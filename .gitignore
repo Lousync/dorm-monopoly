@@ -1,0 +1,10 @@
+# Godot
+.godot/
+*.tmp
+
+# 打包产物（用导出命令重新生成）
+build/
+
+# 系统杂项
+Thumbs.db
+.DS_Store
