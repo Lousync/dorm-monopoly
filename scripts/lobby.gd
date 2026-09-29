@@ -20,6 +20,8 @@ func _ready() -> void:
 			_at_mode = a.substr(11)
 		elif a.begins_with("--shot="):
 			_shot_path = a.substr(7)
+		elif a.begins_with("--shot-lobby="):
+			_shot_path = a.substr(13)
 
 	var bg := ColorRect.new()
 	bg.color = UIKit.BG
@@ -66,11 +68,11 @@ func _ready() -> void:
 	_remove_bot_btn = UIKit.button("－ 机器人", 15)
 	_remove_bot_btn.pressed.connect(func() -> void: Net.host_remove_bot())
 	btn_row.add_child(_remove_bot_btn)
-	_start_btn = UIKit.button("开始游戏！", 17)
+	_start_btn = UIKit.button("开始游戏！", 17, "primary")
 	_start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_start_btn.pressed.connect(_on_start)
 	btn_row.add_child(_start_btn)
-	var leave_btn := UIKit.button("离开", 15)
+	var leave_btn := UIKit.button("离开", 15, "danger")
 	leave_btn.pressed.connect(_on_leave)
 	btn_row.add_child(leave_btn)
 
@@ -91,6 +93,20 @@ func _ready() -> void:
 	_addr_label = UIKit.label("", 14, UIKit.TEXT)
 	_addr_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	av.add_child(_addr_label)
+	var copy_row := HBoxContainer.new()
+	copy_row.add_theme_constant_override("separation", 6)
+	av.add_child(copy_row)
+	var copy_btn := UIKit.button("复制地址", 13)
+	copy_btn.pressed.connect(func() -> void:
+		DisplayServer.clipboard_set(_addr_label.text)
+		copy_btn.text = "已复制 ✓"
+		Fx.play("pop", -6.0)
+		await get_tree().create_timer(1.2).timeout
+		if is_instance_valid(copy_btn):
+			copy_btn.text = "复制地址"
+	)
+	copy_row.add_child(copy_btn)
+	copy_row.add_child(UIKit.label("点击复制全部地址", 12, UIKit.TEXT_DIM))
 
 	var chat_panel := UIKit.panel_container(UIKit.PANEL, 10)
 	chat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -121,6 +137,10 @@ func _ready() -> void:
 	Net.chat_received.connect(_refresh_chat)
 	Net.connection_lost.connect(_on_conn_lost)
 
+	# 入场：左右两列错落淡入
+	Fx.animate_in(left, 0.0)
+	Fx.animate_in(right, 0.12)
+
 	_refresh()
 	_refresh_chat()
 
@@ -142,11 +162,7 @@ func _refresh() -> void:
 	for p in Net.players:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
-		var chip := Panel.new()
-		chip.custom_minimum_size = Vector2(20, 20)
-		var sb := UIKit.stylebox(GameData.PLAYER_COLORS[int(p.color)], 10, Color(0.9, 0.9, 0.9), 1)
-		chip.add_theme_stylebox_override("panel", sb)
-		row.add_child(chip)
+		row.add_child(UIKit.chip(GameData.PLAYER_COLORS[int(p.color)], 20))
 		var tags := ""
 		if int(p.peer) == 1:
 			tags += "（房主）"
@@ -159,7 +175,7 @@ func _refresh() -> void:
 		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		row.add_child(name_l)
 		if bool(p.ready) or bool(p.bot):
-			row.add_child(UIKit.label("已准备", 14, Color(0.45, 0.8, 0.5)))
+			row.add_child(UIKit.label("已准备", 14, UIKit.GOOD))
 		_players_box.add_child(row)
 	if Net.players.size() < Net.MAX_PLAYERS:
 		_players_box.add_child(UIKit.label("（等待其他室友加入，最多 4 人）", 13, UIKit.TEXT_DIM))
@@ -170,6 +186,8 @@ func _refresh() -> void:
 			human_ready = false
 	_ready_btn.visible = not Net.is_host
 	_ready_btn.text = "取消准备" if _i_am_ready() else "准备"
+	if not Net.is_host:
+		UIKit.restyle_button(_ready_btn, "good" if _i_am_ready() else "normal")
 	_add_bot_btn.visible = Net.is_host
 	_remove_bot_btn.visible = Net.is_host
 	_start_btn.visible = Net.is_host
@@ -192,9 +210,6 @@ func _refresh() -> void:
 			lines.append("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）")
 		_addr_label.text = "\n".join(lines)
 
-func _my_port_guess() -> int:
-	return Net.host_port if Net.host_port > 0 else Net.PORT
-
 func _i_am_ready() -> bool:
 	for p in Net.players:
 		if int(p.peer) == Net.multiplayer.get_unique_id():
@@ -206,11 +221,11 @@ func _on_start() -> void:
 
 func _on_leave() -> void:
 	Net.leave()
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _send_chat() -> void:
 	Net.send_chat(_chat_edit.text)
@@ -221,7 +236,7 @@ func _refresh_chat() -> void:
 		return
 	_chat_box.clear()
 	for line in Net.chat_history:
-		_chat_box.append_text(line + "\n")
+		_chat_box.append_text(line.replace("[", "［") + "\n")
 
 # ---------------- 自动化测试钩子 ----------------
 

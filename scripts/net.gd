@@ -1,9 +1,9 @@
 extends Node
 ## 自动加载单例：网络传输、房间大厅数据、局域网房间搜索。
 ##
-## 联机方案：ENet 服务器默认绑定通配地址（IPv4 + IPv6 双栈），
+## 联机方案：ENet 服务器绑定通配地址（IPv4 + IPv6 双栈），
 ## 客户端用 create_client(ip, port) 可填 IPv4 / IPv6 / 域名；
-## 局域网内用 UDP 广播（IPv4 255.255.255.255）自动搜索房间，
+## 局域网内用 UDP 广播（全网广播 + 各网卡子网定向广播 + 本机回环）自动搜索房间，
 ## IPv6 无广播概念，走「直连地址」手动输入。
 
 signal lobby_joined            # 客户端：收到第一份大厅数据
@@ -17,7 +17,8 @@ const PORT := 7777
 const DISCO_PORT := 7778
 const MAX_PLAYERS := 4
 const DISCO_REQ := "DMONO:DISCO?"
-const DISCO_PROTO := "DMONO1"
+const DISCO_PROTO := "DMONO2"   # v2：INFO 增加房间状态字段
+const HELLO_RETRIES := 20
 
 var my_name := "玩家"
 var is_host := false
@@ -29,11 +30,12 @@ var last_error := ""           # 返回主菜单时展示给玩家看
 var players: Array = []        # [{peer:int, name:String, color:int, bot:bool, ready:bool}]
 var chat_history: Array = []   # ["名字：文本", ...]
 
-var found_rooms := {}          # ip -> {name, count, time}
+var found_rooms := {}          # ip -> {name, count, state, time}
 
 var _disco_host: PacketPeerUDP
 var _disco_client: PacketPeerUDP
 var _disco_clock := 99.0
+var _disco_targets: PackedStringArray = []
 
 func _ready() -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -185,7 +187,7 @@ func start_game() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func s_start() -> void:
-	get_tree().change_scene_to_file("res://scenes/game.tscn")
+	Fx.go_to("res://scenes/game.tscn")
 
 # ---------------- 聊天 ----------------
 
@@ -229,8 +231,15 @@ func _name_of(peer: int) -> String:
 func _on_peer_connected(id: int) -> void:
 	print("NET: peer_connected id=", id, " is_server=", multiplayer.is_server())
 	if multiplayer.is_server() and in_game:
-		s_kick.rpc_id(id, "对局已开始，无法中途加入")
-		multiplayer.multiplayer_peer.disconnect_peer(id)
+		_kick_peer(id, "对局已开始，无法中途加入")
+
+## 先把踢人原因可靠送达，稍等一拍再断开连接（避免对端来不及收到就掉线）
+func _kick_peer(id: int, reason: String) -> void:
+	s_kick.rpc_id(id, reason)
+	await get_tree().create_timer(0.35).timeout
+	var mp := multiplayer.multiplayer_peer
+	if mp is ENetMultiplayerPeer and not String(mp.get_peer_address(id)).is_empty():
+		mp.disconnect_peer(id)
 
 func _on_peer_disconnected(id: int) -> void:
 	if multiplayer.is_server() and not in_game:
@@ -245,15 +254,19 @@ func _on_connected_to_server() -> void:
 	_hello_retry()
 
 ## 进房握手重试：ENet 连接建立瞬间高层握手可能未完成，
-## 首个 RPC 有小概率被丢弃，这里带去重地重发直到收到大厅数据。
+## 首个 RPC 有小概率被丢弃，这里带去重地重发直到收到大厅数据；
+## 一直收不到则明确报错，不再让玩家干等。
 func _hello_retry() -> void:
-	for i in 20:
+	for i in HELLO_RETRIES:
 		if not (multiplayer.multiplayer_peer is ENetMultiplayerPeer):
-			return
+			return  # 已被踢 / 已断开，静默退出
 		c_hello.rpc_id(1, my_name)
 		await get_tree().create_timer(0.5).timeout
 		if not players.is_empty():
 			return
+	if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
+		_reset_peer()
+		join_failed.emit("已连上房间但始终无响应，请让房主重新创建房间")
 
 @rpc("any_peer", "call_remote", "reliable")
 func c_hello(pname: String) -> void:
@@ -261,12 +274,10 @@ func c_hello(pname: String) -> void:
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if in_game:
-		s_kick.rpc_id(sender, "对局已开始，无法中途加入")
-		multiplayer.multiplayer_peer.disconnect_peer(sender)
+		_kick_peer(sender, "对局已开始，无法中途加入")
 		return
 	if players.size() >= MAX_PLAYERS:
-		s_kick.rpc_id(sender, "房间已满（最多 4 人）")
-		multiplayer.multiplayer_peer.disconnect_peer(sender)
+		_kick_peer(sender, "房间已满（最多 4 人）")
 		return
 	for p in players:
 		if int(p.peer) == sender:
@@ -297,7 +308,7 @@ func s_kick(reason: String) -> void:
 	_reset_peer()
 	kicked.emit(reason)
 
-# ---------------- 局域网房间搜索（IPv4 UDP 广播） ----------------
+# ---------------- 局域网房间搜索（UDP 广播） ----------------
 
 func start_disco_client() -> void:
 	stop_disco_client()
@@ -307,6 +318,14 @@ func start_disco_client() -> void:
 		return
 	_disco_client.set_broadcast_enabled(true)
 	_disco_clock = 99.0
+	# 全网广播 + 各私网网段的定向广播 + 本机回环（同机双开也能搜到）
+	var targets := PackedStringArray(["255.255.255.255", "127.0.0.1"])
+	var addrs := split_addresses()
+	for ip in addrs.lan4:
+		var parts := String(ip).split(".")
+		if parts.size() == 4:
+			targets.append("%s.%s.%s.255" % [parts[0], parts[1], parts[2]])
+	_disco_targets = targets
 
 func stop_disco_client() -> void:
 	if _disco_client != null:
@@ -329,6 +348,13 @@ func stop_disco() -> void:
 	stop_disco_client()
 	stop_disco_host()
 
+func _disco_state() -> String:
+	if in_game:
+		return "playing"
+	if players.size() >= MAX_PLAYERS:
+		return "full"
+	return "lobby"
+
 func _poll_disco(delta: float) -> void:
 	if _disco_host != null and multiplayer.is_server():
 		while _disco_host.get_available_packet_count() > 0:
@@ -336,64 +362,36 @@ func _poll_disco(delta: float) -> void:
 			var ip := _disco_host.get_packet_ip()
 			var port := _disco_host.get_packet_port()
 			if pkt.get_string_from_utf8() == DISCO_REQ:
-				var info := "%s|INFO|%s|%d/%d" % [DISCO_PROTO, room_name, players.size(), MAX_PLAYERS]
+				var info := "%s|INFO|%s|%d/%d|%s" % [DISCO_PROTO, room_name, players.size(), MAX_PLAYERS, _disco_state()]
 				_disco_host.set_dest_address(ip, port)
 				_disco_host.put_packet(info.to_utf8_buffer())
 	if _disco_client != null:
 		_disco_clock += delta
 		if _disco_clock >= 1.0:
 			_disco_clock = 0.0
-			_disco_client.set_dest_address("255.255.255.255", DISCO_PORT)
-			_disco_client.put_packet(DISCO_REQ.to_utf8_buffer())
+			for t in _disco_targets:
+				_disco_client.set_dest_address(t, DISCO_PORT)
+				_disco_client.put_packet(DISCO_REQ.to_utf8_buffer())
 		while _disco_client.get_available_packet_count() > 0:
-			var pkt := _disco_client.get_packet()
-			var ip := _disco_client.get_packet_ip()
-			var parts := pkt.get_string_from_utf8().split("|")
-			if parts.size() == 4 and parts[0] == DISCO_PROTO and parts[1] == "INFO":
-				found_rooms[ip] = {"name": parts[2], "count": parts[3], "time": Time.get_ticks_msec()}
+			var pkt2 := _disco_client.get_packet()
+			var ip2 := _disco_client.get_packet_ip()
+			var parts := pkt2.get_string_from_utf8().split("|")
+			if parts.size() == 5 and parts[0] == DISCO_PROTO and parts[1] == "INFO":
+				found_rooms[ip2] = {
+					"name": parts[2], "count": parts[3], "state": parts[4],
+					"time": Time.get_ticks_msec(),
+				}
+		# 清理过期房间
+		var now := Time.get_ticks_msec()
+		for ip3 in found_rooms.keys():
+			if now - int(found_rooms[ip3].time) > 6000:
+				found_rooms.erase(ip3)
 
 # ---------------- 地址工具 ----------------
+# 实现在 NetAddr（纯函数、可单测），这里保留同名入口方便旧调用点。
 
-## 把输入解析为 [地址, 端口]。
-## 支持：10.11.28.88 / 10.11.28.88:7800 / ::1 / 2001:db8::1 / [2001:db8::1]:7800 / hostname
 static func parse_endpoint(text: String, default_port: int) -> Array:
-	var s := text.strip_edges()
-	if s.is_empty():
-		return []
-	var host := s
-	var port := default_port
-	if s.begins_with("["):
-		var close := s.find("]")
-		if close < 0:
-			return []
-		host = s.substr(1, close - 1)
-		var rest := s.substr(close + 1)
-		if rest.begins_with(":"):
-			port = int(rest.substr(1))
-	elif s.count(":") == 1:
-		var parts := s.split(":")
-		host = parts[0]
-		port = int(parts[1])
-	if host.is_empty() or port <= 0:
-		return []
-	return [host, port]
+	return NetAddr.parse_endpoint(text, default_port)
 
-## 本机地址分类，便于把可用的直连地址展示给朋友。
 static func split_addresses() -> Dictionary:
-	var res := {"lan4": [], "pub4": [], "lan6": [], "pub6": []}
-	for a in IP.get_local_addresses():
-		var s := String(a)
-		if s.begins_with("127.") or s == "::1" or s.begins_with("169.254") \
-				or s.begins_with("fe80:") or s == "0.0.0.0":
-			continue
-		if s.contains(":"):
-			if s.begins_with("fd") or s.begins_with("fc"):
-				res.lan6.append(s)
-			else:
-				res.pub6.append(s)
-		else:
-			if s.begins_with("10.") or s.begins_with("192.168.") or s.begins_with("172."):
-				res.lan4.append(s)
-			else:
-				res.pub4.append(s)
-	return res
+	return NetAddr.split_addresses()

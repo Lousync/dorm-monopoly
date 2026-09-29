@@ -1,19 +1,27 @@
 extends Control
 ## 对局场景。房主是权威服务器：回合推进、掷骰、结算都在房主侧计算，
 ## 通过 s_* RPC 广播状态快照与动画事件；客户端通过 c_* RPC 上报操作。
+##
+## 表现层：112 格大棋盘（缩放/平移/自动跟随）、横幅与事件卡弹入动画、
+## 金额飘字与滚动、聊天并入战报、结算排名 + 彩带、程序合成音效。
 
 signal roll_received
+
+const DICE_WAIT := 1.35   # 与 DiceView.ROLL_TIME 保持同步
+const STEP_TIME := 0.15   # 每格跳子时长
 
 # ---------------- UI 引用 ----------------
 var board: BoardView
 var dice: DiceView
 var banner: Label
-var card_panel: Panel
+var banner_pill: PanelContainer
+var card_panel: PanelContainer
 var card_label: Label
 var round_label: Label
 var players_box: VBoxContainer
 var status_label: Label
 var roll_btn: Button
+var follow_btn: Button
 var info_label: Label
 var log_text: RichTextLabel
 var chat_edit: LineEdit
@@ -34,17 +42,26 @@ var _awaiting_roll := 0
 var _awaiting_prompt := 0
 var _pending_token := 0
 var _decision := {"token": -1, "yes": false}
+var _prompt_kind := ""
+var _prompt_amount := 0
 var _over_shown := false
 var _card_tween_id := 0
 var _roll_epoch := 0
-var _at_roll_epoch := -1
 var _shot_path := ""
 var _shot_taken := false
+
+# ---------------- 表现层状态 ----------------
+var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
+var _chat_shown := 0
+var _prompt_dlg: Control
+var _prompt_tw: Tween
+var _prompt_token := -1
+var _card_styles := {}
 
 # ---------------- 自动化测试 ----------------
 var at_mode := ""
 var at_rounds := 3
-var _at_roll_key := ""
+var _at_roll_epoch := -1
 
 func _ready() -> void:
 	my_peer = multiplayer.get_unique_id()
@@ -53,10 +70,21 @@ func _ready() -> void:
 			at_mode = a.substr(11)
 		elif a.begins_with("--rounds="):
 			at_rounds = maxi(1, int(a.substr(9)))
+		elif a.begins_with("--max-rounds="):
+			GameData.MAX_ROUNDS = maxi(1, int(a.substr(13)))
 		elif a.begins_with("--shot="):
 			_shot_path = a.substr(7)
 	if at_mode != "":
 		Engine.time_scale = 3.0
+
+	_card_styles = {
+		"info": [UIKit.ACCENT, Color(0.16, 0.14, 0.08, 0.94)],
+		"good": [UIKit.GOOD, Color(0.10, 0.18, 0.12, 0.94)],
+		"bad": [Color(0.94, 0.45, 0.42), Color(0.20, 0.09, 0.09, 0.94)],
+		"jail": [Color(0.66, 0.52, 0.95), Color(0.13, 0.10, 0.20, 0.94)],
+		"move": [Color(0.42, 0.70, 0.95), Color(0.09, 0.14, 0.21, 0.94)],
+		"bust": [Color(0.95, 0.35, 0.35), Color(0.22, 0.07, 0.07, 0.94)],
+	}
 
 	_build_ui()
 
@@ -69,6 +97,7 @@ func _ready() -> void:
 	Net.chat_received.connect(_refresh_chat)
 	Net.connection_lost.connect(_on_conn_lost)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	_chat_shown = Net.chat_history.size()
 	_refresh_chat()
 
 func _exit_tree() -> void:
@@ -83,9 +112,22 @@ func _build_ui() -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 
+	# 棋盘视口：占据顶栏以下全部空间（右侧留出面板宽度给镜头居中/全图适配）
+	board = BoardView.new()
+	board.set_anchors_preset(Control.PRESET_FULL_RECT)
+	board.offset_top = 44
+	board.overlay_right = 506
+	board.overlay_bottom = 130
+	add_child(board)
+	board.tile_clicked.connect(_on_tile_clicked)
+
+	# 顶栏
 	var top := HBoxContainer.new()
-	top.position = Vector2(12, 8)
-	top.size = Vector2(1256, 30)
+	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top.offset_left = 12
+	top.offset_right = -12
+	top.offset_top = 6
+	top.offset_bottom = 40
 	add_child(top)
 	var title := UIKit.label("宿舍大富翁", 20, UIKit.ACCENT)
 	top.add_child(title)
@@ -93,64 +135,64 @@ func _build_ui() -> void:
 	round_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	round_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	top.add_child(round_label)
-	var exit_btn := UIKit.button("退出房间", 14)
+	var exit_btn := UIKit.button("退出房间", 14, "danger")
 	exit_btn.pressed.connect(_on_exit)
 	top.add_child(exit_btn)
 
-	var board_bg := UIKit.panel(Color(0.078, 0.086, 0.118), 14, Color("#3c4254"), 2)
-	board_bg.position = Vector2(10, 46)
-	board_bg.size = Vector2(BoardView.BOARD + 16, BoardView.BOARD + 16)
-	add_child(board_bg)
+	# 棋盘上方 HUD：横幅胶囊 / 事件卡 / 骰子（屏幕空间）
+	var hud := Control.new()
+	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(hud)
 
-	board = BoardView.new()
-	board.position = Vector2(18, 54)
-	add_child(board)
-	board.tile_clicked.connect(_on_tile_clicked)
-
-	# 棋盘中央：回合横幅 + 骰子 + 事件卡
-	banner = UIKit.label("", 19, UIKit.TEXT)
-	banner.position = Vector2(90, 262)
-	banner.size = Vector2(540, 28)
+	banner_pill = UIKit.panel_container(Color(0.055, 0.06, 0.09, 0.85), 12, UIKit.BORDER, 1)
+	banner_pill.position = Vector2(107, 50)
+	banner_pill.size = Vector2(560, 36)
+	banner_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(banner_pill)
+	var bm := UIKit.margins(14, 14, 3, 3)
+	bm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	banner_pill.add_child(bm)
+	banner = UIKit.label("", 16, UIKit.TEXT)
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	board.add_child(banner)
+	bm.add_child(banner)
 
-	dice = DiceView.new()
-	dice.position = Vector2(285, 320)
-	board.add_child(dice)
-
-	card_panel = UIKit.panel(Color(0.208, 0.176, 0.098), 12, UIKit.ACCENT, 2)
-	card_panel.position = Vector2(130, 438)
-	card_panel.size = Vector2(460, 104)
+	card_panel = UIKit.panel_container(Color(0.16, 0.14, 0.08, 0.94), 12, UIKit.ACCENT, 2)
+	card_panel.position = Vector2(107, 96)
+	card_panel.size = Vector2(560, 104)
 	card_panel.visible = false
 	card_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	board.add_child(card_panel)
+	hud.add_child(card_panel)
+	var cm := UIKit.margins(16, 16, 8, 8)
+	cm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_panel.add_child(cm)
 	card_label = UIKit.label("", 15, UIKit.ACCENT)
-	card_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	card_label.offset_left = 14
-	card_label.offset_right = -14
-	card_label.offset_top = 8
-	card_label.offset_bottom = -8
+	card_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	card_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	card_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	card_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_panel.add_child(card_label)
+	cm.add_child(card_label)
+
+	dice = DiceView.new()
+	dice.position = Vector2(24, 706)
+	hud.add_child(dice)
 
 	# 右侧面板
 	var right := VBoxContainer.new()
-	right.position = Vector2(762, 46)
-	right.size = Vector2(508, 742)
+	right.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	right.offset_left = -494
+	right.offset_right = -12
+	right.offset_top = 48
+	right.offset_bottom = -12
 	right.add_theme_constant_override("separation", 8)
 	add_child(right)
 
-	var pp := UIKit.panel_container(UIKit.PANEL, 10)
-	pp.custom_minimum_size = Vector2(0, 168)
-	var pm := UIKit.margins(10, 10, 8, 8)
+	var pp := UIKit.panel_container(UIKit.PANEL_GLASS, 10)
+	pp.custom_minimum_size = Vector2(0, 186)
+	var pm := UIKit.margins(8, 8, 6, 6)
 	pp.add_child(pm)
 	right.add_child(pp)
 	players_box = VBoxContainer.new()
-	players_box.add_theme_constant_override("separation", 6)
+	players_box.add_theme_constant_override("separation", 4)
 	pm.add_child(players_box)
 
 	var action_row := HBoxContainer.new()
@@ -160,16 +202,27 @@ func _build_ui() -> void:
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	action_row.add_child(status_label)
-	roll_btn = UIKit.button("🎲 掷骰子", 17)
+	follow_btn = UIKit.button("跟随", 13)
+	follow_btn.toggle_mode = true
+	follow_btn.button_pressed = true
+	follow_btn.toggled.connect(_on_follow_toggled)
+	action_row.add_child(follow_btn)
+	var over_btn := UIKit.button("全图", 13)
+	over_btn.pressed.connect(func() -> void:
+		board.fit_overview()
+		follow_btn.button_pressed = false
+	)
+	action_row.add_child(over_btn)
+	roll_btn = UIKit.button("🎲 掷骰子", 17, "primary")
 	roll_btn.disabled = true
 	action_row.add_child(roll_btn)
 
-	info_label = UIKit.label("点击棋盘上的格子可以查看详情", 13, UIKit.TEXT_DIM)
+	info_label = UIKit.label("滚轮缩放 · 拖拽平移棋盘 · 点击格子查看详情", 13, UIKit.TEXT_DIM)
 	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info_label.custom_minimum_size = Vector2(0, 40)
 	right.add_child(info_label)
 
-	var lp := UIKit.panel_container(UIKit.PANEL, 10)
+	var lp := UIKit.panel_container(UIKit.PANEL_GLASS, 10)
 	lp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var lm := UIKit.margins(10, 10, 8, 8)
 	lp.add_child(lm)
@@ -214,9 +267,9 @@ func _host_setup() -> void:
 		})
 	htiles = []
 	for i in GameData.TILES.size():
-		htiles.append({"owner": -1, "level": 0})
+		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	_log("游戏开始！每人初始资金 %s，踏上起点领工资 %s" % [
-		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)])
+		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
 	_log("掷出双数可以再动一次；连续三双会被查寝抓走哦")
 	await _wait(1.5)
 	_broadcast_state()
@@ -242,7 +295,7 @@ func _run_game() -> void:
 			continue
 		if int(p.skip) > 0:
 			p.skip = int(p.skip) - 1
-			_log("%s 在宿委会反省，跳过本回合" % p.name)
+			_log("%s 在宿委会反省，跳过本回合" % p.name, "#c9a6ff")
 			_broadcast_state()
 			await _wait(1.0)
 			if not running:
@@ -272,9 +325,12 @@ func _play_turn(p: Dictionary) -> void:
 	while running:
 		_awaiting_roll = int(p.peer)
 		_roll_epoch += 1
+		var epoch := _roll_epoch
 		_broadcast_state()
 		if bool(p.bot):
 			_bot_roll_later()
+		else:
+			_arm_roll_timeout(epoch, int(p.peer))
 		await roll_received
 		if not running:
 			return
@@ -285,14 +341,15 @@ func _play_turn(p: Dictionary) -> void:
 		if at_mode != "":
 			print("AT roll %s: %d+%d" % [p.name, d1, d2])
 		s_roll.rpc(d1, d2)
-		await _wait(1.15)
+		await _wait(DICE_WAIT)
 		if not running:
 			return
 
 		if d1 == d2:
 			chain += 1
 			if chain >= 3:
-				_log("%s 连续三次掷出双数，兴奋过度被查寝带走！" % p.name)
+				_log("%s 连续三次掷出双数，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
+				s_card.rpc("%s 连续三双，被查寝带走！" % p.name, "jail")
 				_send_to_jail(p)
 				_broadcast_state()
 				await _wait(1.0)
@@ -304,10 +361,10 @@ func _play_turn(p: Dictionary) -> void:
 		for idx in path:
 			if idx == 0:
 				p.money = int(p.money) + GameData.SALARY
-				_log("%s 踏上起点，领取工资 %s" % [p.name, GameData.fmt_money(GameData.SALARY)])
+				_log("%s 踏上起点，领取工资 %s" % [p.name, GameData.fmt_money(GameData.SALARY)], "#74d188")
 		p.pos = path[path.size() - 1]
-		s_move.rpc(int(p.peer), path, 0.16)
-		await _wait(0.3 + path.size() * 0.16)
+		s_move.rpc(int(p.peer), path, STEP_TIME)
+		await _wait(0.35 + path.size() * STEP_TIME)
 		if not running:
 			return
 
@@ -316,10 +373,18 @@ func _play_turn(p: Dictionary) -> void:
 		if not running or not bool(p.alive):
 			return
 		if d1 == d2:
-			_log("%s 掷出双数，奖励再动一次！" % p.name)
+			_log("%s 掷出双数，奖励再动一次！" % p.name, "#f0c064")
 			await _wait(0.5)
 			continue
 		return
+
+## 真人玩家发呆太久由系统代掷，避免整局卡死
+func _arm_roll_timeout(epoch: int, peer: int) -> void:
+	await _wait(GameData.ROLL_TIMEOUT)
+	if running and _roll_epoch == epoch and _awaiting_roll == peer:
+		var pl := _player_by_peer(peer)
+		_log("%s 发呆太久，系统代掷一步" % String(pl.get("name", "?")), "#8a90a5")
+		roll_received.emit()
 
 func _bot_roll_later() -> void:
 	await _wait(0.8)
@@ -334,7 +399,7 @@ func _resolve_tile(p: Dictionary) -> void:
 	match String(d.type):
 		"property":
 			var t: Dictionary = htiles[idx]
-			if int(t.owner) == -1:
+			if int(t.owner) == GameData.NO_OWNER:
 				await _resolve_buy(p, idx)
 			elif int(t.owner) == int(p.peer):
 				await _resolve_upgrade(p, idx)
@@ -342,24 +407,43 @@ func _resolve_tile(p: Dictionary) -> void:
 				await _resolve_rent(p, idx)
 		"event":
 			var card: Dictionary = GameData.EVENTS.pick_random()
-			s_card.rpc("【%s】%s" % [d.name, card.t])
+			s_card.rpc("【%s】%s" % [d.name, card.t], _card_kind(card))
 			_log("%s 抽到事件：%s" % [p.name, card.t])
 			await _wait(1.4)
 			await _apply_card(p, card)
 		"fine":
-			_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))])
+			_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#ef7b74")
+			s_card.rpc("【%s】强制缴费 %s" % [d.name, GameData.fmt_money(int(d.amount))], "bad")
+			await _wait(0.6)
 			_pay(p, int(d.amount), {})
+		"bonus":
+			p.money = int(p.money) + int(d.amount)
+			_log("%s 在【%s】赚到 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#74d188")
 		"go_jail":
-			_log("%s 撞上查寝！被押送到宿委会" % p.name)
+			_log("%s 撞上查寝！被押送到宿委会" % p.name, "#c9a6ff")
+			s_card.rpc("【查寝！】%s 被押送到宿委会" % p.name, "jail")
 			_send_to_jail(p)
 		"jail":
 			_log("%s 来宿委会探监，一切安好" % p.name)
 		"rest":
-			_log("%s 卧谈会聊到熄灯，免费休息一晚" % p.name)
+			_log("%s 在【%s】歇了口气，无事发生" % [p.name, d.name])
 		"start":
-			_log("%s 恰好停在起点，工资已到账！" % p.name)
+			_log("%s 恰好停在起点，工资已到账！" % p.name, "#74d188")
 	if not bool(p.alive):
 		_check_end()
+
+func _card_kind(card: Dictionary) -> String:
+	if card.has("go_jail"):
+		return "jail"
+	if card.has("move_steps"):
+		return "move"
+	if card.has("money"):
+		return "good" if int(card.money) >= 0 else "bad"
+	if card.has("from_each"):
+		return "good"
+	if card.has("to_each"):
+		return "bad"
+	return "info"
 
 func _resolve_buy(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -370,10 +454,10 @@ func _resolve_buy(p: Dictionary, idx: int) -> void:
 		"要买下【%s】吗？\n售价 %s · 基础租金 %s\n你的现金 %s" % [
 			d.name, GameData.fmt_money(int(d.price)), GameData.fmt_money(int(d.rent)), GameData.fmt_money(int(p.money))],
 		"买下它！")
-	if ok and running and int(p.money) >= int(d.price) and int(htiles[idx].owner) == -1:
+	if ok and running and int(p.money) >= int(d.price) and int(htiles[idx].owner) == GameData.NO_OWNER:
 		p.money = int(p.money) - int(d.price)
 		htiles[idx].owner = int(p.peer)
-		_log("%s 以 %s 买下了【%s】" % [p.name, GameData.fmt_money(int(d.price)), d.name])
+		_log("%s 以 %s 买下了【%s】" % [p.name, GameData.fmt_money(int(d.price)), d.name], "#f0c064")
 
 func _resolve_upgrade(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -391,7 +475,7 @@ func _resolve_upgrade(p: Dictionary, idx: int) -> void:
 	if ok and running and int(p.money) >= cost:
 		p.money = int(p.money) - cost
 		t.level = int(t.level) + 1
-		_log("%s 花费 %s 把【%s】升级到 Lv%d" % [p.name, GameData.fmt_money(cost), d.name, int(t.level)])
+		_log("%s 花费 %s 把【%s】升级到 Lv%d" % [p.name, GameData.fmt_money(cost), d.name, int(t.level)], "#f0c064")
 
 func _resolve_rent(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -399,7 +483,7 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 	var op := _player_by_peer(int(htiles[idx].owner))
 	if op.is_empty() or not bool(op.alive):
 		return
-	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name])
+	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name], "#ef7b74")
 	_pay(p, rent, op)
 
 func _apply_card(p: Dictionary, card: Dictionary) -> void:
@@ -422,17 +506,16 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 				p.money = int(p.money) - amt2
 				o.money = int(o.money) + amt2
 	if card.has("go_jail"):
-		_log("%s 被查寝抄了近道，直接送宿委会" % p.name)
+		_log("%s 被查寝抄了近道，直接送宿委会" % p.name, "#c9a6ff")
 		_send_to_jail(p)
-	if card.has("move_to"):
-		var target := int(card.move_to)
-		var path := GameData.compute_path_to(int(p.pos), target)
+	if card.has("move_steps"):
+		var path := GameData.compute_path_steps(int(p.pos), int(card.move_steps))
 		for idx in path:
 			if idx == 0:
 				p.money = int(p.money) + GameData.SALARY
-				_log("%s 顺路踏上起点，领工资 %s" % [p.name, GameData.fmt_money(GameData.SALARY)])
-		p.pos = target
+				_log("%s 顺路踏上起点，领工资 %s" % [p.name, GameData.fmt_money(GameData.SALARY)], "#74d188")
 		if not path.is_empty():
+			p.pos = path[path.size() - 1]
 			s_move.rpc(int(p.peer), path, 0.09)
 			await _wait(0.25 + path.size() * 0.09)
 		# 移动后的落点照常结算
@@ -449,14 +532,20 @@ func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 		p.money = 0
 		for t in htiles:
 			if int(t.owner) == int(p.peer):
-				t.owner = -1
+				t.owner = GameData.NO_OWNER
 				t.level = 0
-		_log("%s 无力支付 %s，宣告破产出局！名下地产收归学校" % [p.name, GameData.fmt_money(amount)])
-		s_card.rpc("%s 破产出局！" % p.name)
+		_log("%s 无力支付 %s，宣告破产出局！名下地产收归学校" % [p.name, GameData.fmt_money(amount)], "#ef7b74")
+		s_card.rpc("%s 破产出局！" % p.name, "bust")
 
 func _send_to_jail(p: Dictionary) -> void:
 	p.pos = GameData.JAIL_TILE
 	p.skip = 1
+	s_tp.rpc(int(p.peer), GameData.JAIL_TILE)
+
+@rpc("authority", "call_local", "reliable")
+func s_tp(peer: int, idx: int) -> void:
+	board.set_teleport_target(peer, idx)
+	board.play_move(peer, [], 0.0)
 
 func _group_complete_for(idx: int, owner: int) -> bool:
 	var group: String = GameData.TILES[idx].group
@@ -470,13 +559,6 @@ func _player_by_peer(peer: int) -> Dictionary:
 		if int(p.peer) == peer:
 			return p
 	return {}
-
-func _net_worth(p: Dictionary) -> int:
-	var v := int(p.money)
-	for i in htiles.size():
-		if int(htiles[i].owner) == int(p.peer):
-			v += int(GameData.TILES[i].price) + int(htiles[i].level) * GameData.upgrade_cost(i)
-	return v
 
 func _check_end() -> void:
 	var alive := hp.filter(func(x) -> bool: return bool(x.alive))
@@ -495,25 +577,39 @@ func _end_by_wealth() -> void:
 	_end_game(int(alive[0].peer), "%d 轮结算！最富有的是 %s（总资产 %s）" % [
 		GameData.MAX_ROUNDS, alive[0].name, GameData.fmt_money(_net_worth(alive[0]))])
 
+func _net_worth(p: Dictionary) -> int:
+	var v := int(p.money)
+	for i in htiles.size():
+		if int(htiles[i].owner) == int(p.peer):
+			v += int(GameData.TILES[i].price) + int(htiles[i].level) * GameData.upgrade_cost(i)
+	return v
+
 func _end_game(wpeer: int, line: String) -> void:
 	running = false
 	winner = wpeer
 	_awaiting_roll = 0
 	_awaiting_prompt = 0
-	_log(line)
+	_log(line, "#f0c064")
 	_broadcast_state()
 
 # ================= 房主：交互 =================
 
+## 掷骰：房主本地发信号；客户端走 RPC（此前按钮只查房主变量，客户端点了没反应）
 func _on_roll_pressed() -> void:
-	if _awaiting_roll == my_peer:
-		roll_received.emit()
+	if String(st.get("await", "")) != "roll" or int(st.get("turn", -1)) != my_peer:
+		return
+	roll_btn.disabled = true  # 即时反馈，等下一次状态广播再恢复
+	if multiplayer.is_server():
+		if _awaiting_roll == my_peer:
+			roll_received.emit()
+	else:
+		c_roll.rpc_id(1)
 
 func _bot_decide(kind: String, amount: int, money: int) -> bool:
 	if kind == "buy":
-		return money - amount >= 1500
+		return money - amount >= 2500
 	if kind == "upgrade":
-		return money - amount >= 2000
+		return money - amount >= 3000
 	return false
 
 ## 向目标玩家询问（房主弹窗 / 客户端 RPC / 机器人自动决策），超时视为拒绝
@@ -524,6 +620,8 @@ func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String,
 	var tok := _pending_token
 	_decision = {"token": -1, "yes": false}
 	_awaiting_prompt = int(p.peer)
+	_prompt_kind = kind
+	_prompt_amount = amount
 	_broadcast_state()
 	if int(p.peer) == 1:
 		_show_prompt(tok, title, text, ok_text)
@@ -539,7 +637,7 @@ func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String,
 			break
 	_awaiting_prompt = 0
 	if int(_decision.token) != tok:
-		_log("%s 思考超时，放弃了" % p.name)
+		_log("%s 思考超时，放弃了" % p.name, "#8a90a5")
 	return int(_decision.token) == tok and bool(_decision.yes)
 
 func _answer(token: int, yes: bool) -> void:
@@ -565,14 +663,22 @@ func c_roll() -> void:
 func _on_peer_disconnected(id: int) -> void:
 	if not multiplayer.is_server() or not running:
 		return
+	var found := false
 	for p in hp:
 		if int(p.peer) == id and not bool(p.bot):
 			p.bot = true
-			_log("%s 掉线了，机器人接管他的回合" % p.name)
-			if _awaiting_roll == id:
-				_bot_roll_later()
-			_broadcast_state()
+			found = true
+			_log("%s 掉线了，机器人接管他的回合" % p.name, "#8a90a5")
 			break
+	if not found:
+		return
+	if _awaiting_roll == id:
+		_bot_roll_later()
+	if _awaiting_prompt == id:
+		# 立刻按机器人策略替他做决定，不让全场等 25 秒超时
+		var pd := _player_by_peer(id)
+		_decision = {"token": _pending_token, "yes": _bot_decide(_prompt_kind, _prompt_amount, int(pd.get("money", 0)))}
+	_broadcast_state()
 
 # ================= 房主：广播 =================
 
@@ -602,8 +708,11 @@ func _broadcast_state() -> void:
 		"winner": winner, "roll_epoch": _roll_epoch,
 	})
 
-func _log(line: String) -> void:
-	s_log.rpc(line)
+func _log(line: String, color: String = "#dfe3ee") -> void:
+	var safe := line.replace("[", "［")
+	if color != "#dfe3ee":
+		safe = "[color=%s]%s[/color]" % [color, safe]
+	s_log.rpc(safe)
 
 # ================= 全员：接收 RPC =================
 
@@ -614,32 +723,71 @@ func s_state(state: Dictionary) -> void:
 	round_label.text = "第 %d/%d 轮 · %s" % [int(state.round), int(state.max_rounds), Net.room_name]
 	_refresh_players()
 	_refresh_actions()
+	_refresh_chat()
 	if String(state.phase) == "ended":
 		_show_game_over()
+		if at_mode != "" and not multiplayer.is_server():
+			print("AUTOTEST CLIENT OK round=", state.round)
+			get_tree().quit(0)
 	elif _shot_path != "" and not _shot_taken and int(state.round) >= 2:
 		_shot_taken = true
 		_take_shot(_shot_path)
-	elif at_mode != "" and int(state.round) >= at_rounds and not multiplayer.is_server():
+	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
 		print("AUTOTEST CLIENT OK round=", state.round)
 		get_tree().quit(0)
 
 @rpc("authority", "call_local", "reliable")
 func s_roll(d1: int, d2: int) -> void:
 	dice.play_roll(d1, d2)
+	if d1 == d2:
+		_flair_doubles()
+
+func _flair_doubles() -> void:
+	await get_tree().create_timer(DiceView.ROLL_TIME).timeout
+	if not is_inside_tree():
+		return
+	Fx.float_text(self, dice.position + dice.size * Vector2(0.5, 0.1), "双数！再来一次", UIKit.ACCENT, 21)
 
 @rpc("authority", "call_local", "reliable")
 func s_move(peer: int, path: Array, step_time: float) -> void:
 	board.play_move(peer, path, step_time)
 
 @rpc("authority", "call_local", "reliable")
-func s_card(text: String) -> void:
+func s_card(text: String, kind: String = "info") -> void:
+	var style: Array = _card_styles.get(kind, _card_styles["info"])
+	card_panel.add_theme_stylebox_override("panel", UIKit.stylebox(style[1], 12, style[0], 2))
 	card_label.text = text
+	card_label.add_theme_color_override("font_color", style[0])
 	card_panel.visible = true
+	card_panel.pivot_offset = card_panel.size * 0.5
+	card_panel.scale = Vector2(0.7, 0.7)
+	card_panel.modulate.a = 0.0
+	Fx.play("card", -4.0)
 	_card_tween_id += 1
 	var my_id := _card_tween_id
-	await get_tree().create_timer(2.6).timeout
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(card_panel, "scale", Vector2.ONE, 0.30).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(card_panel, "modulate:a", 1.0, 0.16)
+	tw.set_parallel(false)
+	_hide_card_later(my_id)
+	if kind == "jail":
+		Fx.shake(self, 9.0, 0.35)
+		Fx.play("jail", -2.0)
+	elif kind == "bust":
+		Fx.shake(self, 7.0, 0.3)
+		Fx.play("bust", 0.0)
+
+func _hide_card_later(my_id: int) -> void:
+	await get_tree().create_timer(2.5).timeout
+	if not is_inside_tree() or _card_tween_id != my_id:
+		return
+	var tw := create_tween()
+	tw.tween_property(card_panel, "modulate:a", 0.0, 0.25)
+	await tw.finished
 	if _card_tween_id == my_id:
 		card_panel.visible = false
+		card_panel.modulate.a = 1.0
 
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
@@ -654,25 +802,27 @@ func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
 		if int(p.peer) == peer:
-			return p.name
+			return String(p.name)
 	return "?"
 
 func _refresh_players() -> void:
-	for c in players_box.get_children():
-		c.queue_free()
+	var seen := {}
+	var phase := String(st.get("phase", "playing"))
 	for p in st.get("players", []):
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		var chip := Panel.new()
-		chip.custom_minimum_size = Vector2(16, 16)
-		var chip_sb := UIKit.stylebox(GameData.PLAYER_COLORS[int(p.color)], 8, Color(0.9, 0.9, 0.9), 1)
-		if not bool(p.alive):
-			chip_sb.bg_color = Color(0.35, 0.35, 0.35)
-		chip.add_theme_stylebox_override("panel", chip_sb)
-		row.add_child(chip)
+		var peer := int(p.peer)
+		seen[peer] = true
+		var row: Dictionary = _player_rows.get(peer, {})
+		if row.is_empty():
+			row = _make_player_row(p)
+			_player_rows[peer] = row
+			players_box.add_child(row.root)
+		var active: bool = phase == "playing" and int(st.get("turn", -1)) == peer
+		var sb: StyleBoxFlat = row.sb
+		sb.bg_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.10) if active else Color(0, 0, 0, 0)
+		sb.border_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55) if active else Color(0, 0, 0, 0)
 
 		var tags := ""
-		if int(st.get("turn", -1)) == int(p.peer) and String(st.get("phase", "playing")) == "playing":
+		if active:
 			tags += "▶ "
 		if bool(p.bot):
 			tags += "（机器人）"
@@ -680,43 +830,113 @@ func _refresh_players() -> void:
 			tags += "（破产）"
 		elif int(p.skip) > 0:
 			tags += "（反省中）"
-		var name_l := UIKit.label(p.name + tags, 14, UIKit.TEXT)
-		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		row.add_child(name_l)
+		row.name_l.text = String(p.name) + tags
 
-		var worth := int(p.money)
-		if bool(p.alive):
-			row.add_child(UIKit.label(GameData.fmt_money(worth), 14, UIKit.TEXT))
-		else:
-			row.add_child(UIKit.label("已出局", 14, UIKit.TEXT_DIM))
-		players_box.add_child(row)
+		var chip_sb: StyleBoxFlat = row.chip.get_theme_stylebox("panel")
+		chip_sb.bg_color = Color(0.35, 0.35, 0.35) if not bool(p.alive) else GameData.PLAYER_COLORS[int(p.color)]
+
+		# 金额：滚动数字 + 涨跌闪色 + 棋盘飘字
+		var target := int(p.money)
+		var shown := int(row.shown)
+		if shown != target:
+			var diff := target - shown
+			row.shown = target
+			if row.tw != null and (row.tw as Tween).is_valid():
+				row.tw.kill()
+			var tw := create_tween()
+			row.tw = tw
+			var ml: Label = row.money_l
+			tw.tween_method(func(v: int) -> void: ml.text = GameData.fmt_money(v), shown, target, 0.45) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			var col := UIKit.GOOD if diff > 0 else UIKit.DANGER
+			ml.add_theme_color_override("font_color", col)
+			tw.tween_callback(func() -> void:
+				ml.add_theme_color_override("font_color", UIKit.TEXT)
+			).set_delay(0.6)
+			if bool(p.alive):
+				var pos := board.token_screen_pos(peer) + Vector2(0, -30)
+				Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
+				Fx.play("cash" if diff > 0 else "pay", -5.0)
+		if not bool(p.alive):
+			row.money_l.text = "已出局"
+			row.money_l.add_theme_color_override("font_color", UIKit.TEXT_DIM)
+
+	for peer in _player_rows.keys():
+		if not seen.has(peer):
+			_player_rows[peer].root.queue_free()
+			_player_rows.erase(peer)
+
+func ml_needs_init(_row: Dictionary) -> bool:
+	# 新行首次填充文本
+	return true
+
+func _make_player_row(p: Dictionary) -> Dictionary:
+	var root := PanelContainer.new()
+	var sb := UIKit.stylebox(Color(0, 0, 0, 0), 8, Color(0, 0, 0, 0), 1)
+	root.add_theme_stylebox_override("panel", sb)
+	var m := UIKit.margins(8, 8, 5, 5)
+	root.add_child(m)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	m.add_child(row)
+	var chip := UIKit.chip(GameData.PLAYER_COLORS[int(p.color)], 16)
+	row.add_child(chip)
+	var name_l := UIKit.label(String(p.name), 14, UIKit.TEXT)
+	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(name_l)
+	var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 14, UIKit.TEXT)
+	row.add_child(money_l)
+	return {"root": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
+		"shown": int(p.money), "tw": null, "peer": int(p.peer)}
 
 func _refresh_actions() -> void:
 	var phase := String(st.get("phase", "playing"))
-	var is_my_roll := String(st.get("await", "")) == "roll" and int(st.get("turn", -1)) == my_peer
+	var await_state := String(st.get("await", ""))
+	var is_my_roll := await_state == "roll" and int(st.get("turn", -1)) == my_peer
 	roll_btn.disabled = not is_my_roll
 	roll_btn.visible = phase == "playing"
+	UIKit.restyle_button(roll_btn, "primary" if is_my_roll else "normal")
 	var turn_name := _name_by_peer(int(st.get("turn", -1)))
-	match String(st.get("await", "")):
+	match await_state:
 		"roll":
-			status_label.text = "等待 %s 掷骰子…" % turn_name
+			if is_my_roll:
+				status_label.text = "轮到你掷骰子！"
+				board.focus_peer(my_peer)
+			else:
+				status_label.text = "等待 %s 掷骰子…" % turn_name
 		"prompt":
-			status_label.text = "等待 %s 做决定…" % _name_by_peer(int(st.get("await_peer", -1)))
+			if int(st.get("await_peer", -1)) == my_peer:
+				status_label.text = "轮到你决定！"
+			else:
+				status_label.text = "等待 %s 做决定…" % _name_by_peer(int(st.get("await_peer", -1)))
 		_:
 			if phase == "playing":
 				status_label.text = "%s 的回合" % turn_name
 			else:
 				status_label.text = "游戏结束"
-	if phase != "playing":
-		banner.text = "游戏结束"
-	else:
-		banner.text = status_label.text
+	_set_banner(status_label.text)
 
 	# 自动化测试：轮到自己时自动掷骰（用 roll_epoch 区分连掷的新请求）
 	if at_mode != "" and is_my_roll and int(st.get("roll_epoch", -1)) != _at_roll_epoch:
 		_at_roll_epoch = int(st.get("roll_epoch", -1))
 		_at_auto_roll()
+
+func _set_banner(text: String) -> void:
+	if banner.text == text:
+		return
+	banner.text = text
+	banner_pill.modulate.a = 0.0
+	banner_pill.pivot_offset = banner_pill.size * 0.5
+	banner_pill.scale = Vector2(0.96, 0.96)
+	var tw := create_tween()
+	tw.tween_property(banner_pill, "modulate:a", 1.0, 0.18)
+	tw.parallel().tween_property(banner_pill, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _on_follow_toggled(on: bool) -> void:
+	board.auto_follow = on
+	if on:
+		board.focus_peer(my_peer, true)
 
 func _at_auto_roll() -> void:
 	await get_tree().create_timer(0.4).timeout
@@ -734,31 +954,34 @@ func _on_tile_clicked(idx: int) -> void:
 	if String(d.type) == "property":
 		var owner_name := "无主"
 		var tiles: Array = st.get("tiles", [])
-		if idx < tiles.size() and int(tiles[idx].get("owner", -1)) != -1:
+		if idx < tiles.size() and int(tiles[idx].get("owner", GameData.NO_OWNER)) != GameData.NO_OWNER:
 			owner_name = _name_by_peer(int(tiles[idx].owner))
 		var rent := GameData.rent_for(idx, st.get("tiles", []))
 		line += "\n%s组 · 售价 %s · 当前租金 %s · 持有：%s" % [
 			GameData.GROUP_NAMES.get(d.group, "?"), GameData.fmt_money(int(d.price)),
 			GameData.fmt_money(rent), owner_name]
-	elif String(d.type) == "fine":
+	elif String(d.type) == "fine" or String(d.type) == "bonus":
 		line += "：%s" % GameData.fmt_money(int(d.amount))
 	info_label.text = line
+
+# ================= 弹窗与结算 =================
 
 func _show_game_over() -> void:
 	if _over_shown:
 		return
 	_over_shown = true
-	for c in get_children():
-		if c is ConfirmationDialog:
-			c.queue_free()
+	_close_prompt()
 	over_layer = Control.new()
 	over_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	over_layer.z_index = 50
 	add_child(over_layer)
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.6)
+	dim.color = Color(0, 0, 0, 0)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	over_layer.add_child(dim)
+	var tw := create_tween()
+	tw.tween_property(dim, "color", Color(0, 0, 0, 0.62), 0.4)
+
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	over_layer.add_child(center)
@@ -766,63 +989,154 @@ func _show_game_over() -> void:
 	box.add_theme_constant_override("separation", 16)
 	center.add_child(box)
 	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2)
-	panel.custom_minimum_size = Vector2(420, 200)
+	panel.custom_minimum_size = Vector2(470, 0)
 	box.add_child(panel)
-	var pm := UIKit.margins(20, 20, 20, 20)
+	var pm := UIKit.margins(24, 24, 20, 20)
 	panel.add_child(pm)
 	var pv := VBoxContainer.new()
-	pv.add_theme_constant_override("separation", 12)
+	pv.add_theme_constant_override("separation", 10)
 	pm.add_child(pv)
+
 	var wname := "平局"
 	if int(st.get("winner", -1)) != -1:
 		wname = _name_by_peer(int(st.winner))
-	var big := UIKit.label("游戏结束！%s 获胜" % wname, 26, UIKit.ACCENT)
+	var big := UIKit.label("游戏结束！%s 获胜" % wname, 25, UIKit.ACCENT)
 	big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pv.add_child(big)
-	var hint := UIKit.label("（最后一条战报见左侧日志）", 14, UIKit.TEXT_DIM)
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	pv.add_child(hint)
-	var back := UIKit.button("返回主菜单", 17)
+
+	pv.add_child(UIKit.label("── 最终资产排名 ──", 13, UIKit.TEXT_DIM))
+	for i in _standings().size():
+		var r: Dictionary = _standings()[i]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var is_winner := int(st.get("winner", -1)) != -1 and i == 0
+		var rank := UIKit.label("%d." % (i + 1), 15, UIKit.ACCENT if is_winner else UIKit.TEXT_DIM)
+		row.add_child(rank)
+		row.add_child(UIKit.chip(GameData.PLAYER_COLORS[int(r.color)], 14))
+		var nm := UIKit.label(String(r.name) + ("" if bool(r.alive) else "（破产）"), 15,
+			UIKit.ACCENT if is_winner else UIKit.TEXT)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		row.add_child(nm)
+		row.add_child(UIKit.label(GameData.fmt_money(int(r.worth)), 15,
+			UIKit.ACCENT if is_winner else UIKit.TEXT))
+		pv.add_child(row)
+
+	var vs := UIKit.vspace(6)
+	pv.add_child(vs)
+	var back := UIKit.button("返回主菜单", 17, "primary")
 	back.pressed.connect(_on_exit)
 	pv.add_child(back)
 
+	# 面板弹入 + 彩带 + 胜利音
+	panel.pivot_offset = panel.custom_minimum_size * 0.5
+	panel.scale = Vector2(0.8, 0.8)
+	panel.modulate.a = 0.0
+	var tw2 := create_tween()
+	tw2.set_parallel(true)
+	tw2.tween_property(panel, "scale", Vector2.ONE, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw2.tween_property(panel, "modulate:a", 1.0, 0.2)
+	tw2.set_parallel(false)
+	Fx.play("win")
+	Fx.confetti(self, Rect2(Vector2(0, 0), Vector2(size.x, 120)), 90)
+
+func _standings() -> Array:
+	var rows := []
+	var tiles: Array = st.get("tiles", [])
+	for p in st.get("players", []):
+		var worth := int(p.money)
+		for i in tiles.size():
+			if int(tiles[i].get("owner", GameData.NO_OWNER)) == int(p.peer):
+				worth += int(GameData.TILES[i].price) + int(tiles[i].get("level", 0)) * GameData.upgrade_cost(i)
+		rows.append({"name": String(p.name), "worth": worth, "alive": bool(p.alive), "color": int(p.color)})
+	rows.sort_custom(func(a, b) -> bool: return int(a.worth) > int(b.worth))
+	return rows
+
+## 购买/升级询问弹窗：游戏内风格面板 + 倒计时条，超时自动放弃
 func _show_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 	if at_mode != "":
 		await get_tree().create_timer(0.3).timeout
 		_answer(token, true)
 		return
-	var dlg := ConfirmationDialog.new()
-	dlg.title = title
-	dlg.dialog_text = text
-	dlg.ok_button_text = ok_text
-	dlg.cancel_button_text = "算了"
-	dlg.exclusive = true
-	dlg.min_size = Vector2i(380, 160)
-	add_child(dlg)
-	dlg.confirmed.connect(_on_prompt_ok.bind(token, dlg))
-	dlg.canceled.connect(_on_prompt_no.bind(token, dlg))
-	dlg.close_requested.connect(_on_prompt_no.bind(token, dlg))
-	dlg.popup_centered()
+	_close_prompt()
+	_prompt_token = token
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.z_index = 60
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(layer)
+	_prompt_dlg = layer
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.45)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(center)
+	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2)
+	panel.custom_minimum_size = Vector2(460, 0)
+	center.add_child(panel)
+	var pm := UIKit.margins(22, 22, 18, 18)
+	panel.add_child(pm)
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 12)
+	pm.add_child(pv)
+	pv.add_child(UIKit.label(title, 19, UIKit.ACCENT))
+	var text_l := UIKit.label(text, 14, UIKit.TEXT)
+	text_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pv.add_child(text_l)
+	var bar := UIKit.progress(UIKit.ACCENT)
+	pv.add_child(bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	pv.add_child(row)
+	var no_btn := UIKit.button("算了", 15)
+	no_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(no_btn)
+	var ok_btn := UIKit.button(ok_text, 15, "primary")
+	ok_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(ok_btn)
+	ok_btn.pressed.connect(func() -> void:
+		_answer(token, true)
+		_close_prompt()
+	)
+	no_btn.pressed.connect(func() -> void:
+		_answer(token, false)
+		_close_prompt()
+	)
+	_prompt_tw = create_tween()
+	_prompt_tw.tween_property(bar, "value", 0.0, GameData.PROMPT_TIMEOUT - 1.0)
+	_prompt_tw.tween_callback(func() -> void:
+		if _prompt_token == token:
+			_answer(token, false)
+			_close_prompt()
+	)
 
-func _on_prompt_ok(token: int, dlg: ConfirmationDialog) -> void:
-	_answer(token, true)
-	dlg.queue_free()
-
-func _on_prompt_no(token: int, dlg: ConfirmationDialog) -> void:
-	_answer(token, false)
-	dlg.queue_free()
+func _close_prompt() -> void:
+	if _prompt_tw != null and _prompt_tw.is_valid():
+		_prompt_tw.kill()
+	_prompt_tw = null
+	if _prompt_dlg != null and is_instance_valid(_prompt_dlg):
+		_prompt_dlg.queue_free()
+	_prompt_dlg = null
+	_prompt_token = -1
 
 func _refresh_chat() -> void:
-	# 对局场景不重复展示聊天框历史，聊天走日志即可；预留接口
-	pass
+	# 对局期间的聊天并入战报（弱化颜色），避免错过消息
+	while _chat_shown < Net.chat_history.size():
+		var line := str(Net.chat_history[_chat_shown])
+		_chat_shown += 1
+		log_text.append_text("[color=#7f8699]%s[/color]\n" % line.replace("[", "［"))
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _on_exit() -> void:
 	Net.leave()
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec).timeout
