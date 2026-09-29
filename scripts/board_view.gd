@@ -13,6 +13,8 @@ const WORLD := Vector2(COLS, ROWS) * TILE   # (1960, 1288)
 const GAP := 3.0
 const MIN_ZOOM := 0.2
 const MAX_ZOOM := 1.25
+## 事件卡从牌堆抽出展示的总时长（房主结算等待与它保持同步）
+const DECK_CARD_TIME := 2.7
 
 var auto_follow := true      # 用户拖拽后关闭，点「跟随」按钮恢复
 var overlay_right := 0.0     # 右侧面板等覆盖宽度（镜头居中/适配会避开）
@@ -40,6 +42,13 @@ var _ring_peer := -1
 var _ring_tw: Tween
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
+# 镜头对点跟随（抽卡时对准牌堆）与牌堆抽卡动画
+var _has_follow_pt := false
+var _follow_pt := Vector2.ZERO
+var _deck_pos := {}            # "机会"/"命运" -> world 中心
+var _deck_card: Control
+var _deck_tw: Tween
+
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
@@ -51,7 +60,7 @@ func _ready() -> void:
 	add_child(_world)
 	_build_backdrop()
 	_build_tiles()
-	_build_decor()
+	_build_interior()
 	_build_ring()
 	resized.connect(func() -> void: _need_fit = true)
 	mouse_exited.connect(func() -> void: set_hover(-1))
@@ -87,10 +96,8 @@ func _build_backdrop() -> void:
 	bg.position = Vector2(-26, -26)
 	bg.size = WORLD + Vector2(52, 52)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sb := UIKit.stylebox(Color(0.086, 0.098, 0.137), 22, Color("#3c4254"), 2)
-	sb.shadow_color = Color(0, 0, 0, 0.35)
-	sb.shadow_size = 18
-	bg.add_theme_stylebox_override("panel", sb)
+	# 渐变厚底座：顶亮底暗 + 描边 + 外投影，像一块实体桌游板
+	bg.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.078, 0.086, 0.124), 22, Color("#4a5170"), 2, 16))
 	_world.add_child(bg)
 
 func _build_tiles() -> void:
@@ -107,10 +114,11 @@ func _build_tiles() -> void:
 		_world.add_child(p)
 		_tile_sb.append(sb)
 
-		var strip := ColorRect.new()
+		var strip := Panel.new()
 		strip.position = Vector2(2, 2)
-		strip.size = Vector2(TILE - GAP * 2.0 - 4, 5)
-		strip.color = UIKit.ACCENT if corner else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566"))
+		strip.size = Vector2(TILE - GAP * 2.0 - 4, 6)
+		var strip_c: Color = UIKit.ACCENT if corner else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566"))
+		strip.add_theme_stylebox_override("panel", UIKit.stylebox(strip_c.lightened(0.06), 2))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
 
@@ -145,36 +153,155 @@ func _build_tiles() -> void:
 func _world_descend(l: Label) -> void:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-func _build_decor() -> void:
+## 棋盘中央内区布局（仿实体桌游）：上方标题水印，中央「机会」「命运」两个牌堆，
+## 事件卡从对应牌堆抽出展示。
+func _build_interior() -> void:
 	var c := WORLD * 0.5
 	var p := Panel.new()
-	p.position = c - Vector2(360, 130)
-	p.size = Vector2(720, 260)
+	p.position = Vector2(c.x - 360, 118)
+	p.size = Vector2(720, 224)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sb := UIKit.stylebox(Color(0.10, 0.11, 0.16, 0.65), 26, Color("#3c4254"), 1)
-	p.add_theme_stylebox_override("panel", sb)
+	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.11, 0.16, 0.62), 26,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.22), 1))
 	_world.add_child(p)
 
-	var title := UIKit.label("宿舍大富翁", 62, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.30))
-	title.position = Vector2(0, 52)
-	title.size = Vector2(720, 80)
+	var title := UIKit.title_label("宿舍大富翁", 58, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.34), 0)
+	title.position = Vector2(0, 40)
+	title.size = Vector2(720, 76)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(title)
 
-	var sub := UIKit.label("35 × 23 环线 · 112 格 · 10 大产业", 19, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
-	sub.position = Vector2(0, 138)
-	sub.size = Vector2(720, 30)
+	var sub := UIKit.label("35 × 23 环线 · 112 格 · 10 大产业", 18, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
+	sub.position = Vector2(0, 124)
+	sub.size = Vector2(720, 28)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
 	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点击格子查看详情", 15, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
-	hint.position = Vector2(0, 172)
+	hint.position = Vector2(0, 160)
 	hint.size = Vector2(720, 24)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(hint)
+
+	_build_deck("机会", Vector2(c.x - 240, c.y), UIKit.ACCENT)
+	_build_deck("命运", Vector2(c.x + 240, c.y), Color(0.66, 0.56, 0.95))
+
+## 一个牌堆：区域底板 + 三层错位卡背 + 牌名 + 小字说明
+func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
+	_deck_pos[dname] = center
+	var zone := Panel.new()
+	zone.position = center - Vector2(180, 110)
+	zone.size = Vector2(360, 220)
+	zone.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	zone.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.095, 0.105, 0.15, 0.62), 20,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 4))
+	_world.add_child(zone)
+
+	for i in 3:
+		var card := Panel.new()
+		card.position = center - Vector2(85, 62) + Vector2(6, 6) * float(2 - i)
+		card.size = Vector2(170, 108)
+		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var deep := accent.darkened(0.42) if i < 2 else accent
+		card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+			Color(0.135, 0.125, 0.075) if accent == UIKit.ACCENT else Color(0.125, 0.11, 0.155),
+			10, deep, 2 if i == 2 else 1, 3))
+		_world.add_child(card)
+
+	var t := UIKit.label(dname, 34, accent)
+	t.position = center - Vector2(85, 50)
+	t.size = Vector2(170, 50)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world.add_child(t)
+
+	var cap := UIKit.label("落在【%s】格时从这里抽卡" % dname, 14,
+		Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.7))
+	cap.position = center - Vector2(170, -66)
+	cap.size = Vector2(340, 22)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world.add_child(cap)
+
+func deck_center(deck: String) -> Vector2:
+	return _deck_pos.get(deck, WORLD * 0.5)
+
+## 是否正在牌堆位置展示抽卡（供对局层暂停「镜头跟棋子」抢占）
+func is_showing_deck_card() -> bool:
+	return _deck_card != null and is_instance_valid(_deck_card)
+
+## 仿桌游抽卡：镜头对准牌堆，卡片从堆中滑出、放大展示，再收回；
+## 展示结束后镜头回到 restore_peer 的棋子（-1 则停在原地）。
+func play_deck_card(deck: String, kind: String, text: String, restore_peer := -1) -> void:
+	if not _deck_pos.has(deck):
+		return
+	if _deck_tw != null and _deck_tw.is_valid():
+		_deck_tw.kill()
+		_deck_tw = null
+	if _deck_card != null and is_instance_valid(_deck_card):
+		_deck_card.queue_free()
+		_deck_card = null
+
+	var center: Vector2 = _deck_pos[deck]
+	var style: Array = UIKit.card_palette(kind)
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(style[1], 14, style[0], 2, 10))
+	card.custom_minimum_size = Vector2(560, 150)
+	var m := UIKit.margins(18, 18, 10, 12)
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	m.add_child(v)
+	var title := UIKit.label(deck, 22, style[0])
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var body := UIKit.label(text, 15, UIKit.TEXT)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(524, 0)  # 卡宽 560 - 左右边距，锁定换行宽度
+	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(body)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.z_index = 30
+	_world.add_child(card)
+	card.size = Vector2(560, 150)
+	card.pivot_offset = card.size * 0.5
+
+	var start := center - card.size * 0.5 + Vector2(0, 54)
+	var shown := center - card.size * 0.5 - Vector2(0, 166)
+	card.position = start
+	card.modulate.a = 0.0
+	card.scale = Vector2(0.5, 0.5)
+	focus_point(center + Vector2(0, -110), false)
+
+	_deck_card = card
+	_deck_tw = create_tween()
+	var tw := _deck_tw
+	tw.set_parallel(true)
+	tw.tween_property(card, "position", shown, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(card, "modulate:a", 1.0, 0.18)
+	tw.tween_property(card, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.set_parallel(false)
+	tw.tween_interval(1.75)
+	tw.set_parallel(true)
+	tw.tween_property(card, "position", start, 0.28).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tw.tween_property(card, "modulate:a", 0.0, 0.28)
+	tw.tween_property(card, "scale", Vector2(0.6, 0.6), 0.28)
+	tw.set_parallel(false)
+	tw.tween_callback(func() -> void:
+		card.queue_free()
+		if _deck_card == card:
+			_deck_card = null
+		if restore_peer != -1:
+			focus_peer(restore_peer)
+		else:
+			_has_follow_pt = false
+	)
 
 func _build_ring() -> void:
 	_ring = Panel.new()
@@ -193,15 +320,20 @@ func _process(delta: float) -> void:
 	if _need_fit and size.x > 10.0:
 		_need_fit = false
 		focus_grid(0, 0.8, true)  # 初始镜头：起点角、可读倍率
-	if auto_follow and _follow_peer != -1 and _tokens.has(_follow_peer):
+	if auto_follow and _has_follow_pt:
+		_pan_toward(_follow_pt, delta)
+	elif auto_follow and _follow_peer != -1 and _tokens.has(_follow_peer):
 		var tk: Control = _tokens[_follow_peer]
-		var center := tk.position + tk.size * 0.5
-		var vr := _visible_rect()
-		var target := vr.position + vr.size * 0.5 - center * _zoom
-		_world.position = _world.position.lerp(_clamp_pos(target), 1.0 - exp(-6.0 * delta))
+		_pan_toward(tk.position + tk.size * 0.5, delta)
 	if _ring_peer != -1 and _tokens.has(_ring_peer):
 		var tk2: Control = _tokens[_ring_peer]
 		_ring.position = tk2.position + tk2.size * 0.5 - _ring.size * 0.5
+
+## 镜头平滑推向某个世界坐标点（棋子中心 / 牌堆）
+func _pan_toward(world_center: Vector2, delta: float) -> void:
+	var vr := _visible_rect()
+	var target := vr.position + vr.size * 0.5 - world_center * _zoom
+	_world.position = _world.position.lerp(_clamp_pos(target), 1.0 - exp(-6.0 * delta))
 
 func _visible_rect() -> Rect2:
 	return Rect2(0, 0, size.x - overlay_right, size.y - overlay_bottom)
@@ -210,6 +342,7 @@ func _visible_rect() -> Rect2:
 func fit_overview() -> void:
 	auto_follow = false
 	_follow_peer = -1
+	_has_follow_pt = false
 	var vr := _visible_rect()
 	_zoom = clampf(minf(vr.size.x / (WORLD.x + 40.0), vr.size.y / (WORLD.y + 40.0)), MIN_ZOOM, 1.0)
 	_world.scale = Vector2.ONE * _zoom
@@ -219,6 +352,7 @@ func fit_overview() -> void:
 func focus_grid(idx: int, zoom: float, hard := true) -> void:
 	auto_follow = false
 	_follow_peer = -1
+	_has_follow_pt = false
 	_zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
 	_world.scale = Vector2.ONE * _zoom
 	var center := tile_pos(idx) + Vector2(TILE, TILE) * 0.5
@@ -226,9 +360,20 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 		var vr := _visible_rect()
 		_world.position = _clamp_pos(vr.position + vr.size * 0.5 - center * _zoom)
 
+## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
+func focus_point(world_pt: Vector2, hard := false) -> void:
+	auto_follow = true
+	_follow_peer = -1
+	_has_follow_pt = true
+	_follow_pt = world_pt
+	if hard:
+		var vr := _visible_rect()
+		_world.position = _clamp_pos(vr.position + vr.size * 0.5 - world_pt * _zoom)
+
 func focus_peer(peer: int, hard := false) -> void:
 	auto_follow = true
 	_follow_peer = peer
+	_has_follow_pt = false
 	if hard and _tokens.has(peer):
 		var tk: Control = _tokens[peer]
 		var vr := _visible_rect()
@@ -283,6 +428,7 @@ func _gui_input(ev: InputEvent) -> void:
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
 				auto_follow = false
+				_has_follow_pt = false
 				_world.position = _clamp_pos(_world.position + mm.relative)
 		else:
 			set_hover(_index_at(mm.position))
