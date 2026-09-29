@@ -7,12 +7,10 @@ extends Control
 
 signal roll_received
 
-const DICE_WAIT := 1.35   # 与 DiceView.ROLL_TIME 保持同步
 const STEP_TIME := 0.15   # 每格跳子时长
 
 # ---------------- UI 引用 ----------------
 var board: BoardView
-var dice: DiceView
 var banner: Label
 var banner_pill: PanelContainer
 var card_panel: PanelContainer
@@ -161,9 +159,6 @@ func _build_ui() -> void:
 	card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	cm.add_child(card_label)
 
-	dice = DiceView.new()
-	dice.position = Vector2(24, 706)
-	hud.add_child(dice)
 
 	# 右侧面板
 	var right := VBoxContainer.new()
@@ -202,7 +197,7 @@ func _build_ui() -> void:
 		follow_btn.button_pressed = false
 	)
 	action_row.add_child(over_btn)
-	roll_btn = UIKit.button("🎲 掷骰子", 17, "primary")
+	roll_btn = UIKit.button("转动转盘", 17, "primary")
 	roll_btn.disabled = true
 	action_row.add_child(roll_btn)
 
@@ -259,7 +254,7 @@ func _host_setup() -> void:
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	_log("游戏开始！每人初始资金 %s，踏上起点领工资 %s" % [
 		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
-	_log("掷出双数可以再动一次；连续三双会被查寝抓走哦")
+	_log("转盘决定步数（0~24）：转到 24 满值再动一次；连续三次 20+ 会被查寝抓走哦")
 	await _wait(1.5)
 	_broadcast_state()
 	if at_mode == "host":
@@ -325,20 +320,19 @@ func _play_turn(p: Dictionary) -> void:
 			return
 		_awaiting_roll = 0
 
-		var d1 := randi_range(1, 6)
-		var d2 := randi_range(1, 6)
+		var roll := randi_range(0, 24)
 		if at_mode != "":
-			print("AT roll %s: %d+%d" % [p.name, d1, d2])
-		s_roll.rpc(d1, d2)
-		await _wait(DICE_WAIT)
+			print("AT roll %s: %d" % [p.name, roll])
+		s_roll.rpc(roll)
+		await _wait(WheelView.SPIN_TIME + 0.15)
 		if not running:
 			return
 
-		if d1 == d2:
+		if roll >= 20:
 			chain += 1
 			if chain >= 3:
-				_log("%s 连续三次掷出双数，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
-				s_card.rpc("%s 连续三双，被查寝带走！" % p.name, "jail")
+				_log("%s 连续三次转到 20 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
+				s_card.rpc("%s 连续三次 20+，被查寝带走！" % p.name, "jail")
 				_send_to_jail(p)
 				_broadcast_state()
 				await _wait(1.0)
@@ -346,7 +340,10 @@ func _play_turn(p: Dictionary) -> void:
 		else:
 			chain = 0
 
-		var path := GameData.compute_path(int(p.pos), d1 + d2)
+		var path := GameData.compute_path(int(p.pos), roll)
+		if path.is_empty():
+			_log("%s 转了个 0，原地待命一回合" % p.name, "#8a90a5")
+			return
 		for idx in path:
 			if idx == 0:
 				p.money = int(p.money) + GameData.SALARY
@@ -361,8 +358,8 @@ func _play_turn(p: Dictionary) -> void:
 		_broadcast_state()
 		if not running or not bool(p.alive):
 			return
-		if d1 == d2:
-			_log("%s 掷出双数，奖励再动一次！" % p.name, "#f0c064")
+		if roll == 24:
+			_log("%s 转到 24 满值，奖励再动一次！" % p.name, "#f0c064")
 			await _wait(0.5)
 			continue
 		return
@@ -727,16 +724,19 @@ func s_state(state: Dictionary) -> void:
 		get_tree().quit(0)
 
 @rpc("authority", "call_local", "reliable")
-func s_roll(d1: int, d2: int) -> void:
-	dice.play_roll(d1, d2)
-	if d1 == d2:
-		_flair_doubles()
+func s_roll(v: int) -> void:
+	board.spin_wheel(v, int(st.get("turn", -1)))
+	if v == 24 or v == 0:
+		_flair_roll(v)
 
-func _flair_doubles() -> void:
-	await get_tree().create_timer(DiceView.ROLL_TIME).timeout
+func _flair_roll(v: int) -> void:
+	await get_tree().create_timer(WheelView.SPIN_TIME).timeout
 	if not is_inside_tree():
 		return
-	Fx.float_text(self, dice.position + dice.size * Vector2(0.5, 0.1), "双数！再来一次", UIKit.ACCENT, 21)
+	if v == 24:
+		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "满值 24！再来一次", UIKit.ACCENT, 21)
+	elif v == 0:
+		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "0……转了个寂寞", UIKit.TEXT_DIM, 19)
 
 @rpc("authority", "call_local", "reliable")
 func s_move(peer: int, path: Array, step_time: float) -> void:
@@ -899,11 +899,11 @@ func _refresh_actions() -> void:
 	match await_state:
 		"roll":
 			if is_my_roll:
-				status_label.text = "轮到你掷骰子！"
-				if not board.is_showing_deck_card():
+				status_label.text = "轮到你转盘了！"
+				if not board.is_showing_deck_card() and not board.is_wheel_spinning():
 					board.focus_peer(my_peer)
 			else:
-				status_label.text = "等待 %s 掷骰子…" % turn_name
+				status_label.text = "等待 %s 转盘…" % turn_name
 		"prompt":
 			if int(st.get("await_peer", -1)) == my_peer:
 				status_label.text = "轮到你决定！"
@@ -1158,6 +1158,7 @@ func _take_shot(path: String) -> void:
 	board.focus_grid(27, 0.8, true)
 	await get_tree().create_timer(0.15).timeout
 	board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+	board.spin_wheel(24)
 	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
 	for i in 3:
 		await get_tree().create_timer(0.6).timeout

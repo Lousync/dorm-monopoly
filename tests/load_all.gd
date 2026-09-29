@@ -5,7 +5,7 @@ func _initialize() -> void:
 	var scripts := [
 		"res://scripts/net.gd", "res://scripts/fx.gd", "res://scripts/net_addr.gd",
 		"res://scripts/game_data.gd", "res://scripts/game.gd", "res://scripts/board_view.gd",
-		"res://scripts/dice_view.gd", "res://scripts/main_menu.gd", "res://scripts/lobby.gd",
+		"res://scripts/wheel_view.gd", "res://scripts/main_menu.gd", "res://scripts/lobby.gd",
 		"res://scripts/ui_kit.gd",
 	]
 	var fails := 0

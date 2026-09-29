@@ -52,6 +52,11 @@ var _deck_from := Vector2.ZERO
 var _deck_shown := Vector2.ZERO
 var _deck_restore := -1
 
+# 中央转盘（替代骰子的点数来源）
+var _wheel: WheelView
+var _wheel_restore := -1
+var _wheel_wait := 0.0
+
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
@@ -189,8 +194,9 @@ func _build_interior() -> void:
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(hint)
 
-	_build_deck("机会", Vector2(c.x - 240, c.y), UIKit.ACCENT)
-	_build_deck("命运", Vector2(c.x + 240, c.y), Color(0.66, 0.56, 0.95))
+	_build_deck("机会", Vector2(c.x - 470, c.y), UIKit.ACCENT)
+	_build_deck("命运", Vector2(c.x + 470, c.y), Color(0.66, 0.56, 0.95))
+	_build_wheel(c)
 
 ## 一个牌堆：区域底板 + 三层错位卡背 + 牌名 + 小字说明
 func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
@@ -229,6 +235,32 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_world.add_child(cap)
+
+## 中央转盘：点数来源，掷点时镜头对准它
+func _build_wheel(center: Vector2) -> void:
+	_wheel = WheelView.new()
+	_wheel.size = Vector2(400, 400)
+	_wheel.position = center - _wheel.size * 0.5
+	_world.add_child(_wheel)
+
+func wheel_center() -> Vector2:
+	return _wheel.position + _wheel.size * 0.5 if _wheel != null else WORLD * 0.5
+
+## 转盘在游戏界面坐标（飘字用）
+func wheel_screen_pos() -> Vector2:
+	return global_position + _world.position + wheel_center() * _zoom
+
+## 转盘点数：镜头对准转盘，转完后镜头回到行动棋子
+func spin_wheel(value: int, restore_peer := -1) -> void:
+	if _wheel == null:
+		return
+	_wheel.spin_to(value)
+	_wheel_restore = restore_peer
+	_wheel_wait = WheelView.SPIN_TIME + 0.1
+	focus_point(wheel_center(), false)
+
+func is_wheel_spinning() -> bool:
+	return _wheel != null and _wheel.spinning
 
 func deck_center(deck: String) -> Vector2:
 	return _deck_pos.get(deck, WORLD * 0.5)
@@ -350,6 +382,11 @@ func _process(delta: float) -> void:
 		var tk2: Control = _tokens[_ring_peer]
 		_ring.position = tk2.position + tk2.size * 0.5 - _ring.size * 0.5
 	_tick_deck_card(delta)
+	if _wheel_wait > 0.0:
+		_wheel_wait -= delta
+		if _wheel_wait <= 0.0 and _wheel_restore != -1:
+			focus_peer(_wheel_restore)
+			_wheel_restore = -1
 
 ## 镜头平滑推向某个世界坐标点（棋子中心 / 牌堆）
 func _pan_toward(world_center: Vector2, delta: float) -> void:
