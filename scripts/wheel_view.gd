@@ -1,10 +1,10 @@
 extends Control
 class_name WheelView
-## 赌场风幸运转轮：25 格（0~24），作为移动点数的来源。
+## 赌场风幸运转轮：13 格（0~12），作为移动点数的来源。
 ## 转动用 _process 相位驱动（三次缓出 + 多圈），指针扫过格沿时滴答作响，
 ## 停下后落点格高亮；本项目的持续动画统一手写，不依赖 Tween。
 
-const SEGMENTS := 25
+const SEGMENTS := 13
 const SEG_ANGLE := TAU / SEGMENTS
 ## 旋转总时长（房主结算等待与它保持同步）
 const SPIN_TIME := 2.4

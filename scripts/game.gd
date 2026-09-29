@@ -2,7 +2,7 @@ extends Control
 ## 对局场景。房主是权威服务器：回合推进、掷骰、结算都在房主侧计算，
 ## 通过 s_* RPC 广播状态快照与动画事件；客户端通过 c_* RPC 上报操作。
 ##
-## 表现层：112 格大棋盘（缩放/平移/自动跟随）、横幅与事件卡弹入动画、
+## 表现层：56 格棋盘（缩放/平移/自动跟随）、中央转盘与事件卡抽卡动画、
 ## 金额飘字与滚动、聊天并入战报、结算排名 + 彩带、程序合成音效。
 
 signal roll_received
@@ -254,7 +254,7 @@ func _host_setup() -> void:
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	_log("游戏开始！每人初始资金 %s，踏上起点领工资 %s" % [
 		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
-	_log("转盘决定步数（0~24）：转到 24 满值再动一次；连续三次 20+ 会被查寝抓走哦")
+	_log("转盘决定步数（0~12）：转到 12 满值再动一次；连续三次 10+ 会被查寝抓走哦")
 	await _wait(1.5)
 	_broadcast_state()
 	if at_mode == "host":
@@ -320,7 +320,7 @@ func _play_turn(p: Dictionary) -> void:
 			return
 		_awaiting_roll = 0
 
-		var roll := randi_range(0, 24)
+		var roll := randi_range(0, 12)
 		if at_mode != "":
 			print("AT roll %s: %d" % [p.name, roll])
 		s_roll.rpc(roll)
@@ -328,11 +328,11 @@ func _play_turn(p: Dictionary) -> void:
 		if not running:
 			return
 
-		if roll >= 20:
+		if roll >= 10:
 			chain += 1
 			if chain >= 3:
-				_log("%s 连续三次转到 20 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
-				s_card.rpc("%s 连续三次 20+，被查寝带走！" % p.name, "jail")
+				_log("%s 连续三次转到 10 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
+				s_card.rpc("%s 连续三次 10+，被查寝带走！" % p.name, "jail")
 				_send_to_jail(p)
 				_broadcast_state()
 				await _wait(1.0)
@@ -358,8 +358,8 @@ func _play_turn(p: Dictionary) -> void:
 		_broadcast_state()
 		if not running or not bool(p.alive):
 			return
-		if roll == 24:
-			_log("%s 转到 24 满值，奖励再动一次！" % p.name, "#f0c064")
+		if roll == 12:
+			_log("%s 转到 12 满值，奖励再动一次！" % p.name, "#f0c064")
 			await _wait(0.5)
 			continue
 		return
@@ -734,7 +734,7 @@ func _flair_roll(v: int) -> void:
 	if not is_inside_tree():
 		return
 	if v == 24:
-		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "满值 24！再来一次", UIKit.ACCENT, 21)
+		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "满值 12！再来一次", UIKit.ACCENT, 21)
 	elif v == 0:
 		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "0……转了个寂寞", UIKit.TEXT_DIM, 19)
 

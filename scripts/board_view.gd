@@ -1,15 +1,13 @@
 extends Control
 class_name BoardView
-## 112 格（35×23 外圈）大棋盘：世界坐标渲染，滚轮缩放 / 拖拽平移 / 自动跟随行动棋子。
+## 56 格（18×12 外圈）棋盘：世界坐标渲染，滚轮缩放 / 拖拽平移 / 自动跟随行动棋子。
 ## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修星级弹跳、悬停高亮、
 ## 当前行动者脉冲光环、传送淡入淡出。
 
 signal tile_clicked(idx: int)
 
-const TILE := 56.0
-const COLS := 35
-const ROWS := 23
-const WORLD := Vector2(COLS, ROWS) * TILE   # (1960, 1288)
+const TILE := 64.0
+static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (1152, 768)
 const GAP := 3.0
 const MIN_ZOOM := 0.2
 const MAX_ZOOM := 1.25
@@ -93,7 +91,7 @@ func _index_at(view_pos: Vector2) -> int:
 	var w := _world_from_view(view_pos)
 	var col := int(floor(w.x / TILE))
 	var row := int(floor(w.y / TILE))
-	if col < 0 or col >= COLS or row < 0 or row >= ROWS:
+	if col < 0 or col >= GameData.BOARD_COLS or row < 0 or row >= GameData.BOARD_ROWS:
 		return -1
 	return grid_to_index(col, row)
 
@@ -166,44 +164,45 @@ func _world_descend(l: Label) -> void:
 func _build_interior() -> void:
 	var c := WORLD * 0.5
 	var p := Panel.new()
-	p.position = Vector2(c.x - 360, 118)
-	p.size = Vector2(720, 224)
+	p.position = Vector2(c.x - 300, 72)
+	p.size = Vector2(600, 108)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.11, 0.16, 0.62), 26,
+	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.11, 0.16, 0.62), 20,
 		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.22), 1))
 	_world.add_child(p)
 
-	var title := UIKit.title_label("宿舍大富翁", 58, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.34), 0)
-	title.position = Vector2(0, 40)
-	title.size = Vector2(720, 76)
+	var title := UIKit.title_label("宿舍大富翁", 34, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.34), 0)
+	title.position = Vector2(0, 6)
+	title.size = Vector2(600, 46)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(title)
 
-	var sub := UIKit.label("35 × 23 环线 · 112 格 · 10 大产业", 18, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
-	sub.position = Vector2(0, 124)
-	sub.size = Vector2(720, 28)
+	var sub := UIKit.label("%d × %d 环线 · %d 格 · 10 大产业" % [GameData.BOARD_COLS, GameData.BOARD_ROWS, GameData.TILES.size()],
+		14, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
+	sub.position = Vector2(0, 52)
+	sub.size = Vector2(600, 20)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
-	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点击格子查看详情", 15, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
-	hint.position = Vector2(0, 160)
-	hint.size = Vector2(720, 24)
+	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点击格子查看详情", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
+	hint.position = Vector2(0, 76)
+	hint.size = Vector2(600, 20)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(hint)
 
-	_build_deck("机会", Vector2(c.x - 470, c.y), UIKit.ACCENT)
-	_build_deck("命运", Vector2(c.x + 470, c.y), Color(0.66, 0.56, 0.95))
+	_build_deck("机会", Vector2(c.x - 336, c.y), UIKit.ACCENT)
+	_build_deck("命运", Vector2(c.x + 336, c.y), Color(0.66, 0.56, 0.95))
 	_build_wheel(c)
 
 ## 一个牌堆：区域底板 + 三层错位卡背 + 牌名 + 小字说明
 func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 	_deck_pos[dname] = center
 	var zone := Panel.new()
-	zone.position = center - Vector2(180, 110)
-	zone.size = Vector2(360, 220)
+	zone.position = center - Vector2(140, 90)
+	zone.size = Vector2(280, 180)
 	zone.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	zone.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.095, 0.105, 0.15, 0.62), 20,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 4))
@@ -211,8 +210,8 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 
 	for i in 3:
 		var card := Panel.new()
-		card.position = center - Vector2(85, 62) + Vector2(6, 6) * float(2 - i)
-		card.size = Vector2(170, 108)
+		card.position = center - Vector2(66, 52) + Vector2(5, 5) * float(2 - i)
+		card.size = Vector2(132, 84)
 		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var deep := accent.darkened(0.42) if i < 2 else accent
 		card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
@@ -220,9 +219,9 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 			10, deep, 2 if i == 2 else 1, 3))
 		_world.add_child(card)
 
-	var t := UIKit.label(dname, 34, accent)
-	t.position = center - Vector2(85, 50)
-	t.size = Vector2(170, 50)
+	var t := UIKit.label(dname, 28, accent)
+	t.position = center - Vector2(66, 42)
+	t.size = Vector2(132, 42)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -230,8 +229,8 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 
 	var cap := UIKit.label("落在【%s】格时从这里抽卡" % dname, 14,
 		Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.7))
-	cap.position = center - Vector2(170, -66)
-	cap.size = Vector2(340, 22)
+	cap.position = center - Vector2(132, -56)
+	cap.size = Vector2(264, 20)
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_world.add_child(cap)
@@ -239,7 +238,7 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 ## 中央转盘：点数来源，掷点时镜头对准它
 func _build_wheel(center: Vector2) -> void:
 	_wheel = WheelView.new()
-	_wheel.size = Vector2(400, 400)
+	_wheel.size = Vector2(340, 340)
 	_wheel.position = center - _wheel.size * 0.5
 	_world.add_child(_wheel)
 
@@ -344,7 +343,8 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := -1
 	card.pivot_offset = card.size * 0.5
 
 	var start := center - card.size * 0.5 + Vector2(0, 54)
-	var shown := center - card.size * 0.5 - Vector2(0, 166)
+	var shown := center - card.size * 0.5 - Vector2(0, 140)
+	shown.x = clampf(shown.x, 16.0, WORLD.x - card.size.x - 16.0)
 	card.position = start
 	card.modulate.a = 0.0
 	card.scale = Vector2(0.5, 0.5)
@@ -397,7 +397,7 @@ func _pan_toward(world_center: Vector2, delta: float) -> void:
 func _visible_rect() -> Rect2:
 	return Rect2(0, 0, size.x - overlay_right, size.y - overlay_bottom)
 
-## 全图概览（把 112 格整块塞进可视区域）
+## 全图概览（把整块棋盘塞进可视区域）
 func fit_overview() -> void:
 	auto_follow = false
 	_follow_peer = -1

@@ -77,10 +77,11 @@ func _test_endpoint() -> void:
 	_check(NetAddrScript.parse_endpoint("[::1", 7777) == [], "坏括号")
 
 func _test_board_shape() -> void:
-	_check(GameData.TILES.size() == 112, "棋盘 112 格（28 的 4 倍）")
-	var corners := {0: "start", 34: "jail", 56: "rest", 90: "go_jail"}
-	for i in corners:
-		_check(GameData.TILES[i].type == corners[i], "角格 %d = %s" % [i, corners[i]])
+	_check(GameData.TILES.size() == 56, "棋盘 56 格（112 的一半）")
+	var cs: Array = GameData.corner_indices()
+	var cnames := ["start", "jail", "rest", "go_jail"]
+	for k in 4:
+		_check(GameData.TILES[cs[k]].type == cnames[k], "角格 %d = %s" % [cs[k], cnames[k]])
 	var props := 0
 	var events := 0
 	var fines := 0
@@ -100,31 +101,31 @@ func _test_board_shape() -> void:
 				bonus += 1
 			"rest":
 				rests += 1
-	_check(props == 60, "60 块地产")
-	_check(events == 20, "20 个机会/命运格")
-	_check(fines == 10, "10 个缴费格")
-	_check(bonus == 12, "12 个兼职/奖励格")
-	_check(rests == 7, "7 个休息格（6 空教室 + 角上卧谈会）")
-	var all6 := groups.size() == 10
+	_check(props == 30, "30 块地产")
+	_check(events == 8, "8 个机会/命运格")
+	_check(fines == 4, "4 个缴费格")
+	_check(bonus == 6, "6 个兼职/奖励格")
+	_check(rests == 5, "5 个休息格（4 空教室 + 角上卧谈会）")
+	var all3 := groups.size() == 10
 	for g in groups:
-		if groups[g] != 6:
-			all6 = false
-	_check(all6, "10 组各 6 块地产")
+		if groups[g] != 3:
+			all3 = false
+	_check(all3, "10 组各 3 块地产")
 	# 事件卡移动步数合法性
 	for e in GameData.EVENTS:
 		if e.has("move_steps"):
 			_check(int(e.move_steps) != 0, "事件移动步数非零")
 
 func _test_paths() -> void:
-	var steps: Array = GameData.compute_path(110, 3)
-	_check(steps == [111, 0, 1], "普通移动 110→111→0→1")
+	var steps: Array = GameData.compute_path(54, 3)
+	_check(steps == [55, 0, 1], "普通移动 54→55→0→1")
 	var fwd: Array = GameData.compute_path_steps(10, 5)
 	_check(fwd == [11, 12, 13, 14, 15], "事件前进 5 格")
 	var back: Array = GameData.compute_path_steps(10, -3)
 	_check(back == [9, 8, 7], "事件后退 3 格")
 	_check(GameData.compute_path_steps(5, 0).is_empty(), "原地不移动")
 	var wrap: Array = GameData.compute_path_steps(1, -2)
-	_check(wrap == [0, 111], "倒退跨过起点 1→0→111")
+	_check(wrap == [0, 55], "倒退跨过起点 1→0→55")
 	# 每格都能被 grid 坐标还原（棋盘环线无断点）
 	var ok := true
 	for i in GameData.TILES.size():
@@ -132,9 +133,14 @@ func _test_paths() -> void:
 		if GameData.index_at_grid(g.x, g.y) != i:
 			ok = false
 	_check(ok, "112 格环线坐标换算闭合")
-	# 角格坐标核对
+	# 角格坐标核对（右下/左下/左上/右上）
 	var corners2: Array = GameData.corner_indices()
-	var expect := [Vector2i(34, 22), Vector2i(0, 22), Vector2i(0, 0), Vector2i(34, 0)]
+	var expect := [
+		Vector2i(GameData.BOARD_COLS - 1, GameData.BOARD_ROWS - 1),
+		Vector2i(0, GameData.BOARD_ROWS - 1),
+		Vector2i(0, 0),
+		Vector2i(GameData.BOARD_COLS - 1, 0),
+	]
 	var ok2 := corners2.size() == 4
 	for k in mini(corners2.size(), 4):
 		if GameData.grid_of(corners2[k]) != expect[k]:
