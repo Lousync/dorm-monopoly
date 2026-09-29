@@ -1,21 +1,21 @@
 class_name GameData
 ## 棋盘、事件卡与规则数值。
-## 棋盘为 112 格环形（35×23 外圈，四角各一格），由 _build_tiles 确定性生成：
-## 10 组各 6 块地产沿外圈排布，机会/命运/缴费/兼职/休息穿插其间。
+## 棋盘为 56 格环形（18×12 外圈，四角各一格），由 _build_tiles 确定性生成：
+## 10 组各 3 块地产沿外圈排布，机会/命运/缴费/兼职/休息穿插其间。
 
 const MAX_PLAYERS := 4
 const START_MONEY := 20000
 const SALARY := 4500
 const MAX_LEVEL := 3          # 装修等级上限
 static var MAX_ROUNDS := 30   # 回合上限（static 便于自动化测试覆盖）
-const JAIL_TILE := 34         # 宿委会（左下角）
+const JAIL_TILE := 17         # 宿委会（左下角）
 ## 「无主」哨兵值。不能用 -1：机器人 peer id 会从 -1 开始编号，会撞车。
 const NO_OWNER := -100
 const PROMPT_TIMEOUT := 25.0  # 购买/升级等待秒数
 const ROLL_TIMEOUT := 35.0    # 玩家发呆代掷秒数
 
-const BOARD_COLS := 35
-const BOARD_ROWS := 23
+const BOARD_COLS := 18
+const BOARD_ROWS := 12
 
 const PLAYER_COLORS := [
 	Color(0.898, 0.282, 0.302),  # 红
@@ -176,33 +176,33 @@ static func index_at_grid(col: int, row: int) -> int:
 static var TILES: Array = _build_tiles()
 
 static func _build_tiles() -> Array:
-	var total := BOARD_COLS * 2 + BOARD_ROWS * 2 - 4  # 112
+	var total := BOARD_COLS * 2 + BOARD_ROWS * 2 - 4  # 56
+	var corners: Array = corner_indices()  # [0, 17, 28, 45]
 	var t := []
 	for i in total:
 		t.append({})
-	t[0] = {"type": "start", "name": "起点"}
-	t[34] = {"type": "jail", "name": "宿委会"}
-	t[56] = {"type": "rest", "name": "卧谈会"}
-	t[90] = {"type": "go_jail", "name": "查寝！"}
+	t[corners[0]] = {"type": "start", "name": "起点"}
+	t[corners[1]] = {"type": "jail", "name": "宿委会"}
+	t[corners[2]] = {"type": "rest", "name": "卧谈会"}
+	t[corners[3]] = {"type": "go_jail", "name": "查寝！"}
 
-	# 每排的起始下标（3 连排）
+	# 每组一排 3 连（10 组 = 10 排），沿路径由便宜到贵
 	var runs := [
-		1, 6, 11, 16, 21, 29,        # 底边
-		35, 40, 45, 50,              # 左边
-		57, 62, 67, 72, 77, 83,      # 顶边
-		91, 96, 101, 106,            # 右边
+		1, 5, 9, 14,          # 底边
+		18, 23,               # 左边
+		29, 34, 40,           # 顶边
+		50,                   # 右边
 	]
 	var order := ["daily", "service", "canteen", "study", "sport", "teach", "dorm", "fun", "night", "health"]
 	for g in order.size():
 		var gname: String = order[g]
 		var names: Array = GROUP_TILES[gname]
-		for k in 2:
-			var base: int = runs[g * 2 + k]
-			for j in 3:
-				t[base + j] = {
-					"type": "property", "name": names[k * 3 + j], "group": gname,
-					"price": GROUP_PRICES[gname], "rent": GROUP_RENTS[gname],
-				}
+		var base: int = runs[g]
+		for j in 3:
+			t[base + j] = {
+				"type": "property", "name": names[j], "group": gname,
+				"price": GROUP_PRICES[gname], "rent": GROUP_RENTS[gname],
+			}
 
 	# 剩余格按确定性序列填充：E=机会/命运 F=缴费 B=兼职 R=免费休息
 	var xseq := _x_sequence()
@@ -228,15 +228,15 @@ static func _build_tiles() -> Array:
 			_:
 				t[i] = {"type": "rest", "name": "空教室"}
 		xi += 1
-	if xi != 48:
-		push_error("棋盘铺设错误：剩余格 %d != 48" % xi)
+	if xi != 22:
+		push_error("棋盘铺设错误：剩余格 %d != 22" % xi)
 	return t
 
 static func _x_sequence() -> Array:
-	var a := ["E", "B", "F", "E", "B", "R", "E", "F", "B", "E", "R", "F"]
-	var b1 := ["E", "E", "B", "E", "B", "E", "E", "F", "B", "E", "E", "F"]
-	var b2 := ["E", "B", "E", "E", "B", "R", "E", "F", "B", "E", "F", "R"]
-	return a + a + b1 + b2  # E20 / B12 / F10 / R6，共 48
+	var a := ["E", "B", "F", "E", "R", "B"]
+	var b := ["E", "B", "F", "E", "R", "B"]
+	var c := ["E", "B", "R", "E", "F", "B", "E", "R", "F", "E"]
+	return a + b + c  # E8 / B6 / F4 / R4，共 22
 
 ## 装修升级费用（每级）
 static func upgrade_cost(idx: int) -> int:

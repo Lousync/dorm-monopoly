@@ -62,7 +62,7 @@ func _ready() -> void:
 	icon_r.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	title_row.add_child(icon_r)
 
-	var sub := UIKit.label("宿舍楼里的财富战争 · 局域网 4 人联机 · IPv6 直连 · 112 格大地图", 14, UIKit.TEXT_DIM)
+	var sub := UIKit.label("宿舍楼里的财富战争 · 局域网 4 人联机 · IPv6 直连 · 56 格地图", 14, UIKit.TEXT_DIM)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(sub)
 
