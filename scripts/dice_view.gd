@@ -20,6 +20,7 @@ var v2 := 6
 var doubles := false
 var _rolling := false
 var _jitter := Vector2.ZERO
+var _face: StyleBoxTexture
 var _glow := 0.0:
 	set(v):
 		_glow = v
@@ -30,6 +31,8 @@ func _init() -> void:
 	size = custom_minimum_size
 	pivot_offset = size * 0.5
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 骰面：渐变金 + 描边 + 顶部高光 + 投影（九宫格纹理，只生成一次）
+	_face = UIKit.card_stylebox(UIKit.ACCENT, 13, Color(0.40, 0.285, 0.075), 2, 4)
 
 func set_values(a: int, b: int) -> void:
 	v1 = a
@@ -78,31 +81,23 @@ func _draw() -> void:
 	_draw_die(Rect2(Vector2(81, 5) + _jitter * 0.6, Vector2(66, 66)), v2, _glow)
 
 func _draw_die(r: Rect2, v: int, glow: float) -> void:
-	var shadow := StyleBoxFlat.new()
-	shadow.bg_color = Color(0, 0, 0, 0.35)
-	shadow.set_corner_radius_all(12)
-	shadow.shadow_color = Color(0, 0, 0, 0.4)
-	shadow.shadow_size = 6
-	shadow.shadow_offset = Vector2(0, 3)
-	draw_style_box(shadow, r.grow(2))
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UIKit.ACCENT
-	sb.set_corner_radius_all(12)
-	sb.set_border_width_all(2)
-	sb.border_color = Color(0.42, 0.30, 0.08)
+	draw_style_box(_face, r)
 	if glow > 0.0:
-		sb.border_color = Color(1.0, 0.95, 0.75).lerp(Color(0.42, 0.30, 0.08), 1.0 - glow)
-		sb.shadow_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55 * glow)
-		sb.shadow_size = int(14 * glow)
-		sb.shadow_offset = Vector2.ZERO
-	draw_style_box(sb, r)
-	# 顶部高光条
-	var hi := Rect2(r.position + Vector2(8, 4), Vector2(r.size.x - 16, 5))
-	draw_rect(hi, Color(1, 1, 1, 0.22), true)
+		# 双数发光：亮色描边 + 金色光晕叠在骰面上
+		var glow_sb := StyleBoxFlat.new()
+		glow_sb.draw_center = false
+		glow_sb.set_corner_radius_all(13)
+		glow_sb.set_border_width_all(3)
+		glow_sb.border_color = Color(1.0, 0.95, 0.75).lerp(Color(0.42, 0.30, 0.08), 1.0 - glow)
+		glow_sb.shadow_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55 * glow)
+		glow_sb.shadow_size = int(14 * glow)
+		glow_sb.shadow_offset = Vector2.ZERO
+		draw_style_box(glow_sb, r)
 	var pts: Array = PIPS.get(v, PIPS[1])
 	var inset := 14.0
 	var spread := r.size.x - inset * 2.0
 	for p in pts:
 		var c := r.position + Vector2(inset, inset) + Vector2(p.x, p.y) / 2.0 * spread
 		draw_circle(c + Vector2(0, 1.5), 5.0, Color(0.10, 0.07, 0.02, 0.5))
-		draw_circle(c, 5.0, Color(0.16, 0.12, 0.04))
+		draw_circle(c, 5.0, Color(0.17, 0.125, 0.04))
+		draw_circle(c + Vector2(-1.6, -1.6), 2.0, Color(1, 0.95, 0.8, 0.28))

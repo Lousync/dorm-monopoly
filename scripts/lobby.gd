@@ -23,9 +23,7 @@ func _ready() -> void:
 		elif a.begins_with("--shot-lobby="):
 			_shot_path = a.substr(13)
 
-	var bg := ColorRect.new()
-	bg.color = UIKit.BG
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var bg := UIKit.decor_bg()
 	add_child(bg)
 
 	var root := HBoxContainer.new()
@@ -43,12 +41,12 @@ func _ready() -> void:
 	left.add_theme_constant_override("separation", 10)
 	root.add_child(left)
 
-	_room_label = UIKit.label("房间大厅", 30, UIKit.ACCENT)
+	_room_label = UIKit.title_label("房间大厅", 28)
 	left.add_child(_room_label)
 
-	var players_panel := UIKit.panel_container(UIKit.PANEL, 10)
+	var players_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 8)
 	players_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var pm := UIKit.margins()
+	var pm := UIKit.margins(10, 10, 8, 8)
 	players_panel.add_child(pm)
 	left.add_child(players_panel)
 
@@ -70,6 +68,7 @@ func _ready() -> void:
 	btn_row.add_child(_remove_bot_btn)
 	_start_btn = UIKit.button("开始游戏！", 17, "primary")
 	_start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_start_btn.custom_minimum_size = Vector2(0, 40)
 	_start_btn.pressed.connect(_on_start)
 	btn_row.add_child(_start_btn)
 	var leave_btn := UIKit.button("离开", 15, "danger")
@@ -82,8 +81,8 @@ func _ready() -> void:
 	right.add_theme_constant_override("separation", 10)
 	root.add_child(right)
 
-	var addr_panel := UIKit.panel_container(UIKit.PANEL, 10)
-	var am := UIKit.margins()
+	var addr_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 8)
+	var am := UIKit.margins(10, 10, 8, 8)
 	addr_panel.add_child(am)
 	right.add_child(addr_panel)
 	var av := VBoxContainer.new()
@@ -108,9 +107,9 @@ func _ready() -> void:
 	copy_row.add_child(copy_btn)
 	copy_row.add_child(UIKit.label("点击复制全部地址", 12, UIKit.TEXT_DIM))
 
-	var chat_panel := UIKit.panel_container(UIKit.PANEL, 10)
+	var chat_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 8)
 	chat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var cm := UIKit.margins()
+	var cm := UIKit.margins(10, 10, 8, 8)
 	chat_panel.add_child(cm)
 	right.add_child(chat_panel)
 	var cv := VBoxContainer.new()
@@ -160,25 +159,33 @@ func _refresh() -> void:
 	for c in _players_box.get_children():
 		c.queue_free()
 	for p in Net.players:
+		var card := UIKit.panel_container(Color(0.125, 0.14, 0.19, 0.9), 10,
+			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.65), 1, 3)
+		var cm := UIKit.margins(10, 10, 6, 6)
+		card.add_child(cm)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
+		cm.add_child(row)
 		row.add_child(UIKit.chip(GameData.PLAYER_COLORS[int(p.color)], 20))
 		var tags := ""
 		if int(p.peer) == 1:
 			tags += "（房主）"
 		if bool(p.bot):
 			tags += "（机器人）"
-		if not bool(p.ready) and not bool(p.bot):
-			tags += "  — 未准备"
-		var name_l := UIKit.label(p.name + tags, 17, UIKit.TEXT)
+		var name_l := UIKit.label(p.name + tags, 16, UIKit.TEXT)
 		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		row.add_child(name_l)
 		if bool(p.ready) or bool(p.bot):
-			row.add_child(UIKit.label("已准备", 14, UIKit.GOOD))
-		_players_box.add_child(row)
+			row.add_child(UIKit.pill("已准备", UIKit.GOOD, 12))
+		elif not bool(p.bot):
+			row.add_child(UIKit.pill("未准备", UIKit.TEXT_DIM, 12))
+		_players_box.add_child(card)
 	if Net.players.size() < Net.MAX_PLAYERS:
-		_players_box.add_child(UIKit.label("（等待其他室友加入，最多 4 人）", 13, UIKit.TEXT_DIM))
+		var wait := UIKit.label("（等待其他室友加入，最多 4 人）", 13, UIKit.TEXT_DIM)
+		wait.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_players_box.add_child(wait)
 
 	var human_ready := true
 	for p in Net.players:
@@ -209,6 +216,9 @@ func _refresh() -> void:
 		if lines.is_empty():
 			lines.append("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）")
 		_addr_label.text = "\n".join(lines)
+
+func _card_border() -> Color:
+	return Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85)
 
 func _i_am_ready() -> bool:
 	for p in Net.players:

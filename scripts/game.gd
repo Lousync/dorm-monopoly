@@ -56,7 +56,6 @@ var _chat_shown := 0
 var _prompt_dlg: Control
 var _prompt_tw: Tween
 var _prompt_token := -1
-var _card_styles := {}
 
 # ---------------- 自动化测试 ----------------
 var at_mode := ""
@@ -76,15 +75,6 @@ func _ready() -> void:
 			_shot_path = a.substr(7)
 	if at_mode != "":
 		Engine.time_scale = 3.0
-
-	_card_styles = {
-		"info": [UIKit.ACCENT, Color(0.16, 0.14, 0.08, 0.94)],
-		"good": [UIKit.GOOD, Color(0.10, 0.18, 0.12, 0.94)],
-		"bad": [Color(0.94, 0.45, 0.42), Color(0.20, 0.09, 0.09, 0.94)],
-		"jail": [Color(0.66, 0.52, 0.95), Color(0.13, 0.10, 0.20, 0.94)],
-		"move": [Color(0.42, 0.70, 0.95), Color(0.09, 0.14, 0.21, 0.94)],
-		"bust": [Color(0.95, 0.35, 0.35), Color(0.22, 0.07, 0.07, 0.94)],
-	}
 
 	_build_ui()
 
@@ -107,10 +97,8 @@ func _exit_tree() -> void:
 # ================= 界面构建 =================
 
 func _build_ui() -> void:
-	var bg := ColorRect.new()
-	bg.color = UIKit.BG
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
+	# 纯渐变氛围底（棋盘外露出的部分），不撒尘埃保持棋盘清晰
+	add_child(UIKit.decor_bg(false))
 
 	# 棋盘视口：占据顶栏以下全部空间（右侧留出面板宽度给镜头居中/全图适配）
 	board = BoardView.new()
@@ -129,7 +117,7 @@ func _build_ui() -> void:
 	top.offset_top = 6
 	top.offset_bottom = 40
 	add_child(top)
-	var title := UIKit.label("宿舍大富翁", 20, UIKit.ACCENT)
+	var title := UIKit.title_label("宿舍大富翁", 20)
 	top.add_child(title)
 	round_label = UIKit.label("", 17, UIKit.TEXT)
 	round_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -145,7 +133,8 @@ func _build_ui() -> void:
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hud)
 
-	banner_pill = UIKit.panel_container(Color(0.055, 0.06, 0.09, 0.85), 12, UIKit.BORDER, 1)
+	banner_pill = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.5), 1, 8)
 	banner_pill.position = Vector2(107, 50)
 	banner_pill.size = Vector2(560, 36)
 	banner_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -157,7 +146,7 @@ func _build_ui() -> void:
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bm.add_child(banner)
 
-	card_panel = UIKit.panel_container(Color(0.16, 0.14, 0.08, 0.94), 12, UIKit.ACCENT, 2)
+	card_panel = UIKit.panel_container(Color(0.16, 0.14, 0.08, 0.94), 12, UIKit.ACCENT, 2, 10)
 	card_panel.position = Vector2(107, 96)
 	card_panel.size = Vector2(560, 104)
 	card_panel.visible = false
@@ -186,7 +175,7 @@ func _build_ui() -> void:
 	right.add_theme_constant_override("separation", 8)
 	add_child(right)
 
-	var pp := UIKit.panel_container(UIKit.PANEL_GLASS, 10)
+	var pp := UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	pp.custom_minimum_size = Vector2(0, 186)
 	var pm := UIKit.margins(8, 8, 6, 6)
 	pp.add_child(pm)
@@ -222,7 +211,7 @@ func _build_ui() -> void:
 	info_label.custom_minimum_size = Vector2(0, 40)
 	right.add_child(info_label)
 
-	var lp := UIKit.panel_container(UIKit.PANEL_GLASS, 10)
+	var lp := UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	lp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var lm := UIKit.margins(10, 10, 8, 8)
 	lp.add_child(lm)
@@ -407,9 +396,10 @@ func _resolve_tile(p: Dictionary) -> void:
 				await _resolve_rent(p, idx)
 		"event":
 			var card: Dictionary = GameData.EVENTS.pick_random()
-			s_card.rpc("【%s】%s" % [d.name, card.t], _card_kind(card))
+			# 仿桌游：机会/命运卡从棋盘中央对应牌堆抽出展示
+			s_card.rpc(String(card.t), _card_kind(card), String(d.name))
 			_log("%s 抽到事件：%s" % [p.name, card.t])
-			await _wait(1.4)
+			await _wait(BoardView.DECK_CARD_TIME + 0.1)
 			await _apply_card(p, card)
 		"fine":
 			_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#ef7b74")
@@ -729,7 +719,7 @@ func s_state(state: Dictionary) -> void:
 		if at_mode != "" and not multiplayer.is_server():
 			print("AUTOTEST CLIENT OK round=", state.round)
 			get_tree().quit(0)
-	elif _shot_path != "" and not _shot_taken and int(state.round) >= 2:
+	elif _shot_path != "" and not _shot_taken and (int(state.round) >= 2 or at_mode == ""):
 		_shot_taken = true
 		_take_shot(_shot_path)
 	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
@@ -753,9 +743,17 @@ func s_move(peer: int, path: Array, step_time: float) -> void:
 	board.play_move(peer, path, step_time)
 
 @rpc("authority", "call_local", "reliable")
-func s_card(text: String, kind: String = "info") -> void:
-	var style: Array = _card_styles.get(kind, _card_styles["info"])
-	card_panel.add_theme_stylebox_override("panel", UIKit.stylebox(style[1], 12, style[0], 2))
+func s_card(text: String, kind: String = "info", deck: String = "") -> void:
+	Fx.play("card", -4.0)
+	if deck != "":
+		# 事件卡：从棋盘中央牌堆抽出，展示完镜头回到行动棋子
+		board.play_deck_card(deck, kind, text, int(st.get("turn", -1)))
+		if kind == "jail":
+			Fx.shake(self, 9.0, 0.35)
+			Fx.play("jail", -2.0)
+		return
+	var style: Array = UIKit.card_palette(kind)
+	card_panel.add_theme_stylebox_override("panel", UIKit.card_stylebox(style[1], 12, style[0], 2, 10))
 	card_label.text = text
 	card_label.add_theme_color_override("font_color", style[0])
 	card_panel.visible = true
@@ -818,8 +816,8 @@ func _refresh_players() -> void:
 			players_box.add_child(row.root)
 		var active: bool = phase == "playing" and int(st.get("turn", -1)) == peer
 		var sb: StyleBoxFlat = row.sb
-		sb.bg_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.10) if active else Color(0, 0, 0, 0)
-		sb.border_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55) if active else Color(0, 0, 0, 0)
+		sb.bg_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.13) if active else Color(0.52, 0.56, 0.68, 0.05)
+		sb.border_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.65) if active else Color(0, 0, 0, 0)
 
 		var tags := ""
 		if active:
@@ -872,7 +870,7 @@ func ml_needs_init(_row: Dictionary) -> bool:
 
 func _make_player_row(p: Dictionary) -> Dictionary:
 	var root := PanelContainer.new()
-	var sb := UIKit.stylebox(Color(0, 0, 0, 0), 8, Color(0, 0, 0, 0), 1)
+	var sb := UIKit.stylebox(Color(0.52, 0.56, 0.68, 0.05), 8, Color(0, 0, 0, 0), 1)
 	root.add_theme_stylebox_override("panel", sb)
 	var m := UIKit.margins(8, 8, 5, 5)
 	root.add_child(m)
@@ -902,7 +900,8 @@ func _refresh_actions() -> void:
 		"roll":
 			if is_my_roll:
 				status_label.text = "轮到你掷骰子！"
-				board.focus_peer(my_peer)
+				if not board.is_showing_deck_card():
+					board.focus_peer(my_peer)
 			else:
 				status_label.text = "等待 %s 掷骰子…" % turn_name
 		"prompt":
@@ -988,7 +987,7 @@ func _show_game_over() -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 16)
 	center.add_child(box)
-	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2)
+	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2, 20)
 	panel.custom_minimum_size = Vector2(470, 0)
 	box.add_child(panel)
 	var pm := UIKit.margins(24, 24, 20, 20)
@@ -1000,27 +999,36 @@ func _show_game_over() -> void:
 	var wname := "平局"
 	if int(st.get("winner", -1)) != -1:
 		wname = _name_by_peer(int(st.winner))
-	var big := UIKit.label("游戏结束！%s 获胜" % wname, 25, UIKit.ACCENT)
+	var big := UIKit.title_label("游戏结束！%s 获胜" % wname, 26)
 	big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pv.add_child(big)
 
 	pv.add_child(UIKit.label("── 最终资产排名 ──", 13, UIKit.TEXT_DIM))
 	for i in _standings().size():
 		var r: Dictionary = _standings()[i]
+		var is_winner := int(st.get("winner", -1)) != -1 and i == 0
+		var row_card := UIKit.panel_container(
+			Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.10) if is_winner else Color(0.5, 0.55, 0.68, 0.05),
+			10,
+			Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55) if is_winner else Color(0, 0, 0, 0), 1)
+		var rm := UIKit.margins(10, 10, 5, 5)
+		row_card.add_child(rm)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
-		var is_winner := int(st.get("winner", -1)) != -1 and i == 0
-		var rank := UIKit.label("%d." % (i + 1), 15, UIKit.ACCENT if is_winner else UIKit.TEXT_DIM)
-		row.add_child(rank)
-		row.add_child(UIKit.chip(GameData.PLAYER_COLORS[int(r.color)], 14))
+		rm.add_child(row)
+		row.add_child(UIKit.rank_badge(i + 1, 24))
+		row.add_child(UIKit.chip(GameData.PLAYER_COLORS[int(r.color)], 16))
 		var nm := UIKit.label(String(r.name) + ("" if bool(r.alive) else "（破产）"), 15,
 			UIKit.ACCENT if is_winner else UIKit.TEXT)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		row.add_child(nm)
-		row.add_child(UIKit.label(GameData.fmt_money(int(r.worth)), 15,
-			UIKit.ACCENT if is_winner else UIKit.TEXT))
-		pv.add_child(row)
+		var worth_l := UIKit.label(GameData.fmt_money(int(r.worth)), 15,
+			UIKit.ACCENT if is_winner else UIKit.TEXT)
+		worth_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		row.add_child(worth_l)
+		pv.add_child(row_card)
 
 	var vs := UIKit.vspace(6)
 	pv.add_child(vs)
@@ -1029,7 +1037,7 @@ func _show_game_over() -> void:
 	pv.add_child(back)
 
 	# 面板弹入 + 彩带 + 胜利音
-	panel.pivot_offset = panel.custom_minimum_size * 0.5
+	panel.resized.connect(func() -> void: panel.pivot_offset = panel.size * 0.5)
 	panel.scale = Vector2(0.8, 0.8)
 	panel.modulate.a = 0.0
 	var tw2 := create_tween()
@@ -1075,7 +1083,7 @@ func _show_prompt(token: int, title: String, text: String, ok_text: String) -> v
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(center)
-	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2)
+	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2, 18)
 	panel.custom_minimum_size = Vector2(460, 0)
 	center.add_child(panel)
 	var pm := UIKit.margins(22, 22, 18, 18)
@@ -1083,7 +1091,7 @@ func _show_prompt(token: int, title: String, text: String, ok_text: String) -> v
 	var pv := VBoxContainer.new()
 	pv.add_theme_constant_override("separation", 12)
 	pm.add_child(pv)
-	pv.add_child(UIKit.label(title, 19, UIKit.ACCENT))
+	pv.add_child(UIKit.title_label(title, 20))
 	var text_l := UIKit.label(text, 14, UIKit.TEXT)
 	text_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pv.add_child(text_l)
@@ -1142,8 +1150,19 @@ func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec).timeout
 
 func _take_shot(path: String) -> void:
-	await get_tree().create_timer(0.8).timeout
-	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png(path)
-	print("SHOT SAVED ", path)
+	await get_tree().create_timer(0.4).timeout
+	while board.is_showing_deck_card():
+		await get_tree().create_timer(0.25).timeout
+	board.fit_overview()
+	await get_tree().create_timer(0.2).timeout
+	board.focus_grid(27, 0.8, true)
+	await get_tree().create_timer(0.15).timeout
+	board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
+	for i in 3:
+		await get_tree().create_timer(0.6).timeout
+		await RenderingServer.frame_post_draw
+		var p := path if i == 0 else path.replace(".png", "_%d.png" % i)
+		get_viewport().get_texture().get_image().save_png(p)
+		print("SHOT SAVED ", p)
 	get_tree().quit(0)

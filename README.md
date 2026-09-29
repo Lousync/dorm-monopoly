@@ -57,6 +57,7 @@
 - 落在无主地产可购买；落在自己的地产可花钱**装修**（Lv1~Lv3，费用为地价一半）。
 - 租金 = 基础租金 × (1 + 装修等级)；**集齐同色一组再 ×2**。路过别人的地自动扣款。
 - 「机会 / 命运」格抽宿舍事件卡：奖学金、查寝、请客奶茶、过生日收红包、共享单车快进……
+  仿实体桌游，两副牌堆就摆在棋盘中央，抽卡时镜头对准牌堆、卡片从堆中滑出展示再收回。
 - 「校医院 / 缴电费」等 10 个格强制缴费；「勤工俭学 / 奖学金」等 12 个格直接进账；
   「空教室 / 卧谈会」免费休息。
 - 付不起钱即破产，名下地产充公；**活到最后**，或 **30 轮后总资产最高**者获胜。
@@ -124,6 +125,8 @@ Godot_console.exe --headless --path . -- --autotest=client --rounds=3
 # 快速打完结算（2 轮后按身家结算，覆盖游戏结束排名界面）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 --max-rounds=2 &
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3 --max-rounds=2
+# 无干扰布局截图（单人开局即拍；--shot= 也可配 autotest 在第 2 轮拍对局）
+Godot_console.exe --path . -- --shot-game=x --shot=shots/layout.png
 # IPv6 回环验证（验证双栈服务端接受 ::1）
 Godot_console.exe --headless --path . --script tests/net_probe.gd -- --mode=host &
 Godot_console.exe --headless --path . --script tests/net_probe.gd -- --mode=client6

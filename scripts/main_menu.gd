@@ -11,6 +11,7 @@ var _rooms_box: VBoxContainer
 var _status: Label
 var _title: Label
 var _rooms_sig := ""
+var _shot_game := false
 
 var _at_mode := ""
 
@@ -24,13 +25,17 @@ func _ready() -> void:
 			Net.my_name = "房主"
 			Net.host_game(7791)
 			get_tree().change_scene_to_file.call_deferred("res://scenes/lobby.tscn")
+		elif a.begins_with("--shot-game="):
+			# 单人开局直达对局（配合 --shot= 用于无干扰的布局截图）
+			_shot_game = true
+			Net.my_name = "房主"
+			Net.host_game(7793)
+			get_tree().change_scene_to_file.call_deferred("res://scenes/game.tscn")
 
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")
 
-	var bg := ColorRect.new()
-	bg.color = UIKit.BG
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var bg := UIKit.decor_bg()
 	add_child(bg)
 
 	var center := CenterContainer.new()
@@ -42,9 +47,20 @@ func _ready() -> void:
 	root.add_theme_constant_override("separation", 10)
 	center.add_child(root)
 
-	_title = UIKit.label("宿舍大富翁", 42, UIKit.ACCENT)
-	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	root.add_child(_title)
+	# 标题行：双骰子图标 + 描边金字
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 16)
+	title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(title_row)
+	var icon_l := UIKit.dice_icon(40)
+	icon_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	title_row.add_child(icon_l)
+	_title = UIKit.title_label("宿舍大富翁", 46)
+	title_row.add_child(_title)
+	var icon_r := UIKit.dice_icon(40)
+	icon_r.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	title_row.add_child(icon_r)
 
 	var sub := UIKit.label("宿舍楼里的财富战争 · 局域网 4 人联机 · IPv6 直连 · 112 格大地图", 14, UIKit.TEXT_DIM)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -63,7 +79,7 @@ func _ready() -> void:
 	name_row.add_child(_name_edit)
 
 	# ----- 创建房间 -----
-	var create_panel := UIKit.panel_container(UIKit.PANEL, 10)
+	var create_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
 	var cp := UIKit.margins()
 	create_panel.add_child(cp)
 	root.add_child(create_panel)
@@ -90,7 +106,7 @@ func _ready() -> void:
 	create_row.add_child(create_hint)
 
 	# ----- 加入房间 -----
-	var join_panel := UIKit.panel_container(UIKit.PANEL, 10)
+	var join_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
 	var jp := UIKit.margins()
 	join_panel.add_child(jp)
 	root.add_child(join_panel)
@@ -121,7 +137,7 @@ func _ready() -> void:
 	port_row.add_child(join_hint)
 
 	# ----- 局域网房间列表 -----
-	var rooms_panel := UIKit.panel_container(UIKit.PANEL, 10)
+	var rooms_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
 	rooms_panel.custom_minimum_size = Vector2(0, 120)
 	var rp := UIKit.margins()
 	rooms_panel.add_child(rp)
@@ -165,7 +181,7 @@ func _ready() -> void:
 		Net.last_error = ""
 
 	var mp := Net.multiplayer.multiplayer_peer
-	if mp != null and not (mp is OfflineMultiplayerPeer) and Net.is_host:
+	if not _shot_game and mp != null and not (mp is OfflineMultiplayerPeer) and Net.is_host:
 		# 已经是房主（例如从大厅返回）→ 直接到大厅
 		get_tree().change_scene_to_file.call_deferred("res://scenes/lobby.tscn")
 	else:
@@ -175,6 +191,7 @@ func _ready() -> void:
 	for i in root.get_child_count():
 		var c: Control = root.get_child(i)
 		Fx.animate_in(c, 0.05 * i)
+	_title.resized.connect(func() -> void: _title.pivot_offset = _title.size * 0.5)
 	var tw := create_tween()
 	tw.set_loops()
 	tw.tween_property(_title, "scale", Vector2(1.025, 1.025), 1.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -201,6 +218,9 @@ func _ready() -> void:
 			print("AUTOTEST CLIENT TIMEOUT")
 			get_tree().quit(1)
 		)
+
+func _card_border() -> Color:
+	return Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85)
 
 func _exit_tree() -> void:
 	Net.lobby_joined.disconnect(_on_lobby_joined)
