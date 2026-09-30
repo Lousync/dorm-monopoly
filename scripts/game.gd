@@ -19,7 +19,10 @@ var round_label: Label
 var status_label: Label
 var roll_btn: Button
 var follow_btn: Button
-var info_label: Label
+var info_panel: PanelContainer
+var info_title: Label
+var info_body: Label
+var info_sb: StyleBoxFlat
 var log_text: RichTextLabel
 var log_panel: PanelContainer
 var log_toggle: Button
@@ -219,15 +222,26 @@ func _build_ui() -> void:
 	roll_btn.disabled = true
 	bar_row.add_child(roll_btn)
 
-	# 左下角：格子详情 / 操作提示
-	info_label = UIKit.label("滚轮缩放 · 拖拽平移 · 点对手座位卡或按 Tab 转到 TA 视角 · 空格回自己", 13, UIKit.TEXT_DIM)
-	info_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	info_label.offset_left = 14
-	info_label.offset_right = 356
-	info_label.offset_top = -50
-	info_label.offset_bottom = -12
-	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	add_child(info_label)
+	# 左下角：格子详情卡（点击棋盘格子弹出相关信息）
+	info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
+	info_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	info_panel.offset_left = 14
+	info_panel.offset_right = 356
+	info_panel.offset_top = -196
+	info_panel.offset_bottom = -66
+	add_child(info_panel)
+	info_sb = UIKit.stylebox(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1)
+	info_panel.add_theme_stylebox_override("panel", info_sb)
+	var im := UIKit.margins(12, 10, 10, 10)
+	info_panel.add_child(im)
+	var iv := VBoxContainer.new()
+	iv.add_theme_constant_override("separation", 5)
+	im.add_child(iv)
+	info_title = UIKit.label("操作提示", 16, UIKit.ACCENT)
+	iv.add_child(info_title)
+	info_body = UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情\n点对手座位卡或按 Tab 转到 TA 视角 · 空格回自己", 13, UIKit.TEXT)
+	info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	iv.add_child(info_body)
 
 	# 右上：战报 / 聊天（可折叠，保持桌面干净）
 	log_toggle = UIKit.button("战报 ▾", 13)
@@ -1001,19 +1015,41 @@ func _at_auto_roll() -> void:
 
 func _on_tile_clicked(idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
-	var line := "【%s】%s" % [d.name, GameData.TILE_DESC.get(d.type, "")]
-	if String(d.type) == "property":
-		var owner_name := "无主"
-		var tiles: Array = st.get("tiles", [])
-		if idx < tiles.size() and int(tiles[idx].get("owner", GameData.NO_OWNER)) != GameData.NO_OWNER:
-			owner_name = _name_by_peer(int(tiles[idx].owner))
-		var rent := GameData.rent_for(idx, st.get("tiles", []))
-		line += "\n%s组 · 售价 %s · 当前租金 %s · 持有：%s" % [
-			GameData.GROUP_NAMES.get(d.group, "?"), GameData.fmt_money(int(d.price)),
-			GameData.fmt_money(rent), owner_name]
-	elif String(d.type) == "fine" or String(d.type) == "bonus":
-		line += "：%s" % GameData.fmt_money(int(d.amount))
-	info_label.text = line
+	var t := String(d.type)
+	var tiles: Array = st.get("tiles", [])
+	var level := 0
+	var owner_id := GameData.NO_OWNER
+	if idx < tiles.size():
+		owner_id = int(tiles[idx].get("owner", GameData.NO_OWNER))
+		level = int(tiles[idx].get("level", 0))
+
+	var accent := UIKit.ACCENT
+	var body := String(GameData.TILE_DESC.get(t, "宿舍一角，岁月静好"))
+	match t:
+		"property":
+			accent = GameData.GROUP_COLORS.get(String(d.group), UIKit.ACCENT)
+			var owner_name := "无主 · 踩到可购买"
+			if owner_id != GameData.NO_OWNER:
+				owner_name = _name_by_peer(owner_id)
+			body = "%s产业 · 售价 %s\n当前租金 %s · 装修 Lv%d（%s）\n持有：%s" % [
+				GameData.GROUP_NAMES.get(String(d.group), "?"), GameData.fmt_money(int(d.price)),
+				GameData.fmt_money(GameData.rent_for(idx, tiles)), level, "★".repeat(level) if level > 0 else "未装修",
+				owner_name]
+		"fine":
+			accent = UIKit.DANGER
+			body = "%s\n金额：%s" % [body, GameData.fmt_money(int(d.amount))]
+		"bonus":
+			accent = UIKit.GOOD
+			body = "%s\n金额：%s" % [body, GameData.fmt_money(int(d.amount))]
+	info_title.text = "【%s】" % String(d.name)
+	info_title.add_theme_color_override("font_color", accent)
+	info_body.text = body
+	info_sb.border_color = Color(accent.r, accent.g, accent.b, 0.7)
+	info_panel.add_theme_stylebox_override("panel", info_sb)
+	info_panel.pivot_offset = info_panel.size * 0.5
+	info_panel.scale = Vector2(0.94, 0.94)
+	var tw := create_tween()
+	tw.tween_property(info_panel, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 # ================= 弹窗与结算 =================
 
@@ -1216,6 +1252,7 @@ func _take_shot(path: String) -> void:
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
 		board.focus_grid(27, 0.8, true)
 		await get_tree().create_timer(0.15).timeout
+		_on_tile_clicked(27)  # 顺便展示格子详情卡
 	if not path.contains("plain"):
 		board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 		board.spin_wheel(12)
