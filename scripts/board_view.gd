@@ -7,10 +7,10 @@ class_name BoardView
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
 
-const TILE := 80.0
-static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (1440, 960)
-const GAP := 4.0
-const MIN_ZOOM := 0.3
+const TILE := 112.0
+static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (2016, 1344)
+const GAP := 5.0
+const MIN_ZOOM := 0.22
 const MAX_ZOOM := 1.25
 ## 事件卡从牌堆抽出展示的总时长（房主结算等待与它保持同步）
 const DECK_CARD_TIME := 2.35
@@ -209,8 +209,8 @@ func _build_tiles() -> void:
 		_tile_sb.append(sb)
 
 		var strip := Panel.new()
-		strip.position = Vector2(2, 2)
-		strip.size = Vector2(TILE - GAP * 2.0 - 4, 7)
+		strip.position = Vector2(3, 3)
+		strip.size = Vector2(TILE - GAP * 2.0 - 6, 9)
 		var strip_c: Color = UIKit.ACCENT if corner else (Color(0.93, 0.30, 0.55) if d.type == "casino" else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566")))
 		strip.add_theme_stylebox_override("panel", UIKit.stylebox(strip_c.lightened(0.06), 2))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -226,32 +226,32 @@ func _build_tiles() -> void:
 				ic.texture = icon_t
 				ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				ic.position = Vector2((TILE - GAP * 2.0) * 0.5 - 13.0, 15)
-				ic.size = Vector2(26, 26)
+				ic.position = Vector2((TILE - GAP * 2.0) * 0.5 - 18.0, 20)
+				ic.size = Vector2(36, 36)
 				ic.modulate = Color(1, 1, 1, 0.42 if not corner else 0.55)
 				ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				p.add_child(ic)
 
-		var name_l := UIKit.label(d.name, 14, UIKit.ACCENT if corner else (Color(0.98, 0.58, 0.78) if casino else UIKit.TEXT))
-		name_l.position = Vector2(4, 12)
-		name_l.size = Vector2(TILE - GAP * 2.0 - 8, 30)
+		var name_l := UIKit.label(d.name, 18, UIKit.ACCENT if corner else (Color(0.98, 0.58, 0.78) if casino else UIKit.TEXT))
+		name_l.position = Vector2(5, 18)
+		name_l.size = Vector2(TILE - GAP * 2.0 - 10, 44)
 		name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_world_descend(name_l)
 		p.add_child(name_l)
 
-		var sub := UIKit.label("", 11, UIKit.TEXT_DIM)
-		sub.position = Vector2(4, 48)
-		sub.size = Vector2(TILE - GAP * 2.0 - 8, 14)
+		var sub := UIKit.label("", 14, UIKit.TEXT_DIM)
+		sub.position = Vector2(5, 70)
+		sub.size = Vector2(TILE - GAP * 2.0 - 10, 17)
 		sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_world_descend(sub)
 		p.add_child(sub)
 		_sub_labels.append(sub)
 
-		var star := UIKit.label("", 12, UIKit.ACCENT)
-		star.position = Vector2(4, 46)
-		star.size = Vector2(TILE - GAP * 2.0 - 8, 16)
+		var star := UIKit.label("", 15, UIKit.ACCENT)
+		star.position = Vector2(5, 68)
+		star.size = Vector2(TILE - GAP * 2.0 - 10, 19)
 		star.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_world_descend(star)
 		p.add_child(star)
@@ -268,37 +268,37 @@ func _world_descend(l: Label) -> void:
 func _build_interior() -> void:
 	var c := WORLD * 0.5
 	var p := Panel.new()
-	p.position = Vector2(c.x - 330, 90)
-	p.size = Vector2(660, 126)
+	p.position = Vector2(c.x - 380, 110)
+	p.size = Vector2(760, 140)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.11, 0.16, 0.62), 20,
 		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.22), 1))
 	_world.add_child(p)
 
-	var title := UIKit.title_label("宿舍大富翁", 38, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.34), 0)
-	title.position = Vector2(0, 8)
-	title.size = Vector2(660, 52)
+	var title := UIKit.title_label("宿舍大富翁", 42, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.34), 0)
+	title.position = Vector2(0, 10)
+	title.size = Vector2(760, 58)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(title)
 
 	var sub := UIKit.label("%d × %d 环线 · %d 格 · 10 大产业" % [GameData.BOARD_COLS, GameData.BOARD_ROWS, GameData.TILES.size()],
-		15, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
-	sub.position = Vector2(0, 64)
-	sub.size = Vector2(660, 22)
+		16, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
+	sub.position = Vector2(0, 72)
+	sub.size = Vector2(760, 26)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
-	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点座位卡 / Tab 转视角 · 空格回自己", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
-	hint.position = Vector2(0, 94)
-	hint.size = Vector2(660, 20)
+	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点座位卡 / Tab 转视角 · 空格回自己", 14, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
+	hint.position = Vector2(0, 104)
+	hint.size = Vector2(760, 24)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(hint)
 
-	_build_deck("机会", Vector2(c.x - 440, c.y), UIKit.ACCENT)
-	_build_deck("命运", Vector2(c.x + 440, c.y), Color(0.66, 0.56, 0.95))
+	_build_deck("机会", Vector2(c.x - 560, c.y), UIKit.ACCENT)
+	_build_deck("命运", Vector2(c.x + 560, c.y), Color(0.66, 0.56, 0.95))
 	_build_wheel(c)
 
 ## 一个牌堆：区域底板 + 三层错位卡背 + 牌名 + 小字说明
@@ -342,7 +342,7 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 ## 中央转盘：点数来源，掷点时镜头对准它
 func _build_wheel(center: Vector2) -> void:
 	_wheel = WheelView.new()
-	_wheel.size = Vector2(360, 360)
+	_wheel.size = Vector2(400, 400)
 	_wheel.position = center - _wheel.size * 0.5
 	_world.add_child(_wheel)
 
@@ -462,10 +462,10 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := -1
 
 func _build_ring() -> void:
 	_ring = Panel.new()
-	_ring.size = Vector2(52, 52)
+	_ring.size = Vector2(64, 64)
 	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ring.z_index = 15
-	var sb := UIKit.stylebox(Color(0, 0, 0, 0), 26, UIKit.ACCENT, 3)
+	var sb := UIKit.stylebox(Color(0, 0, 0, 0), 32, UIKit.ACCENT, 3)
 	sb.draw_center = false
 	_ring.add_theme_stylebox_override("panel", sb)
 	_ring.visible = false
@@ -1010,14 +1010,14 @@ func _token_target(p: Dictionary, slot: int) -> Vector2:
 	return _token_at(int(p.pos), slot)
 
 func _token_at(idx: int, slot: int) -> Vector2:
-	return tile_pos(idx) + Vector2(TILE, TILE) * 0.5 - Vector2(17, 19) + _slot_offset(slot)
+	return tile_pos(idx) + Vector2(TILE, TILE) * 0.5 - Vector2(22, 25) + _slot_offset(slot)
 
 func _slot_offset(slot: int) -> Vector2:
 	match slot % 4:
-		0: return Vector2(-20, -20)
-		1: return Vector2(20, -20)
-		2: return Vector2(-20, 20)
-		_: return Vector2(20, 20)
+		0: return Vector2(-28, -28)
+		1: return Vector2(28, -28)
+		2: return Vector2(-28, 28)
+		_: return Vector2(28, 28)
 
 ## 棋子：Kenney 桌游小人（CC0），按玩家槽位取色；素材缺失时退回纯色圆片
 func _make_token(slot: int, pname: String) -> Control:
@@ -1028,7 +1028,7 @@ func _make_token(slot: int, pname: String) -> Control:
 		tr.texture = piece
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tr.size = Vector2(34, 38)
+		tr.size = Vector2(44, 50)
 		tk = tr
 	else:
 		var p := Panel.new()
