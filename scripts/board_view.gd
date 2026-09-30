@@ -23,10 +23,18 @@ const HOLE_MX := 16.0        # 棋盘与左右栏的间隙
 # 方框边长由棋盘长边驱动，上下间隙动态配平，桌面恒为正方形
 static var TABLE := _make_table()
 
+## 棋盘下移贴住玩家数据区：下缘只留小缝，余下空隙留给顶部数据面板
+const HOLE_GAP_BOTTOM := 80.0
+static var BOARD_OFFSET := _make_board_offset()
+
 static func _make_table() -> Rect2:
 	var side: float = WORLD.x + 2.0 * (BAND_SIDE + HOLE_MX)
 	var my: float = (side - 2.0 * BAND_TB - WORLD.y) * 0.5
 	return Rect2(-(BAND_SIDE + HOLE_MX), -(BAND_TB + my), side, side)
+
+static func _make_board_offset() -> Vector2:
+	var hole_bottom := TABLE.end.y - BAND_TB
+	return Vector2(HOLE_MX, hole_bottom - HOLE_GAP_BOTTOM - WORLD.y)
 const SEAT_SIZE := Vector2(1068, 220)
 const SLOT_SIZE := Vector2(148, 196)
 
@@ -99,6 +107,7 @@ func _ready() -> void:
 	mouse_exited.connect(func() -> void:
 		set_hover(-1)
 		_set_seat_hover(-1))
+	_build_top_panels()
 
 # ---------------- 坐标换算 ----------------
 
@@ -111,7 +120,7 @@ static func grid_to_index(col: int, row: int) -> int:
 	return GameData.index_at_grid(col, row)
 
 static func tile_pos(i: int) -> Vector2:
-	return Vector2(tile_grid(i)) * TILE
+	return BOARD_OFFSET + Vector2(tile_grid(i)) * TILE
 
 func _world_from_view(view_pos: Vector2) -> Vector2:
 	return _center + (view_pos - _visible_center()).rotated(-_rot) / _zoom
@@ -141,7 +150,7 @@ func _clamp_center(c: Vector2) -> Vector2:
 	return out
 
 func _index_at(view_pos: Vector2) -> int:
-	var w := _world_from_view(view_pos)
+	var w := _world_from_view(view_pos) - BOARD_OFFSET
 	var col := int(floor(w.x / TILE))
 	var row := int(floor(w.y / TILE))
 	if col < 0 or col >= GameData.BOARD_COLS or row < 0 or row >= GameData.BOARD_ROWS:
@@ -170,7 +179,7 @@ func _build_backdrop() -> void:
 
 	# 棋盘区：同一张木纹上轻微压暗 + 描边勾出边界，格子直接落在桌面上
 	var bg := Panel.new()
-	bg.position = Vector2(-26, -26)
+	bg.position = BOARD_OFFSET - Vector2(26, 26)
 	bg.size = WORLD + Vector2(52, 52)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.05, 0.05, 0.07, 0.32), 20,
@@ -266,7 +275,7 @@ func _world_descend(l: Label) -> void:
 ## 棋盘中央内区布局（仿实体桌游）：上方标题水印，中央「机会」「命运」两个牌堆，
 ## 事件卡从对应牌堆抽出展示。
 func _build_interior() -> void:
-	var c := WORLD * 0.5
+	var c := WORLD * 0.5 + BOARD_OFFSET
 	var p := Panel.new()
 	p.position = Vector2(c.x - 380, 110)
 	p.size = Vector2(760, 140)
@@ -858,6 +867,98 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
 		"shown": int(p.money), "tw": null}
+
+# ---------------- 顶部数据面板（棋盘上方的空区） ----------------
+
+var _rank_rows := []                # {peer, row, name_l, money_l, prop_l}
+var _rank_box: VBoxContainer
+var _world_log: RichTextLabel
+
+## 顶部空区放两块数据面板：左边战况排行，右边最近战报（世界坐标，随桌面旋转）
+func _build_top_panels() -> void:
+	var top := TABLE.position.y + BAND_TB + 36.0
+	var bot := BOARD_OFFSET.y - 36.0
+	var left := -HOLE_MX
+	var right := WORLD.x + HOLE_MX
+	var half_w := (right - left) * 0.5
+	_make_data_panel(Rect2(left + 16, top, half_w - 32, bot - top), "战况", true)
+	_make_data_panel(Rect2(left + half_w + 16, top, half_w - 32, bot - top), "最近战报", false)
+
+func _make_data_panel(rect: Rect2, title: String, rank: bool) -> void:
+	var panel := Panel.new()
+	panel.position = rect.position
+	panel.size = rect.size
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.88), 16,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55), 1))
+	_world.add_child(panel)
+	var m := UIKit.margins(18, 14, 14, 12)
+	m.position = Vector2(18, 14)
+	m.size = rect.size - Vector2(32, 26)  # Panel 非容器，内衬需显式铺满
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	m.add_child(v)
+	var t := UIKit.label(title, 24, UIKit.ACCENT)
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(t)
+	if rank:
+		_rank_box = v
+	else:
+		_world_log = RichTextLabel.new()
+		_world_log.bbcode_enabled = true
+		_world_log.scroll_following = true
+		_world_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_world_log.custom_minimum_size = Vector2(0, 120)
+		_world_log.add_theme_font_size_override("normal_font_size", 19)
+		_world_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(_world_log)
+
+## 战况面板：按行动顺序建行（现金由对局层刷新）
+func build_rank(players: Array) -> void:
+	for r in _rank_rows:
+		(r.row as Control).queue_free()
+	_rank_rows.clear()
+	for p in players:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var chip := UIKit.chip(GameData.PLAYER_COLORS[int(p.color) % 4], 14)
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(chip)
+		var name_l := UIKit.label(String(p.name), 20, UIKit.TEXT)
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(name_l)
+		var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 20, UIKit.ACCENT)
+		money_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(money_l)
+		var prop_l := UIKit.label("", 18, UIKit.TEXT_DIM)
+		prop_l.custom_minimum_size = Vector2(360, 0)
+		prop_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		prop_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(prop_l)
+		_rank_box.add_child(row)
+		_rank_rows.append({"peer": int(p.peer), "row": row, "name_l": name_l,
+			"money_l": money_l, "prop_l": prop_l})
+
+func rank_count() -> int:
+	return _rank_rows.size()
+
+func update_rank_row(peer: int, money: int, prop_text: String) -> void:
+	for r in _rank_rows:
+		if int(r.peer) == peer:
+			(r.money_l as Label).text = GameData.fmt_money(money)
+			(r.prop_l as Label).text = prop_text
+			return
+
+## 最近战报镜像（世界面板）
+func world_log_line(bb: String) -> void:
+	if _world_log != null and is_instance_valid(_world_log):
+		_world_log.append_text(bb + "\n")
 
 # ---------------- 渲染状态快照 ----------------
 

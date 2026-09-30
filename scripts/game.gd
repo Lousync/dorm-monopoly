@@ -847,6 +847,7 @@ func _hide_card_later(my_id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
 	log_text.append_text(line + "\n")
+	board.world_log_line(line)
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -868,6 +869,11 @@ func _refresh_players() -> void:
 		var pls: Array = st.get("players", [])
 		if not pls.is_empty():
 			board.build_seats(pls, my_peer)
+	if board.rank_count() == 0:
+		var pls2: Array = st.get("players", [])
+		if not pls2.is_empty():
+			board.build_rank(pls2)
+	var tiles_arr: Array = st.get("tiles", [])
 	for p in st.get("players", []):
 		var peer := int(p.peer)
 		seen[peer] = true
@@ -930,6 +936,16 @@ func _refresh_players() -> void:
 				var pos := board.token_screen_pos(peer) + Vector2(0, -30)
 				Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
 				Fx.play("cash" if diff > 0 else "pay", -5.0)
+		# 顶部战况面板：现金 / 地产数 / 身家（与房主 _net_worth 同一公式）
+		var prop_n := 0
+		var worth := int(p.money)
+		for i in tiles_arr.size():
+			var td: Dictionary = tiles_arr[i]
+			if int(td.get("owner", GameData.NO_OWNER)) == peer:
+				prop_n += 1
+				worth += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
+		board.update_rank_row(peer, int(p.money), "地产 ×%d · 身家 %s" % [prop_n, GameData.fmt_money(worth)])
+
 		if not bool(p.alive):
 			row.money_l.text = "已出局"
 			row.money_l.add_theme_color_override("font_color", UIKit.TEXT_DIM)
@@ -1226,6 +1242,7 @@ func _refresh_chat() -> void:
 		var line := str(Net.chat_history[_chat_shown])
 		_chat_shown += 1
 		log_text.append_text("[color=#7f8699]%s[/color]\n" % line.replace("[", "［"))
+		board.world_log_line("[color=#7f8699]%s[/color]" % line.replace("[", "［"))
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
