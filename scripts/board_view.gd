@@ -145,48 +145,31 @@ func _index_at(view_pos: Vector2) -> int:
 # ---------------- 场景搭建 ----------------
 
 func _build_backdrop() -> void:
-	# 整张木纹桌面：铺满座位带之外再加边距，四家座位都坐在桌面上
+	# 一整张连续的木纹桌面：棋盘区和操作栏坐在同一张桌上，没有材质接缝
 	var table := Panel.new()
 	table.position = TABLE.position - Vector2(30, 30)
 	table.size = TABLE.size + Vector2(60, 60)
 	table.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	table.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.085, 0.06), 30, Color(0.32, 0.24, 0.15), 3, 18))
+	table.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.085, 0.06), 30, Color(0.30, 0.23, 0.15), 3, 18))
 	_world.add_child(table)
-	var table_wood := TextureRect.new()
-	table_wood.texture = UIKit.tex("res://assets/textures/wood_floor.jpg")
-	table_wood.stretch_mode = TextureRect.STRETCH_TILE
-	table_wood.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-	table_wood.position = Vector2(10, 10)
-	table_wood.size = table.size - Vector2(20, 20)
-	table_wood.modulate = Color(0.34, 0.29, 0.24)
-	table_wood.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	table.add_child(table_wood)
-
-	# 棋盘板：渐变厚底座 + 木纹（像铺在桌面上的一块实体桌游板）
-	var bg := Panel.new()
-	bg.position = Vector2(-26, -26)
-	bg.size = WORLD + Vector2(52, 52)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# 渐变厚底座：顶亮底暗 + 描边 + 外投影，像一块实体桌游板
-	bg.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.078, 0.086, 0.124), 22, Color("#4a5170"), 2, 16))
-	_world.add_child(bg)
-	# 木纹桌面（ambientCG WoodFloor064，CC0）：压暗后铺在棋盘板上，四边留出板边
 	var wood := TextureRect.new()
 	wood.texture = UIKit.tex("res://assets/textures/wood_floor.jpg")
 	wood.stretch_mode = TextureRect.STRETCH_TILE
 	wood.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-	wood.position = Vector2(8, 8)
-	wood.size = bg.size - Vector2(16, 16)
-	wood.modulate = Color(0.5, 0.44, 0.38)
+	wood.position = Vector2(10, 10)
+	wood.size = table.size - Vector2(20, 20)
+	wood.modulate = Color(0.44, 0.39, 0.33)
 	wood.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.add_child(wood)
-	# 内缘压线，让木纹像镶进棋盘边框
-	var rim := Panel.new()
-	rim.position = wood.position
-	rim.size = wood.size
-	rim.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0), 10, Color(0, 0, 0, 0.45), 2))
-	rim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.add_child(rim)
+	table.add_child(wood)
+
+	# 棋盘区：同一张木纹上轻微压暗 + 描边勾出边界，格子直接落在桌面上
+	var bg := Panel.new()
+	bg.position = Vector2(-26, -26)
+	bg.size = WORLD + Vector2(52, 52)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.05, 0.05, 0.07, 0.32), 20,
+		Color(0.24, 0.19, 0.12, 0.9), 2, 12))
+	_world.add_child(bg)
 
 ## 格子类型 → Twemoji 主题图标名（assets/icons/，CC-BY 4.0）
 const TILE_ICONS := {
@@ -728,12 +711,13 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_world.add_child(holder)
 
-	var sb := UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.86), 18, Color(0, 0, 0, 0), 2)
+	# 栏底：极淡的暗色横条，只负责拼出方框轮廓，不描边不抢眼
+	var bar_sb := UIKit.stylebox(Color(0.03, 0.035, 0.06, 0.40), 18, Color(0, 0, 0, 0), 0)
 	var body := Panel.new()
 	body.position = bar.position
 	body.size = bar.size
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_theme_stylebox_override("panel", sb)
+	body.add_theme_stylebox_override("panel", bar_sb)
 	holder.add_child(body)
 
 	var root := Control.new()
@@ -743,6 +727,14 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	root.position = bar.get_center() - SEAT_SIZE * 0.5
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(root)
+
+	# 内容卡：紧凑包住信息与牌位，回合高亮描边画在这里而不是整条栏上
+	var sb := UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.88), 16, Color(0, 0, 0, 0), 2)
+	var card := Panel.new()
+	card.size = SEAT_SIZE
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_theme_stylebox_override("panel", sb)
+	root.add_child(card)
 
 	var chip: Control
 	var piece := UIKit.piece_tex(int(p.color) % 4)
