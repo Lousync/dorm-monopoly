@@ -20,6 +20,33 @@ const DANGER := Color(0.937, 0.325, 0.314)
 
 static var _tex_cache := {}
 
+# ---------------- 开源素材加载 ----------------
+
+const PIECE_COLORS := ["Red", "Blue", "Green", "Yellow"]  # 与 GameData.PLAYER_COLORS 顺序对应
+
+## 运行时加载素材纹理：优先走资源导入缓存，未导入时直接读文件，双路径都可用
+static func tex(path: String) -> Texture2D:
+	if _tex_cache.has(path):
+		return _tex_cache[path]
+	var t: Texture2D = null
+	if ResourceLoader.exists(path):
+		t = load(path) as Texture2D
+	if t == null and FileAccess.file_exists(path):
+		var img := Image.load_from_file(path)
+		if img != null:
+			t = ImageTexture.create_from_image(img)
+	if t != null:
+		_tex_cache[path] = t
+	return t
+
+## 主题图标（assets/icons/，Twemoji CC-BY 4.0）
+static func icon(name: String) -> Texture2D:
+	return tex("res://assets/icons/%s.png" % name)
+
+## Kenney 棋子（assets/pieces/，CC0），color_idx 对应玩家槽位 0~3
+static func piece_tex(color_idx: int) -> Texture2D:
+	return tex("res://assets/pieces/piece%s_05.png" % PIECE_COLORS[clampi(color_idx, 0, 3)])
+
 # ---------------- 基础控件 ----------------
 
 static func label(text: String, size: int = 15, color: Color = TEXT) -> Label:
@@ -195,13 +222,30 @@ static func stylebox(bg: Color, corner: int = 10, border: Color = Color(0, 0, 0,
 		sb.shadow_offset = shadow_off
 	return sb
 
-## 玩家色小圆片
-static func chip(color: Color, side: float = 16.0) -> Panel:
-	var c := Panel.new()
+## 玩家色小棋子（Kenney 桌游棋子，CC0）；素材缺失时退回纯色圆片
+static func chip(color: Color, side: float = 16.0) -> Control:
+	var c := Control.new()
 	c.custom_minimum_size = Vector2(side, side)
-	c.add_theme_stylebox_override("panel", stylebox(color, int(side * 0.5),
-		Color(0.93, 0.93, 0.96, 0.9), 2 if side >= 18 else 1, 3, Color(0, 0, 0, 0.4)))
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var idx: int = GameData.PLAYER_COLORS.find(color)
+	if idx >= 0:
+		var t := piece_tex(idx)
+		if t != null:
+			var tr := TextureRect.new()
+			tr.texture = t
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+			tr.offset_bottom = -1.0
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			c.add_child(tr)
+			return c
+	var p := Panel.new()
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_theme_stylebox_override("panel", stylebox(color, int(side * 0.5),
+		Color(0.93, 0.93, 0.96, 0.9), 2 if side >= 18 else 1, 3, Color(0, 0, 0, 0.4)))
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(p)
 	return c
 
 ## 圆角小徽章（「已准备」等），fg 决定文字与描边色调

@@ -833,8 +833,9 @@ func _refresh_players() -> void:
 			tags += "（反省中）"
 		row.name_l.text = String(p.name) + tags
 
-		var chip_sb: StyleBoxFlat = row.chip.get_theme_stylebox("panel")
-		chip_sb.bg_color = Color(0.35, 0.35, 0.35) if not bool(p.alive) else GameData.PLAYER_COLORS[int(p.color)]
+		# 棋子（Kenney 小人 / 纯色圆片）：破产时整体置灰
+		var chip_c: Control = row.chip
+		chip_c.modulate = Color(0.42, 0.42, 0.48, 0.85) if not bool(p.alive) else Color.WHITE
 
 		# 金额：滚动数字 + 涨跌闪色 + 棋盘飘字
 		var target := int(p.money)

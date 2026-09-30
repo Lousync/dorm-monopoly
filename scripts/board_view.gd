@@ -105,6 +105,40 @@ func _build_backdrop() -> void:
 	# 渐变厚底座：顶亮底暗 + 描边 + 外投影，像一块实体桌游板
 	bg.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.078, 0.086, 0.124), 22, Color("#4a5170"), 2, 16))
 	_world.add_child(bg)
+	# 木纹桌面（ambientCG WoodFloor064，CC0）：压暗后铺在棋盘板上，四边留出板边
+	var wood := TextureRect.new()
+	wood.texture = UIKit.tex("res://assets/textures/wood_floor.jpg")
+	wood.stretch_mode = TextureRect.STRETCH_TILE
+	wood.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	wood.position = Vector2(8, 8)
+	wood.size = bg.size - Vector2(16, 16)
+	wood.modulate = Color(0.5, 0.44, 0.38)
+	wood.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_child(wood)
+	# 内缘压线，让木纹像镶进棋盘边框
+	var rim := Panel.new()
+	rim.position = wood.position
+	rim.size = wood.size
+	rim.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0), 10, Color(0, 0, 0, 0.45), 2))
+	rim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_child(rim)
+
+## 格子类型 → Twemoji 主题图标名（assets/icons/，CC-BY 4.0）
+const TILE_ICONS := {
+	"property": {"daily": "daily", "service": "service", "canteen": "canteen", "study": "study",
+		"sport": "sport", "teach": "teach", "dorm": "dorm", "fun": "fun",
+		"night": "night", "health": "health"},
+	"event": {"机会": "luck", "命运": "fate"},
+	"fine": "fine", "bonus": "bonus", "rest": "rest",
+	"start": "start", "jail": "jail", "go_jail": "gojail",
+}
+
+func _tile_icon_name(d: Dictionary) -> String:
+	var t := String(d.type)
+	var v = TILE_ICONS.get(t, "")
+	if v is Dictionary:
+		return v.get(String(d.get("group", d.get("name", ""))), "")
+	return v
 
 func _build_tiles() -> void:
 	for i in GameData.TILES.size():
@@ -127,6 +161,21 @@ func _build_tiles() -> void:
 		strip.add_theme_stylebox_override("panel", UIKit.stylebox(strip_c.lightened(0.06), 2))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
+
+		# 主题图标水印：垫在牌名下面，给每类格子一个视觉身份
+		var icon_name := _tile_icon_name(d)
+		if icon_name != "":
+			var icon_t := UIKit.icon(icon_name)
+			if icon_t != null:
+				var ic := TextureRect.new()
+				ic.texture = icon_t
+				ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				ic.position = Vector2((TILE - GAP * 2.0) * 0.5 - 11.0, 13)
+				ic.size = Vector2(22, 22)
+				ic.modulate = Color(1, 1, 1, 0.42 if not corner else 0.55)
+				ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				p.add_child(ic)
 
 		var name_l := UIKit.label(d.name, 12, UIKit.ACCENT if corner else UIKit.TEXT)
 		name_l.position = Vector2(4, 10)
@@ -559,7 +608,7 @@ func render(state: Dictionary) -> void:
 		seen[peer] = true
 		var slot := int(p.color)
 		if not _tokens.has(peer):
-			var tk := _make_token(GameData.PLAYER_COLORS[slot], String(p.name))
+			var tk := _make_token(slot, String(p.name))
 			tk.set_meta("slot", slot)
 			_tokens[peer] = tk
 			_animating[peer] = false
@@ -570,7 +619,7 @@ func render(state: Dictionary) -> void:
 			var tw := tk.create_tween()
 			tw.tween_property(tk, "scale", Vector2.ONE, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		elif not _animating.get(peer, false):
-			var tk2: Panel = _tokens[peer]
+			var tk2: Control = _tokens[peer]
 			tk2.set_meta("slot", slot)
 			tk2.position = _token_at(int(p.pos), slot)
 
@@ -652,23 +701,33 @@ func _token_target(p: Dictionary, slot: int) -> Vector2:
 	return _token_at(int(p.pos), slot)
 
 func _token_at(idx: int, slot: int) -> Vector2:
-	return tile_pos(idx) + Vector2(TILE, TILE) * 0.5 - Vector2(10, 10) + _slot_offset(slot)
+	return tile_pos(idx) + Vector2(TILE, TILE) * 0.5 - Vector2(13, 13) + _slot_offset(slot)
 
 func _slot_offset(slot: int) -> Vector2:
 	match slot % 4:
-		0: return Vector2(-14, -14)
-		1: return Vector2(14, -14)
-		2: return Vector2(-14, 14)
-		_: return Vector2(14, 14)
+		0: return Vector2(-15, -15)
+		1: return Vector2(15, -15)
+		2: return Vector2(-15, 15)
+		_: return Vector2(15, 15)
 
-func _make_token(color: Color, pname: String) -> Panel:
-	var tk := Panel.new()
-	tk.size = Vector2(20, 20)
-	var sb := UIKit.stylebox(color, 10, Color(0.95, 0.95, 0.97), 2)
-	sb.shadow_color = Color(0, 0, 0, 0.45)
-	sb.shadow_size = 4
-	sb.shadow_offset = Vector2(0, 2)
-	tk.add_theme_stylebox_override("panel", sb)
+## 棋子：Kenney 桌游小人（CC0），按玩家槽位取色；素材缺失时退回纯色圆片
+func _make_token(slot: int, pname: String) -> Control:
+	var piece := UIKit.piece_tex(slot)
+	var tk: Control
+	if piece != null:
+		var tr := TextureRect.new()
+		tr.texture = piece
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.size = Vector2(26, 30)
+		tk = tr
+	else:
+		var p := Panel.new()
+		var sb := UIKit.stylebox(GameData.PLAYER_COLORS[slot % 4], 10, Color(0.95, 0.95, 0.97), 2, 4, Color(0, 0, 0, 0.45))
+		p.add_theme_stylebox_override("panel", sb)
+		p.size = Vector2(20, 20)
+		tk = p
+	tk.pivot_offset = tk.size * 0.5
 	tk.tooltip_text = pname
 	tk.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tk.z_index = 20
@@ -687,7 +746,7 @@ func token_screen_pos(peer: int) -> Vector2:
 func _kill_token_tw(peer: int) -> void:
 	if not _tokens.has(peer):
 		return
-	var tk: Panel = _tokens[peer]
+	var tk: Control = _tokens[peer]
 	if tk.has_meta("tw"):
 		var old = tk.get_meta("tw")
 		if old is Tween and (old as Tween).is_valid():
@@ -703,7 +762,7 @@ func play_move(peer: int, path: Array, step_time: float) -> void:
 	var p := int(peer)
 	if not _tokens.has(p):
 		return
-	var tk: Panel = _tokens[p]
+	var tk: Control = _tokens[p]
 	_kill_token_tw(p)
 	_animating[p] = true
 	if path.is_empty():
@@ -724,7 +783,7 @@ func play_move(peer: int, path: Array, step_time: float) -> void:
 		_animating[p] = false
 	)
 
-func _teleport_anim(p: int, tk: Panel) -> void:
+func _teleport_anim(p: int, tk: Control) -> void:
 	var slot := int(tk.get_meta("slot", 0))
 	var tw := create_tween()
 	tk.set_meta("tw", tw)
