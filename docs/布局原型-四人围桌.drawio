@@ -22,13 +22,13 @@
         <mxCell id="overlay-zone" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#999999;" value="弹层区：商店 / 黑市 / 赌场 / 发现三选一（弹出时盖在桌面上方）">
           <mxGeometry x="360" y="170" width="560" height="460" as="geometry" />
         </mxCell>
-        <mxCell id="seat-top" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="顶部座位 · 玩家3：头像/名字/现金/体力⚡/状态角标 + 道具牌位×5（小 · 非交互）">
+        <mxCell id="seat-top" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="上家座位 · 玩家3：内容按 TA 视角排版（我看是倒的）头像/名字/现金/⚡/状态 + 牌位×5">
           <mxGeometry x="340" y="8" width="600" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="seat-left" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="左侧座位 · 玩家2（下家，示意）：同顶部，牌位竖排">
+        <mxCell id="seat-left" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="左家座位 · 玩家2（下家示意）：内容旋转 90° 朝向 TA">
           <mxGeometry x="10" y="210" width="180" height="380" as="geometry" />
         </mxCell>
-        <mxCell id="seat-right" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="右侧座位 · 玩家4：同顶部，牌位竖排">
+        <mxCell id="seat-right" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="右家座位 · 玩家4：内容旋转 90° 朝向 TA">
           <mxGeometry x="1090" y="210" width="180" height="380" as="geometry" />
         </mxCell>
         <mxCell id="seat-bottom" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fdf6e3;strokeColor=#b58900;" value="">
@@ -63,6 +63,9 @@
         </mxCell>
         <mxCell id="log-chat" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#888888;" value="日志 / 聊天（可折叠）">
           <mxGeometry x="950" y="8" width="320" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="view-note" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#888888;dashed=1;" value="视角交互：桌面世界（棋盘/座位/牌位/转轮/牌堆）随视角旋转——点任意座位转到 TA 视角（TA 的区域转到屏幕下方变正），点自己座位/按空格回自己视角。屏幕层不转：弹层、回合横幅、日志、行动按钮。">
+          <mxGeometry x="10" y="608" width="180" height="180" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
