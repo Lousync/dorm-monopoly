@@ -15,12 +15,14 @@ const MAX_ZOOM := 1.25
 ## 事件卡从牌堆抽出展示的总时长（房主结算等待与它保持同步）
 const DECK_CARD_TIME := 2.35
 
-# 四人围桌：座位带围绕棋盘（世界坐标），底=本地玩家，左/上/右=对手（内容朝向各自主人）
-const BAND_LEFT := 235.0
-const BAND_RIGHT := 235.0
-const BAND_TOP := 210.0
-const BAND_BOTTOM := 240.0
-static var TABLE := Rect2(-BAND_LEFT, -BAND_TOP, WORLD.x + BAND_LEFT + BAND_RIGHT, WORLD.y + BAND_TOP + BAND_BOTTOM)
+# 正方形牌桌：四条操作栏拼成一个闭合方框，长方形棋盘嵌在框内
+# （底=本地玩家，左/上/右=对手，内容朝向各自主人）
+const BAND_SIDE := 240.0     # 左右操作栏宽（座位件厚 220 + 边距）
+const BAND_TB := 286.0       # 上下操作栏厚
+const HOLE_MX := 16.0        # 棋盘与左右栏的间隙
+const HOLE_MY := 162.0       # 棋盘与上下栏的间隙（把方框配平成正方形）
+static var TABLE := Rect2(-(BAND_SIDE + HOLE_MX), -(BAND_TB + HOLE_MY),
+	WORLD.x + 2.0 * (BAND_SIDE + HOLE_MX), WORLD.y + 2.0 * (BAND_TB + HOLE_MY))
 const SEAT_SIZE := Vector2(1068, 220)
 const SLOT_SIZE := Vector2(148, 196)
 
@@ -662,24 +664,23 @@ func seat_count() -> int:
 func seat(peer: int) -> Dictionary:
 	return _seats.get(int(_seat_of_peer.get(peer, -1)), {})
 
-func _seat_center(e: int) -> Vector2:
+## 第 e 条操作栏的方框区域（世界坐标）：上下栏横贯全边、左右栏嵌在上下栏之间，拼成闭合方框
+func _seat_bar(e: int) -> Rect2:
+	var ht := -HOLE_MY
+	var hb := WORLD.y + HOLE_MY
 	match e:
-		1: return Vector2(-BAND_LEFT * 0.5, WORLD.y * 0.5)
-		2: return Vector2(WORLD.x * 0.5, -BAND_TOP * 0.5)
-		3: return Vector2(WORLD.x + BAND_RIGHT * 0.5, WORLD.y * 0.5)
-		_: return Vector2(WORLD.x * 0.5, WORLD.y + BAND_BOTTOM * 0.5)
+		1: return Rect2(TABLE.position.x, ht, BAND_SIDE, hb - ht)
+		3: return Rect2(WORLD.x + HOLE_MX, ht, BAND_SIDE, hb - ht)
+		2: return Rect2(TABLE.position.x, TABLE.position.y, TABLE.size.x, BAND_TB)
+		_: return Rect2(TABLE.position.x, hb, TABLE.size.x, BAND_TB)
 
-func _seat_band(e: int) -> Rect2:
-	match e:
-		1: return Rect2(-BAND_LEFT, -BAND_TOP, BAND_LEFT, WORLD.y + BAND_TOP + BAND_BOTTOM)
-		2: return Rect2(-BAND_LEFT, -BAND_TOP, WORLD.x + BAND_LEFT + BAND_RIGHT, BAND_TOP)
-		3: return Rect2(WORLD.x, -BAND_TOP, BAND_RIGHT, WORLD.y + BAND_TOP + BAND_BOTTOM)
-		_: return Rect2(-BAND_LEFT, WORLD.y, WORLD.x + BAND_LEFT + BAND_RIGHT, BAND_BOTTOM)
+func _seat_center(e: int) -> Vector2:
+	return _seat_bar(e).get_center()
 
 func _occupied_rect() -> Rect2:
 	var r := Rect2(Vector2.ZERO, WORLD).grow(30.0)
 	for e in _seats:
-		r = r.merge(_seat_band(e))
+		r = r.merge(_seat_bar(e))
 	return r
 
 ## 视角旋转：点谁转谁（TA 的区域转到屏幕下方变正）；空格/点自己回自己视角
@@ -713,30 +714,35 @@ func at_home_view() -> bool:
 	return absf(wrapf(_rot, -PI, PI)) < 0.3
 
 func _seat_at(view_pos: Vector2) -> int:
-	var gp: Vector2 = _world.to_global(_world_from_view(view_pos))
+	var wpt := _world_from_view(view_pos)
 	for e in _seats:
-		var s: Dictionary = _seats[e]
-		var root: Control = s.root
-		if Rect2(Vector2.ZERO, root.size).has_point(root.to_local(gp)):
-			return int(s.peer)
+		if _seat_bar(e).has_point(wpt):
+			return int(_seats[e].peer)
 	return -1
 
-## 一个座位：信息块（头像/名字/现金/体力）+ 5 个道具牌位；整块旋转 e*90° 朝向座位主人
+## 一个座位：整条操作栏面板（拼方框的一边）+ 旋转排布的内容件
+## （头像/名字/现金/体力 + 5 个道具牌位），内容朝向座位主人
 func _make_seat(p: Dictionary, e: int) -> Dictionary:
+	var bar := _seat_bar(e)
+	var holder := Control.new()
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world.add_child(holder)
+
+	var sb := UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.86), 18, Color(0, 0, 0, 0), 2)
+	var body := Panel.new()
+	body.position = bar.position
+	body.size = bar.size
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_theme_stylebox_override("panel", sb)
+	holder.add_child(body)
+
 	var root := Control.new()
 	root.size = SEAT_SIZE
 	root.pivot_offset = SEAT_SIZE * 0.5
 	root.rotation_degrees = e * 90.0
-	root.position = _seat_center(e) - SEAT_SIZE * 0.5
+	root.position = bar.get_center() - SEAT_SIZE * 0.5
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_world.add_child(root)
-
-	var sb := UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.86), 18, Color(0, 0, 0, 0), 2)
-	var body := Panel.new()
-	body.size = SEAT_SIZE
-	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_theme_stylebox_override("panel", sb)
-	root.add_child(body)
+	holder.add_child(root)
 
 	var chip: Control
 	var piece := UIKit.piece_tex(int(p.color) % 4)
@@ -748,12 +754,12 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		tr.position = Vector2(16, 16)
 		tr.size = Vector2(52, 60)
 		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		body.add_child(tr)
+		root.add_child(tr)
 		chip = tr
 	else:
 		chip = UIKit.chip(GameData.PLAYER_COLORS[int(p.color) % 4], 26)
 		chip.position = Vector2(22, 26)
-		body.add_child(chip)
+		root.add_child(chip)
 
 	var name_l := UIKit.label(String(p.name), 21, UIKit.TEXT)
 	name_l.position = Vector2(78, 14)
@@ -761,20 +767,20 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_child(name_l)
+	root.add_child(name_l)
 
 	var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 22, UIKit.ACCENT)
 	money_l.position = Vector2(14, 92)
 	money_l.size = Vector2(224, 40)
 	money_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_child(money_l)
+	root.add_child(money_l)
 
 	var stamina_row := HBoxContainer.new()
 	stamina_row.position = Vector2(14, 148)
 	stamina_row.size = Vector2(224, 40)
 	stamina_row.add_theme_constant_override("separation", 5)
 	stamina_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_child(stamina_row)
+	root.add_child(stamina_row)
 	var bolt := UIKit.label("⚡", 20, Color(1.0, 0.85, 0.3))
 	bolt.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stamina_row.add_child(bolt)
@@ -795,7 +801,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sp.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.035), 10,
 			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55), 1))
-		body.add_child(sp)
+		root.add_child(sp)
 		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
 		plus.set_anchors_preset(Control.PRESET_FULL_RECT)
 		plus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -804,7 +810,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		sp.add_child(plus)
 		slots.append(sp)
 
-	return {"root": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
+	return {"root": holder, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
 		"shown": int(p.money), "tw": null}
 
