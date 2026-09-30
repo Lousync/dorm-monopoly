@@ -286,7 +286,7 @@ func _build_interior() -> void:
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
-	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点对手座位卡转到 TA 视角 · 空格回自己", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
+	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点座位卡 / Tab 转视角 · 空格回自己", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
 	hint.position = Vector2(0, 76)
 	hint.size = Vector2(600, 20)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -581,13 +581,13 @@ func _gui_input(ev: InputEvent) -> void:
 				_dragging = true
 				_panning = false
 				_press_pos = mb.position
-		elif _dragging:
-			if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
-				var seat := _seat_at(mb.position)
-				if seat != -1:
-					Fx.play("click", -10.0)
-					rotate_to_seat(seat)
-					seat_clicked.emit(seat)
+			elif _dragging:
+				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
+					var seat := _seat_at(mb.position)
+					if seat != -1:
+						Fx.play("click", -10.0)
+						rotate_to_seat(seat)
+						seat_clicked.emit(seat)
 				else:
 					var idx := _index_at(mb.position)
 					if idx >= 0:
@@ -670,6 +670,8 @@ func _occupied_rect() -> Rect2:
 		r = r.merge(_seat_bar(e))
 	return r
 
+var _view_edge := 0         # 当前视角所在的座位边（0=自己）
+
 ## 视角旋转：点谁转谁（TA 的区域转到屏幕下方变正）；空格/点自己回自己视角
 func rotate_to_seat(peer: int) -> void:
 	rotate_to_edge(int(_seat_of_peer.get(peer, -1)))
@@ -677,6 +679,7 @@ func rotate_to_seat(peer: int) -> void:
 func rotate_to_edge(e: int, hard := false) -> void:
 	if e < 0 or not _seats.has(e):
 		return
+	_view_edge = e
 	_rot_target = -e * PI * 0.5
 	_center_target = _clamp_center(_seat_center(e))
 	if hard:
@@ -692,6 +695,13 @@ func rotate_to_edge(e: int, hard := false) -> void:
 
 func rotate_home() -> void:
 	rotate_to_edge(0)
+
+## Tab：按行动顺序循环切换到下一个有人的座位视角
+func rotate_next() -> void:
+	var order: Array = _seats.keys()
+	order.sort()
+	var i: int = order.find(_view_edge)
+	rotate_to_edge(int(order[(i + 1) % order.size()]))
 
 func is_rotating() -> bool:
 	return _rotating

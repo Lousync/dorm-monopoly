@@ -178,11 +178,11 @@ func _build_ui() -> void:
 	cm.add_child(card_label)
 
 
-	# 底部行动条（屏幕层，正对自己座位）：状态 / 镜头控制 / 转盘
+	# 底部行动条（屏幕层，正对自己座位）：状态 / 镜头与视角控制 / 转盘
 	var bar := UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.85), 14, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 6)
 	bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	bar.offset_left = -336
-	bar.offset_right = 336
+	bar.offset_left = -400
+	bar.offset_right = 400
 	bar.offset_top = -64
 	bar.offset_bottom = -10
 	add_child(bar)
@@ -206,12 +206,21 @@ func _build_ui() -> void:
 		follow_btn.button_pressed = false
 	)
 	bar_row.add_child(over_btn)
+	# 视角切换：对局中镜头跟着棋子走时座位卡常在屏幕外，这里提供常驻入口
+	for seat_btn in [["左家", 1], ["对家", 2], ["右家", 3]]:
+		var sb_btn := UIKit.button(seat_btn[0], 13)
+		var edge: int = seat_btn[1]
+		sb_btn.pressed.connect(func() -> void:
+			board.rotate_to_edge(edge)
+			follow_btn.button_pressed = false
+		)
+		bar_row.add_child(sb_btn)
 	roll_btn = UIKit.button("转动转盘", 17, "primary")
 	roll_btn.disabled = true
 	bar_row.add_child(roll_btn)
 
 	# 左下角：格子详情 / 操作提示
-	info_label = UIKit.label("滚轮缩放 · 拖拽平移 · 鼠标放到四周对手的座位卡上变手势后点击，转到 TA 视角 · 空格回自己", 13, UIKit.TEXT_DIM)
+	info_label = UIKit.label("滚轮缩放 · 拖拽平移 · 点对手座位卡或按 Tab 转到 TA 视角 · 空格回自己", 13, UIKit.TEXT_DIM)
 	info_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	info_label.offset_left = 14
 	info_label.offset_right = 356
@@ -966,12 +975,16 @@ func _on_follow_toggled(on: bool) -> void:
 		board.focus_peer(my_peer, true)
 
 func _unhandled_input(event: InputEvent) -> void:
-	# 空格：视角转回自己座位
+	# 空格：视角转回自己座位；Tab：循环切到下一家视角
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_SPACE:
 			board.rotate_home()
+		elif k.keycode == KEY_TAB:
+			board.rotate_next()
+			follow_btn.button_pressed = false
 
+## 临时自测：合成一次对顶部座位卡的点击，验证视角旋转链路（--click-test）
 func _toggle_log() -> void:
 	log_panel.visible = not log_panel.visible
 	log_toggle.text = "战报 ▴" if log_panel.visible else "战报 ▾"
