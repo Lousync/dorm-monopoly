@@ -129,7 +129,7 @@ const TILE_ICONS := {
 		"sport": "sport", "teach": "teach", "dorm": "dorm", "fun": "fun",
 		"night": "night", "health": "health"},
 	"event": {"机会": "luck", "命运": "fate"},
-	"fine": "fine", "bonus": "bonus", "rest": "rest",
+	"fine": "fine", "bonus": "bonus", "rest": "rest", "casino": "casino",
 	"start": "start", "jail": "jail", "go_jail": "gojail",
 }
 
@@ -157,12 +157,13 @@ func _build_tiles() -> void:
 		var strip := Panel.new()
 		strip.position = Vector2(2, 2)
 		strip.size = Vector2(TILE - GAP * 2.0 - 4, 6)
-		var strip_c: Color = UIKit.ACCENT if corner else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566"))
+		var strip_c: Color = UIKit.ACCENT if corner else (Color(0.93, 0.30, 0.55) if d.type == "casino" else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566")))
 		strip.add_theme_stylebox_override("panel", UIKit.stylebox(strip_c.lightened(0.06), 2))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
 
 		# 主题图标水印：垫在牌名下面，给每类格子一个视觉身份
+		var casino: bool = d.type == "casino"
 		var icon_name := _tile_icon_name(d)
 		if icon_name != "":
 			var icon_t := UIKit.icon(icon_name)
@@ -177,7 +178,7 @@ func _build_tiles() -> void:
 				ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				p.add_child(ic)
 
-		var name_l := UIKit.label(d.name, 12, UIKit.ACCENT if corner else UIKit.TEXT)
+		var name_l := UIKit.label(d.name, 12, UIKit.ACCENT if corner else (Color(0.98, 0.58, 0.78) if casino else UIKit.TEXT))
 		name_l.position = Vector2(4, 10)
 		name_l.size = Vector2(TILE - GAP * 2.0 - 8, 26)
 		name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -594,6 +595,8 @@ func render(state: Dictionary) -> void:
 				sub.text = "免费休息"
 			"event":
 				sub.text = "?"
+			"casino":
+				sub.text = "全员豪赌"
 
 	var phase := String(state.get("phase", "playing"))
 	if phase == "ended":

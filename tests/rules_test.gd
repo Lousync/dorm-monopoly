@@ -87,6 +87,7 @@ func _test_board_shape() -> void:
 	var fines := 0
 	var bonus := 0
 	var rests := 0
+	var casinos := 0
 	var groups := {}
 	for t in GameData.TILES:
 		match String(t.type):
@@ -101,11 +102,14 @@ func _test_board_shape() -> void:
 				bonus += 1
 			"rest":
 				rests += 1
+			"casino":
+				casinos += 1
 	_check(props == 30, "30 块地产")
-	_check(events == 8, "8 个机会/命运格")
+	_check(events == 6, "6 个机会/命运格")
 	_check(fines == 4, "4 个缴费格")
 	_check(bonus == 6, "6 个兼职/奖励格")
 	_check(rests == 5, "5 个休息格（4 空教室 + 角上卧谈会）")
+	_check(casinos == 2, "2 个宿舍赌场格")
 	var all3 := groups.size() == 10
 	for g in groups:
 		if groups[g] != 3:
