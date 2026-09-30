@@ -16,12 +16,13 @@ var banner_pill: PanelContainer
 var card_panel: PanelContainer
 var card_label: Label
 var round_label: Label
-var players_box: VBoxContainer
 var status_label: Label
 var roll_btn: Button
 var follow_btn: Button
 var info_label: Label
 var log_text: RichTextLabel
+var log_panel: PanelContainer
+var log_toggle: Button
 var chat_edit: LineEdit
 var over_layer: Control
 
@@ -47,6 +48,7 @@ var _card_tween_id := 0
 var _roll_epoch := 0
 var _shot_path := ""
 var _shot_taken := false
+var _shot_rot := 0
 
 # ---------------- 表现层状态 ----------------
 var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
@@ -87,6 +89,8 @@ func _ready() -> void:
 			GameData.MAX_ROUNDS = maxi(1, int(a.substr(13)))
 		elif a.begins_with("--shot="):
 			_shot_path = a.substr(7)
+		elif a.begins_with("--shot-rot="):
+			_shot_rot = clampi(int(a.substr(11)), 0, 3)
 	if at_mode != "":
 		Engine.time_scale = 3.0
 
@@ -114,16 +118,16 @@ func _build_ui() -> void:
 	# 纯渐变氛围底（棋盘外露出的部分），不撒尘埃保持棋盘清晰
 	add_child(UIKit.decor_bg(false))
 
-	# 棋盘视口：占据顶栏以下全部空间（右侧留出面板宽度给镜头居中/全图适配）
+	# 棋盘视口：整屏（四座在桌面世界四周，镜头避开顶栏与底部行动条）
 	board = BoardView.new()
 	board.set_anchors_preset(Control.PRESET_FULL_RECT)
-	board.offset_top = 44
-	board.overlay_right = 506
-	board.overlay_bottom = 130
+	board.overlay_top = 46
+	board.overlay_bottom = 70
 	add_child(board)
 	board.tile_clicked.connect(_on_tile_clicked)
+	board.seat_clicked.connect(func(_peer: int) -> void: pass)  # 转视角已在视图内处理；预留扩展
 
-	# 顶栏
+	# 顶栏：标题 / 回合横幅 / 轮次 / 退出
 	var top := HBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	top.offset_left = 12
@@ -133,40 +137,38 @@ func _build_ui() -> void:
 	add_child(top)
 	var title := UIKit.title_label("宿舍大富翁", 20)
 	top.add_child(title)
-	round_label = UIKit.label("", 17, UIKit.TEXT)
-	round_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	round_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	top.add_child(round_label)
-	var exit_btn := UIKit.button("退出房间", 14, "danger")
-	exit_btn.pressed.connect(_on_exit)
-	top.add_child(exit_btn)
-
-	# 棋盘上方 HUD：横幅胶囊 / 事件卡 / 骰子（屏幕空间）
-	var hud := Control.new()
-	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(hud)
 
 	banner_pill = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
 		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.5), 1, 8)
-	banner_pill.position = Vector2(107, 50)
-	banner_pill.size = Vector2(560, 36)
+	banner_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	banner_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(banner_pill)
-	var bm := UIKit.margins(14, 14, 3, 3)
+	top.add_child(banner_pill)
+	var bm := UIKit.margins(14, 3, 3, 3)
 	bm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner_pill.add_child(bm)
 	banner = UIKit.label("", 16, UIKit.TEXT)
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bm.add_child(banner)
 
+	round_label = UIKit.label("", 15, UIKit.TEXT)
+	top.add_child(round_label)
+	var exit_btn := UIKit.button("退出房间", 14, "danger")
+	exit_btn.pressed.connect(_on_exit)
+	top.add_child(exit_btn)
+
+	# 悬浮事件卡（非牌堆提示，屏幕空间不随视角旋转）
+	var hud := Control.new()
+	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(hud)
+
 	card_panel = UIKit.panel_container(Color(0.16, 0.14, 0.08, 0.94), 12, UIKit.ACCENT, 2, 10)
-	card_panel.position = Vector2(107, 96)
-	card_panel.size = Vector2(560, 104)
+	card_panel.position = Vector2(12, 54)
+	card_panel.size = Vector2(430, 96)
 	card_panel.visible = false
 	card_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(card_panel)
-	var cm := UIKit.margins(16, 16, 8, 8)
+	var cm := UIKit.margins(16, 14, 8, 8)
 	cm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card_panel.add_child(cm)
 	card_label = UIKit.label("", 15, UIKit.ACCENT)
@@ -176,70 +178,80 @@ func _build_ui() -> void:
 	cm.add_child(card_label)
 
 
-	# 右侧面板
-	var right := VBoxContainer.new()
-	right.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	right.offset_left = -494
-	right.offset_right = -12
-	right.offset_top = 48
-	right.offset_bottom = -12
-	right.add_theme_constant_override("separation", 8)
-	add_child(right)
-
-	var pp := UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
-	pp.custom_minimum_size = Vector2(0, 186)
-	var pm := UIKit.margins(8, 8, 6, 6)
-	pp.add_child(pm)
-	right.add_child(pp)
-	players_box = VBoxContainer.new()
-	players_box.add_theme_constant_override("separation", 4)
-	pm.add_child(players_box)
-
-	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 8)
-	right.add_child(action_row)
+	# 底部行动条（屏幕层，正对自己座位）：状态 / 镜头控制 / 转盘
+	var bar := UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.85), 14, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 6)
+	bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	bar.offset_left = -336
+	bar.offset_right = 336
+	bar.offset_top = -64
+	bar.offset_bottom = -10
+	add_child(bar)
+	var barm := UIKit.margins(12, 8, 12, 8)
+	bar.add_child(barm)
+	var bar_row := HBoxContainer.new()
+	bar_row.add_theme_constant_override("separation", 8)
+	barm.add_child(bar_row)
 	status_label = UIKit.label("", 15, UIKit.TEXT)
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	action_row.add_child(status_label)
+	bar_row.add_child(status_label)
 	follow_btn = UIKit.button("跟随", 13)
 	follow_btn.toggle_mode = true
 	follow_btn.button_pressed = true
 	follow_btn.toggled.connect(_on_follow_toggled)
-	action_row.add_child(follow_btn)
-	var over_btn := UIKit.button("全图", 13)
+	bar_row.add_child(follow_btn)
+	var over_btn := UIKit.button("全桌", 13)
 	over_btn.pressed.connect(func() -> void:
 		board.fit_overview()
 		follow_btn.button_pressed = false
 	)
-	action_row.add_child(over_btn)
+	bar_row.add_child(over_btn)
 	roll_btn = UIKit.button("转动转盘", 17, "primary")
 	roll_btn.disabled = true
-	action_row.add_child(roll_btn)
+	bar_row.add_child(roll_btn)
 
-	info_label = UIKit.label("滚轮缩放 · 拖拽平移棋盘 · 点击格子查看详情", 13, UIKit.TEXT_DIM)
+	# 左下角：格子详情 / 操作提示
+	info_label = UIKit.label("滚轮缩放 · 拖拽平移 · 点座位转到 TA 视角 · 空格回自己", 13, UIKit.TEXT_DIM)
+	info_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	info_label.offset_left = 14
+	info_label.offset_right = 356
+	info_label.offset_top = -50
+	info_label.offset_bottom = -12
 	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info_label.custom_minimum_size = Vector2(0, 40)
-	right.add_child(info_label)
+	add_child(info_label)
 
-	var lp := UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
-	lp.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# 右上：战报 / 聊天（可折叠，保持桌面干净）
+	log_toggle = UIKit.button("战报 ▾", 13)
+	log_toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	log_toggle.offset_left = -106
+	log_toggle.offset_right = -12
+	log_toggle.offset_top = 48
+	log_toggle.offset_bottom = 76
+	log_toggle.pressed.connect(_toggle_log)
+	add_child(log_toggle)
+
+	log_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
+	log_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	log_panel.offset_left = -352
+	log_panel.offset_right = -12
+	log_panel.offset_top = 48
+	log_panel.offset_bottom = -12
+	log_panel.visible = false
+	add_child(log_panel)
 	var lm := UIKit.margins(10, 10, 8, 8)
-	lp.add_child(lm)
-	right.add_child(lp)
+	log_panel.add_child(lm)
 	var lv := VBoxContainer.new()
 	lv.add_theme_constant_override("separation", 4)
 	lm.add_child(lv)
-	lv.add_child(UIKit.label("战报", 13, UIKit.TEXT_DIM))
+	lv.add_child(UIKit.label("战报 / 聊天", 13, UIKit.TEXT_DIM))
 	log_text = RichTextLabel.new()
 	log_text.scroll_following = true
 	log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_text.add_theme_font_size_override("normal_font_size", 13)
 	lv.add_child(log_text)
-
 	var chat_row := HBoxContainer.new()
 	chat_row.add_theme_constant_override("separation", 6)
-	right.add_child(chat_row)
+	lv.add_child(chat_row)
 	chat_edit = UIKit.line_edit("聊天…（回车发送）")
 	chat_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	chat_edit.text_submitted.connect(func(_t: String) -> void:
@@ -828,14 +840,20 @@ func _name_by_peer(peer: int) -> String:
 func _refresh_players() -> void:
 	var seen := {}
 	var phase := String(st.get("phase", "playing"))
+	# 座位一次性落位（按行动顺序：自己坐底，下家在左，对家在上，上家在右）
+	if board.seat_count() == 0:
+		var pls: Array = st.get("players", [])
+		if not pls.is_empty():
+			board.build_seats(pls, my_peer)
 	for p in st.get("players", []):
 		var peer := int(p.peer)
 		seen[peer] = true
 		var row: Dictionary = _player_rows.get(peer, {})
 		if row.is_empty():
-			row = _make_player_row(p)
+			row = board.seat(peer)
+			if row.is_empty():
+				continue
 			_player_rows[peer] = row
-			players_box.add_child(row.root)
 		var active: bool = phase == "playing" and int(st.get("turn", -1)) == peer
 		var sb: StyleBoxFlat = row.sb
 		sb.bg_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.13) if active else Color(0.52, 0.56, 0.68, 0.05)
@@ -855,6 +873,17 @@ func _refresh_players() -> void:
 		# 棋子（Kenney 小人 / 纯色圆片）：破产时整体置灰
 		var chip_c: Control = row.chip
 		chip_c.modulate = Color(0.42, 0.42, 0.48, 0.85) if not bool(p.alive) else Color.WHITE
+		var seat_root: Control = row.get("root")
+		if seat_root != null:
+			seat_root.modulate = Color(1, 1, 1, 0.55) if not bool(p.alive) else Color.WHITE
+
+		# 体力闪电（道具系统的展示预留，暂为常量 3/5）
+		var stamina := int(p.get("stamina", 3))
+		for i in (row.pips as Array).size():
+			var pip: Panel = row.pips[i]
+			pip.add_theme_stylebox_override("panel", UIKit.stylebox(
+				Color(1.0, 0.85, 0.3, 0.85) if i < stamina else Color(1, 1, 1, 0.07),
+				4, Color(0, 0, 0, 0.25), 1))
 
 		# 金额：滚动数字 + 涨跌闪色 + 棋盘飘字
 		var target := int(p.money)
@@ -884,32 +913,7 @@ func _refresh_players() -> void:
 
 	for peer in _player_rows.keys():
 		if not seen.has(peer):
-			_player_rows[peer].root.queue_free()
-			_player_rows.erase(peer)
-
-func ml_needs_init(_row: Dictionary) -> bool:
-	# 新行首次填充文本
-	return true
-
-func _make_player_row(p: Dictionary) -> Dictionary:
-	var root := PanelContainer.new()
-	var sb := UIKit.stylebox(Color(0.52, 0.56, 0.68, 0.05), 8, Color(0, 0, 0, 0), 1)
-	root.add_theme_stylebox_override("panel", sb)
-	var m := UIKit.margins(8, 8, 5, 5)
-	root.add_child(m)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	m.add_child(row)
-	var chip := UIKit.chip(GameData.PLAYER_COLORS[int(p.color)], 16)
-	row.add_child(chip)
-	var name_l := UIKit.label(String(p.name), 14, UIKit.TEXT)
-	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	row.add_child(name_l)
-	var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 14, UIKit.TEXT)
-	row.add_child(money_l)
-	return {"root": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
-		"shown": int(p.money), "tw": null, "peer": int(p.peer)}
+			_player_rows.erase(peer)  # 座位是桌面世界的一部分，保留在桌上（掉线/出局只改显示）
 
 func _refresh_actions() -> void:
 	var phase := String(st.get("phase", "playing"))
@@ -923,7 +927,8 @@ func _refresh_actions() -> void:
 		"roll":
 			if is_my_roll:
 				status_label.text = "轮到你转盘了！"
-				if not board.is_showing_deck_card() and not board.is_wheel_spinning():
+				if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
+						and not board.is_rotating() and board.at_home_view():
 					board.focus_peer(my_peer)
 			else:
 				status_label.text = "等待 %s 转盘…" % turn_name
@@ -959,6 +964,17 @@ func _on_follow_toggled(on: bool) -> void:
 	board.auto_follow = on
 	if on:
 		board.focus_peer(my_peer, true)
+
+func _unhandled_input(event: InputEvent) -> void:
+	# 空格：视角转回自己座位
+	if event is InputEventKey and event.pressed and not event.echo:
+		var k := event as InputEventKey
+		if k.keycode == KEY_SPACE:
+			board.rotate_home()
+
+func _toggle_log() -> void:
+	log_panel.visible = not log_panel.visible
+	log_toggle.text = "战报 ▴" if log_panel.visible else "战报 ▾"
 
 func _at_auto_roll() -> void:
 	await get_tree().create_timer(0.4).timeout
@@ -1179,8 +1195,14 @@ func _take_shot(path: String) -> void:
 		await get_tree().create_timer(0.25).timeout
 	board.fit_overview()
 	await get_tree().create_timer(0.2).timeout
-	board.focus_grid(27, 0.8, true)
-	await get_tree().create_timer(0.15).timeout
+	board.cam_locked = true  # 摆拍期间锁住自动镜头，避免对局推进拽走视角
+	if _shot_rot > 0:
+		board.rotate_to_edge(_shot_rot, true)  # 摆拍：转到对应座位的视角
+		await get_tree().create_timer(0.15).timeout
+	if not path.contains("table"):
+		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
+		board.focus_grid(27, 0.8, true)
+		await get_tree().create_timer(0.15).timeout
 	if not path.contains("plain"):
 		board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 		board.spin_wheel(12)

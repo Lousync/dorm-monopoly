@@ -1,7 +1,8 @@
 # 宿舍大富翁
 
 宿舍主题的大富翁棋牌游戏，用 **Godot 4.6** 制作。
-**56 格宿舍地图**（滚轮缩放 / 拖拽平移 / 镜头自动跟随），
+**56 格宿舍地图铺在木纹桌面上，四人各坐一边**（滚轮缩放 / 拖拽平移 / 镜头自动跟随 /
+点座位转到 TA 视角），
 支持 **同一局域网 4 人联机**（自动搜索房间）与 **IPv6 / IPv4 直连**（跨校园网也能玩）。
 界面全部程序化绘制，另引用少量开源素材（棋子 / 图标 / 木纹），授权见 `assets/CREDITS.md`；
 8-bit 音效同样为运行时程序合成。
@@ -70,8 +71,14 @@
 
 ## 操作与表现
 
-- 棋盘：**滚轮缩放**、**拖拽平移**（拖一下就解除跟随）、右上「跟随」按钮回到镜头跟随，
-  轮到谁行动镜头自动跟到谁，行动棋子带脉冲光环。
+- **四人围桌**：整屏是一张木纹桌面，棋盘铺在中央，四家座位分坐下/左/上/右边，
+  座位上摆着各自的头像、现金、体力槽和 **5 个道具牌位**；对手的信息与牌位按**他们的视角**
+  摆放——上家的牌你看着是倒的、左右两家是横的，跟真围一张桌子一样。
+- 视角：**点谁的座位就转到谁的视角**（TA 的区域转到屏幕下方变正），点自己座位或按
+  **空格**回自己视角，「全桌」一键看全景；转到别人视角时对局镜头不会把你拽回来。
+- 棋盘：**滚轮缩放**、**拖拽平移**（拖一下就解除跟随）、「跟随」按钮回到镜头跟随，
+  轮到谁行动镜头自动跟到谁（仅在自己视角时），行动棋子带脉冲光环。
+- 战报 / 聊天收进右上角折叠面板，点「战报」展开；底部行动条集中状态与「转动转盘」。
 - 转盘：减速旋转 + 指针滴答声 + 落点格高亮，转到 12 满值有音效奖励。
 - 金额变动：玩家面板数字滚动、涨绿跌红闪烁，棋盘上同步飘字。
 - 事件/缴费/查寝：游戏内风格弹卡（不同颜色），查寝、破产伴随震屏与音效。
@@ -144,6 +151,9 @@ Godot_console.exe --headless --path . -- --autotest=host --rounds=3 --max-rounds
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3 --max-rounds=2
 # 无干扰布局截图（单人开局即拍；--shot= 也可配 autotest 在第 2 轮拍对局）
 Godot_console.exe --path . -- --shot-game=x --shot=shots/layout.png
+# 围桌摆拍：路径含 table 停在全景、含 plain 关闭摆拍道具；--shot-rot=1/2/3 转到对应座位视角
+Godot_console.exe --path . -- --autotest=host --rounds=3 --shot=shots/table_4p_home_plain.png
+Godot_console.exe --path . -- --autotest=host --rounds=3 --shot=shots/table_4p_rot1_plain.png --shot-rot=1
 # IPv6 回环验证（验证双栈服务端接受 ::1）
 Godot_console.exe --headless --path . --script tests/net_probe.gd -- --mode=host &
 Godot_console.exe --headless --path . --script tests/net_probe.gd -- --mode=client6

@@ -5,20 +5,34 @@ class_name BoardView
 ## 当前行动者脉冲光环、传送淡入淡出。
 
 signal tile_clicked(idx: int)
+signal seat_clicked(peer: int)
 
 const TILE := 64.0
 static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (1152, 768)
 const GAP := 3.0
-const MIN_ZOOM := 0.2
+const MIN_ZOOM := 0.3
 const MAX_ZOOM := 1.25
 ## 事件卡从牌堆抽出展示的总时长（房主结算等待与它保持同步）
 const DECK_CARD_TIME := 2.35
 
+# 四人围桌：座位带围绕棋盘（世界坐标），底=本地玩家，左/上/右=对手（内容朝向各自主人）
+const BAND_LEFT := 235.0
+const BAND_RIGHT := 235.0
+const BAND_TOP := 210.0
+const BAND_BOTTOM := 240.0
+static var TABLE := Rect2(-BAND_LEFT, -BAND_TOP, WORLD.x + BAND_LEFT + BAND_RIGHT, WORLD.y + BAND_TOP + BAND_BOTTOM)
+const SEAT_SIZE := Vector2(1068, 220)
+const SLOT_SIZE := Vector2(148, 196)
+
 var auto_follow := true      # 用户拖拽后关闭，点「跟随」按钮恢复
-var overlay_right := 0.0     # 右侧面板等覆盖宽度（镜头居中/适配会避开）
-var overlay_bottom := 0.0    # 底部覆盖高度
+var cam_locked := false      # 摆拍/剧情演出时锁住自动镜头（focus_* 直接忽略）
+var overlay_top := 0.0       # 屏幕层覆盖高度/宽度（镜头居中/适配会避开）
+var overlay_left := 0.0
+var overlay_right := 0.0
+var overlay_bottom := 0.0
 
 var _world: Control
+var _table: Node2D
 var _zoom := 0.5
 var _need_fit := true
 var _dragging := false
@@ -26,6 +40,11 @@ var _panning := false
 var _press_pos := Vector2.ZERO
 var _follow_peer := -1
 var _hover := -1
+var _rot := 0.0              # 视角旋转（弧度，0 = 自己坐南看北）
+var _rot_target := 0.0
+var _rotating := false
+var _center := WORLD * 0.5   # 可视区中心对应的世界坐标（注视点）
+var _center_target := WORLD * 0.5
 
 var _tile_sb: Array = []       # 每格 StyleBoxFlat
 var _sub_labels: Array = []
@@ -60,10 +79,12 @@ func _init() -> void:
 	clip_contents = true
 
 func _ready() -> void:
+	_table = Node2D.new()
+	add_child(_table)
 	_world = Control.new()
 	_world.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_world.size = WORLD
-	add_child(_world)
+	_table.add_child(_world)
 	_build_backdrop()
 	_build_tiles()
 	_build_interior()
@@ -85,7 +106,31 @@ static func tile_pos(i: int) -> Vector2:
 	return Vector2(tile_grid(i)) * TILE
 
 func _world_from_view(view_pos: Vector2) -> Vector2:
-	return (view_pos - _world.position) / _zoom
+	return _center + (view_pos - _visible_center()).rotated(-_rot) / _zoom
+
+func _view_from_world(w: Vector2) -> Vector2:
+	return (_world.position + _zoom * w).rotated(_rot)
+
+func _visible_center() -> Vector2:
+	return _visible_rect().get_center()
+
+## 把镜头状态（注视点/倍率/旋转）落到节点变换上：
+## 视口中心项随视角旋转、注视点项不转，保证 view(c)=Vc 且旋转围绕注视点不漂移
+func _apply_cam() -> void:
+	_world.scale = Vector2.ONE * _zoom
+	_table.rotation = _rot
+	_world.position = _visible_center().rotated(-_rot) - _center * _zoom
+
+## 注视点限制在桌面内容内（旋转 90° 倍数时可视宽高互换）
+func _clamp_center(c: Vector2) -> Vector2:
+	var vr := _visible_rect()
+	var half := (vr.size.rotated(-_rot) * 0.5).abs() / _zoom
+	var mn := TABLE.position + half
+	var mx := TABLE.end - half
+	var out := c
+	out.x = TABLE.get_center().x if mn.x > mx.x else clampf(c.x, mn.x, mx.x)
+	out.y = TABLE.get_center().y if mn.y > mx.y else clampf(c.y, mn.y, mx.y)
+	return out
 
 func _index_at(view_pos: Vector2) -> int:
 	var w := _world_from_view(view_pos)
@@ -98,6 +143,24 @@ func _index_at(view_pos: Vector2) -> int:
 # ---------------- 场景搭建 ----------------
 
 func _build_backdrop() -> void:
+	# 整张木纹桌面：铺满座位带之外再加边距，四家座位都坐在桌面上
+	var table := Panel.new()
+	table.position = TABLE.position - Vector2(30, 30)
+	table.size = TABLE.size + Vector2(60, 60)
+	table.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	table.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.085, 0.06), 30, Color(0.32, 0.24, 0.15), 3, 18))
+	_world.add_child(table)
+	var table_wood := TextureRect.new()
+	table_wood.texture = UIKit.tex("res://assets/textures/wood_floor.jpg")
+	table_wood.stretch_mode = TextureRect.STRETCH_TILE
+	table_wood.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	table_wood.position = Vector2(10, 10)
+	table_wood.size = table.size - Vector2(20, 20)
+	table_wood.modulate = Color(0.34, 0.29, 0.24)
+	table_wood.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	table.add_child(table_wood)
+
+	# 棋盘板：渐变厚底座 + 木纹（像铺在桌面上的一块实体桌游板）
 	var bg := Panel.new()
 	bg.position = Vector2(-26, -26)
 	bg.size = WORLD + Vector2(52, 52)
@@ -236,7 +299,7 @@ func _build_interior() -> void:
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
-	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点击格子查看详情", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
+	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点座位转到 TA 视角 · 空格回自己", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
 	hint.position = Vector2(0, 76)
 	hint.size = Vector2(600, 20)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -295,9 +358,9 @@ func _build_wheel(center: Vector2) -> void:
 func wheel_center() -> Vector2:
 	return _wheel.position + _wheel.size * 0.5 if _wheel != null else WORLD * 0.5
 
-## 转盘在游戏界面坐标（飘字用）
+## 转盘在游戏界面坐标（飘字用，含视角旋转）
 func wheel_screen_pos() -> Vector2:
-	return global_position + _world.position + wheel_center() * _zoom
+	return global_position + _view_from_world(wheel_center())
 
 ## 转盘点数：镜头对准转盘，转完后镜头回到行动棋子
 func spin_wheel(value: int, restore_peer := -1) -> void:
@@ -422,12 +485,20 @@ func _build_ring() -> void:
 func _process(delta: float) -> void:
 	if _need_fit and size.x > 10.0:
 		_need_fit = false
-		focus_grid(0, 0.8, true)  # 初始镜头：起点角、可读倍率
+		fit_overview(true)  # 初始镜头：四人围桌全景
 	if auto_follow and _has_follow_pt:
 		_pan_toward(_follow_pt, delta)
 	elif auto_follow and _follow_peer != -1 and _tokens.has(_follow_peer):
 		var tk: Control = _tokens[_follow_peer]
 		_pan_toward(tk.position + tk.size * 0.5, delta)
+	if _rotating:
+		var k := 1.0 - exp(-7.0 * delta)
+		_rot = lerp_angle(_rot, _rot_target, k)
+		_center = _center.lerp(_center_target, k)
+		if absf(wrapf(_rot_target - _rot, -PI, PI)) < 0.004 and _center.distance_to(_center_target) < 1.0:
+			_rot = _rot_target
+			_center = _center_target
+			_rotating = false
 	if _ring_peer != -1 and _tokens.has(_ring_peer):
 		var tk2: Control = _tokens[_ring_peer]
 		_ring.position = tk2.position + tk2.size * 0.5 - _ring.size * 0.5
@@ -437,77 +508,79 @@ func _process(delta: float) -> void:
 		if _wheel_wait <= 0.0 and _wheel_restore != -1:
 			focus_peer(_wheel_restore)
 			_wheel_restore = -1
+	_apply_cam()
 
 ## 镜头平滑推向某个世界坐标点（棋子中心 / 牌堆）
 func _pan_toward(world_center: Vector2, delta: float) -> void:
-	var vr := _visible_rect()
-	var target := vr.position + vr.size * 0.5 - world_center * _zoom
-	_world.position = _world.position.lerp(_clamp_pos(target), 1.0 - exp(-6.0 * delta))
+	_center = _center.lerp(_clamp_center(world_center), 1.0 - exp(-6.0 * delta))
 
 func _visible_rect() -> Rect2:
-	return Rect2(0, 0, size.x - overlay_right, size.y - overlay_bottom)
+	return Rect2(overlay_left, overlay_top, size.x - overlay_left - overlay_right, size.y - overlay_top - overlay_bottom)
 
-## 全图概览（把整块棋盘塞进可视区域）
-func fit_overview() -> void:
+## 全桌概览（把整张围桌塞进可视区域，回到自己视角）；hard=true 立即到位
+func fit_overview(hard := false) -> void:
 	auto_follow = false
 	_follow_peer = -1
 	_has_follow_pt = false
+	_rot_target = 0.0
+	_rotating = true
 	var vr := _visible_rect()
-	_zoom = clampf(minf(vr.size.x / (WORLD.x + 40.0), vr.size.y / (WORLD.y + 40.0)), MIN_ZOOM, 1.0)
-	_world.scale = Vector2.ONE * _zoom
-	_world.position = _clamp_pos(vr.position + (vr.size - WORLD * _zoom) * 0.5)
+	var occ := _occupied_rect()
+	var osize := occ.size.rotated(_rot_target).abs()
+	_zoom = clampf(minf(vr.size.x / (osize.x + 40.0), vr.size.y / (osize.y + 40.0)), MIN_ZOOM, 1.0)
+	_center_target = occ.get_center()
+	if hard:
+		_rot = 0.0
+		_rotating = false
+		_center = _center_target
+	_apply_cam()
 
-## 镜头对准某格 / 某棋子；hard=true 立即居中
+## 镜头对准某格 / 某棋子；hard=true 立即居中（显式对焦会打断进行中的转视角动画）
 func focus_grid(idx: int, zoom: float, hard := true) -> void:
+	if cam_locked:
+		return
 	auto_follow = false
 	_follow_peer = -1
 	_has_follow_pt = false
+	_rotating = false
 	_zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
-	_world.scale = Vector2.ONE * _zoom
-	var center := tile_pos(idx) + Vector2(TILE, TILE) * 0.5
 	if hard:
-		var vr := _visible_rect()
-		_world.position = _clamp_pos(vr.position + vr.size * 0.5 - center * _zoom)
+		_center = _clamp_center(tile_pos(idx) + Vector2(TILE, TILE) * 0.5)
+		_center_target = _center
+	_apply_cam()
 
 ## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
 func focus_point(world_pt: Vector2, hard := false) -> void:
+	if cam_locked:
+		return
 	auto_follow = true
 	_follow_peer = -1
 	_has_follow_pt = true
 	_follow_pt = world_pt
+	_rotating = false
 	if hard:
-		var vr := _visible_rect()
-		_world.position = _clamp_pos(vr.position + vr.size * 0.5 - world_pt * _zoom)
+		_center = _clamp_center(world_pt)
+		_center_target = _center
+	_apply_cam()
 
 func focus_peer(peer: int, hard := false) -> void:
+	if cam_locked:
+		return
 	auto_follow = true
 	_follow_peer = peer
 	_has_follow_pt = false
+	_rotating = false
 	if hard and _tokens.has(peer):
 		var tk: Control = _tokens[peer]
-		var vr := _visible_rect()
-		_world.position = _clamp_pos(vr.position + vr.size * 0.5 - (tk.position + tk.size * 0.5) * _zoom)
+		_center = _clamp_center(tk.position + tk.size * 0.5)
+		_center_target = _center
+	_apply_cam()
 
 func _zoom_at(factor: float, anchor: Vector2) -> void:
 	var before := _world_from_view(anchor)
 	_zoom = clampf(_zoom * factor, MIN_ZOOM, MAX_ZOOM)
-	_world.scale = Vector2.ONE * _zoom
-	_world.position = _clamp_pos(anchor - before * _zoom)
-
-func _clamp_pos(p: Vector2) -> Vector2:
-	var vr := _visible_rect()
-	var m := 26.0
-	var x := p.x
-	var y := p.y
-	if WORLD.x * _zoom < vr.size.x:
-		x = vr.position.x + (vr.size.x - WORLD.x * _zoom) * 0.5
-	else:
-		x = clampf(x, vr.end.x - WORLD.x * _zoom - m, vr.position.x + m)
-	if WORLD.y * _zoom < vr.size.y:
-		y = vr.position.y + (vr.size.y - WORLD.y * _zoom) * 0.5
-	else:
-		y = clampf(y, vr.end.y - WORLD.y * _zoom - m, vr.position.y + m)
-	return Vector2(x, y)
+	_center = _clamp_center(before - (anchor - _visible_center()).rotated(-_rot) / _zoom)
+	_apply_cam()
 
 func _gui_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton:
@@ -521,8 +594,14 @@ func _gui_input(ev: InputEvent) -> void:
 				_dragging = true
 				_panning = false
 				_press_pos = mb.position
-			elif _dragging:
-				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
+		elif _dragging:
+			if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
+				var seat := _seat_at(mb.position)
+				if seat != -1:
+					Fx.play("click", -10.0)
+					rotate_to_seat(seat)
+					seat_clicked.emit(seat)
+				else:
 					var idx := _index_at(mb.position)
 					if idx >= 0:
 						Fx.play("click", -10.0)
@@ -538,7 +617,8 @@ func _gui_input(ev: InputEvent) -> void:
 				_panning = true
 				auto_follow = false
 				_has_follow_pt = false
-				_world.position = _clamp_pos(_world.position + mm.relative)
+				_center = _clamp_center(_center - mm.relative.rotated(-_rot) / _zoom)
+				_apply_cam()
 		else:
 			set_hover(_index_at(mm.position))
 
@@ -552,6 +632,181 @@ func set_hover(idx: int) -> void:
 		_animate_tile(old, false)
 	if idx >= 0:
 		_animate_tile(idx, true)
+
+# ---------------- 四人围桌座位 ----------------
+
+var _seats := {}         # edge(0底 1左 2上 3右) -> 座位部件字典
+var _seat_of_peer := {}  # peer -> edge
+var _my_peer := -1
+
+## 按行动顺序落座：e0=自己，e1=下家(左)，e2=对家(上)，e3=上家(右)；人不满空位不建
+func build_seats(players: Array, my_peer: int) -> void:
+	for e in _seats:
+		(_seats[e].root as Control).queue_free()
+	_seats.clear()
+	_seat_of_peer.clear()
+	_my_peer = my_peer
+	var my_i := 0
+	for i in players.size():
+		if int(players[i].peer) == my_peer:
+			my_i = i
+			break
+	for k in players.size():
+		var p: Dictionary = players[(my_i + k) % players.size()]
+		_seats[k] = _make_seat(p, k)
+		_seat_of_peer[int(p.peer)] = k
+
+func seat_count() -> int:
+	return _seats.size()
+
+func seat(peer: int) -> Dictionary:
+	return _seats.get(int(_seat_of_peer.get(peer, -1)), {})
+
+func _seat_center(e: int) -> Vector2:
+	match e:
+		1: return Vector2(-BAND_LEFT * 0.5, WORLD.y * 0.5)
+		2: return Vector2(WORLD.x * 0.5, -BAND_TOP * 0.5)
+		3: return Vector2(WORLD.x + BAND_RIGHT * 0.5, WORLD.y * 0.5)
+		_: return Vector2(WORLD.x * 0.5, WORLD.y + BAND_BOTTOM * 0.5)
+
+func _seat_band(e: int) -> Rect2:
+	match e:
+		1: return Rect2(-BAND_LEFT, -BAND_TOP, BAND_LEFT, WORLD.y + BAND_TOP + BAND_BOTTOM)
+		2: return Rect2(-BAND_LEFT, -BAND_TOP, WORLD.x + BAND_LEFT + BAND_RIGHT, BAND_TOP)
+		3: return Rect2(WORLD.x, -BAND_TOP, BAND_RIGHT, WORLD.y + BAND_TOP + BAND_BOTTOM)
+		_: return Rect2(-BAND_LEFT, WORLD.y, WORLD.x + BAND_LEFT + BAND_RIGHT, BAND_BOTTOM)
+
+func _occupied_rect() -> Rect2:
+	var r := Rect2(Vector2.ZERO, WORLD).grow(30.0)
+	for e in _seats:
+		r = r.merge(_seat_band(e))
+	return r
+
+## 视角旋转：点谁转谁（TA 的区域转到屏幕下方变正）；空格/点自己回自己视角
+func rotate_to_seat(peer: int) -> void:
+	rotate_to_edge(int(_seat_of_peer.get(peer, -1)))
+
+func rotate_to_edge(e: int, hard := false) -> void:
+	if e < 0 or not _seats.has(e):
+		return
+	_rot_target = -e * PI * 0.5
+	_center_target = _clamp_center(_seat_center(e))
+	if hard:
+		_rot = _rot_target
+		_center = _center_target
+		_rotating = false
+	else:
+		_rotating = true
+	auto_follow = false
+	_follow_peer = -1
+	_has_follow_pt = false
+	_apply_cam()
+
+func rotate_home() -> void:
+	rotate_to_edge(0)
+
+func is_rotating() -> bool:
+	return _rotating
+
+## 是否坐在自己的视角上（≈0°）；转去别人座位期间对局层不应把镜头拉回
+func at_home_view() -> bool:
+	return absf(wrapf(_rot, -PI, PI)) < 0.3
+
+func _seat_at(view_pos: Vector2) -> int:
+	var gp: Vector2 = _world.to_global(_world_from_view(view_pos))
+	for e in _seats:
+		var s: Dictionary = _seats[e]
+		var root: Control = s.root
+		if Rect2(Vector2.ZERO, root.size).has_point(root.to_local(gp)):
+			return int(s.peer)
+	return -1
+
+## 一个座位：信息块（头像/名字/现金/体力）+ 5 个道具牌位；整块旋转 e*90° 朝向座位主人
+func _make_seat(p: Dictionary, e: int) -> Dictionary:
+	var root := Control.new()
+	root.size = SEAT_SIZE
+	root.pivot_offset = SEAT_SIZE * 0.5
+	root.rotation_degrees = e * 90.0
+	root.position = _seat_center(e) - SEAT_SIZE * 0.5
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world.add_child(root)
+
+	var sb := UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.86), 18, Color(0, 0, 0, 0), 2)
+	var body := Panel.new()
+	body.size = SEAT_SIZE
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_theme_stylebox_override("panel", sb)
+	root.add_child(body)
+
+	var chip: Control
+	var piece := UIKit.piece_tex(int(p.color) % 4)
+	if piece != null:
+		var tr := TextureRect.new()
+		tr.texture = piece
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.position = Vector2(16, 16)
+		tr.size = Vector2(52, 60)
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		body.add_child(tr)
+		chip = tr
+	else:
+		chip = UIKit.chip(GameData.PLAYER_COLORS[int(p.color) % 4], 26)
+		chip.position = Vector2(22, 26)
+		body.add_child(chip)
+
+	var name_l := UIKit.label(String(p.name), 21, UIKit.TEXT)
+	name_l.position = Vector2(78, 14)
+	name_l.size = Vector2(158, 56)
+	name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(name_l)
+
+	var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 22, UIKit.ACCENT)
+	money_l.position = Vector2(14, 92)
+	money_l.size = Vector2(224, 40)
+	money_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(money_l)
+
+	var stamina_row := HBoxContainer.new()
+	stamina_row.position = Vector2(14, 148)
+	stamina_row.size = Vector2(224, 40)
+	stamina_row.add_theme_constant_override("separation", 5)
+	stamina_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(stamina_row)
+	var bolt := UIKit.label("⚡", 20, Color(1.0, 0.85, 0.3))
+	bolt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stamina_row.add_child(bolt)
+	var pips: Array = []
+	for i in 5:
+		var pip := Panel.new()
+		pip.custom_minimum_size = Vector2(24, 30)
+		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pip.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.07), 4, Color(0, 0, 0, 0.25), 1))
+		stamina_row.add_child(pip)
+		pips.append(pip)
+
+	var slots: Array = []
+	for i in 5:
+		var sp := Panel.new()
+		sp.position = Vector2(254.0 + float(i) * (SLOT_SIZE.x + 10.0), 12)
+		sp.size = SLOT_SIZE
+		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sp.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.035), 10,
+			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55), 1))
+		body.add_child(sp)
+		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
+		plus.set_anchors_preset(Control.PRESET_FULL_RECT)
+		plus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		plus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sp.add_child(plus)
+		slots.append(sp)
+
+	return {"root": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
+		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
+		"shown": int(p.money), "tw": null}
 
 # ---------------- 渲染状态快照 ----------------
 
@@ -742,9 +997,9 @@ func token_world_pos(peer: int) -> Vector2:
 	var tk: Control = _tokens[peer]
 	return tk.position + tk.size * 0.5
 
-## 棋子在游戏界面坐标（飘字用）
+## 棋子在游戏界面坐标（飘字用，含视角旋转）
 func token_screen_pos(peer: int) -> Vector2:
-	return global_position + _world.position + token_world_pos(peer) * _zoom
+	return global_position + _view_from_world(token_world_pos(peer))
 
 func _kill_token_tw(peer: int) -> void:
 	if not _tokens.has(peer):
