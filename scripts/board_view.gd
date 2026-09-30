@@ -583,16 +583,16 @@ func _gui_input(ev: InputEvent) -> void:
 				_press_pos = mb.position
 			elif _dragging:
 				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
-					var seat := _seat_at(mb.position)
-					if seat != -1:
+					var e := _seat_edge_at(mb.position)
+					if e != -1:
 						Fx.play("click", -10.0)
-						rotate_to_seat(seat)
-						seat_clicked.emit(seat)
-				else:
-					var idx := _index_at(mb.position)
-					if idx >= 0:
-						Fx.play("click", -10.0)
-						tile_clicked.emit(idx)
+						rotate_to_edge(e)
+						seat_clicked.emit(int(_seats[e].peer))
+					else:
+						var idx := _index_at(mb.position)
+						if idx >= 0:
+							Fx.play("click", -10.0)
+							tile_clicked.emit(idx)
 				if not (mb.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)):
 					_dragging = false
 					_panning = false
