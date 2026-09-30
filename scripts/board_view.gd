@@ -278,33 +278,26 @@ func _build_interior() -> void:
 	var c := WORLD * 0.5 + BOARD_OFFSET
 	var p := Panel.new()
 	p.position = Vector2(c.x - 380, 110)
-	p.size = Vector2(760, 140)
+	p.size = Vector2(760, 104)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.11, 0.16, 0.62), 20,
 		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.22), 1))
 	_world.add_child(p)
 
 	var title := UIKit.title_label("宿舍大富翁", 42, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.34), 0)
-	title.position = Vector2(0, 10)
-	title.size = Vector2(760, 58)
+	title.position = Vector2(0, 8)
+	title.size = Vector2(760, 54)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(title)
 
 	var sub := UIKit.label("%d × %d 环线 · %d 格 · 10 大产业" % [GameData.BOARD_COLS, GameData.BOARD_ROWS, GameData.TILES.size()],
 		16, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.75))
-	sub.position = Vector2(0, 72)
+	sub.position = Vector2(0, 66)
 	sub.size = Vector2(760, 26)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
-
-	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点座位卡 / Tab 转视角 · 空格回自己", 14, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
-	hint.position = Vector2(0, 104)
-	hint.size = Vector2(760, 24)
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(hint)
 
 	_build_deck("机会", Vector2(c.x - 560, c.y), UIKit.ACCENT)
 	_build_deck("命运", Vector2(c.x + 560, c.y), Color(0.66, 0.56, 0.95))
