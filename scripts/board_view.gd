@@ -538,8 +538,8 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 
 ## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
 func focus_point(world_pt: Vector2, hard := false) -> void:
-	if cam_locked:
-		return
+	if cam_locked or not at_home_view():
+		return  # 摆拍锁定或身在别人视角时，对局镜头不抢方向盘
 	auto_follow = true
 	_follow_peer = -1
 	_has_follow_pt = true
@@ -551,8 +551,8 @@ func focus_point(world_pt: Vector2, hard := false) -> void:
 	_apply_cam()
 
 func focus_peer(peer: int, hard := false) -> void:
-	if cam_locked:
-		return
+	if cam_locked or not at_home_view():
+		return  # 身在别人视角时，对局镜头不抢方向盘
 	auto_follow = true
 	_follow_peer = peer
 	_has_follow_pt = false
@@ -603,6 +603,7 @@ func _gui_input(ev: InputEvent) -> void:
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
 				_set_seat_hover(-1)
+				_rotating = false   # 拖拽立即接管，转场动画不再拉扯
 				auto_follow = false
 				_has_follow_pt = false
 				_center = _clamp_center(_center - mm.relative.rotated(-_rot) / _zoom)
@@ -695,6 +696,15 @@ func rotate_to_edge(e: int, hard := false) -> void:
 
 func rotate_home() -> void:
 	rotate_to_edge(0)
+
+## 「跟随」：视角转回自己并恢复行动跟随（绕过别人视角的镜头闸）
+func go_home_follow(peer: int) -> void:
+	auto_follow = true
+	_follow_peer = peer
+	_has_follow_pt = false
+	_view_edge = 0
+	_rot_target = 0.0
+	_rotating = true
 
 ## Tab：按行动顺序循环切换到下一个有人的座位视角
 func rotate_next() -> void:

@@ -972,7 +972,7 @@ func _set_banner(text: String) -> void:
 func _on_follow_toggled(on: bool) -> void:
 	board.auto_follow = on
 	if on:
-		board.focus_peer(my_peer, true)
+		board.go_home_follow(my_peer)  # 转回自己视角并恢复行动跟随
 
 func _unhandled_input(event: InputEvent) -> void:
 	# 空格：视角转回自己座位；Tab：循环切到下一家视角
