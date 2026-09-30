@@ -92,7 +92,9 @@ func _ready() -> void:
 	_build_interior()
 	_build_ring()
 	resized.connect(func() -> void: _need_fit = true)
-	mouse_exited.connect(func() -> void: set_hover(-1))
+	mouse_exited.connect(func() -> void:
+		set_hover(-1)
+		_set_seat_hover(-1))
 
 # ---------------- 坐标换算 ----------------
 
@@ -284,7 +286,7 @@ func _build_interior() -> void:
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
-	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点座位转到 TA 视角 · 空格回自己", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
+	var hint := UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情 · 点对手座位卡转到 TA 视角 · 空格回自己", 13, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.55))
 	hint.position = Vector2(0, 76)
 	hint.size = Vector2(600, 20)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -600,12 +602,14 @@ func _gui_input(ev: InputEvent) -> void:
 		if _dragging and mask != 0:
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
+				_set_seat_hover(-1)
 				auto_follow = false
 				_has_follow_pt = false
 				_center = _clamp_center(_center - mm.relative.rotated(-_rot) / _zoom)
 				_apply_cam()
 		else:
 			set_hover(_index_at(mm.position))
+			_set_seat_hover(_seat_edge_at(mm.position))
 
 ## 设置悬停格（-1 清除），触发高亮渐变
 func set_hover(idx: int) -> void:
@@ -696,12 +700,37 @@ func is_rotating() -> bool:
 func at_home_view() -> bool:
 	return absf(wrapf(_rot, -PI, PI)) < 0.3
 
-func _seat_at(view_pos: Vector2) -> int:
+func _seat_edge_at(view_pos: Vector2) -> int:
 	var wpt := _world_from_view(view_pos)
 	for e in _seats:
 		if _seat_bar(e).has_point(wpt):
-			return int(_seats[e].peer)
+			return e
 	return -1
+
+func _seat_at(view_pos: Vector2) -> int:
+	var e := _seat_edge_at(view_pos)
+	return int(_seats[e].peer) if e != -1 else -1
+
+var _hover_seat := -1  # 悬停中的座位边（-1 无）
+
+## 悬停反馈：内容卡提亮 + 手势光标，明示「这块可以点」
+func _set_seat_hover(e: int) -> void:
+	if e == _hover_seat:
+		return
+	var old := _hover_seat
+	_hover_seat = e
+	if old != -1 and _seats.has(old):
+		_seat_hover_fx(old, false)
+	if e != -1 and _seats.has(e):
+		_seat_hover_fx(e, true)
+	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if e != -1 else Control.CURSOR_ARROW
+
+func _seat_hover_fx(e: int, hovered: bool) -> void:
+	var content: Control = _seats[e].get("content")
+	if content == null or not is_instance_valid(content):
+		return
+	var tw := create_tween()
+	tw.tween_property(content, "modulate", Color(1.16, 1.16, 1.24) if hovered else Color.WHITE, 0.12)
 
 ## 一个座位：整条操作栏面板（拼方框的一边）+ 旋转排布的内容件
 ## （头像/名字/现金/体力 + 5 个道具牌位），内容朝向座位主人
@@ -802,7 +831,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		sp.add_child(plus)
 		slots.append(sp)
 
-	return {"root": holder, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
+	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
 		"shown": int(p.money), "tw": null}
 

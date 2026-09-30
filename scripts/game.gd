@@ -211,7 +211,7 @@ func _build_ui() -> void:
 	bar_row.add_child(roll_btn)
 
 	# 左下角：格子详情 / 操作提示
-	info_label = UIKit.label("滚轮缩放 · 拖拽平移 · 点座位转到 TA 视角 · 空格回自己", 13, UIKit.TEXT_DIM)
+	info_label = UIKit.label("滚轮缩放 · 拖拽平移 · 鼠标放到四周对手的座位卡上变手势后点击，转到 TA 视角 · 空格回自己", 13, UIKit.TEXT_DIM)
 	info_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	info_label.offset_left = 14
 	info_label.offset_right = 356
