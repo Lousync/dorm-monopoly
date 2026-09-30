@@ -1,0 +1,70 @@
+<mxfile host="app.diagrams.net" agent="ZCode" version="29.6.1">
+  <diagram name="四人围桌布局" id="layout-table-1">
+    <mxGraphModel dx="1280" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="table-bg" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f0e6;strokeColor=#8b5a2b;" value="整屏 = 木纹桌面（美术负责）">
+          <mxGeometry x="0" y="0" width="1280" height="800" as="geometry" />
+        </mxCell>
+        <mxCell id="board" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#444444;" value="棋盘 56 格环形（世界空间 · 可缩放平移）">
+          <mxGeometry x="220" y="140" width="840" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="deck-chance" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f4ff;strokeColor=#3a7ebf;" value="机会牌堆（已有）">
+          <mxGeometry x="430" y="350" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="wheel" parent="1" vertex="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#fff2cc;strokeColor=#b58900;" value="转轮（已有）">
+          <mxGeometry x="570" y="300" width="150" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="deck-fate" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe8f0;strokeColor=#bf3a7e;" value="命运牌堆（已有）">
+          <mxGeometry x="730" y="350" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="overlay-zone" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#999999;" value="弹层区：商店 / 黑市 / 赌场 / 发现三选一（弹出时盖在桌面上方）">
+          <mxGeometry x="360" y="170" width="560" height="460" as="geometry" />
+        </mxCell>
+        <mxCell id="seat-top" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="顶部座位 · 玩家3：头像/名字/现金/体力⚡/状态角标 + 道具牌位×5（小 · 非交互）">
+          <mxGeometry x="340" y="8" width="600" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="seat-left" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="左侧座位 · 玩家2（下家，示意）：同顶部，牌位竖排">
+          <mxGeometry x="10" y="210" width="180" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="seat-right" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#5a7ebf;" value="右侧座位 · 玩家4：同顶部，牌位竖排">
+          <mxGeometry x="1090" y="210" width="180" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="seat-bottom" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fdf6e3;strokeColor=#b58900;" value="">
+          <mxGeometry x="200" y="672" width="880" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="me-info" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b58900;" value="你 · 玩家1：头像/名字/现金">
+          <mxGeometry x="210" y="678" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="me-status" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b58900;" value="体力 ⚡×5 + 状态角标（监/眠/黑屋/冷却）">
+          <mxGeometry x="210" y="737" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="slot1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#c0a030;" value="道具牌位1">
+          <mxGeometry x="410" y="680" width="92" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="slot2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#c0a030;" value="道具牌位2">
+          <mxGeometry x="508" y="680" width="92" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="slot3" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#c0a030;" value="道具牌位3">
+          <mxGeometry x="606" y="680" width="92" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="slot4" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#c0a030;" value="道具牌位4">
+          <mxGeometry x="704" y="680" width="92" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="slot5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#c0a030;" value="道具牌位5">
+          <mxGeometry x="802" y="680" width="92" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="me-button" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b3;strokeColor=#b5651d;" value="行动按钮：掷轮 / 使用道具">
+          <mxGeometry x="920" y="690" width="140" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="turn-banner" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#b58900;" value="当前回合横幅（现有元素迁移）">
+          <mxGeometry x="460" y="112" width="360" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="log-chat" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#888888;" value="日志 / 聊天（可折叠）">
+          <mxGeometry x="950" y="8" width="320" height="100" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
