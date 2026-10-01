@@ -129,12 +129,12 @@
 	.seat.left .card, .seat.right .card { width: 320px; height: 61px; }
 
 	/* ---------- 底部：玩家牌位垫 ---------- */
-	.mat-self { position: absolute; left: 396px; top: 685px; width: 296px; height: 61px;
+	.mat-self { position: absolute; left: 396px; top: 654px; width: 296px; height: 61px;
 		background: rgba(10, 12, 20, .34); border-radius: 8px;
 		border: 1px solid rgba(245, 179, 66, .55); display: flex; align-items: center;
 		gap: 7px; padding: 6px 9px; }
 	.mat-self .turn { color: #f5b342; font-size: 7px; }
-	.mat-feed { position: absolute; left: 702px; top: 685px; width: 182px; height: 61px;
+	.mat-feed { position: absolute; left: 702px; top: 654px; width: 182px; height: 61px;
 		background: rgba(7, 9, 16, .72); border: 1px solid rgba(90, 98, 128, .55);
 		border-radius: 8px; overflow: hidden; }
 	.mat-feed .fh { color: #8b93ad; font-size: 7px; padding: 2px 6px;
@@ -143,12 +143,14 @@
 	.mat-feed .fl p { font-size: 7.5px; line-height: 10.5px; color: #c6cbdb;
 		white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 
-	/* ---------- 行动条 / 选项按钮 ---------- */
-	.actions { position: absolute; left: 0; right: 0; bottom: 8px; height: 36px;
-		display: flex; justify-content: center; align-items: center; gap: 8px; }
-	.actions .status { color: #dfe3ee; font-size: 12px; margin-right: 6px; }
-	.abtn { font-size: 11px; color: #dfe3ee; background: linear-gradient(180deg, #262b3d, #1b1f2e);
-		border: 1px solid #3a4058; border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+	/* ---------- 行动条：拼在牌垫下方，与座位卡/战报条连成一块牌垫 ---------- */
+	.actions { position: absolute; left: 396px; top: 721px; width: 488px; height: 30px;
+		display: flex; justify-content: center; align-items: center; gap: 6px;
+		background: rgba(7, 9, 16, .6); border: 1px solid rgba(90, 98, 128, .55);
+		border-radius: 8px; }
+	.actions .status { color: #dfe3ee; font-size: 10px; margin-right: 4px; }
+	.abtn { font-size: 10px; color: #dfe3ee; background: linear-gradient(180deg, #262b3d, #1b1f2e);
+		border: 1px solid #3a4058; border-radius: 5px; padding: 3px 9px; cursor: pointer; }
 	.abtn:hover { border-color: #f5b342; }
 	.abtn.roll { color: #3a2405; font-weight: bold; border-color: #f5b342;
 		background: linear-gradient(180deg, #ffd88a, #f0a72e); }
