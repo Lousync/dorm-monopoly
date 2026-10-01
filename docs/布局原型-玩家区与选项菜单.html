@@ -192,15 +192,44 @@
 	.optbtn:hover { border-color: #f5b342; }
 
 	/* ---------- 事件弹卡（牌位垫上方） ---------- */
-	/* ---------- 事件弹卡：落在牌垫上（覆盖上排，短暂显示后消失，按类型变色） ---------- */
-	.eventcard { position: absolute; left: 396px; top: 660px; width: 488px; z-index: 26;
-		box-sizing: border-box; text-align: center; background: rgba(22, 12, 10, .96);
-		border: 2px solid #ef7b74; border-radius: 8px; padding: 9px 16px;
-		color: #ff9d97; font-size: 13px; display: none;
-		box-shadow: 0 6px 18px rgba(0, 0, 0, .5); }
-	.eventcard.show { display: block; animation: pop .28s ease-out; }
-	@keyframes pop { 0% { transform: scale(.6); opacity: 0; }
-		100% { transform: scale(1); opacity: 1; } }
+	/* ---------- 事件反馈三候选：A 飞钞 / B 横幅扫过 / C 角标堆叠 ---------- */
+	#fxlayer { position: absolute; inset: 0; z-index: 26; pointer-events: none; }
+	.bill { position: absolute; width: 20px; height: 11px; border-radius: 2px;
+		display: flex; align-items: center; justify-content: center;
+		font-size: 8px; font-weight: bold; color: #0c2a12;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+		transition: transform .55s cubic-bezier(.3, .7, .4, 1), opacity .55s; }
+	.bill.gain { background: linear-gradient(180deg, #7fd894, #58c468); }
+	.bill.pay  { background: linear-gradient(180deg, #e89a94, #d86060); }
+	.ftext { position: absolute; font-size: 14px; font-weight: bold;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, .7); animation: ftrise 1.3s forwards; }
+	@keyframes ftrise { 0% { opacity: 0; transform: translateY(8px); }
+		18% { opacity: 1; } 100% { opacity: 0; transform: translateY(-30px); } }
+	@keyframes mnpulse-good { 0%, 100% { color: #f5b342; }
+		40% { color: #7fe08f; text-shadow: 0 0 8px rgba(88, 196, 104, .8); } }
+	@keyframes mnpulse-bad  { 0%, 100% { color: #f5b342; }
+		40% { color: #ff8f88; text-shadow: 0 0 8px rgba(216, 96, 96, .8); } }
+	.mn.pulse-good { animation: mnpulse-good .9s; }
+	.mn.pulse-bad  { animation: mnpulse-bad .9s; }
+	.eventcard { position: absolute; left: 396px; top: 666px; width: 488px; height: 42px;
+		z-index: 27; box-sizing: border-box; display: none; align-items: center;
+		justify-content: center; background: rgba(12, 13, 22, .92);
+		border-top: 2px solid #ef7b74; border-bottom: 2px solid #ef7b74;
+		color: #ff9d97; font-size: 16px; font-weight: bold; letter-spacing: 1px; }
+	.eventcard.show { display: flex; animation: sweep 2.1s ease-in-out forwards; }
+	@keyframes sweep { 0% { transform: translateX(-470px); opacity: 0; }
+		28% { transform: translateX(0); opacity: 1; }
+		68% { transform: translateX(0); opacity: 1; }
+		100% { transform: translateX(470px); opacity: 0; } }
+	#toasts { position: absolute; left: 700px; top: 646px; width: 186px; z-index: 26;
+		display: flex; flex-direction: column; gap: 3px; pointer-events: none; }
+	.toast { font-size: 9px; padding: 3px 8px; border-radius: 10px;
+		background: rgba(10, 12, 20, .92); white-space: nowrap; overflow: hidden;
+		text-overflow: ellipsis; border: 1px solid #565d75;
+		animation: toastin .22s ease-out; }
+	.toast.out { opacity: 0; transition: opacity .4s; }
+	@keyframes toastin { 0% { transform: translateX(30px); opacity: 0; }
+		100% { transform: none; opacity: 1; } }
 
 	/* ---------- 格子详情（左下临时） ---------- */
 	.tileinfo { position: absolute; left: 14px; bottom: 66px; z-index: 24; width: 210px;
@@ -363,8 +392,10 @@
 	<!-- 左上角唯一入口：选项 -->
 	<button class="optbtn" onclick="openMenu()">☰ 选项</button>
 
-	<!-- 事件弹卡：从牌位垫上方弹出 -->
-	<div class="eventcard" id="eventcard">⚠ 缴电费 ¥300，钱包在流泪</div>
+	<!-- 事件反馈层：A 飞钞浮字 / B 横幅扫过 / C 角标堆叠 -->
+	<div id="fxlayer"></div>
+	<div id="toasts"></div>
+	<div class="eventcard" id="eventcard"></div>
 
 	<!-- 格子详情（左下临时弹卡，演示左留白） -->
 	<div class="tileinfo" id="tileinfo">
@@ -415,6 +446,10 @@
 		<div class="row"><label>阶段</label>
 			<button id="b-ph1" class="on" onclick="setPhase(1)">转轮盘</button>
 			<button id="b-ph2" onclick="setPhase(2)">使用道具</button></div>
+		<div class="row"><label>反馈</label>
+			<button id="b-evA" class="on" onclick="setEvStyle('A')">A 飞钞</button>
+			<button id="b-evB" onclick="setEvStyle('B')">B 横幅</button>
+			<button id="b-evC" onclick="setEvStyle('C')">C 角标</button></div>
 		<div class="row"><label>触发</label>
 			<button onclick="popEvent()">事件弹卡</button>
 			<button onclick="popTile()">格子详情</button></div>
@@ -480,19 +515,73 @@
 		setTimeout(() => t.style.display = "none", 1600);
 	}
 	const EVTS = [
-		{ t: "⚠ 缴电费 ¥300，钱包在流泪", c: "#ef7b74", bg: "rgba(24, 12, 10, .96)" },
-		{ t: "奖学金到账 +¥1,500！", c: "#58c468", bg: "rgba(8, 20, 12, .96)" },
-		{ t: "【机会】帮宿管阿姨搬水 +¥600", c: "#f0a72e", bg: "rgba(21, 16, 6, .96)" }
+		{ kind: "pay",   t: "缴电费 ¥300",                 money: "-¥300" },
+		{ kind: "gain",  t: "奖学金到账 +¥1,500",          money: "+¥1,500" },
+		{ kind: "event", t: "【机会】帮宿管阿姨搬水 +¥600", money: "+¥600" }
 	];
-	let evi = 0, evtimer = null;
+	let evi = 0, evStyle = "A";
+	const KCOL = { pay: "#ef7b74", gain: "#58c468", event: "#f0a72e" };
+	function setEvStyle(s) {
+		evStyle = s;
+		["A", "B", "C"].forEach(k => $("b-ev" + k).classList.toggle("on", k === s));
+	}
 	function popEvent() {
-		const e = $("eventcard");
 		const v = EVTS[evi++ % EVTS.length];
-		e.textContent = v.t;
-		e.style.borderColor = v.c; e.style.color = v.c; e.style.background = v.bg;
-		e.classList.remove("show"); void e.offsetWidth; e.classList.add("show");
-		clearTimeout(evtimer);
-		evtimer = setTimeout(() => e.classList.remove("show"), 1800);
+		if (evStyle === "A") evBills(v);
+		else if (evStyle === "B") evBanner(v);
+		else evToast(v);
+	}
+	const MONEY_AT = { x: 462, y: 688 };   // 座位卡金额附近（舞台坐标）
+	function evBills(v) {
+		const layer = $("fxlayer");
+		const good = v.kind !== "pay";
+		for (let i = 0; i < 4; i++) {
+			const b = document.createElement("div");
+			b.className = "bill " + (good ? "gain" : "pay");
+			b.textContent = "¥";
+			const from = good
+				? { x: MONEY_AT.x + 150 + Math.random() * 210, y: 588 + Math.random() * 30 }
+				: { x: MONEY_AT.x + Math.random() * 30 - 10,   y: MONEY_AT.y };
+			const to = good
+				? { x: MONEY_AT.x + Math.random() * 30 - 10,   y: MONEY_AT.y }
+				: { x: MONEY_AT.x + 150 + Math.random() * 210, y: 586 + Math.random() * 30 };
+			b.style.left = from.x + "px"; b.style.top = from.y + "px";
+			layer.appendChild(b);
+			setTimeout(() => {
+				b.style.transform = "translate(" + (to.x - from.x) + "px," + (to.y - from.y) + "px) rotate(" + (Math.random() * 140 - 70) + "deg)";
+				b.style.opacity = "0";
+			}, 60 + i * 90);
+			setTimeout(() => b.remove(), 950 + i * 90);
+		}
+		const ft = document.createElement("div");
+		ft.className = "ftext"; ft.textContent = v.money;
+		ft.style.color = good ? "#7fe08f" : "#ff8f88";
+		ft.style.left = (MONEY_AT.x - 6) + "px"; ft.style.top = (MONEY_AT.y - 30) + "px";
+		layer.appendChild(ft);
+		setTimeout(() => ft.remove(), 1350);
+		pulseMoney(good);
+	}
+	function pulseMoney(good) {
+		const mn = document.querySelector(".mat-self .mn");
+		const c = good ? "pulse-good" : "pulse-bad";
+		mn.classList.remove("pulse-good", "pulse-bad"); void mn.offsetWidth;
+		mn.classList.add(c);
+		setTimeout(() => mn.classList.remove(c), 950);
+	}
+	function evBanner(v) {
+		const b = $("eventcard");
+		b.textContent = v.t;
+		b.style.borderColor = KCOL[v.kind]; b.style.color = KCOL[v.kind];
+		b.classList.remove("show"); void b.offsetWidth; b.classList.add("show");
+	}
+	function evToast(v) {
+		const box = $("toasts");
+		const t = document.createElement("div");
+		t.className = "toast"; t.textContent = v.t;
+		t.style.borderColor = KCOL[v.kind]; t.style.color = KCOL[v.kind];
+		box.appendChild(t);
+		while (box.children.length > 3) box.firstChild.remove();
+		setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 450); }, 2400);
 	}
 	function popTile() {
 		const e = $("tileinfo"); e.classList.toggle("show");
