@@ -24,6 +24,8 @@ $G = "D:\develp\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/item_test.gd      # 道具单测
 & $G --headless --path . --script tests/blackshop_test.gd # 黑市单测
 & $G --headless --path . --script tests/shop_test.gd      # 小卖部单测
+& $G --headless --path . --script tests/casino_test.gd    # 赌场单测
+& $G --headless --path . --script tests/regression_test.gd # 回归单测（审查发现的问题逐条钉住）
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
 
@@ -52,4 +54,4 @@ $G = "D:\develp\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 ## 七、当前状态
 
-见 `docs/dev/开发台账.md`。主要待办：破产未清道具回唯一池、数值专场回填、开局畸变/特殊事件/开局设置面板、发现三选一大卡、赌场弹层迁桌面、对局布局返工。
+见 `docs/dev/开发台账.md`。主要待办：数值专场回填、开局畸变/特殊事件/开局设置面板、发现三选一大卡、赌场弹层迁桌面、对局布局返工。
