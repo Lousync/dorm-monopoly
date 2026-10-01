@@ -3256,18 +3256,6 @@ func _take_shot(path: String) -> void:
 
 # ================= 赌桌小游戏：炸弹猫 =================
 
-func _casino_card_name(c: String) -> String:
-	match c:
-		"bomb": return "炸弹"
-		"defuse": return "拆除"
-		_: return "小鱼"
-
-func _bombcat_deck() -> Array:
-	var deck := ["bomb", "bomb", "bomb", "defuse", "defuse",
-		"fish", "fish", "fish", "fish", "fish", "fish", "fish"]
-	deck.shuffle()
-	return deck
-
 func _casino_next_epoch() -> int:
 	_casino_epoch += 1
 	_casino_action = {"epoch": -1, "action": ""}
@@ -3302,7 +3290,7 @@ func _run_casino(p: Dictionary) -> void:
 	_log("全员下注 %s，奖池 %s，赢家通吃！" % [
 		GameData.fmt_money(CASINO_STAKE), GameData.fmt_money(pot)], "#f0a0c0")
 
-	var deck := _bombcat_deck()
+	var deck := BombCat.deck()
 	var defuse := {}
 	var fish := {}
 	var used_peek := {}
@@ -3327,7 +3315,7 @@ func _run_casino(p: Dictionary) -> void:
 			drew = await _casino_wait_action(epoch, 9.0)
 			while drew == "peek" and running:
 				used_peek[peer] = true
-				s_casino_peek.rpc_id(peer, _casino_card_name(String(deck.back())))
+				s_casino_peek.rpc_id(peer, BombCat.card_name(String(deck.back())))
 				s_casino_event.rpc("%s 偷看了牌堆顶" % pl.name, "move")
 				epoch = _casino_next_epoch()
 				s_casino_turn.rpc(peer, epoch, defuse, fish, int(deck.size()), false)
@@ -3355,15 +3343,7 @@ func _run_casino(p: Dictionary) -> void:
 	if not running:
 		return
 
-	var winner := -1
-	if table.size() == 1:
-		winner = int(table[0])
-	elif deck.is_empty():
-		var best := -1
-		for peer2 in order:
-			if table.has(peer2) and int(fish[peer2]) > best:
-				best = int(fish[peer2])
-				winner = int(peer2)
+	var winner := BombCat.winner(table, order, fish, deck.is_empty())
 	if winner == -1:
 		s_casino_end.rpc(-1, 0)
 		_log("赌局不了了之，奖池退还", "#8a90a5")
