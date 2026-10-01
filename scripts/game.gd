@@ -50,6 +50,8 @@ var cheat_slot := -1
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
+var card_gallery: Control
+var card_gallery_flag := false
 
 # ---------------- 开发者模式 ----------------
 var dev_enabled := false
@@ -176,6 +178,13 @@ func _ready() -> void:
 			menu_probe = true
 	if menu_probe:
 		_menu_probe_run()
+	for a3 in OS.get_cmdline_user_args():
+		if a3 == "--card-gallery":
+			card_gallery_flag = true
+	if card_gallery_flag:
+		dev_enabled = true
+		_apply_dev_mode()
+		_open_card_gallery()
 
 func _exit_tree() -> void:
 	if at_mode != "":
@@ -421,6 +430,9 @@ func _build_ui() -> void:
 		erow.add_child(tb)
 	dev_ts_l = UIKit.label("当前 1x", 11, UIKit.TEXT_DIM)
 	erow.add_child(dev_ts_l)
+	var gal_btn := UIKit.button("道具卡图鉴", 11)
+	gal_btn.pressed.connect(_open_card_gallery)
+	dev_inject_box.add_child(gal_btn)
 	if not multiplayer.is_server():
 		dev_inject_box.visible = false  # 客户端：仅观察
 
@@ -1485,6 +1497,108 @@ func _refresh_chat() -> void:
 		_chat_shown += 1
 		log_text.append_text("[color=#7f8699]%s[/color]\n" % line.replace("[", "［"))
 	
+# ================= 道具卡图鉴（模板预览） =================
+
+func _open_card_gallery() -> void:
+	if card_gallery != null and is_instance_valid(card_gallery):
+		card_gallery.visible = true
+		return
+	card_gallery = Control.new()
+	card_gallery.set_anchors_preset(Control.PRESET_FULL_RECT)
+	card_gallery.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(card_gallery)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.03, 0.03, 0.07, 0.78)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_gallery.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	card_gallery.add_child(cc)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(0.45, 0.85, 0.55, 0.7), 1, 10)
+	panel.custom_minimum_size = Vector2(1160, 740)
+	cc.add_child(panel)
+	var m := UIKit.margins(16, 14, 12, 12)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	m.add_child(v)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	v.add_child(head)
+	head.add_child(UIKit.label("道具卡片模板 · §12 规格（品质框 / 左上⚡或被动 / 右上计数 / 图区占位 / 价格不上卡）",
+		14, UIKit.ACCENT))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	var close_btn := UIKit.button("✕ 关闭", 13)
+	close_btn.pressed.connect(func() -> void: card_gallery.visible = false)
+	head.add_child(close_btn)
+	v.add_child(UIKit.label("小 = 道具栏 · 中 = 货架（价格随货架显示）· 大 = 发现三选一 / 使用展示 —— 图区为占位，正式图画归美术对话",
+		11, UIKit.TEXT_DIM))
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var gv := VBoxContainer.new()
+	gv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gv.add_theme_constant_override("separation", 12)
+	scroll.add_child(gv)
+
+	gv.add_child(_card_section("道具栏尺寸（小 · 96×132）", [
+		_card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "白 · 被动"),
+		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "绿 · 被动"),
+		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "蓝 · ⚡3"),
+		_card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "紫 · ⚡5"),
+		_card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "橙 · ⚡4"),
+		_card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "橙 · 一次性"),
+	]))
+	gv.add_child(_card_section("货架尺寸（中 · 150×210）· 状态一览", [
+		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {}, "普通"),
+		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2}, "冷却中 · 右上剩 2 回合·压暗"),
+		_card_cell("黑卡", ItemCard.SIZE_MEDIUM, {"count": 2}, "计数中 · 剩 2 次购买"),
+		_card_cell("空想者的香皂", ItemCard.SIZE_MEDIUM, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
+		_card_cell("蛋蛋节", ItemCard.SIZE_MEDIUM, {}, "一次性 · 用后焚毁"),
+		_card_cell("平均主义", ItemCard.SIZE_MEDIUM, {"dim": true}, "买不起 · 压暗"),
+		_card_cell("平均主义", ItemCard.SIZE_MEDIUM, {"selected": true}, "发现可选 · 金框高亮"),
+	]))
+	gv.add_child(_card_section("发现 / 使用展示尺寸（大 · 220×300）", [
+		_card_cell("蛋蛋节", ItemCard.SIZE_LARGE, {"selected": true}, "发现三选一（高亮）"),
+		_card_cell("黑卡", ItemCard.SIZE_LARGE, {}, "使用展示"),
+	]))
+
+func _card_section(title: String, cells: Array) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	box.add_child(UIKit.label(title, 12, UIKit.TEXT_DIM))
+	var row := HFlowContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("h_separation", 14)
+	row.add_theme_constant_override("v_separation", 6)
+	box.add_child(row)
+	for c in cells:
+		row.add_child(c)
+	return box
+
+func _card_cell(id: String, size: Vector2, state: Dictionary, caption: String) -> Control:
+	var cell := VBoxContainer.new()
+	cell.add_theme_constant_override("separation", 3)
+	var holder := Control.new()
+	holder.custom_minimum_size = size + Vector2(14, 14)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.add_child(holder)
+	var card := ItemCard.make(id, size, state)
+	card.position = Vector2(7, 7)
+	holder.add_child(card)
+	var cap := UIKit.label(caption, 10, UIKit.TEXT_DIM)
+	cap.custom_minimum_size = Vector2(size.x + 14, 0)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cell.add_child(cap)
+	return cell
+
 # ================= 道具系统：host 逻辑与 RPC（阶段一） =================
 
 func _refresh_price() -> int:
