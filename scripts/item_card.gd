@@ -99,7 +99,7 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	qbar.add_theme_stylebox_override("panel", UIKit.stylebox(Color(qc.r, qc.g, qc.b, 0.2), 4,
 		Color(qc.r, qc.g, qc.b, 0.55), 1))
 	card.add_child(qbar)
-	var ql := UIKit.label(q + "品质", maxi(int(size.y * 0.048), 8), qc)
+	var ql := UIKit.label(String(ItemData.QUALITY_NAMES.get(q, q)), maxi(int(size.y * 0.048), 8), qc)
 	ql.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ql.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	ql.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

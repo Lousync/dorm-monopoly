@@ -1548,12 +1548,12 @@ func _open_card_gallery() -> void:
 	scroll.add_child(gv)
 
 	gv.add_child(_card_section("道具栏尺寸（小 · 96×132）", [
-		_card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "白 · 被动"),
-		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "绿 · 被动"),
-		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "蓝 · ⚡3"),
-		_card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "紫 · ⚡5"),
-		_card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "橙 · ⚡4"),
-		_card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "橙 · 一次性"),
+		_card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
+		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "稀有 · 被动"),
+		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "超稀有 · ⚡3"),
+		_card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡5"),
+		_card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "传说 · ⚡4"),
+		_card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "传说 · 一次性"),
 	]))
 	gv.add_child(_card_section("货架尺寸（中 · 150×210）· 状态一览", [
 		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {}, "普通"),

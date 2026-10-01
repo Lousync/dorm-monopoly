@@ -3,6 +3,7 @@ class_name ItemData
 ## implemented=false 的道具不进货架池，效果随批次解锁
 
 const QUALITIES := ["白", "绿", "蓝", "紫", "橙"]
+const QUALITY_NAMES := {"白": "普通", "绿": "稀有", "蓝": "超稀有", "紫": "史诗", "橙": "传说"}  # 显示名（内部键仍为颜色字）
 const QUALITY_COLORS := {
 	"白": Color(0.93, 0.93, 0.93), "绿": Color(0.42, 0.78, 0.55),
 	"蓝": Color(0.36, 0.6, 0.92), "紫": Color(0.66, 0.47, 0.92),

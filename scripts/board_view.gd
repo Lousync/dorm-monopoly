@@ -1055,7 +1055,7 @@ func _make_shop(rect: Rect2) -> void:
 		var qc: Color = SHOP_QUALITIES[qi]
 		dot.add_theme_stylebox_override("panel", UIKit.stylebox(qc, 6, Color(0, 0, 0, 0.4), 1))
 		legend.add_child(dot)
-		legend.add_child(UIKit.label(["白", "绿", "蓝", "紫", "橙"][qi], 13, SHOP_WOOD_TEXT))
+		legend.add_child(UIKit.label(ItemData.QUALITY_NAMES[["白", "绿", "蓝", "紫", "橙"][qi]], 13, SHOP_WOOD_TEXT))
 	_shop_refresh = UIKit.button("刷新货架 · ¥—", 14)
 	_shop_refresh.disabled = true
 	_shop_refresh.mouse_filter = Control.MOUSE_FILTER_IGNORE
