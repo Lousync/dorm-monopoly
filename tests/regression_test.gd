@@ -60,6 +60,9 @@ func _run() -> void:
 		fails += 1
 	else:
 		_test_net_reset(_net)
+	_test_lobby_rules(_net)
+	_test_endpoint_format()
+	_test_room_info_port()
 
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
@@ -70,6 +73,7 @@ func _run() -> void:
 	_test_shop_buttons(g)
 	_test_authority_guards(g)
 	_test_dead_player_items_return_to_pool(g)
+	_test_roster_marks_disconnected_bots(g, _net)
 	_test_camera_state(g)
 	await _test_roll_button_off_home_view(g)
 
@@ -178,6 +182,17 @@ func _test_authority_guards(g) -> void:
 	g.c_casino_action(5, "top")
 	_check(String(g._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
 
+func _test_roster_marks_disconnected_bots(g, net) -> void:
+	print("== 开局名册：淡出期间掉线的玩家应转机器人 ==")
+	net.players = [
+		{"peer": 1, "name": "房主", "color": 0, "bot": false, "ready": true},
+		{"peer": 2, "name": "乙", "color": 1, "bot": false, "ready": true},
+	]
+	var h: Array = g._build_hp()
+	_check(h.size() == 2, "名册人数正确（实得 %d）" % h.size())
+	_check(not bool(h[0].bot), "房主仍为真人")
+	_check(bool(h[1].bot), "未真正连上的玩家在对局里标记为机器人")
+
 func _test_dead_player_items_return_to_pool(g) -> void:
 	print("== 破产玩家的唯一道具应回池 ==")
 	var dead := _mk_player(1, "甲")
@@ -199,6 +214,52 @@ func _test_conn_lost_unpauses(g, lobby) -> void:
 	g.get_tree().paused = true
 	lobby._on_conn_lost("房主已离开")
 	_check(not lobby.get_tree().paused, "大厅场景掉线后解除暂停")
+
+func _test_lobby_rules(net) -> void:
+	print("== 大厅：hello 判定顺序 / 昵称清洗 / 发现器兜底重启 ==")
+	# 满员房间（其中含 peer 0）里，已入座玩家重发 hello 不能被当成新人踢掉
+	net.players = [
+		{"peer": 0, "name": "甲", "color": 0, "bot": false, "ready": true},
+		{"peer": 5, "name": "乙", "color": 1, "bot": false, "ready": true},
+		{"peer": 6, "name": "丙", "color": 2, "bot": false, "ready": true},
+		{"peer": 7, "name": "丁", "color": 3, "bot": false, "ready": true},
+	]
+	net.in_game = false
+	_check(net.hello_verdict(0) == "", "满员房间里已入座的玩家重发 hello 不被踢")
+	_check(net.hello_verdict(99) != "", "满员房间里的新玩家被拒")
+	net.in_game = true
+	_check(net.hello_verdict(5) == "", "开局后已入座玩家重发 hello 不被踢")
+	net.in_game = false
+
+	# 昵称清洗：| 与换行都会污染大厅/发现报文
+	_check(net.sanitize_name("A|B") == "AB", "昵称里的 | 被剔除")
+	_check(net.sanitize_name("a\nb") == "ab", "昵称里的换行被剔除")
+	_check(net.sanitize_name("   ") == "玩家", "空白昵称回落为「玩家」")
+
+	# 加入失败后房间发现器必须能自动重启
+	net._reset_peer()
+	_check(net._disco_client == null, "重置后发现器已停")
+	net.ensure_disco_client()
+	_check(net._disco_client != null, "主菜单刷新时发现器自动重启")
+
+func _test_endpoint_format() -> void:
+	print("== 地址展示串：IPv6 必须带方括号（否则解析不出端口） ==")
+	var cases := [["10.11.28.88", 7777], ["2001:db8::1", 8000], ["::1", 7777], ["fe80::abcd", 9000]]
+	for c in cases:
+		var host := String(c[0])
+		var port := int(c[1])
+		var s := NetAddr.format_endpoint(host, port)
+		var back := NetAddr.parse_endpoint(s, 1)
+		_check(back.size() == 2 and String(back[0]) == host and int(back[1]) == port,
+			"\"%s\" 往返解析回 %s:%d（实得 %s）" % [s, host, port, str(back)])
+
+func _test_room_info_port() -> void:
+	print("== 房间发现报文必须带房主端口（否则从列表加入会拨错端口） ==")
+	var info := NetAddr.parse_room_info("%s|INFO|宿舍A|2/4|open|8123" % "DMONO3")
+	_check(String(info.get("name", "")) == "宿舍A", "解析出房间名")
+	_check(String(info.get("count", "")) == "2/4", "解析出人数")
+	_check(int(info.get("port", 0)) == 8123, "解析出房主端口")
+	_check(NetAddr.parse_room_info("bad").is_empty(), "坏报文返回空")
 
 func _test_camera_state(g) -> void:
 	print("== 镜头状态：回自己视角 / 窗口缩放 ==")

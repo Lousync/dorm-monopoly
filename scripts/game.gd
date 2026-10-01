@@ -592,16 +592,26 @@ func _build_ui() -> void:
 
 # ================= 房主：初始化与主循环 =================
 
-func _host_setup() -> void:
-	running = true
-	hp = []
+## 由大厅名册构造对局玩家表。注意把「没真正连上」的玩家标成机器人：
+## 大厅→对局有约 0.4 秒淡出窗口，期间掉线的玩家若仍记为真人，
+## 他每一手都要等满 35 秒超时才对局才推进（见 fix/v0.0.2）。
+func _build_hp() -> Array:
+	var out := []
+	var live := multiplayer.get_peers()
 	for p in Net.players:
-		hp.append({
-			"peer": int(p.peer), "name": String(p.name), "color": int(p.color),
-			"bot": bool(p.bot), "money": GameData.START_MONEY,
+		var peer := int(p.peer)
+		var gone: bool = peer != 1 and not live.has(peer)
+		out.append({
+			"peer": peer, "name": String(p.name), "color": int(p.color),
+			"bot": bool(p.bot) or gone, "money": GameData.START_MONEY,
 			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
 			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
 		})
+	return out
+
+func _host_setup() -> void:
+	running = true
+	hp = _build_hp()
 	htiles = []
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
