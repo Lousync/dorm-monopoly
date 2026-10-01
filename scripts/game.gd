@@ -50,6 +50,22 @@ var cheat_slot := -1
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
+
+# ---------------- 开发者模式 ----------------
+var dev_enabled := false
+var dev_panel: PanelContainer
+var dev_state_l: Label
+var dev_cam_l: Label
+var dev_players: HBoxContainer
+var dev_pbtns: Array = []
+var dev_sel_peer := 0
+var dev_item_opt: OptionButton
+var dev_item_desc: Label
+var dev_stam_s: HSlider
+var dev_tp_spin: SpinBox
+var dev_roll_spin: SpinBox
+var dev_ts_l: Label
+var dev_inject_box: VBoxContainer
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
@@ -115,7 +131,10 @@ var _at_roll_epoch := -1
 
 func _ready() -> void:
 	my_peer = multiplayer.get_unique_id()
+	var dev_flag := false
 	for a in OS.get_cmdline_user_args():
+		if a == "--dev":
+			dev_flag = true
 		if a.begins_with("--autotest="):
 			at_mode = a.substr(11)
 		elif a.begins_with("--rounds="):
@@ -146,7 +165,11 @@ func _ready() -> void:
 	if cfg.load("user://settings.cfg") == OK:
 		audio_volume = clampf(float(cfg.get_value("audio", "volume", 1.0)), 0.0, 1.0)
 		audio_mute = bool(cfg.get_value("audio", "mute", false))
+		dev_enabled = bool(cfg.get_value("dev", "enabled", false)) or dev_flag
+	if at_mode != "" and not dev_flag:
+		dev_enabled = false
 	_apply_audio()
+	_apply_dev_mode()
 
 func _exit_tree() -> void:
 	if at_mode != "":
@@ -277,6 +300,123 @@ func _build_ui() -> void:
 	opt_btn.pressed.connect(_open_menu)
 	add_child(opt_btn)
 	_build_menu_ui()
+
+	# 开发者模式面板（左侧；注入区仅房主可见）
+	dev_panel = UIKit.panel_container(Color(0.05, 0.06, 0.1, 0.94), 12, Color(0.45, 0.85, 0.55, 0.5), 1)
+	dev_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	dev_panel.offset_left = 8
+	dev_panel.offset_top = 56
+	dev_panel.offset_right = 276
+	dev_panel.offset_bottom = 720
+	dev_panel.visible = false
+	add_child(dev_panel)
+	var dm := UIKit.margins(10, 12, 10, 10)
+	dev_panel.add_child(dm)
+	var dv := VBoxContainer.new()
+	dv.add_theme_constant_override("separation", 6)
+	dm.add_child(dv)
+	dv.add_child(UIKit.label("开发者模式（F1 显隐）", 13, Color(0.5, 0.9, 0.5)))
+	dev_state_l = UIKit.label("", 11, UIKit.TEXT)
+	dv.add_child(dev_state_l)
+	dev_cam_l = UIKit.label("", 11, UIKit.TEXT_DIM)
+	dv.add_child(dev_cam_l)
+	dv.add_child(UIKit.label("玩家（点选后注入）", 11, UIKit.TEXT_DIM))
+	dev_players = HBoxContainer.new()
+	dev_players.add_theme_constant_override("separation", 4)
+	dv.add_child(dev_players)
+	dev_inject_box = VBoxContainer.new()
+	dev_inject_box.add_theme_constant_override("separation", 5)
+	dv.add_child(dev_inject_box)
+	var mrow1 := HBoxContainer.new()
+	mrow1.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(mrow1)
+	for amt in [["+1千", 1000], ["+1万", 10000], ["-1千", -1000]]:
+		var ab := UIKit.button(String(amt[0]), 11)
+		var av: int = amt[1]
+		ab.pressed.connect(func() -> void: _dev_add_money(av))
+		mrow1.add_child(ab)
+	var irow := HBoxContainer.new()
+	irow.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(irow)
+	dev_item_opt = OptionButton.new()
+	for id in ItemData.ITEMS:
+		dev_item_opt.add_item(id)
+	dev_item_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dev_item_opt.item_selected.connect(func(_i: int) -> void: _dev_item_desc_update())
+	irow.add_child(dev_item_opt)
+	dev_item_desc = UIKit.label("", 10, UIKit.TEXT_DIM)
+	dev_item_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dev_item_desc.custom_minimum_size = Vector2(0, 26)
+	dev_inject_box.add_child(dev_item_desc)
+	var irow2 := HBoxContainer.new()
+	irow2.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(irow2)
+	var give_btn := UIKit.button("发放", 11)
+	give_btn.pressed.connect(_dev_grant_item)
+	irow2.add_child(give_btn)
+	var use_btn := UIKit.button("强制使用", 11)
+	use_btn.pressed.connect(_dev_force_use)
+	irow2.add_child(use_btn)
+	var clear_bag := UIKit.button("清背包", 11)
+	clear_bag.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.items = []))
+	irow2.add_child(clear_bag)
+	var dsrow := HBoxContainer.new()
+	dsrow.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(dsrow)
+	dsrow.add_child(UIKit.label("体力", 11, UIKit.TEXT_DIM))
+	dev_stam_s = HSlider.new()
+	dev_stam_s.min_value = 0
+	dev_stam_s.max_value = 5
+	dev_stam_s.step = 1
+	dev_stam_s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dev_stam_s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dsrow.add_child(dev_stam_s)
+	var cds_btn := UIKit.button("清冷却", 11)
+	cds_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void:
+		for it in p.get("items", []):
+			it.cd = 0
+	))
+	dsrow.add_child(cds_btn)
+	var trow := HBoxContainer.new()
+	trow.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(trow)
+	trow.add_child(UIKit.label("传送格", 11, UIKit.TEXT_DIM))
+	dev_tp_spin = SpinBox.new()
+	dev_tp_spin.min_value = 0
+	dev_tp_spin.max_value = int(GameData.TILES.size()) - 1
+	dev_tp_spin.custom_minimum_size = Vector2(64, 0)
+	trow.add_child(dev_tp_spin)
+	var tp_btn := UIKit.button("传送", 11)
+	tp_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.pos = int(dev_tp_spin.value)))
+	trow.add_child(tp_btn)
+	trow.add_child(UIKit.label("点数", 11, UIKit.TEXT_DIM))
+	dev_roll_spin = SpinBox.new()
+	dev_roll_spin.min_value = 0
+	dev_roll_spin.max_value = 12
+	dev_roll_spin.custom_minimum_size = Vector2(56, 0)
+	trow.add_child(dev_roll_spin)
+	var fr_btn := UIKit.button("强制", 11)
+	fr_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.cheat_roll = int(dev_roll_spin.value)))
+	trow.add_child(fr_btn)
+	var erow := HBoxContainer.new()
+	erow.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(erow)
+	var end_btn := UIKit.button("结束当前等待", 11)
+	end_btn.pressed.connect(_dev_end_wait)
+	erow.add_child(end_btn)
+	erow.add_child(UIKit.label("时间倍率", 11, UIKit.TEXT_DIM))
+	for ts in [[".25", 0.25], ["1", 1.0], ["4", 4.0], ["8", 8.0]]:
+		var tb := UIKit.button(String(ts[0]), 11)
+		var tv: float = ts[1]
+		tb.pressed.connect(func() -> void:
+			Engine.time_scale = tv
+			_dev_ts_update()
+		)
+		erow.add_child(tb)
+	dev_ts_l = UIKit.label("当前 1x", 11, UIKit.TEXT_DIM)
+	erow.add_child(dev_ts_l)
+	if not multiplayer.is_server():
+		dev_inject_box.visible = false  # 客户端：仅观察
 
 	# 左下角：格子详情卡（点击棋盘格子弹出相关信息）
 	info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
@@ -1103,7 +1243,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 空格：视角转回自己座位；Tab：循环切到下一家视角
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
-		if k.keycode == KEY_SPACE:
+		if k.keycode == KEY_F1:
+			_toggle_dev()
+		elif k.keycode == KEY_SPACE:
 			board.go_home_follow(my_peer)
 		elif k.keycode == KEY_TAB:
 			board.rotate_next()
@@ -1883,6 +2025,140 @@ func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 		tw.parallel().tween_property(bill, "modulate:a", 0.0, 0.2).set_delay(0.36)
 		tw.tween_callback(bill.queue_free)
 
+# ================= 开发者模式 =================
+
+func _apply_dev_mode() -> void:
+	if dev_panel != null and is_instance_valid(dev_panel):
+		dev_panel.visible = dev_enabled
+	if board != null:
+		board.dev_tile_index = dev_enabled
+	_dev_ts_update()
+
+func _toggle_dev() -> void:
+	dev_enabled = not dev_enabled
+	var cfg := ConfigFile.new()
+	cfg.load("user://settings.cfg")
+	cfg.set_value("dev", "enabled", dev_enabled)
+	cfg.save("user://settings.cfg")
+	_apply_dev_mode()
+
+func _dev_ts_update() -> void:
+	if dev_ts_l != null and is_instance_valid(dev_ts_l):
+		dev_ts_l.text = "当前 " + String.num(Engine.time_scale, 2) + "x"
+
+func _dev_selected() -> Dictionary:
+	var p := _player_by_peer(dev_sel_peer)
+	return p
+
+func _dev_edit_selected(edit: Callable) -> void:
+	if not multiplayer.is_server():
+		return
+	var p := _dev_selected()
+	if p.is_empty():
+		return
+	edit.call(p)
+	_broadcast_state()
+
+func _dev_add_money(amount: int) -> void:
+	_dev_edit_selected(func(p: Dictionary) -> void: p.money = int(p.money) + amount)
+
+func _dev_grant_item() -> void:
+	var id := _dev_selected_item()
+	if id == "":
+		return
+	_dev_edit_selected(func(p: Dictionary) -> void: p.items.append({"id": id, "cd": 0}))
+
+func _dev_selected_item() -> String:
+	if dev_item_opt == null or dev_item_opt.selected < 0:
+		return ""
+	return String(ItemData.ITEMS.keys()[dev_item_opt.selected])
+
+func _dev_item_desc_update() -> void:
+	var d := ItemData.def(_dev_selected_item())
+	dev_item_desc.text = "%s · %d⚡ · %s" % [String(d.get("quality", "?")), int(d.get("cost", 0)), String(d.get("desc", ""))] \
+		if String(d.get("type", "")) == "active" else "%s · 被动 · %s" % [String(d.get("quality", "?")), String(d.get("desc", ""))]
+
+func _dev_force_use() -> void:
+	if not multiplayer.is_server():
+		return
+	var id := _dev_selected_item()
+	var p := _dev_selected()
+	if p.is_empty() or id == "":
+		return
+	if not _has_item(p, id):
+		p.items.append({"id": id, "cd": 0})
+	match id:
+		"作弊器":
+			p.cheat_roll = clampi(int(dev_roll_spin.value), 0, 12)
+			_log("[dev] %s 的下一次转盘点数被锁成 %d" % [p.name, int(dev_roll_spin.value)], "#7fd88f")
+		"平均主义":
+			var alive: Array = hp.filter(func(x) -> bool: return bool(x.alive))
+			var total := 0
+			for a in alive:
+				total += int(a.money)
+			var share := int(total / alive.size())
+			var rem := total - share * alive.size()
+			for a in alive:
+				a.money = share
+			for k in rem:
+				alive[k].money = int(alive[k].money) + 1
+			_log("[dev] 全场现金已拉平", "#7fd88f")
+		_:
+			_log("[dev] 【%s】效果尚未实装（被动持有即可生效 / 后续批次）" % id, "#7fd88f")
+	_broadcast_state()
+
+func _dev_end_wait() -> void:
+	if not multiplayer.is_server():
+		return
+	match String(st.get("await", "")):
+		"roll":
+			roll_received.emit()
+		"item":
+			_item_action = {"epoch": _item_epoch, "action": "skip"}
+		"shop":
+			_shop_leave(_shop_peer)
+
+func _dev_refresh_panel() -> void:
+	if dev_panel == null or not is_instance_valid(dev_panel) or not dev_panel.visible:
+		return
+	var lines := ["第%d/%d轮 · await=%s" % [int(st.get("round", 0)), int(st.get("max_rounds", 0)), String(st.get("await", ""))]]
+	for p in st.get("players", []):
+		var its := []
+		for it in p.get("items", []):
+			its.append(String(it.id) + (("·%d" % int(it.cd)) if int(it.cd) > 0 else ""))
+		lines.append("%s ¥%d ⚡%d 格%d %s" % [String(p.name), int(p.money), int(p.get("stamina", 0)),
+			int(p.pos), " ".join(its)])
+	var shop_txt := ""
+	for k in st.get("shops", {}):
+		var arr: Array = st.shops[k].slots
+		var names := []
+		for id in arr:
+			names.append("空" if String(id) == "" else String(id))
+		shop_txt += "[%s]" % ",".join(names)
+	lines.append("刷¥%d %s" % [int(st.get("refresh_price", 0)), shop_txt])
+	dev_state_l.text = "\n".join(lines)
+	dev_cam_l.text = board.cam_info()
+	# 玩家选择按钮懒建 + 文本刷新
+	if dev_pbtns.is_empty() and board.seat_count() > 0:
+		for p in st.get("players", []):
+			var peer := int(p.peer)
+			var b := UIKit.button(String(p.name), 11)
+			b.toggle_mode = true
+			b.pressed.connect(func() -> void:
+				dev_sel_peer = peer
+				_dev_sel_refresh()
+			)
+			dev_players.add_child(b)
+			dev_pbtns.append({"peer": peer, "btn": b})
+	_dev_sel_refresh()
+
+func _dev_sel_refresh() -> void:
+	if dev_sel_peer == 0 and not dev_pbtns.is_empty():
+		dev_sel_peer = int(dev_pbtns[0].peer)
+	for e in dev_pbtns:
+		var btn: Button = e.btn
+		btn.button_pressed = int(e.peer) == dev_sel_peer
+
 func _process(_delta: float) -> void:
 	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
 	if mat_bar == null:
@@ -1899,6 +2175,8 @@ func _process(_delta: float) -> void:
 	if show and not shop_mine:
 		var r := board.home_card_screen_rect()
 		mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
+	if dev_enabled:
+		_dev_refresh_panel()
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
@@ -1906,6 +2184,7 @@ func _on_conn_lost(reason: String) -> void:
 
 func _on_exit() -> void:
 	get_tree().paused = false
+	Engine.time_scale = 1.0
 	Net.leave()
 	Fx.go_to("res://scenes/main_menu.tscn")
 
@@ -2257,3 +2536,13 @@ func _close_casino() -> void:
 	_casino_layer = null
 	_casino_rows = {}
 	_casino_log = null
+
+
+func _dev_player_edit(edit: Callable) -> void:
+	if not multiplayer.is_server():
+		return
+	var p := _dev_selected()
+	if p.is_empty():
+		return
+	edit.call(p)
+	_broadcast_state()

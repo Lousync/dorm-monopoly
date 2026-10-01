@@ -224,6 +224,12 @@ func _build_tiles() -> void:
 		strip.add_theme_stylebox_override("panel", UIKit.stylebox(strip_c.lightened(0.06), 2))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
+		var idx_l := UIKit.label(str(i), 10, Color(1, 1, 1, 0.6))
+		idx_l.position = Vector2(TILE - GAP * 2.0 - 22.0, 0)
+		idx_l.visible = dev_tile_index
+		idx_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		p.add_child(idx_l)
+		_tile_idx_labels.append(idx_l)
 
 		# 主题图标水印：垫在牌名下面，给每类格子一个视觉身份
 		var casino: bool = d.type == "casino"
@@ -883,7 +889,14 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 
 var _casino_pool_l: Label
 var _casino_status_l: Label
-var _shop_slots: Array = []         # {card, price_l}（道具系统解冻后接货架存货）
+var _shop_slots: Array = []         # {card, price_l, plus_l}
+var _tile_idx_labels: Array = []    # 开发者模式：格子编号叠层
+var dev_tile_index := false:
+	set(v):
+		dev_tile_index = v
+		for l in _tile_idx_labels:
+			if is_instance_valid(l):
+				(l as Label).visible = v
 var _shop_refresh: Button
 
 const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部：菜绿
@@ -1209,6 +1222,10 @@ func set_shop_display(shops: Dictionary, refresh_price: int, active: int) -> voi
 			card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.05, 0.055, 0.08, 0.9), 10,
 				Color(qc.r, qc.g, qc.b, 0.6), 1))
 			price_l.text = "¥%d" % ItemData.price(String(d.get("quality", "白")))
+
+## 镜头调试信息（开发者面板）
+func cam_info() -> String:
+	return "缩放 %.2f · 旋转 %.1f° · 注视 (%d, %d)" % [_zoom, rad_to_deg(_rot), int(_center.x), int(_center.y)]
 
 ## 自己座位卡（边 0）的屏幕矩形（自己视角下无旋转，用于锚定屏幕层牌垫条）
 func home_card_screen_rect() -> Rect2:
