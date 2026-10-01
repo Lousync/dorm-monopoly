@@ -131,10 +131,21 @@ tests/
   rules_test.gd        规则单测（棋盘 / 租金 / 路径 / 地址解析 / 坐标闭合）
   item_test.gd         道具单测（蛋蛋节 / 亡牌飞行员coco / 焦土与香皂）
   blackshop_test.gd    黑市单测（地皮计价 / 挨打小黑屋 / bot / 机会卡池过滤）
+  shop_test.gd         小卖部全链路单测（操作条买按钮 / 桌面货架可点即买）
   regression_test.gd   回归单测（把审查发现的问题逐条钉住）
   load_all.gd          脚本静态加载检查（自动扫描 scripts/，能抓出解析错误）
   net_probe.gd 等      ENet 双栈连通性探针
 ```
+
+## 文档导航
+
+- **总索引**：`docs/README.md`
+- **工程与协作**：`docs/dev/架构总览.md` · `联机协议.md` · `上手指南.md` · `开发台账.md`
+- **玩法台账**：`docs/gameplay/README.md`
+  （棋盘与地产 / 事件卡 / 经济与胜负 / 小卖部 / 黑市 / 赌场-炸弹猫 / 道具系统 / 道具图鉴 / 开局畸变 / 特殊事件）
+- **想法池**：`docs/想法备忘.md`
+
+> 新同学请从 `docs/dev/上手指南.md` 开始，再读 `架构总览.md` 与 `联机协议.md`。
 
 ## 素材与授权
 
@@ -170,6 +181,8 @@ Godot_console.exe --headless --path . --script tests/load_all.gd
 Godot_console.exe --headless --path . --script tests/item_test.gd
 # 黑市单测（地皮计价/逐块交地/挨打小黑屋/bot/机会卡过滤）
 Godot_console.exe --headless --path . --script tests/blackshop_test.gd
+# 小卖部全链路单测（进店买不了：操作条按钮 + 桌面货架可点即买）
+Godot_console.exe --headless --path . --script tests/shop_test.gd
 # 赌场小游戏规则单测（炸弹猫牌堆构成 / 卡面名 / 胜负判定）
 Godot_console.exe --headless --path . --script tests/casino_test.gd
 # 回归单测（被踢后重置残留/回合计数/客户端道具栏/小卖部购买按钮/镜头等）

@@ -33,7 +33,7 @@ var pause_mask: ColorRect
 var audio_volume := 1.0
 var audio_mute := false
 
-# ---------------- 道具系统（host 状态，详见 docs/道具系统设计.md） ----------------
+# ---------------- 道具系统（host 状态，详见 docs/gameplay/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
@@ -2071,8 +2071,8 @@ func c_shop_leave() -> void:
 		return
 	_shop_leave(multiplayer.get_remote_sender_id())
 
-## 蛋蛋节：全员送礼（规则 §4：他人白/绿/蓝三档均分，使用者紫 70%/橙 30%，
-## 礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
+## 蛋蛋节：全员送礼（规则见 docs/gameplay/道具图鉴.md：他人白/绿/蓝三档均分，
+## 使用者紫 70%/橙 30%；礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
 func _apply_egg_festival(p: Dictionary) -> void:
 	_log("%s 点燃了【蛋蛋节】，礼物撒满全场！" % p.name, "#f0a0c0")
 	for o in hp:
@@ -2322,10 +2322,10 @@ func _process(_delta: float) -> void:
 	if dev.enabled:
 		dev.refresh_panel()
 
-## 交易面板贴在屏幕底部居中（避开底部行动条隐藏后的空档）
+## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内
 func _place_overlay_bar(c: Control) -> void:
-	var vp := get_viewport_rect().size
-	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, vp.y - 148.0)
+	var vp := size
+	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, maxf(vp.y - c.size.y - 16.0, 8.0))
 
 ## 小卖部「买」按钮：按货架逐格显隐 + 标价 + 可买判定（缓存签名，避免每帧重建）。
 ## 这三个按钮创建时 visible=false，此前没有任何代码把它们打开过，
@@ -2339,7 +2339,13 @@ func _refresh_shop_buttons() -> void:
 	var mine: Dictionary = _state_player(my_peer)
 	var money := int(mine.get("money", 0))
 	var bag: Array = mine.get("items", [])
-	var sig := "%d|%s|%d|%d" % [open, str(slots), money, bag.size()]
+	# 黑卡还有次数时本次购买免费：不该因为现金不够而置灰
+	var free_buy := false
+	for it in bag:
+		if String(it.id) == "黑卡" and int(it.get("charges", 0)) > 0:
+			free_buy = true
+	var refresh := int(st.get("refresh_price", 0))
+	var sig := "%d|%s|%d|%d|%s|%d" % [open, str(slots), money, bag.size(), str(free_buy), refresh]
 	if sig == _shop_btn_sig:
 		return
 	_shop_btn_sig = sig
@@ -2352,7 +2358,10 @@ func _refresh_shop_buttons() -> void:
 		var price := ItemData.price(String(ItemData.def(id).quality))
 		b.visible = true
 		b.text = "买 %s %s" % [id, GameData.fmt_money(price)]
-		b.disabled = money < price or bag.size() >= 5
+		b.disabled = bag.size() >= 5 or (not free_buy and money < price)
+	if shop_refresh_btn != null:
+		shop_refresh_btn.text = "刷新 · %s" % GameData.fmt_money(refresh)
+		shop_refresh_btn.disabled = money < refresh
 
 ## 黑市面板刷新（缓存签名，避免每帧重建）
 func _refresh_black_ui() -> void:

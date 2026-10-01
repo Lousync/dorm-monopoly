@@ -6,6 +6,7 @@ class_name BoardView
 
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
+signal shop_slot_clicked(slot: int)   # 点击桌面小卖部货架卡（行动者购买）
 
 const TILE := 112.0
 static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (2016, 1344)
@@ -1037,7 +1038,7 @@ func _make_shop(rect: Rect2) -> void:
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(sp)
-	head.add_child(UIKit.label("每回合限购 1 件 · 刷新费递增", 14, SHOP_WOOD_TEXT))
+	head.add_child(UIKit.label("点击货架卡购买 · 刷新费递增", 14, SHOP_WOOD_TEXT))
 	var shelf := HBoxContainer.new()
 	shelf.add_theme_constant_override("separation", 28)
 	shelf.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1052,7 +1053,13 @@ func _make_shop(rect: Rect2) -> void:
 		shelf.add_child(slot)
 		var card := Panel.new()
 		card.custom_minimum_size = Vector2(150, 210)
-		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.mouse_filter = Control.MOUSE_FILTER_STOP   # 可点击购买（行动者）
+		card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var slot_i := i
+		card.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				shop_slot_clicked.emit(slot_i)
+		)
 		card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.06, 0.045, 0.03, 0.95), 10,
 			Color(0.45, 0.32, 0.16, 0.55), 1))
 		slot.add_child(card)
@@ -1242,13 +1249,16 @@ func set_shop_display(shops: Dictionary, refresh_price: int, active: int) -> voi
 			show_idx = int(k)
 			break
 	var entries: Array = shops.get(show_idx, {}).get("slots", [])
+	var suffix := " · 点击购买" if active >= 0 else ""
 	for i in _shop_slots.size():
 		var e: Dictionary = _shop_slots[i]
 		var card: Panel = e.card
 		var price_l: Label = e.price_l
 		var id := String(entries[i]) if i < entries.size() else ""
+		# 营业中才吃点击（购买），歇业时透明避免挡住棋盘拖拽
+		card.mouse_filter = Control.MOUSE_FILTER_STOP if active >= 0 else Control.MOUSE_FILTER_IGNORE
 		if String(card.get_meta("slot_key", "")) == id:
-			price_l.text = ("¥%d" % ItemData.price(String(ItemData.def(id).quality))) if id != "" else "空货位"
+			price_l.text = ("¥%d%s" % [ItemData.price(String(ItemData.def(id).quality)), suffix]) if id != "" else "空货位"
 			continue
 		card.set_meta("slot_key", id)
 		for c in card.get_children():
@@ -1263,7 +1273,7 @@ func set_shop_display(shops: Dictionary, refresh_price: int, active: int) -> voi
 			price_l.text = "空货位"
 		else:
 			card.add_child(ItemCard.make(id, ItemCard.SIZE_MEDIUM, {}))
-			price_l.text = "¥%d" % ItemData.price(String(ItemData.def(id).quality))
+			price_l.text = "¥%d%s" % [ItemData.price(String(ItemData.def(id).quality)), suffix]
 
 ## 镜头调试信息（开发者面板）
 func cam_info() -> String:

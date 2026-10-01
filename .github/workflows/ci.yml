@@ -34,7 +34,7 @@ jobs:
       - name: 单测与回归
         run: |
           set -euo pipefail
-          for t in rules_test load_all item_test blackshop_test casino_test regression_test; do
+          for t in rules_test load_all item_test shop_test blackshop_test casino_test regression_test; do
             echo "::group::$t"
             godot --headless --path . --script "tests/$t.gd"
             echo "::endgroup::"

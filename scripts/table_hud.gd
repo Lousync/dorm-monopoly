@@ -19,6 +19,15 @@ static func build_play_ui(g: Node) -> void:
 	g.board.overlay_bottom = 70
 	g.add_child(g.board)
 	g.board.tile_clicked.connect(g._on_tile_clicked)
+	# 点桌面货架卡直接买（来自 main 的「货架可点即买」，合并时这段连接随 _build_ui 搬到了这里）
+	g.board.shop_slot_clicked.connect(func(slot: int) -> void:
+		if int(g.st.get("shop_peer", 0)) != g.my_peer:
+			return
+		if g.multiplayer.is_server():
+			g._shop_buy(g.my_peer, slot)
+		else:
+			g.c_shop_buy.rpc(slot)
+	)
 	g.board.seat_clicked.connect(func(peer: int) -> void:
 		if peer == g.my_peer:
 			g.board.go_home_follow(g.my_peer)  # 点自己座位卡：回自己视角并恢复镜头跟随
