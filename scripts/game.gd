@@ -47,6 +47,8 @@ var ph2_pill: Control
 var ph_arrow_l: Label
 var cheat_picker: Control
 var cheat_slot := -1
+var target_picker: Control
+var target_btn_box: VBoxContainer
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
@@ -1690,7 +1692,26 @@ func _item_phase(p: Dictionary) -> void:
 	_item_action = {"epoch": -1}
 	_broadcast_state()
 	if bool(p.bot):
-		_item_action = {"epoch": epoch, "action": "skip"}  # 机器人道具策略后续批次
+		var used := false
+		for i in p.get("items", []).size():
+			var it: Dictionary = p.items[i]
+			var d := ItemData.def(String(it.id))
+			if String(d.type) == "passive" or not bool(d.implemented) \
+					or int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < int(d.cost):
+				continue
+			if String(it.id) == "黑卡":
+				_use_item(int(p.peer), i, -1)
+				used = true
+			elif String(it.id) == "交换生":
+				var targets: Array = _swap_targets(int(p.peer))
+				if not targets.is_empty():
+					var t: Dictionary = targets[randi_range(0, targets.size() - 1)]
+					_use_item(int(p.peer), i, int(t.peer))
+					used = true
+			if used:
+				break
+		if not used:
+			_item_action = {"epoch": epoch, "action": "skip"}
 	else:
 		_arm_item_timeout(epoch, int(p.peer))
 	while running and _awaiting_item == int(p.peer) and int(_item_action.get("epoch", -1)) != epoch:
@@ -1719,6 +1740,7 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 		return
 	if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < int(d.cost):
 		return
+	var prev_cd := int(it.get("cd", 0))
 	p.stamina = int(p.stamina) - int(d.cost)
 	it.cd = int(d.cooldown)
 	p.item_used = true
@@ -1738,9 +1760,28 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 			for k in rem:
 				alive[k].money = int(alive[k].money) + 1
 			_log("%s 发动【平均主义】，全场现金拉平！" % p.name, "#c9a6ff")
+		"交换生":
+			var target := _player_by_peer(arg)
+			if target.is_empty() or arg == peer or not bool(target.alive) \
+					or (target.get("items", []) as Array).is_empty():
+				it.cd = prev_cd  # 不消耗：找不到可交换对象
+				p.item_used = false
+				p.stamina = int(p.stamina) + int(d.cost)
+				_log("%s 的【交换生】没找到可交换的对象" % p.name, "#8a90a5")
+				return
+			var titems: Array = target.items
+			var tidx := randi_range(0, titems.size() - 1)
+			var theirs: Dictionary = titems[tidx]
+			titems[tidx] = it  # 我的交换生（含新冷却）给对方——冷却随实例走
+			items[slot] = theirs
+			_log("%s 用【交换生】从 %s 处换来【%s】！" % [p.name, target.name, String(theirs.id)], "#c9a6ff")
+		"黑卡":
+			it.charges = 3
+			_log("%s 使用【黑卡】，接下来 3 次购买免单！" % p.name, "#f0a0c0")
 		_:
 			p.item_used = false
 			p.stamina = int(p.stamina) + int(d.cost)
+			it.cd = prev_cd
 			return
 	_item_action = {"epoch": _item_epoch, "action": "used"}
 	_broadcast_state()
@@ -1796,9 +1837,20 @@ func _shop_buy(peer: int, slot: int) -> void:
 	var id := String(arr[slot])
 	var price := ItemData.price(String(ItemData.def(id).quality))
 	var p := _player_by_peer(peer)
-	if p.is_empty() or p.items.size() >= 5 or int(p.money) < price:
+	if p.is_empty() or p.items.size() >= 5:
 		return
-	p.money = int(p.money) - price
+	var free := false
+	for pit in p.get("items", []):
+		if String(pit.id) == "黑卡" and int(pit.get("charges", 0)) > 0:
+			pit.charges = int(pit.charges) - 1
+			free = true
+			break
+	if not free:
+		if int(p.money) < price:
+			return
+		p.money = int(p.money) - price
+	else:
+		_log("%s 刷【黑卡】免单拿下【%s】" % [p.name, id], "#f0a0c0")
 	p.items.append({"id": id, "cd": 0})
 	arr[slot] = ""
 	_log("%s 在小卖部买下了【%s】（%s）" % [p.name, id, GameData.fmt_money(price)], "#8fb7f2")
@@ -1882,13 +1934,17 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 			continue
 		var usable: bool = int(it.get("cd", 0)) == 0 \
 			and int(p.get("stamina", 0)) >= int(d.cost) and not bool(p.get("item_used", false))
-		var b := UIKit.button("%s ⚡%d" % [String(it.id), int(d.cost)], 12)
+		var iid := String(it.id)
+		if iid == "交换生" and usable:
+			usable = not _swap_targets(my_peer).is_empty()
+		var b := UIKit.button("%s ⚡%d" % [iid, int(d.cost)], 12)
 		b.disabled = not usable
 		var slot := i
-		var iid := String(it.id)
 		b.pressed.connect(func() -> void:
 			if iid == "作弊器":
 				_open_cheat_picker(slot)
+			elif iid == "交换生":
+				_open_target_picker(slot)
 			else:
 				_send_use_item(slot, -1)
 		)
@@ -1915,6 +1971,28 @@ func _open_cheat_picker(slot: int) -> void:
 
 func _close_cheat_picker() -> void:
 	cheat_picker.visible = false
+
+func _swap_targets(exclude_peer: int) -> Array:
+	return hp.filter(func(x) -> bool:
+		return bool(x.alive) and int(x.peer) != exclude_peer \
+			and not (x.get("items", []) as Array).is_empty())
+
+func _open_target_picker(slot: int) -> void:
+	_close_cheat_picker()
+	for c in target_btn_box.get_children():
+		c.queue_free()
+	for t in _swap_targets(my_peer):
+		var b := UIKit.button("%s（%d 件道具）" % [String(t.name), (t.get("items", []) as Array).size()], 13)
+		var tp := int(t.peer)
+		b.pressed.connect(func() -> void:
+			_close_target_picker()
+			_send_use_item(slot, tp)
+		)
+		target_btn_box.add_child(b)
+	target_picker.visible = true
+
+func _close_target_picker() -> void:
+	target_picker.visible = false
 
 # ================= 选项菜单 / 房主暂停 / 设置 =================
 
@@ -2099,6 +2177,35 @@ func _build_menu_ui() -> void:
 	var cv_cancel := UIKit.button("取消", 13)
 	cv_cancel.pressed.connect(_close_cheat_picker)
 	cv2.add_child(cv_cancel)
+
+	# 目标玩家选择器（交换生等选玩家类道具）
+	target_picker = Control.new()
+	target_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
+	target_picker.visible = false
+	add_child(target_picker)
+	var td_dim := ColorRect.new()
+	td_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	td_dim.color = Color(0.04, 0.04, 0.08, 0.55)
+	target_picker.add_child(td_dim)
+	var tc := CenterContainer.new()
+	tc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	target_picker.add_child(tc)
+	var tp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(0.66, 0.47, 0.92, 0.8), 1, 10)
+	tp.custom_minimum_size = Vector2(320, 0)
+	tc.add_child(tp)
+	var tpm := UIKit.margins(20, 20, 14, 12)
+	tp.add_child(tpm)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 8)
+	tpm.add_child(tv)
+	tv.add_child(UIKit.label("选择目标玩家", 14, UIKit.ACCENT))
+	target_btn_box = VBoxContainer.new()
+	target_btn_box.add_theme_constant_override("separation", 6)
+	tv.add_child(target_btn_box)
+	var tv_cancel := UIKit.button("取消", 13)
+	tv_cancel.pressed.connect(_close_target_picker)
+	tv.add_child(tv_cancel)
 
 func _open_menu() -> void:
 	if multiplayer.is_server():
