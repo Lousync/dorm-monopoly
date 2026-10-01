@@ -31,6 +31,26 @@ func _mk_player(peer: int, nm: String) -> Dictionary:
 		"pos": 0, "alive": true, "skip": 0, "stamina": 3, "items": [], "item_used": false,
 		"cheat_roll": -1}
 
+## 重建座位：先停掉在途的金额滚动 tween（它们捕获了旧的标签节点，
+## 座位一重建就会写到已释放的控件上），再清掉 game 侧陈旧的行引用缓存。
+func _rebuild_seats(g, pls: Array) -> void:
+	for peer in g._player_rows:
+		var row: Dictionary = g._player_rows[peer]
+		var tw = row.get("tw")
+		if tw != null and (tw as Tween).is_valid():
+			tw.kill()
+	g.board.build_seats(pls, g.my_peer)
+	g._player_rows.clear()
+
+func _prop_idx(offset: int) -> int:
+	var n := 0
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "property":
+			if n == offset:
+				return i
+			n += 1
+	return -1
+
 func _shop_tile() -> int:
 	for i in GameData.TILES.size():
 		if String(GameData.TILES[i].get("type", "")) == "shop":
@@ -74,6 +94,8 @@ func _run() -> void:
 	_test_authority_guards(g)
 	_test_dead_player_items_return_to_pool(g)
 	_test_roster_marks_disconnected_bots(g, _net)
+	_test_hot_chain(g)
+	_test_shop_refresh_full_shelf(g)
 	_test_camera_state(g)
 	await _test_roll_button_off_home_view(g)
 
@@ -182,6 +204,34 @@ func _test_authority_guards(g) -> void:
 	g.c_casino_action(5, "top")
 	_check(String(g._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
 
+func _test_hot_chain(g) -> void:
+	print("== 「连续三次 10+」必须跨回合累计 ==")
+	var p := _mk_player(1, "甲")
+	p["hot_chain"] = 0
+	_check(not g._note_roll_hot(p, 10), "第 1 次 10+ 不抓")
+	_check(not g._note_roll_hot(p, 12), "第 2 次 10+ 不抓")
+	_check(g._note_roll_hot(p, 11), "第 3 次 10+ 触发查寝")
+	_check(int(p.hot_chain) == 0, "触发后计数清零")
+	_check(not g._note_roll_hot(p, 3), "低于 10 不计入")
+	_check(not g._note_roll_hot(p, 10), "中断后重新累计（第 1 次）")
+	_check(not g._note_roll_hot(p, 10), "中断后重新累计（第 2 次）")
+	_check(g._note_roll_hot(p, 10), "中断后重新累计（第 3 次再抓）")
+
+func _test_shop_refresh_full_shelf(g) -> void:
+	print("== 小卖部刷新：货架没变化就不收钱 ==")
+	var tile := _shop_tile()
+	var p := _mk_player(1, "甲")
+	p.money = 9000
+	g.hp = [p]
+	g.turn_i = 0            # hp 只有 1 人，_broadcast_state 会索引 hp[turn_i]
+	g.shops = {tile: {"slots": ["作弊器", "招财猫", "黑卡"]}}   # 三格都满
+	g._shop_peer = 1
+	g._shop_tile = tile
+	g.refresh_count = 0
+	g._shop_refresh(1)
+	_check(int(p.money) == 9000, "满货架刷新不扣钱（实得 %s）" % str(p.money))
+	_check(g.refresh_count == 0, "满货架刷新不推高全场刷新价")
+
 func _test_roster_marks_disconnected_bots(g, net) -> void:
 	print("== 开局名册：淡出期间掉线的玩家应转机器人 ==")
 	net.players = [
@@ -264,7 +314,7 @@ func _test_room_info_port() -> void:
 func _test_camera_state(g) -> void:
 	print("== 镜头状态：回自己视角 / 窗口缩放 ==")
 	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
-	g.board.build_seats(pls, 1)
+	_rebuild_seats(g, pls)
 	g.board._process(0.0)             # 首次布局：fit_overview
 	_check(g.board.size.x > 10.0, "棋盘控件已布局（w=%.0f）" % g.board.size.x)
 	# 默认全景倍率下 _clamp_center 会退化成「恒等于桌面中心」，座座位目标无从区分
@@ -304,7 +354,7 @@ func _test_roll_button_off_home_view(g) -> void:
 		"round": 1, "max_rounds": 30, "players": pls, "tiles": _fresh_tiles(),
 		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
 	}
-	g.board.build_seats(pls, 1)       # 建立座位（边 0 = 自己）
+	_rebuild_seats(g, pls)            # 建立座位（边 0 = 自己）
 	g.board.rotate_to_edge(0, true)   # 前面的镜头用例可能把视角留在别人座位
 	g._refresh_actions()              # 掷骰按钮的显隐/可用由状态决定
 	await process_frame

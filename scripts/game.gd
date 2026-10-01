@@ -606,6 +606,7 @@ func _build_hp() -> Array:
 			"bot": bool(p.bot) or gone, "money": GameData.START_MONEY,
 			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
 			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
+			"hot_chain": 0,
 		})
 	return out
 
@@ -698,6 +699,20 @@ func _alive_count() -> int:
 			n += 1
 	return n
 
+## 记录一次转盘结果对「连续三次 10+ 被查寝」的累计，返回是否应触发查寝。
+## 计数必须存在玩家表里跨回合保留：原来 chain 是 _play_turn 的局部变量，每回合
+## 清零，而重转的 while 只在 12 点时才循环，于是这条开局就广播的规则
+##（「连续三次 10+ 会被查寝」）实际只在同回合连开三个 12 时才触发（见 fix/v0.0.2）。
+func _note_roll_hot(p: Dictionary, roll: int) -> bool:
+	if roll < 10:
+		p.hot_chain = 0
+		return false
+	p.hot_chain = int(p.get("hot_chain", 0)) + 1
+	if int(p.hot_chain) < 3:
+		return false
+	p.hot_chain = 0
+	return true
+
 func _play_turn(p: Dictionary) -> void:
 	if at_mode != "":
 		print("AT turn start: r%d %s" % [round_no, p.name])
@@ -706,7 +721,6 @@ func _play_turn(p: Dictionary) -> void:
 		_log("%s 在小黑屋反省，本回合强制保守托管" % p.name, "#c9a6ff")
 	_item_turn_start(p)  # 休眠=保守托管：被动与自动结算照常（§1）
 	_broadcast_state()
-	var chain := 0
 	while running:
 		_awaiting_roll = int(p.peer)
 		_roll_epoch += 1
@@ -733,17 +747,13 @@ func _play_turn(p: Dictionary) -> void:
 		if not running:
 			return
 
-		if roll >= 10:
-			chain += 1
-			if chain >= 3:
-				_log("%s 连续三次转到 10 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
-				s_card.rpc("%s 连续三次 10+，被查寝带走！" % p.name, "jail")
-				_send_to_jail(p)
-				_broadcast_state()
-				await _wait(1.0)
-				return
-		else:
-			chain = 0
+		if _note_roll_hot(p, roll):
+			_log("%s 连续三次转到 10 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
+			s_card.rpc("%s 连续三次 10+，被查寝带走！" % p.name, "jail")
+			_send_to_jail(p)
+			_broadcast_state()
+			await _wait(1.0)
+			return
 
 		var path := GameData.compute_path(int(p.pos), roll)
 		if path.is_empty():
@@ -2141,9 +2151,15 @@ func _shop_refresh(peer: int) -> void:
 	var cost := _refresh_price()
 	if p.is_empty() or int(p.money) < cost:
 		return
+	# _stock_shop 只补空位：三格都满时刷新什么也不会发生，却照收钱还推高全场刷新价
+	#（此前玩家会「花钱买了个寂寞」，见 fix/v0.0.2）
+	var before := str(shops[_shop_tile].slots)
+	_stock_shop(_shop_tile)
+	if str(shops[_shop_tile].slots) == before:
+		_log("货架满满当当，刷新也不会有新货（没花钱）", "#8a90a5")
+		return
 	p.money = int(p.money) - cost
 	refresh_count += 1
-	_stock_shop(_shop_tile)
 	_log("%s 花 %s 刷新了货架（全场刷新价上涨）" % [p.name, GameData.fmt_money(cost)], "#8a90a5")
 	_broadcast_state()
 
