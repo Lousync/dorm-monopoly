@@ -33,9 +33,9 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 
 	var pad := size.y * 0.035
 	var art_h := size.y * 0.40
-	var name_h := size.y * 0.115
-	var qual_h := size.y * 0.09
-	var gap := size.y * 0.026
+	var name_h := size.y * 0.10
+	var qual_h := size.y * 0.082
+	var gap := size.y * 0.022
 
 	# 图区（占位）
 	var art := Panel.new()
@@ -83,7 +83,7 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	desc_box.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0.32), 4,
 		Color(qc.r, qc.g, qc.b, 0.28), 1))
 	card.add_child(desc_box)
-	var desc_l := UIKit.label(String(d.get("desc", "")), maxi(int(size.y * 0.05), 8), UIKit.TEXT_DIM)
+	var desc_l := UIKit.label(String(d.get("desc", "")), maxi(int(size.y * 0.042), 7), UIKit.TEXT_DIM)
 	desc_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc_l.position = Vector2(5, 4)
 	desc_l.size = desc_box.size - Vector2(10, 8)
