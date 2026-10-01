@@ -192,15 +192,15 @@
 	.optbtn:hover { border-color: #f5b342; }
 
 	/* ---------- 事件弹卡（牌位垫上方） ---------- */
-	/* ---------- 事件弹卡（顶部中央，原横幅位置，短暂弹出） ---------- */
-	.eventcard { position: absolute; left: 50%; top: 46px; z-index: 25;
-		transform: translateX(-50%); min-width: 300px; text-align: center;
-		background: rgba(22, 12, 10, .95); border: 2px solid #ef7b74; border-radius: 10px;
-		padding: 10px 26px; color: #ff9d97; font-size: 15px; display: none;
-		box-shadow: 0 10px 26px rgba(0, 0, 0, .5); }
+	/* ---------- 事件弹卡：落在牌垫上（覆盖上排，短暂显示后消失，按类型变色） ---------- */
+	.eventcard { position: absolute; left: 396px; top: 660px; width: 488px; z-index: 26;
+		box-sizing: border-box; text-align: center; background: rgba(22, 12, 10, .96);
+		border: 2px solid #ef7b74; border-radius: 8px; padding: 9px 16px;
+		color: #ff9d97; font-size: 13px; display: none;
+		box-shadow: 0 6px 18px rgba(0, 0, 0, .5); }
 	.eventcard.show { display: block; animation: pop .28s ease-out; }
-	@keyframes pop { 0% { transform: translateX(-50%) scale(.6); opacity: 0; }
-		100% { transform: translateX(-50%) scale(1); opacity: 1; } }
+	@keyframes pop { 0% { transform: scale(.6); opacity: 0; }
+		100% { transform: scale(1); opacity: 1; } }
 
 	/* ---------- 格子详情（左下临时） ---------- */
 	.tileinfo { position: absolute; left: 14px; bottom: 66px; z-index: 24; width: 210px;
@@ -479,9 +479,20 @@
 		t.style.display = "block";
 		setTimeout(() => t.style.display = "none", 1600);
 	}
+	const EVTS = [
+		{ t: "⚠ 缴电费 ¥300，钱包在流泪", c: "#ef7b74", bg: "rgba(24, 12, 10, .96)" },
+		{ t: "奖学金到账 +¥1,500！", c: "#58c468", bg: "rgba(8, 20, 12, .96)" },
+		{ t: "【机会】帮宿管阿姨搬水 +¥600", c: "#f0a72e", bg: "rgba(21, 16, 6, .96)" }
+	];
+	let evi = 0, evtimer = null;
 	function popEvent() {
-		const e = $("eventcard"); e.classList.remove("show");
-		void e.offsetWidth; e.classList.add("show");
+		const e = $("eventcard");
+		const v = EVTS[evi++ % EVTS.length];
+		e.textContent = v.t;
+		e.style.borderColor = v.c; e.style.color = v.c; e.style.background = v.bg;
+		e.classList.remove("show"); void e.offsetWidth; e.classList.add("show");
+		clearTimeout(evtimer);
+		evtimer = setTimeout(() => e.classList.remove("show"), 1800);
 	}
 	function popTile() {
 		const e = $("tileinfo"); e.classList.toggle("show");
