@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>布局原型：玩家牌位垫 + 选项菜单</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	#stage { width: 1280px; height: 800px; position: relative; flex: none;
+		background: linear-gradient(160deg, #1a1d2b 0%, #10121c 60%, #0b0d15 100%);
+		overflow: hidden; }
+
+	/* ---------- 桌面 ---------- */
+	.wood { position: absolute; left: 290px; top: 55px; width: 700px; height: 700px;
+		border-radius: 14px;
+		background:
+			repeating-linear-gradient(93deg, rgba(0,0,0,.10) 0 3px, rgba(0,0,0,0) 3px 46px),
+			repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 2px, rgba(0,0,0,0) 2px 9px),
+			linear-gradient(180deg, #6e4d2c, #59391d 55%, #4a2e16);
+		box-shadow: 0 0 0 3px #3a2410, 0 0 0 5px #2a190b, 0 18px 50px rgba(0,0,0,.55); }
+
+	/* ---------- 顶部两座常驻设施 ---------- */
+	.fixture { position: absolute; border-radius: 10px; }
+	.fixture.shop { left: 361px; top: 136px; width: 268px; height: 134px;
+		background: linear-gradient(180deg, #241809, #1c1206);
+		border: 2px solid #5c3f1f; box-shadow: 0 6px 14px rgba(0,0,0,.45); }
+	.fixture.casino { left: 641px; top: 136px; width: 268px; height: 134px;
+		background: radial-gradient(ellipse at 50% 42%, #14683f 0%, #0d4d2e 62%, #0a3d24 100%);
+		border: 2px solid #b5761a; box-shadow: 0 6px 14px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,214,120,.28); }
+	.awning { position: absolute; left: 6px; right: 6px; top: 5px; height: 22px;
+		display: flex; }
+	.awning i { flex: 1; }
+	.awning i:nth-child(odd) { background: #6bc78c; }
+	.awning i:nth-child(even) { background: #f3ead6; }
+	.scallop { position: absolute; left: 6px; right: 6px; top: 27px; height: 9px; display: flex; }
+	.scallop i { flex: 1; border-radius: 0 0 50% 50%; }
+	.scallop i:nth-child(odd) { background: #6bc78c; }
+	.scallop i:nth-child(even) { background: #f3ead6; }
+	.plaque { position: absolute; left: 10px; top: 36px; display: flex; gap: 5px;
+		align-items: center; background: #170f05; border: 1px solid #7d5a28;
+		border-radius: 5px; padding: 3px 9px; z-index: 2; }
+	.plaque b { color: #f0e2c2; font-size: 12px; letter-spacing: 1px; }
+	.rules { position: absolute; right: 10px; top: 40px; color: #a08c68; font-size: 8px; z-index: 2; }
+	.shelf { position: absolute; left: 0; right: 0; bottom: 16px; display: flex;
+		justify-content: center; gap: 12px; }
+	.slotcard { width: 46px; height: 44px; border-radius: 5px;
+		background: #0e0a05; border: 1px solid rgba(160, 118, 58, .6);
+		color: rgba(240, 226, 194, .25); font-size: 15px;
+		display: flex; align-items: center; justify-content: center; }
+	.slotprice { text-align: center; color: #a08c68; font-size: 7px; margin-top: 2px; }
+	.legend { position: absolute; left: 10px; bottom: 5px; display: flex; gap: 4px;
+		align-items: center; }
+	.legend s { width: 6px; height: 6px; border-radius: 50%; text-decoration: none; }
+	.legend em { font-style: normal; color: #a08c68; font-size: 7px; margin-right: 3px; }
+	.refresh { position: absolute; right: 8px; bottom: 4px; font-size: 8px; color: #d8cbae;
+		background: linear-gradient(180deg, #4a3313, #38260d); border: 1px solid #7d5a28;
+		border-radius: 4px; padding: 2px 7px; }
+	.casino .ring { position: absolute; inset: 4px; border-radius: 7px;
+		border: 1px solid rgba(255, 214, 120, .3); }
+	.casino .ctitle { position: absolute; left: 10px; top: 40px; color: #ffd88a;
+		font-size: 12px; letter-spacing: 1px; }
+	.casino .crules { position: absolute; right: 10px; top: 44px; color: #7fae8c; font-size: 8px; }
+	.potrow { position: absolute; left: 0; right: 0; top: 58px; display: flex;
+		justify-content: center; align-items: center; gap: 9px; }
+	.pot { background: rgba(4, 18, 11, .9); border: 1px solid rgba(255, 216, 138, .45);
+		border-radius: 6px; padding: 3px 20px; text-align: center; }
+	.pot u { display: block; text-decoration: none; color: #7fae8c; font-size: 7px; }
+	.pot b { color: #f5b342; font-size: 15px; }
+	.minicard { width: 12px; height: 17px; border-radius: 2px; background: #201c2c;
+		border: 1px solid #b5761a; }
+	.minicard.l { transform: rotate(-8deg); }
+	.minicard.r { transform: rotate(8deg); }
+	.cstatus { position: absolute; left: 0; right: 0; bottom: 20px; text-align: center;
+		color: #7fae8c; font-size: 8px; }
+
+	/* ---------- 棋盘（示意环） ---------- */
+	.boardwrap { position: absolute; left: 361px; top: 274px; width: 548px; height: 366px; }
+	.tile { position: absolute; width: 29px; height: 29px; border-radius: 3px;
+		background: #171a29; border: 1px solid #2c3046; overflow: hidden; }
+	.tile s { display: block; height: 5px; text-decoration: none; }
+	.tile em { display: block; font-style: normal; color: #8b93ad; font-size: 6px;
+		text-align: center; margin-top: 5px; }
+	.wheel { position: absolute; left: 50%; top: 50%; width: 96px; height: 96px;
+		margin: -48px 0 0 -48px; border-radius: 50%;
+		background: repeating-conic-gradient(#2c3350 0 27.7deg, #3a4266 27.7deg 55.4deg);
+		border: 3px solid #b5761a; }
+	.wheel::after { content: ""; position: absolute; left: 50%; top: 50%; width: 14px;
+		height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #f5b342; }
+	.deckchip { position: absolute; width: 62px; height: 38px; border-radius: 4px;
+		background: #221e2f; border: 2px solid #6a5a9e; color: #b3a8e0; font-size: 11px;
+		display: flex; align-items: center; justify-content: center; top: 50%; }
+	.deckchip.d2 { border-color: #b5761a; color: #f0c875; }
+	.mark { position: absolute; left: 0; right: 0; bottom: 34px; text-align: center;
+		color: rgba(245, 179, 66, .32); font-size: 17px; letter-spacing: 3px; }
+
+	/* ---------- 座位（对家 / 左右家） ---------- */
+	.seat { position: absolute; background: rgba(255, 255, 255, .035);
+		border-radius: 8px; }
+	.card { position: relative; background: rgba(10, 12, 20, .28); border-radius: 8px;
+		display: flex; align-items: center; gap: 7px; padding: 8px 10px; }
+	.badge { flex: none; width: 17px; height: 17px; border-radius: 50%;
+		background: radial-gradient(circle at 35% 30%, #ffd88a, #b5761a);
+		color: #3a2405; font-size: 10px; font-weight: bold;
+		display: flex; align-items: center; justify-content: center; }
+	.badge.gray { background: radial-gradient(circle at 35% 30%, #9aa1b8, #565d75); }
+	.chip { flex: none; width: 15px; height: 15px; border-radius: 50%; }
+	.cinfo { flex: 1; min-width: 0; }
+	.cinfo .nm { color: #dfe3ee; font-size: 10px; white-space: nowrap; }
+	.cinfo .mn { color: #f5b342; font-size: 11px; }
+	.cinfo .est { color: #8b93ad; font-size: 7.5px; margin-top: 1px; white-space: nowrap; }
+	.stam { display: flex; gap: 2px; margin-top: 2px; }
+	.stam s { width: 5px; height: 7px; border-radius: 1px; background: #3a3f55; }
+	.stam s.on { background: #f5d342; }
+	.slots { display: flex; gap: 4px; }
+	.slots i { width: 27px; height: 44px; border-radius: 4px;
+		border: 1px solid rgba(255, 255, 255, .14); color: rgba(255, 255, 255, .18);
+		font-size: 10px; display: flex; align-items: center; justify-content: center; }
+	.seat.top { left: 361px; top: 64px; width: 548px; height: 61px; }
+	.seat.top .card { width: 320px; height: 61px; margin: 0 auto; }
+	.seat.left, .seat.right { top: 347px; width: 61px; height: 296px; }
+	.seat.left { left: 300px; } .seat.right { left: 889px; }
+	.seat .rot { width: 296px; height: 61px; transform-origin: center center; }
+	.seat.left .rot { transform: rotate(90deg); position: absolute;
+		left: -130px; top: 118px; }
+	.seat.right .rot { transform: rotate(-90deg); position: absolute;
+		left: -94px; top: 118px; }
+	.seat.left .card, .seat.right .card { width: 320px; height: 61px; }
+
+	/* ---------- 底部：玩家牌位垫 ---------- */
+	.mat-self { position: absolute; left: 396px; top: 654px; width: 296px; height: 61px;
+		background: rgba(10, 12, 20, .34); border-radius: 8px;
+		border: 1px solid rgba(245, 179, 66, .55); display: flex; align-items: center;
+		gap: 7px; padding: 6px 9px; }
+	.mat-self .turn { color: #f5b342; font-size: 7px; }
+	/* ---------- 右上角悬浮战报框 ---------- */
+	.float-feed { position: absolute; right: 12px; top: 12px; width: 216px; z-index: 20;
+		background: rgba(7, 9, 16, .88); border: 1px solid rgba(90, 98, 128, .6);
+		border-radius: 8px; overflow: hidden; }
+	.float-feed .fh { color: #8b93ad; font-size: 11px; padding: 6px 10px; cursor: pointer; }
+	.float-feed .fh:hover { color: #dfe3ee; }
+	.float-feed .fl { height: 128px; overflow: hidden; padding: 2px 10px 6px;
+		border-top: 1px solid rgba(90, 98, 128, .4); }
+	.float-feed .fl p { font-size: 10px; line-height: 15px; color: #c6cbdb;
+		white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+	.float-feed.min .fl { display: none; }
+
+	/* ---------- 牌垫装饰区（宿舍风小物件，纯装饰） ---------- */
+	.decorbox { position: absolute; left: 702px; top: 654px; width: 182px; height: 61px; }
+	.die { position: absolute; left: 18px; top: 20px; width: 17px; height: 17px;
+		border-radius: 3px; transform: rotate(14deg);
+		background: radial-gradient(circle at 28% 30%, #333 2px, transparent 2.4px),
+			radial-gradient(circle at 72% 72%, #333 2px, transparent 2.4px),
+			radial-gradient(circle at 50% 50%, #333 2px, transparent 2.4px), #f2edda;
+		box-shadow: 1px 2px 3px rgba(0, 0, 0, .5); }
+	.chip { position: absolute; width: 15px; height: 15px; border-radius: 50%;
+		border: 2px dashed rgba(255, 255, 255, .55); box-shadow: 1px 2px 3px rgba(0, 0, 0, .5); }
+	.chip.c1 { left: 54px; top: 34px; background: #c05a7a; }
+	.chip.c2 { left: 74px; top: 22px; background: #4e8fe0; }
+	.chip.c3 { left: 66px; top: 42px; background: #58c468; }
+	.mug { position: absolute; right: 20px; top: 24px; width: 16px; height: 13px;
+		border-radius: 2px 2px 4px 4px; background: #b5761a;
+		box-shadow: inset 0 2px 0 rgba(255, 255, 255, .25), 1px 2px 3px rgba(0, 0, 0, .5); }
+	.mug::after { content: ""; position: absolute; right: -6px; top: 2px; width: 5px;
+		height: 7px; border: 2px solid #8b93ad; border-radius: 50%; }
+
+	/* ---------- 牌垫第二行：回合两阶段条 + 转动转盘大按钮 ---------- */
+	.phasebar { position: absolute; left: 396px; top: 719px; width: 488px; height: 34px;
+		display: flex; justify-content: space-between; align-items: center; gap: 8px;
+		background: rgba(7, 9, 16, .6); border: 1px solid rgba(90, 98, 128, .55);
+		border-radius: 8px; padding: 0 8px; }
+	.phases { display: flex; align-items: center; gap: 6px; }
+	.ph { font-size: 10px; color: #565d75; background: #1b1f2e; border: 1px solid #2a3046;
+		border-radius: 5px; padding: 3px 9px; }
+	.ph.now { color: #3a2405; font-weight: bold;
+		background: linear-gradient(180deg, #ffd88a, #f0a72e); border-color: #f5b342; }
+	.pharrow { color: #565d75; font-size: 11px; }
+	.spinbtn { font-size: 12px; font-weight: bold; color: #3a2405; cursor: pointer;
+		background: linear-gradient(180deg, #ffd88a, #f0a72e); border: 1px solid #f5b342;
+		border-radius: 6px; padding: 5px 16px; box-shadow: 0 2px 6px rgba(0, 0, 0, .4); }
+	.spinbtn:active { transform: translateY(1px); }
+	.spinbtn.spent { filter: grayscale(.7) brightness(.65); cursor: default; }
+	.spinbtn.spent:active { transform: none; }
+	/* 道具阶段：牌位点亮 */
+	.mat-self.using .slots i { border-color: rgba(245, 179, 66, .8);
+		color: rgba(245, 179, 66, .5); box-shadow: 0 0 6px rgba(245, 179, 66, .35); }
+	.optbtn { position: absolute; left: 12px; top: 12px; z-index: 30;
+		display: flex; align-items: center; gap: 6px; font-size: 12px; color: #dfe3ee;
+		background: rgba(10, 12, 20, .78); border: 1px solid #3a4058; border-radius: 7px;
+		padding: 6px 12px; cursor: pointer; }
+	.optbtn:hover { border-color: #f5b342; }
+
+	/* ---------- 事件弹卡（牌位垫上方） ---------- */
+	/* ---------- 事件反馈三候选：A 飞钞 / B 横幅扫过 / C 角标堆叠 ---------- */
+	#fxlayer { position: absolute; inset: 0; z-index: 26; pointer-events: none; }
+	.bill { position: absolute; width: 20px; height: 11px; border-radius: 2px;
+		display: flex; align-items: center; justify-content: center;
+		font-size: 8px; font-weight: bold; color: #0c2a12;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+		transition: transform .55s cubic-bezier(.3, .7, .4, 1), opacity .55s; }
+	.bill.gain { background: linear-gradient(180deg, #7fd894, #58c468); }
+	.bill.pay  { background: linear-gradient(180deg, #e89a94, #d86060); }
+	.ftext { position: absolute; font-size: 14px; font-weight: bold;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, .7); animation: ftrise 1.3s forwards; }
+	@keyframes ftrise { 0% { opacity: 0; transform: translateY(8px); }
+		18% { opacity: 1; } 100% { opacity: 0; transform: translateY(-30px); } }
+	@keyframes mnpulse-good { 0%, 100% { color: #f5b342; }
+		40% { color: #7fe08f; text-shadow: 0 0 8px rgba(88, 196, 104, .8); } }
+	@keyframes mnpulse-bad  { 0%, 100% { color: #f5b342; }
+		40% { color: #ff8f88; text-shadow: 0 0 8px rgba(216, 96, 96, .8); } }
+	.mn.pulse-good { animation: mnpulse-good .9s; }
+	.mn.pulse-bad  { animation: mnpulse-bad .9s; }
+	.eventcard { position: absolute; left: 396px; top: 666px; width: 488px; height: 42px;
+		z-index: 27; box-sizing: border-box; display: none; align-items: center;
+		justify-content: center; background: rgba(12, 13, 22, .92);
+		border-top: 2px solid #ef7b74; border-bottom: 2px solid #ef7b74;
+		color: #ff9d97; font-size: 16px; font-weight: bold; letter-spacing: 1px; }
+	.eventcard.show { display: flex; animation: sweep 2.1s ease-in-out forwards; }
+	@keyframes sweep { 0% { transform: translateX(-470px); opacity: 0; }
+		28% { transform: translateX(0); opacity: 1; }
+		68% { transform: translateX(0); opacity: 1; }
+		100% { transform: translateX(470px); opacity: 0; } }
+	#toasts { position: absolute; left: 700px; top: 646px; width: 186px; z-index: 26;
+		display: flex; flex-direction: column; gap: 3px; pointer-events: none; }
+	.toast { font-size: 9px; padding: 3px 8px; border-radius: 10px;
+		background: rgba(10, 12, 20, .92); white-space: nowrap; overflow: hidden;
+		text-overflow: ellipsis; border: 1px solid #565d75;
+		animation: toastin .22s ease-out; }
+	.toast.out { opacity: 0; transition: opacity .4s; }
+	@keyframes toastin { 0% { transform: translateX(30px); opacity: 0; }
+		100% { transform: none; opacity: 1; } }
+
+	/* ---------- 格子详情（左下临时） ---------- */
+	.tileinfo { position: absolute; left: 14px; bottom: 66px; z-index: 24; width: 210px;
+		background: rgba(10, 12, 20, .92); border: 1px solid #565d75; border-left: 3px solid #5a8fe0;
+		border-radius: 8px; padding: 8px 12px; display: none; }
+	.tileinfo.show { display: block; }
+	.tileinfo b { color: #dfe3ee; font-size: 12px; }
+	.tileinfo p { color: #8b93ad; font-size: 10px; margin-top: 3px; line-height: 14px; }
+
+	/* ---------- 覆盖层：菜单 / 确认 / 暂停遮罩 ---------- */
+	.dim { position: absolute; inset: 0; z-index: 40; background: rgba(4, 4, 8, .55);
+		display: none; }
+	.dim.show { display: block; }
+	.panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+		width: 320px; background: #161927; border: 1px solid #3a4058; border-radius: 12px;
+		padding: 18px 20px; z-index: 41; display: none;
+		box-shadow: 0 18px 50px rgba(0, 0, 0, .6); }
+	.panel.show { display: block; }
+	.panel h3 { color: #f5b342; font-size: 16px; margin-bottom: 4px; }
+	.panel .pstate { color: #8b93ad; font-size: 11px; margin-bottom: 14px; }
+	.panel .pstate.warn { color: #f0a72e; }
+	.mbtn { display: block; width: 100%; text-align: left; font-size: 14px; color: #dfe3ee;
+		background: #1d2131; border: 1px solid #333a52; border-radius: 8px;
+		padding: 10px 14px; margin-top: 8px; cursor: pointer; }
+	.mbtn:hover { border-color: #f5b342; color: #ffd88a; }
+	.mbtn.danger { color: #ff9d97; border-color: #5c3030; }
+	.mbtn.danger:hover { border-color: #ef7b74; }
+	.srow { display: flex; align-items: center; justify-content: space-between;
+		padding: 9px 2px; border-bottom: 1px dashed #2a3046; }
+	.srow span { color: #dfe3ee; font-size: 13px; }
+	.srow input[type=range] { width: 140px; accent-color: #f5b342; }
+	.srow .sw { width: 34px; height: 18px; border-radius: 9px; background: #333a52;
+		position: relative; cursor: pointer; }
+	.srow .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px;
+		height: 14px; border-radius: 50%; background: #8b93ad; transition: all .15s; }
+	.srow .sw.on { background: #f0a72e; }
+	.srow .sw.on::after { left: 18px; background: #fff; }
+	.shint { color: #565d75; font-size: 11px; text-align: center; padding: 10px 0 2px; }
+	.confirm p { color: #dfe3ee; font-size: 13px; line-height: 20px; margin-bottom: 6px; }
+	.confirm small { color: #8b93ad; font-size: 11px; }
+	.btnrow { display: flex; gap: 10px; margin-top: 14px; }
+	.btnrow .mbtn { margin: 0; text-align: center; }
+
+	/* ---------- 原型控制条（非游戏内容） ---------- */
+	.proto { position: absolute; right: 10px; bottom: 10px; z-index: 60;
+		border: 1px dashed #4e8f5c; border-radius: 8px; background: rgba(8, 20, 12, .85);
+		padding: 8px 10px; font-size: 11px; color: #9fd3ab; }
+	.proto b { font-size: 11px; }
+	.proto .row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+	.proto button { font-size: 11px; color: #cfe8d4; background: #14251a;
+		border: 1px solid #3c5c46; border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+	.proto button.on { background: #2c5c3a; border-color: #6bc78c; }
+	.proto label { color: #7fae8c; }
+	#toast { position: absolute; left: 50%; top: 46%; transform: translateX(-50%);
+		z-index: 70; background: rgba(10, 12, 20, .95); border: 1px solid #f5b342;
+		color: #ffd88a; font-size: 13px; border-radius: 8px; padding: 10px 22px; display: none; }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+	<div class="wood"></div>
+
+	<!-- 小卖部 -->
+	<div class="fixture shop">
+		<div class="awning"></div><div class="scallop"></div>
+		<div class="plaque"><b>小卖部</b></div>
+		<div class="rules">每回合限购 1 件 · 刷新费递增</div>
+		<div class="shelf">
+			<div><div class="slotcard">＋</div><div class="slotprice">待上架</div></div>
+			<div><div class="slotcard">＋</div><div class="slotprice">待上架</div></div>
+			<div><div class="slotcard">＋</div><div class="slotprice">待上架</div></div>
+		</div>
+		<div class="legend">
+			<s style="background:#ececec"></s><em>白</em><s style="background:#58c468"></s><em>绿</em>
+			<s style="background:#4e8fe0"></s><em>蓝</em><s style="background:#9a6fe0"></s><em>紫</em>
+			<s style="background:#e8943a"></s><em>橙</em>
+		</div>
+		<div class="refresh">刷新货架 · ¥—</div>
+	</div>
+
+	<!-- 宿舍赌场 -->
+	<div class="fixture casino">
+		<div class="ring"></div>
+		<div class="ctitle">宿舍赌场</div>
+		<div class="crules">踩到赌场格开局 · 全员入局 · 赢家通吃</div>
+		<div class="potrow">
+			<div class="minicard l"></div>
+			<div class="pot"><u>当前奖池</u><b>¥0</b></div>
+			<div class="minicard r"></div>
+		</div>
+		<div class="cstatus">歇业中 · 等待有人踩中赌场格</div>
+	</div>
+
+	<!-- 棋盘 -->
+	<div class="boardwrap">
+		<div class="wheel"></div>
+		<div class="deckchip" style="left:76px">机会</div>
+		<div class="deckchip d2" style="right:76px">命运</div>
+		<div class="mark">宿 舍 大 富 翁</div>
+	</div>
+
+	<!-- 对家 / 左右家 -->
+	<div class="seat top"><div class="card">
+		<div class="badge gray">2</div><div class="chip" style="background:#4e8fe0"></div>
+		<div class="cinfo"><div class="nm">机器人A</div><div class="mn">¥20,000</div>
+			<div class="est">地产 ×0 · 身家 ¥20,000</div></div>
+		<div class="slots"><i>＋</i><i>＋</i><i>＋</i><i>＋</i><i>＋</i></div>
+	</div></div>
+	<div class="seat left"><div class="rot"><div class="card">
+		<div class="badge gray">3</div><div class="chip" style="background:#58c468"></div>
+		<div class="cinfo"><div class="nm">机器人B</div><div class="mn">¥20,000</div>
+			<div class="est">地产 ×0 · 身家 ¥20,000</div></div>
+		<div class="slots"><i>＋</i><i>＋</i><i>＋</i><i>＋</i><i>＋</i></div>
+	</div></div></div>
+	<div class="seat right"><div class="rot"><div class="card">
+		<div class="badge gray">4</div><div class="chip" style="background:#f0d342"></div>
+		<div class="cinfo"><div class="nm">机器人C</div><div class="mn">¥20,000</div>
+			<div class="est">地产 ×0 · 身家 ¥20,000</div></div>
+		<div class="slots"><i>＋</i><i>＋</i><i>＋</i><i>＋</i><i>＋</i></div>
+	</div></div></div>
+
+	<!-- 我的牌位垫：座位卡（排名徽章 + 地产/身家下沉到这里） + 右侧战报条 -->
+	<div class="mat-self">
+		<div class="badge">1</div><div class="chip" style="background:#e8763a"></div>
+		<div class="cinfo"><div class="nm">玩家 <span class="turn">▶ 行动中</span></div>
+			<div class="mn">¥18,400</div>
+			<div class="est">地产 ×3 · 身家 ¥52,300</div>
+			<div class="stam"><s class="on"></s><s class="on"></s><s class="on"></s><s></s><s></s></div>
+		</div>
+		<div class="slots"><i>＋</i><i>＋</i><i>＋</i><i>＋</i><i>＋</i></div>
+	</div>
+	<div class="decorbox">
+		<div class="die"></div><div class="chip c1"></div><div class="chip c2"></div>
+		<div class="chip c3"></div><div class="mug"></div>
+	</div>
+
+	<!-- 右上角悬浮战报框（可折叠） -->
+	<div class="float-feed" id="floatfeed">
+		<div class="fh" onclick="toggleFeed()">第 2/30 轮 · 战报 <span id="feedarrow">▾</span></div>
+		<div class="fl">
+			<p style="color:#f0a0c0">机器人A 踩中赌场，全员 ¥800 入局</p>
+			<p>你 掷出 8 点，前进到 快递驿站</p>
+			<p style="color:#74d188">机器人B 支付租金 ¥1,200 → 你</p>
+			<p style="color:#ef7b74">机器人C 被查寝，宿委会反省一回合</p>
+			<p style="color:#f0c064">你 抽到【机会】搬水 +¥600</p>
+			<p style="color:#8fb7f2">机器人A 偷看了牌堆顶</p>
+		</div>
+	</div>
+
+	<!-- 牌垫第二行：回合阶段 + 转动转盘 -->
+	<div class="phasebar" id="phasebar">
+		<div class="phases">
+			<span class="ph now" id="ph1chip">① 转轮盘</span>
+			<span class="pharrow">→</span>
+			<span class="ph" id="ph2chip">② 使用道具</span>
+		</div>
+		<button class="spinbtn" id="spinbtn" onclick="setPhase(2)">转动转盘</button>
+	</div>
+
+	<!-- 左上角唯一入口：选项 -->
+	<button class="optbtn" onclick="openMenu()">☰ 选项</button>
+
+	<!-- 事件反馈层：A 飞钞浮字 / B 横幅扫过 / C 角标堆叠 -->
+	<div id="fxlayer"></div>
+	<div id="toasts"></div>
+	<div class="eventcard" id="eventcard"></div>
+
+	<!-- 格子详情（左下临时弹卡，演示左留白） -->
+	<div class="tileinfo" id="tileinfo">
+		<b>快递驿站</b><p>无主地产 · 售价 ¥2,800<br>租金 ¥350 ×(1+装修) · 同色一组再 ×2</p>
+	</div>
+
+	<!-- 覆盖层 -->
+	<div class="dim" id="dim"></div>
+	<div class="panel" id="menu">
+		<h3>选项</h3>
+		<div class="pstate" id="pstate"></div>
+		<button class="mbtn" onclick="closeAll()">▶ 继续游戏</button>
+		<button class="mbtn" onclick="showPanel('settings')">⚙ 设置</button>
+		<button class="mbtn danger" onclick="showPanel('confirm')">⏻ 退出游戏</button>
+	</div>
+	<div class="panel" id="settings">
+		<h3>设置</h3>
+		<div class="pstate">改动立即生效（原型示意）</div>
+		<div class="srow"><span>音效音量</span><input type="range" min="0" max="100" value="70"></div>
+		<div class="srow"><span>静音</span><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+		<div class="shint">—— 更多设置项（预留扩展） ——</div>
+		<button class="mbtn" onclick="showPanel('menu')">‹ 返回</button>
+	</div>
+	<div class="panel confirm" id="confirm">
+		<h3>退出游戏</h3>
+		<div class="pstate warn">对局进行中</div>
+		<p>确定要退出本局吗？</p>
+		<small id="cfnote">退出后你的回合将由机器人接管，对局继续。</small>
+		<div class="btnrow">
+			<button class="mbtn" onclick="showPanel('menu')">取消</button>
+			<button class="mbtn danger" onclick="quitGame()">确认退出</button>
+		</div>
+	</div>
+	<div class="dim show" id="pausermask" style="display:none; z-index:45">
+		<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center">
+			<div style="color:#ffd88a;font-size:22px;letter-spacing:2px">⏸ 房主已暂停</div>
+			<div style="color:#8b93ad;font-size:13px;margin-top:10px">等待房主继续…</div>
+		</div>
+	</div>
+	<div id="toast"></div>
+
+	<!-- 原型控制条（非游戏内容） -->
+	<div class="proto">
+		<b>原型控制（非游戏 UI）</b>
+		<div class="row"><label>身份</label>
+			<button id="b-host" class="on" onclick="setHost(true)">房主</button>
+			<button id="b-guest" onclick="setHost(false)">非房主</button></div>
+		<div class="row"><label>阶段</label>
+			<button id="b-ph1" class="on" onclick="setPhase(1)">转轮盘</button>
+			<button id="b-ph2" onclick="setPhase(2)">使用道具</button></div>
+		<div class="row"><label>反馈</label>
+			<button id="b-evA" class="on" onclick="setEvStyle('A')">A 飞钞</button>
+			<button id="b-evB" onclick="setEvStyle('B')">B 横幅</button>
+			<button id="b-evC" onclick="setEvStyle('C')">C 角标</button></div>
+		<div class="row"><label>触发</label>
+			<button onclick="popEvent()">事件弹卡</button>
+			<button onclick="popTile()">格子详情</button></div>
+		<div class="row"><label>演示</label>
+			<button id="b-mask" onclick="toggleMask()">房主暂停中遮罩</button></div>
+	</div>
+</div></div>
+
+<script>
+	// 棋盘 56 格示意环（18×12 外圈）
+	const cols = ["#d8a03c", "#c05a7a", "#4e8fe0", "#58c468", "#9a6fe0", "#e8943a", "#5a8fe0", "#8b93ad"];
+	const bw = document.querySelector(".boardwrap");
+	for (let i = 0; i < 56; i++) {
+		const t = document.createElement("div"); t.className = "tile";
+		const s = document.createElement("s"); const e = document.createElement("em");
+		if (i === 0) { s.style.background = "#f5b342"; e.textContent = "起点"; }
+		else { s.style.background = cols[i % cols.length]; e.textContent = i % 3 === 0 ? "机会" : "地块"; }
+		t.appendChild(s); t.appendChild(e);
+		let x, y;
+		if (i < 18) { x = 6 + i * 30; y = 0; }                       // 上边 18
+		else if (i < 28) { x = 519; y = 6 + (i - 18) * 36; }         // 右边 10
+		else if (i < 46) { x = 6 + (45 - i) * 30; y = 337; }         // 下边 18
+		else { x = 0; y = 6 + (55 - i) * 36; }                       // 左边 10
+		t.style.left = x + "px"; t.style.top = y + "px";
+		bw.appendChild(t);
+	}
+	// 雨棚条纹
+	for (const cls of ["awning", "scallop"]) {
+		const el = document.querySelector("." + cls);
+		for (let i = 0; i < 16; i++) el.appendChild(document.createElement("i"));
+	}
+
+	const $ = id => document.getElementById(id);
+	const panels = ["menu", "settings", "confirm"];
+	let isHost = true;
+	function setHost(h) {
+		isHost = h;
+		$("b-host").classList.toggle("on", h);
+		$("b-guest").classList.toggle("on", !h);
+	}
+	function showPanel(id) {
+		panels.forEach(p => $(p).classList.toggle("show", p === id));
+		$("dim").classList.add("show");
+		if (id === "menu") {
+			const st = $("pstate");
+			if (isHost) { st.textContent = "⏸ 游戏已暂停（全场）"; st.className = "pstate warn"; }
+			else { st.textContent = "▶ 对局进行中 · 仅房主可暂停"; st.className = "pstate"; }
+		}
+		if (id === "confirm")
+			$("cfnote").textContent = isHost
+				? "你是房主：退出后对局结束，所有人回到主菜单。"
+				: "退出后你的回合将由机器人接管，对局继续。";
+	}
+	function openMenu() { showPanel("menu"); }
+	function closeAll() {
+		panels.forEach(p => $(p).classList.remove("show"));
+		$("dim").classList.remove("show");
+	}
+	function quitGame() {
+		closeAll();
+		const t = $("toast"); t.textContent = "（原型）已退出对局，返回主菜单";
+		t.style.display = "block";
+		setTimeout(() => t.style.display = "none", 1600);
+	}
+	const EVTS = [
+		{ kind: "pay",   t: "缴电费 ¥300",                 money: "-¥300" },
+		{ kind: "gain",  t: "奖学金到账 +¥1,500",          money: "+¥1,500" },
+		{ kind: "event", t: "【机会】帮宿管阿姨搬水 +¥600", money: "+¥600" }
+	];
+	let evi = 0, evStyle = "A";
+	const KCOL = { pay: "#ef7b74", gain: "#58c468", event: "#f0a72e" };
+	function setEvStyle(s) {
+		evStyle = s;
+		["A", "B", "C"].forEach(k => $("b-ev" + k).classList.toggle("on", k === s));
+	}
+	function popEvent() {
+		const v = EVTS[evi++ % EVTS.length];
+		if (evStyle === "A") evBills(v);
+		else if (evStyle === "B") evBanner(v);
+		else evToast(v);
+	}
+	const MONEY_AT = { x: 462, y: 688 };   // 座位卡金额附近（舞台坐标）
+	function evBills(v) {
+		const layer = $("fxlayer");
+		const good = v.kind !== "pay";
+		for (let i = 0; i < 4; i++) {
+			const b = document.createElement("div");
+			b.className = "bill " + (good ? "gain" : "pay");
+			b.textContent = "¥";
+			const from = good
+				? { x: MONEY_AT.x + 150 + Math.random() * 210, y: 588 + Math.random() * 30 }
+				: { x: MONEY_AT.x + Math.random() * 30 - 10,   y: MONEY_AT.y };
+			const to = good
+				? { x: MONEY_AT.x + Math.random() * 30 - 10,   y: MONEY_AT.y }
+				: { x: MONEY_AT.x + 150 + Math.random() * 210, y: 586 + Math.random() * 30 };
+			b.style.left = from.x + "px"; b.style.top = from.y + "px";
+			layer.appendChild(b);
+			setTimeout(() => {
+				b.style.transform = "translate(" + (to.x - from.x) + "px," + (to.y - from.y) + "px) rotate(" + (Math.random() * 140 - 70) + "deg)";
+				b.style.opacity = "0";
+			}, 60 + i * 90);
+			setTimeout(() => b.remove(), 950 + i * 90);
+		}
+		const ft = document.createElement("div");
+		ft.className = "ftext"; ft.textContent = v.money;
+		ft.style.color = good ? "#7fe08f" : "#ff8f88";
+		ft.style.left = (MONEY_AT.x - 6) + "px"; ft.style.top = (MONEY_AT.y - 30) + "px";
+		layer.appendChild(ft);
+		setTimeout(() => ft.remove(), 1350);
+		pulseMoney(good);
+	}
+	function pulseMoney(good) {
+		const mn = document.querySelector(".mat-self .mn");
+		const c = good ? "pulse-good" : "pulse-bad";
+		mn.classList.remove("pulse-good", "pulse-bad"); void mn.offsetWidth;
+		mn.classList.add(c);
+		setTimeout(() => mn.classList.remove(c), 950);
+	}
+	function evBanner(v) {
+		const b = $("eventcard");
+		b.textContent = v.t;
+		b.style.borderColor = KCOL[v.kind]; b.style.color = KCOL[v.kind];
+		b.classList.remove("show"); void b.offsetWidth; b.classList.add("show");
+	}
+	function evToast(v) {
+		const box = $("toasts");
+		const t = document.createElement("div");
+		t.className = "toast"; t.textContent = v.t;
+		t.style.borderColor = KCOL[v.kind]; t.style.color = KCOL[v.kind];
+		box.appendChild(t);
+		while (box.children.length > 3) box.firstChild.remove();
+		setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 450); }, 2400);
+	}
+	function popTile() {
+		const e = $("tileinfo"); e.classList.toggle("show");
+	}
+	function toggleFeed() {
+		const f = $("floatfeed"); f.classList.toggle("min");
+		$("feedarrow").textContent = f.classList.contains("min") ? "▸" : "▾";
+	}
+	function setPhase(p) {
+		const b = $("phasebar"); b.classList.toggle("p2", p === 2);
+		$("ph1chip").classList.toggle("now", p === 1);
+		$("ph2chip").classList.toggle("now", p === 2);
+		const btn = $("spinbtn");
+		btn.textContent = p === 1 ? "转动转盘" : "等待使用道具";
+		btn.classList.toggle("spent", p === 2);
+		document.querySelector(".mat-self").classList.toggle("using", p === 2);
+		$("b-ph1").classList.toggle("on", p === 1);
+		$("b-ph2").classList.toggle("on", p === 2);
+	}
+	function toggleMask() {
+		const m = $("pausermask");
+		m.style.display = m.style.display === "none" ? "block" : "none";
+		$("b-mask").classList.toggle("on", m.style.display === "block");
+	}
+
+	// 舞台等比缩放
+	function fit() {
+		const s = Math.min(innerWidth / 1280, innerHeight / 800);
+		document.getElementById("stage").style.transform = "scale(" + s + ")";
+	}
+	addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>
