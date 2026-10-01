@@ -165,17 +165,26 @@
 	.mug::after { content: ""; position: absolute; right: -6px; top: 2px; width: 5px;
 		height: 7px; border: 2px solid #8b93ad; border-radius: 50%; }
 
-	/* ---------- 行动条：拼在牌垫下方，与座位卡/战报条连成一块牌垫 ---------- */
-	.actions { position: absolute; left: 396px; top: 721px; width: 488px; height: 30px;
-		display: flex; justify-content: center; align-items: center; gap: 6px;
+	/* ---------- 牌垫第二行：回合两阶段条 + 转动转盘大按钮 ---------- */
+	.phasebar { position: absolute; left: 396px; top: 719px; width: 488px; height: 34px;
+		display: flex; justify-content: space-between; align-items: center; gap: 8px;
 		background: rgba(7, 9, 16, .6); border: 1px solid rgba(90, 98, 128, .55);
-		border-radius: 8px; }
-	.actions .status { color: #dfe3ee; font-size: 10px; margin-right: 4px; }
-	.abtn { font-size: 10px; color: #dfe3ee; background: linear-gradient(180deg, #262b3d, #1b1f2e);
-		border: 1px solid #3a4058; border-radius: 5px; padding: 3px 9px; cursor: pointer; }
-	.abtn:hover { border-color: #f5b342; }
-	.abtn.roll { color: #3a2405; font-weight: bold; border-color: #f5b342;
-		background: linear-gradient(180deg, #ffd88a, #f0a72e); }
+		border-radius: 8px; padding: 0 8px; }
+	.phases { display: flex; align-items: center; gap: 6px; }
+	.ph { font-size: 10px; color: #565d75; background: #1b1f2e; border: 1px solid #2a3046;
+		border-radius: 5px; padding: 3px 9px; }
+	.ph.now { color: #3a2405; font-weight: bold;
+		background: linear-gradient(180deg, #ffd88a, #f0a72e); border-color: #f5b342; }
+	.pharrow { color: #565d75; font-size: 11px; }
+	.spinbtn { font-size: 12px; font-weight: bold; color: #3a2405; cursor: pointer;
+		background: linear-gradient(180deg, #ffd88a, #f0a72e); border: 1px solid #f5b342;
+		border-radius: 6px; padding: 5px 16px; box-shadow: 0 2px 6px rgba(0, 0, 0, .4); }
+	.spinbtn:active { transform: translateY(1px); }
+	.spinbtn.spent { filter: grayscale(.7) brightness(.65); cursor: default; }
+	.spinbtn.spent:active { transform: none; }
+	/* 道具阶段：牌位点亮 */
+	.mat-self.using .slots i { border-color: rgba(245, 179, 66, .8);
+		color: rgba(245, 179, 66, .5); box-shadow: 0 0 6px rgba(245, 179, 66, .35); }
 	.optbtn { position: absolute; left: 12px; top: 12px; z-index: 30;
 		display: flex; align-items: center; gap: 6px; font-size: 12px; color: #dfe3ee;
 		background: rgba(10, 12, 20, .78); border: 1px solid #3a4058; border-radius: 7px;
@@ -340,13 +349,14 @@
 		</div>
 	</div>
 
-	<!-- 行动条（收编为牌位垫的一部分，屏幕层不随桌旋转） -->
-	<div class="actions">
-		<span class="status">轮到你转盘了！</span>
-		<button class="abtn">跟随</button><button class="abtn">全景</button>
-		<button class="abtn">左家</button><button class="abtn">对家</button>
-		<button class="abtn">右家</button>
-		<button class="abtn roll">转动转盘</button>
+	<!-- 牌垫第二行：回合阶段 + 转动转盘 -->
+	<div class="phasebar" id="phasebar">
+		<div class="phases">
+			<span class="ph now" id="ph1chip">① 转轮盘</span>
+			<span class="pharrow">→</span>
+			<span class="ph" id="ph2chip">② 使用道具</span>
+		</div>
+		<button class="spinbtn" id="spinbtn" onclick="setPhase(2)">转动转盘</button>
 	</div>
 
 	<!-- 左上角唯一入口：选项 -->
@@ -401,6 +411,9 @@
 		<div class="row"><label>身份</label>
 			<button id="b-host" class="on" onclick="setHost(true)">房主</button>
 			<button id="b-guest" onclick="setHost(false)">非房主</button></div>
+		<div class="row"><label>阶段</label>
+			<button id="b-ph1" class="on" onclick="setPhase(1)">转轮盘</button>
+			<button id="b-ph2" onclick="setPhase(2)">使用道具</button></div>
 		<div class="row"><label>触发</label>
 			<button onclick="popEvent()">事件弹卡</button>
 			<button onclick="popTile()">格子详情</button></div>
@@ -475,6 +488,17 @@
 	function toggleFeed() {
 		const f = $("floatfeed"); f.classList.toggle("min");
 		$("feedarrow").textContent = f.classList.contains("min") ? "▸" : "▾";
+	}
+	function setPhase(p) {
+		const b = $("phasebar"); b.classList.toggle("p2", p === 2);
+		$("ph1chip").classList.toggle("now", p === 1);
+		$("ph2chip").classList.toggle("now", p === 2);
+		const btn = $("spinbtn");
+		btn.textContent = p === 1 ? "转动转盘" : "等待使用道具";
+		btn.classList.toggle("spent", p === 2);
+		document.querySelector(".mat-self").classList.toggle("using", p === 2);
+		$("b-ph1").classList.toggle("on", p === 1);
+		$("b-ph2").classList.toggle("on", p === 2);
 	}
 	function toggleMask() {
 		const m = $("pausermask");
