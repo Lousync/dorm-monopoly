@@ -66,6 +66,7 @@ var dev_tp_spin: SpinBox
 var dev_roll_spin: SpinBox
 var dev_ts_l: Label
 var dev_inject_box: VBoxContainer
+var menu_probe := false
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
@@ -170,6 +171,11 @@ func _ready() -> void:
 		dev_enabled = false
 	_apply_audio()
 	_apply_dev_mode()
+	for a2 in OS.get_cmdline_user_args():
+		if a2 == "--menu-probe":
+			menu_probe = true
+	if menu_probe:
+		_menu_probe_run()
 
 func _exit_tree() -> void:
 	if at_mode != "":
@@ -1802,7 +1808,8 @@ func _pill_label(p: Control) -> Label:
 func _build_menu_ui() -> void:
 	menu_layer = Control.new()
 	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.process_mode = Node.PROCESS_MODE_WHEN_PAUSED
+	# ALWAYS 而非 WHEN_PAUSED：非房主本地打开菜单时对局仍在跑，菜单必须可交互
+	menu_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	menu_layer.visible = false
 	add_child(menu_layer)
 
@@ -2158,6 +2165,25 @@ func _dev_sel_refresh() -> void:
 	for e in dev_pbtns:
 		var btn: Button = e.btn
 		btn.button_pressed = int(e.peer) == dev_sel_peer
+
+func _menu_probe_run() -> void:
+	await _wait(2.0)
+	print("PROBE open menu...")
+	_open_menu()
+	await get_tree().create_timer(0.5, true).timeout
+	print("PROBE paused=", get_tree().paused, " menu_visible=", menu_layer.visible,
+		" panel=", menu_panel.visible, " state=", menu_state.text)
+	_menu_resume()
+	await get_tree().create_timer(0.5, true).timeout
+	print("PROBE resumed paused=", get_tree().paused, " menu_visible=", menu_layer.visible)
+	_open_menu()
+	await get_tree().create_timer(0.5, true).timeout
+	print("PROBE reopen paused=", get_tree().paused, " menu_visible=", menu_layer.visible)
+	_menu_resume()
+	await get_tree().create_timer(0.5, true).timeout
+	print("PROBE final paused=", get_tree().paused)
+	print("PROBE DONE")
+	get_tree().quit(0)
 
 func _process(_delta: float) -> void:
 	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
