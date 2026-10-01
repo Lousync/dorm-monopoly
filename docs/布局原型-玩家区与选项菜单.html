@@ -134,14 +134,36 @@
 		border: 1px solid rgba(245, 179, 66, .55); display: flex; align-items: center;
 		gap: 7px; padding: 6px 9px; }
 	.mat-self .turn { color: #f5b342; font-size: 7px; }
-	.mat-feed { position: absolute; left: 702px; top: 654px; width: 182px; height: 61px;
-		background: rgba(7, 9, 16, .72); border: 1px solid rgba(90, 98, 128, .55);
+	/* ---------- 右上角悬浮战报框 ---------- */
+	.float-feed { position: absolute; right: 12px; top: 12px; width: 216px; z-index: 20;
+		background: rgba(7, 9, 16, .88); border: 1px solid rgba(90, 98, 128, .6);
 		border-radius: 8px; overflow: hidden; }
-	.mat-feed .fh { color: #8b93ad; font-size: 7px; padding: 2px 6px;
-		border-bottom: 1px solid rgba(90, 98, 128, .4); }
-	.mat-feed .fl { height: 44px; overflow: hidden; padding: 2px 6px; }
-	.mat-feed .fl p { font-size: 7.5px; line-height: 10.5px; color: #c6cbdb;
+	.float-feed .fh { color: #8b93ad; font-size: 11px; padding: 6px 10px; cursor: pointer; }
+	.float-feed .fh:hover { color: #dfe3ee; }
+	.float-feed .fl { height: 128px; overflow: hidden; padding: 2px 10px 6px;
+		border-top: 1px solid rgba(90, 98, 128, .4); }
+	.float-feed .fl p { font-size: 10px; line-height: 15px; color: #c6cbdb;
 		white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+	.float-feed.min .fl { display: none; }
+
+	/* ---------- 牌垫装饰区（宿舍风小物件，纯装饰） ---------- */
+	.decorbox { position: absolute; left: 702px; top: 654px; width: 182px; height: 61px; }
+	.die { position: absolute; left: 18px; top: 20px; width: 17px; height: 17px;
+		border-radius: 3px; transform: rotate(14deg);
+		background: radial-gradient(circle at 28% 30%, #333 2px, transparent 2.4px),
+			radial-gradient(circle at 72% 72%, #333 2px, transparent 2.4px),
+			radial-gradient(circle at 50% 50%, #333 2px, transparent 2.4px), #f2edda;
+		box-shadow: 1px 2px 3px rgba(0, 0, 0, .5); }
+	.chip { position: absolute; width: 15px; height: 15px; border-radius: 50%;
+		border: 2px dashed rgba(255, 255, 255, .55); box-shadow: 1px 2px 3px rgba(0, 0, 0, .5); }
+	.chip.c1 { left: 54px; top: 34px; background: #c05a7a; }
+	.chip.c2 { left: 74px; top: 22px; background: #4e8fe0; }
+	.chip.c3 { left: 66px; top: 42px; background: #58c468; }
+	.mug { position: absolute; right: 20px; top: 24px; width: 16px; height: 13px;
+		border-radius: 2px 2px 4px 4px; background: #b5761a;
+		box-shadow: inset 0 2px 0 rgba(255, 255, 255, .25), 1px 2px 3px rgba(0, 0, 0, .5); }
+	.mug::after { content: ""; position: absolute; right: -6px; top: 2px; width: 5px;
+		height: 7px; border: 2px solid #8b93ad; border-radius: 50%; }
 
 	/* ---------- 行动条：拼在牌垫下方，与座位卡/战报条连成一块牌垫 ---------- */
 	.actions { position: absolute; left: 396px; top: 721px; width: 488px; height: 30px;
@@ -213,7 +235,7 @@
 	.btnrow .mbtn { margin: 0; text-align: center; }
 
 	/* ---------- 原型控制条（非游戏内容） ---------- */
-	.proto { position: absolute; right: 10px; top: 10px; z-index: 60;
+	.proto { position: absolute; right: 10px; bottom: 10px; z-index: 60;
 		border: 1px dashed #4e8f5c; border-radius: 8px; background: rgba(8, 20, 12, .85);
 		padding: 8px 10px; font-size: 11px; color: #9fd3ab; }
 	.proto b { font-size: 11px; }
@@ -300,8 +322,14 @@
 		</div>
 		<div class="slots"><i>＋</i><i>＋</i><i>＋</i><i>＋</i><i>＋</i></div>
 	</div>
-	<div class="mat-feed">
-		<div class="fh">第 2/30 轮 · 战报</div>
+	<div class="decorbox">
+		<div class="die"></div><div class="chip c1"></div><div class="chip c2"></div>
+		<div class="chip c3"></div><div class="mug"></div>
+	</div>
+
+	<!-- 右上角悬浮战报框（可折叠） -->
+	<div class="float-feed" id="floatfeed">
+		<div class="fh" onclick="toggleFeed()">第 2/30 轮 · 战报 <span id="feedarrow">▾</span></div>
 		<div class="fl">
 			<p style="color:#f0a0c0">机器人A 踩中赌场，全员 ¥800 入局</p>
 			<p>你 掷出 8 点，前进到 快递驿站</p>
@@ -443,6 +471,10 @@
 	}
 	function popTile() {
 		const e = $("tileinfo"); e.classList.toggle("show");
+	}
+	function toggleFeed() {
+		const f = $("floatfeed"); f.classList.toggle("min");
+		$("feedarrow").textContent = f.classList.contains("min") ? "▸" : "▾";
 	}
 	function toggleMask() {
 		const m = $("pausermask");
