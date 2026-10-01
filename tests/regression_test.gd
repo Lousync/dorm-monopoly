@@ -283,7 +283,8 @@ func _test_ui_widgets_applied(g) -> void:
 		"log_text", "log_head", "log_toggle", "info_panel", "info_title",
 		"info_body", "info_sb", "status_label", "chat_edit", "card_panel",
 		"card_label", "opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",
-		"ph_arrow_l", "black_btns", "black_hint"]
+		"ph_arrow_l", "black_btns", "black_hint",
+		"menu_dim", "menu_wraps", "rules_btn", "rules_panel", "rules_body", "rules_tabs"]
 	var missing: Array = []
 	for n in names:
 		if g.get(n) == null:

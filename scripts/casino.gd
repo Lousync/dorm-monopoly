@@ -11,7 +11,6 @@ extends Node
 
 var g                       # 宿主：对局场景（game.gd）
 
-const CASINO_STAKE := 800
 
 var _casino_epoch := 0
 var _casino_action := {"epoch": -1, "action": ""}
@@ -72,16 +71,16 @@ func run(p: Dictionary) -> void:
 		return
 	var pot := 0
 	for a in alive:
-		var pay: int = mini(CASINO_STAKE, int(a.money))
+		var pay: int = mini(GameData.CASINO_STAKE, int(a.money))
 		a.money = int(a.money) - pay
 		pot += pay
 	_broadcast_state()
 	var order: Array = []
 	for a in alive:
 		order.append(int(a.peer))
-	s_casino_start.rpc("炸弹猫", CASINO_STAKE, pot, order)
+	s_casino_start.rpc("炸弹猫", GameData.CASINO_STAKE, pot, order)
 	_log("全员下注 %s，奖池 %s，赢家通吃！" % [
-		GameData.fmt_money(CASINO_STAKE), GameData.fmt_money(pot)], "#f0a0c0")
+		GameData.fmt_money(GameData.CASINO_STAKE), GameData.fmt_money(pot)], "#f0a0c0")
 
 	var deck := BombCat.deck()
 	var defuse := {}

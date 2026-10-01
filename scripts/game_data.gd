@@ -13,6 +13,10 @@ const JAIL_TILE := 17         # 宿委会（左下角）
 const NO_OWNER := -100
 const PROMPT_TIMEOUT := 25.0  # 购买/升级等待秒数
 const ROLL_TIMEOUT := 35.0    # 玩家发呆代掷秒数
+## 赌场注码。放在这里（而不是 casino.gd）是为了让规则说明面板能引用它：
+## casino.gd 直接用了 Fx autoload，数据类 preload 它会把 autoload 依赖拖进
+## 编译链（--script 模式下 autoload 尚未注册，整条链会编译失败）。
+const CASINO_STAKE := 800
 
 const BOARD_COLS := 18
 const BOARD_ROWS := 12

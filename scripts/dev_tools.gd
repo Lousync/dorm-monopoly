@@ -369,6 +369,10 @@ func take_shot(path: String) -> void:
 		g.board.focus_grid(27, 0.8, true)
 		await get_tree().create_timer(0.15).timeout
 		_on_tile_clicked(27)  # 顺便展示格子详情卡
+	if path.contains("rules"):
+		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
+	if path.contains("pause"):
+		g._open_menu()           # 摆拍：打开暂停菜单
 	if not path.contains("plain"):
 		g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 		g.board.spin_wheel(12)

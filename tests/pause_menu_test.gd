@@ -84,6 +84,14 @@ func _run() -> void:
 	# headless 的根窗口默认只有 64x64，画布却按 1280 拉伸；先摆成与实机一致的尺寸，
 	# 否则控件布局与真机不符，点击坐标也会落在窗口外
 	root.size = Vector2i(1280, 800)
+	# --script 模式下 autoload 不能按全局名引用（编译期尚未注册），运行时从 root 取
+	var net = root.get_node_or_null("Net")
+	if net != null:
+		# 摆一份名册：否则 _host_setup 会对着空 hp 调 _broadcast_state 报错，噪音盖住真失败
+		net.players = [
+			{"peer": 1, "name": "我", "color": 0, "bot": false, "ready": true},
+			{"peer": 2, "name": "乙", "color": 1, "bot": true, "ready": true},
+		]
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false  # 冻结主循环，本测试手动摆状态

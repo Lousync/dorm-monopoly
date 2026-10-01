@@ -207,13 +207,16 @@ static func build_play_ui(g: Node) -> void:
 
 	g.dev.build_panel()
 
-	# 左下角：格子详情卡（点击棋盘格子弹出相关信息）
+	# 左下角：格子详情卡（点击棋盘格子弹出）。
+	# 原先这块是常驻的「操作提示」文本；现改为默认隐藏，操作提示与完整规则
+	# 收进左下角的「📖 规则说明」面板（见 rules_panel.gd / rules_text.gd）。
 	g.info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	g.info_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	g.info_panel.offset_left = 14
 	g.info_panel.offset_right = 356
 	g.info_panel.offset_top = -196
 	g.info_panel.offset_bottom = -66
+	g.info_panel.visible = false
 	g.add_child(g.info_panel)
 	g.info_sb = UIKit.stylebox(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1)
 	g.info_panel.add_theme_stylebox_override("panel", g.info_sb)
@@ -222,9 +225,9 @@ static func build_play_ui(g: Node) -> void:
 	var iv := VBoxContainer.new()
 	iv.add_theme_constant_override("separation", 5)
 	im.add_child(iv)
-	g.info_title = UIKit.label("操作提示", 16, UIKit.ACCENT)
+	g.info_title = UIKit.label("格子详情", 16, UIKit.ACCENT)
 	iv.add_child(g.info_title)
-	g.info_body = UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情\n点对手座位卡或按 Tab 转到 TA 视角 · 空格回自己", 13, UIKit.TEXT)
+	g.info_body = UIKit.label("点棋盘上任意格子看详情", 13, UIKit.TEXT)
 	g.info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	iv.add_child(g.info_body)
 
@@ -240,7 +243,9 @@ static func build_play_ui(g: Node) -> void:
 
 	g.log_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	g.log_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	g.log_panel.offset_left = -352
+	# 宽度 300（原 340）：右侧栏太宽时底部操作条会被它压住，
+	# 见 game.gd:_dock_band（底栏按可用带夹位）
+	g.log_panel.offset_left = -300
 	g.log_panel.offset_right = -12
 	g.log_panel.offset_top = 46
 	g.log_panel.offset_bottom = 780
@@ -434,6 +439,11 @@ static func build_menu_ui(g: Node) -> void:
 		"settings": {"wrap": sc, "panel": g.settings_panel},
 		"confirm": {"wrap": cc, "panel": g.confirm_panel},
 	}
+
+	# 置顶：压暗底与菜单要盖住棋盘 / 战报栏 / 底部操作条。它们都是本函数之后才
+	# 加进 game 的子节点，不置顶的话只有棋盘被压暗，两侧栏和底栏仍是亮的。
+	# 置顶同时保证「谁吃鼠标」与「谁在上层」一致（见 fix/v0.1.0 的暂停卡死）。
+	g.move_child(g.menu_layer, g.get_child_count() - 1)
 
 	# 作弊器点数选框（0~12，本地弹出）
 	g.cheat_picker = Control.new()

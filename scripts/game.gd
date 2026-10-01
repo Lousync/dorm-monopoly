@@ -76,11 +76,17 @@ var black_picker: Control
 var black_picker_box: VBoxContainer
 var _black_sig := ""
 
-# ---------------- 开发者模式 ----------------
+# ---------------- 格详情卡 / 规则说明（左下角，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
 var info_sb: StyleBoxFlat
+var rules_btn: Button            # 收起态：左下角「📖 规则说明」按钮
+var rules_panel: PanelContainer  # 展开态：分页规则面板（原位向上展开）
+var rules_body: RichTextLabel
+var rules_tabs := {}             # 分页 key -> 按钮
+var rules_open := false
+var rules_tab := ""
 var log_text: RichTextLabel
 var log_panel: PanelContainer
 var log_toggle: Button
@@ -202,6 +208,8 @@ func _exit_tree() -> void:
 func _build_ui() -> void:
 	# 控件构建已搬到 TableHud（原先 500 行都在这里）；控件直接写回本类同名成员
 	TableHud.build_play_ui(self)
+	# 左下角「📖 规则说明」：收起是按钮、点开原位向上展开分页规则（文案见 RulesText）
+	RulesPanel.build(self)
 func _build_hp() -> Array:
 	var out := []
 	var live := multiplayer.get_peers()
@@ -1165,6 +1173,8 @@ func _on_tile_clicked(idx: int) -> void:
 	info_body.text = body
 	info_sb.border_color = Color(accent.r, accent.g, accent.b, 0.7)
 	info_panel.add_theme_stylebox_override("panel", info_sb)
+	# 规则说明展开时占着左下角，格详情卡让位（见 _set_rules_open）
+	info_panel.visible = not rules_open
 	info_panel.pivot_offset = info_panel.size * 0.5
 	info_panel.scale = Vector2(0.94, 0.94)
 	var tw := create_tween()
@@ -2239,6 +2249,8 @@ func _build_menu_ui() -> void:
 ##（见 fix/v0.1.0 与 tests/pause_menu_test.gd）。
 func _menu_show(which: String) -> void:
 	menu_layer.visible = which != ""
+	if menu_layer.visible and menu_layer.get_index() != get_child_count() - 1:
+		move_child(menu_layer, -1)  # 开局后新挂的节点（结算层等）不该压在菜单上
 	for k in menu_wraps:
 		var e: Dictionary = menu_wraps[k]
 		# wrap 负责吃输入（全屏 STOP），panel 负责「当前显示哪块」的可查询状态
@@ -2264,6 +2276,32 @@ func _menu_resume() -> void:
 func s_pause(on: bool) -> void:
 	get_tree().paused = on
 	pause_mask.visible = on and not multiplayer.is_server()
+
+# ================= 规则说明面板（左下角） =================
+
+## 展开/收起规则说明。展开时它占据左下角，格子详情卡让位（隐藏）——
+## 两者锚在同一块地方，同时显示会互相压住；收起后格详情卡照常弹出。
+func _set_rules_open(on: bool) -> void:
+	if rules_open == on:
+		return
+	rules_open = on
+	rules_btn.visible = not on
+	rules_panel.visible = on
+	if on:
+		info_panel.visible = false
+		# 自左下角向上「长出来」：缩放支点在左下角（构建时已设，这里兜底重算）
+		rules_panel.pivot_offset = Vector2(0.0, rules_panel.size.y)
+		rules_panel.modulate.a = 0.0
+		rules_panel.scale = Vector2(0.96, 0.96)
+		var tw := create_tween().set_parallel(true)
+		tw.tween_property(rules_panel, "modulate:a", 1.0, 0.16)
+		tw.tween_property(rules_panel, "scale", Vector2.ONE, 0.2) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		rules_body.scroll_to_line(0)
+		Fx.play("pop", -8.0, 0.9)
+	else:
+		rules_panel.modulate.a = 1.0
+		rules_panel.scale = Vector2.ONE
 
 func _apply_audio() -> void:
 	AudioServer.set_bus_mute(0, audio_mute)
@@ -2325,23 +2363,46 @@ func _process(_delta: float) -> void:
 		# 自己座位卡下沿只有一行的空间，两条必须并排而不是上下叠放，
 		# 否则操作条会被挤出屏幕底部（见 fix/v0.0.2）。
 		var r := board.home_card_screen_rect()
+		var band := _dock_band()
 		if action_bar.visible:
 			var gap := 8.0
 			var total: float = mat_bar.size.x + gap + action_bar.size.x
-			var left: float = r.get_center().x - total * 0.5
+			var left: float = _clamp_dock_x(r.get_center().x - total * 0.5, total, band)
 			mat_bar.position = Vector2(left, r.end.y + 10.0)
 			action_bar.position = Vector2(left + mat_bar.size.x + gap, r.end.y + 10.0)
 		else:
-			mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
+			mat_bar.position = Vector2(
+				_clamp_dock_x(r.get_center().x - mat_bar.size.x * 0.5, mat_bar.size.x, band),
+				r.end.y + 10.0)
 	elif action_bar.visible:
 		_place_overlay_bar(action_bar)
+
+## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
+## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。
+func _dock_band() -> Vector2:
+	var x0 := 14.0
+	if rules_panel != null and rules_panel.visible:
+		x0 = maxf(x0, rules_panel.offset_right + 10.0)
+	elif info_panel != null and info_panel.visible:
+		x0 = maxf(x0, info_panel.offset_right + 10.0)
+	var x1 := size.x - 14.0
+	if log_panel != null and log_panel.visible:
+		# 战报栏挂 TOP_RIGHT 锚点，所以它的左边缘 = 屏宽 + offset_left（不写死宽度）
+		x1 = minf(x1, size.x + log_panel.offset_left - 8.0)
+	return Vector2(x0, maxf(x1, x0 + 120.0))
+
+## 把底栏左边缘夹进可用带内（带太窄时以左边缘为准，宁可溢出也不推到屏幕外）
+func _clamp_dock_x(want: float, width: float, band: Vector2) -> float:
+	return clampf(want, band.x, maxf(band.x, band.y - width))
 	if dev.enabled:
 		dev.refresh_panel()
 
-## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内
+## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内；
+## 横向同样夹进可用带，免得展开规则说明后被压住
 func _place_overlay_bar(c: Control) -> void:
 	var vp := size
-	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, maxf(vp.y - c.size.y - 16.0, 8.0))
+	c.position = Vector2(_clamp_dock_x(vp.x * 0.5 - c.size.x * 0.5, c.size.x, _dock_band()),
+		maxf(vp.y - c.size.y - 16.0, 8.0))
 
 ## 小卖部「买」按钮：按货架逐格显隐 + 标价 + 可买判定（缓存签名，避免每帧重建）。
 ## 这三个按钮创建时 visible=false，此前没有任何代码把它们打开过，
