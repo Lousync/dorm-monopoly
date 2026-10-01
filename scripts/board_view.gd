@@ -879,6 +879,8 @@ const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部：菜绿
 const CASINO_ACCENT := Color(0.93, 0.3, 0.55)   # 赌场：与赌场格同色
 const SHOP_QUALITIES := [Color(0.93, 0.93, 0.93), Color(0.42, 0.78, 0.55),
 	Color(0.36, 0.6, 0.92), Color(0.66, 0.47, 0.92), Color(0.96, 0.62, 0.25)]  # 白绿蓝紫橙
+const SHOP_WOOD_TEXT := Color(0.78, 0.7, 0.58)     # 木柜台上的米黄字
+const CASINO_FELT_TEXT := Color(0.72, 0.8, 0.68)   # 绿呢桌上的浅绿字
 
 ## 顶部空区：上层数据轨（战况四家横排 + 最近战报），下层左右两座常驻设施
 ## （左小卖部 / 右赌场，世界坐标随桌面旋转；小卖部为道具系统的桌面柜台壳子）
@@ -904,6 +906,14 @@ func _zone_panel(rect: Rect2, sb: StyleBox) -> Panel:
 	panel.add_theme_stylebox_override("panel", sb)
 	_world.add_child(panel)
 	return panel
+
+func _mini_card_back() -> Panel:
+	var cb := Panel.new()
+	cb.size = Vector2(34, 46)
+	cb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cb.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.125, 0.11, 0.155), 8,
+		Color(UIKit.ACCENT_DEEP.r, UIKit.ACCENT_DEEP.g, UIKit.ACCENT_DEEP.b), 1, 3))
+	return cb
 
 func _fixture_icon(icon_name: String) -> TextureRect:
 	var t := TextureRect.new()
@@ -958,13 +968,44 @@ func _make_log_rail(rect: Rect2) -> void:
 	_world_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(_world_log)
 
-## 小卖部（左半）：货架 3 格 + 品质图例 + 刷新按钮，道具系统解冻后接活数据，规格零迁移
+## 小卖部（左半）：木柜台 + 绿白条纹雨棚 + 货架 3 格 + 品质图例 + 刷新按钮
+## （道具系统解冻后接货架存货 / 刷新费用 / 购买操作，规格零迁移）
 func _make_shop(rect: Rect2) -> void:
-	var panel := _zone_panel(rect, UIKit.card_stylebox(Color(0.078, 0.08, 0.1, 0.9), 18,
-		Color(SHOP_ACCENT.r, SHOP_ACCENT.g, SHOP_ACCENT.b, 0.55), 1, 12))
-	var m := UIKit.margins(18, 14, 12, 12)
-	m.position = Vector2(18, 14)
-	m.size = rect.size - Vector2(36, 26)
+	var panel := _zone_panel(rect, UIKit.card_stylebox(Color(0.135, 0.095, 0.06, 0.97), 18,
+		Color(0.36, 0.25, 0.13), 2, 14))
+	# 雨棚：绿白竖条纹 + 圆弧垂边，压在柜台顶上
+	var band := HBoxContainer.new()
+	band.position = Vector2(14, 12)
+	band.size = Vector2(rect.size.x - 28.0, 30)
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(band)
+	var scal := HBoxContainer.new()
+	scal.position = Vector2(14, 42)
+	scal.size = Vector2(rect.size.x - 28.0, 20)
+	scal.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(scal)
+	for i in 24:
+		var c := SHOP_ACCENT if i % 2 == 0 else Color(0.93, 0.9, 0.8)
+		var cr := ColorRect.new()
+		cr.color = c
+		cr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		band.add_child(cr)
+		var cup := Panel.new()
+		var cup_w := (rect.size.x - 28.0) / 24.0
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = c
+		sb.corner_radius_bottom_left = int(cup_w * 0.5)
+		sb.corner_radius_bottom_right = int(cup_w * 0.5)
+		sb.border_width_bottom = 1
+		sb.border_color = Color(0, 0, 0, 0.2)
+		cup.add_theme_stylebox_override("panel", sb)
+		cup.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		scal.add_child(cup)
+	var m := UIKit.margins(0, 0, 0, 0)
+	m.position = Vector2(18, 76)
+	m.size = rect.size - Vector2(36, 88)  # 上让位雨棚，下留 12 底边距
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(m)
 	var v := VBoxContainer.new()
@@ -972,16 +1013,25 @@ func _make_shop(rect: Rect2) -> void:
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	m.add_child(v)
 	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 8)
+	head.add_theme_constant_override("separation", 10)
 	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(head)
-	head.add_child(_fixture_icon("daily"))
-	head.add_child(UIKit.label("小卖部", 26, SHOP_ACCENT))
+	var plaque := UIKit.panel_container(Color(0.1, 0.07, 0.045, 0.95), 8, Color(0.5, 0.36, 0.18), 1)
+	head.add_child(plaque)
+	var pm := UIKit.margins(12, 10, 4, 4)
+	pm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	plaque.add_child(pm)
+	var ph := HBoxContainer.new()
+	ph.add_theme_constant_override("separation", 8)
+	ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pm.add_child(ph)
+	ph.add_child(_fixture_icon("daily"))
+	ph.add_child(UIKit.label("小卖部", 24, Color(0.93, 0.88, 0.75)))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(sp)
-	head.add_child(UIKit.label("每回合限购 1 件 · 刷新费递增", 14, UIKit.TEXT_DIM))
+	head.add_child(UIKit.label("每回合限购 1 件 · 刷新费递增", 14, SHOP_WOOD_TEXT))
 	var shelf := HBoxContainer.new()
 	shelf.add_theme_constant_override("separation", 28)
 	shelf.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -994,18 +1044,18 @@ func _make_shop(rect: Rect2) -> void:
 		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		shelf.add_child(slot)
 		var card := Panel.new()
-		card.custom_minimum_size = Vector2(150, 200)
+		card.custom_minimum_size = Vector2(150, 150)
 		card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.05, 0.055, 0.08, 0.9), 10,
-			Color(SHOP_ACCENT.r, SHOP_ACCENT.g, SHOP_ACCENT.b, 0.26), 1))
+		card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.06, 0.045, 0.03, 0.95), 10,
+			Color(0.45, 0.32, 0.16, 0.55), 1))
 		slot.add_child(card)
 		var cc := CenterContainer.new()
 		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(cc)
-		cc.add_child(UIKit.label("＋", 36, Color(1, 1, 1, 0.13)))
-		var price_l := UIKit.label("待上架", 13, UIKit.TEXT_DIM)
+		cc.add_child(UIKit.label("＋", 36, Color(0.93, 0.88, 0.75, 0.16)))
+		var price_l := UIKit.label("待上架", 13, SHOP_WOOD_TEXT)
 		price_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		price_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot.add_child(price_l)
@@ -1028,19 +1078,28 @@ func _make_shop(rect: Rect2) -> void:
 		var qc: Color = SHOP_QUALITIES[qi]
 		dot.add_theme_stylebox_override("panel", UIKit.stylebox(qc, 6, Color(0, 0, 0, 0.4), 1))
 		legend.add_child(dot)
-		legend.add_child(UIKit.label(["白", "绿", "蓝", "紫", "橙"][qi], 13, UIKit.TEXT_DIM))
+		legend.add_child(UIKit.label(["白", "绿", "蓝", "紫", "橙"][qi], 13, SHOP_WOOD_TEXT))
 	_shop_refresh = UIKit.button("刷新货架 · ¥—", 14)
 	_shop_refresh.disabled = true
 	_shop_refresh.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	foot.add_child(_shop_refresh)
 
-## 赌场（右半）：常驻显示奖池与状态，活数据由对局层经 update_casino 喂入；对局玩法仍在弹层
+
+## 赌场（右半）：绿呢牌桌 + 金色滚边 + 两张卡背，奖池/状态活数据；对局玩法仍在弹层
 func _make_casino(rect: Rect2) -> void:
-	var panel := _zone_panel(rect, UIKit.card_stylebox(Color(0.082, 0.075, 0.1, 0.9), 18,
-		Color(CASINO_ACCENT.r, CASINO_ACCENT.g, CASINO_ACCENT.b, 0.55), 1, 12))
-	var m := UIKit.margins(18, 14, 12, 12)
-	m.position = Vector2(18, 14)
-	m.size = rect.size - Vector2(36, 26)
+	var panel := _zone_panel(rect, UIKit.card_stylebox(Color(0.062, 0.155, 0.105, 0.97), 18,
+		Color(UIKit.ACCENT_DEEP.r, UIKit.ACCENT_DEEP.g, UIKit.ACCENT_DEEP.b), 2, 14))
+	# 牌桌内圈金线
+	var ring := Panel.new()
+	ring.position = Vector2(10, 10)
+	ring.size = rect.size - Vector2(20, 20)
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0), 12,
+		Color(UIKit.ACCENT_HI.r, UIKit.ACCENT_HI.g, UIKit.ACCENT_HI.b, 0.3), 1))
+	panel.add_child(ring)
+	var m := UIKit.margins(18, 16, 16, 14)
+	m.position = Vector2(18, 16)
+	m.size = rect.size - Vector2(36, 30)
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(m)
 	var v := VBoxContainer.new()
@@ -1048,32 +1107,41 @@ func _make_casino(rect: Rect2) -> void:
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	m.add_child(v)
 	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 8)
+	head.add_theme_constant_override("separation", 10)
 	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(head)
 	head.add_child(_fixture_icon("casino"))
-	head.add_child(UIKit.label("宿舍赌场", 26, Color(0.98, 0.58, 0.78)))
+	head.add_child(UIKit.label("宿舍赌场", 26, UIKit.ACCENT_HI))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(sp)
-	head.add_child(UIKit.label("踩到赌场格开局 · 全员入局 · 赢家通吃", 14, UIKit.TEXT_DIM))
+	head.add_child(UIKit.label("踩到赌场格开局 · 全员入局 · 赢家通吃", 14, CASINO_FELT_TEXT))
 	var mid := VBoxContainer.new()
 	mid.alignment = BoxContainer.ALIGNMENT_CENTER
 	mid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(mid)
-	var pot_panel := UIKit.panel_container(Color(0.05, 0.055, 0.08, 0.85), 12,
-		Color(CASINO_ACCENT.r, CASINO_ACCENT.g, CASINO_ACCENT.b, 0.3), 1)
-	pot_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	mid.add_child(pot_panel)
-	var pm := UIKit.margins(24, 24, 10, 8)
+	var pot_row := HBoxContainer.new()
+	pot_row.add_theme_constant_override("separation", 24)
+	pot_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	pot_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mid.add_child(pot_row)
+	var cb_l := _mini_card_back()
+	cb_l.rotation = -0.12
+	cb_l.pivot_offset = Vector2(17, 23)
+	pot_row.add_child(cb_l)
+	var pot_panel := UIKit.panel_container(Color(0.03, 0.07, 0.05, 0.9), 12,
+		Color(UIKit.ACCENT_HI.r, UIKit.ACCENT_HI.g, UIKit.ACCENT_HI.b, 0.45), 1)
+	pot_row.add_child(pot_panel)
+	var pm := UIKit.margins(28, 28, 10, 8)
+	pm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pot_panel.add_child(pm)
 	var pv := VBoxContainer.new()
 	pv.add_theme_constant_override("separation", 2)
 	pv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pm.add_child(pv)
-	var cap := UIKit.label("当前奖池", 14, UIKit.TEXT_DIM)
+	var cap := UIKit.label("当前奖池", 14, CASINO_FELT_TEXT)
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pv.add_child(cap)
@@ -1081,10 +1149,15 @@ func _make_casino(rect: Rect2) -> void:
 	_casino_pool_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_casino_pool_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pv.add_child(_casino_pool_l)
-	_casino_status_l = UIKit.label("歇业中 · 等待有人踩中赌场格", 15, UIKit.TEXT_DIM)
+	var cb_r := _mini_card_back()
+	cb_r.rotation = 0.12
+	cb_r.pivot_offset = Vector2(17, 23)
+	pot_row.add_child(cb_r)
+	_casino_status_l = UIKit.label("歇业中 · 等待有人踩中赌场格", 15, CASINO_FELT_TEXT)
 	_casino_status_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_casino_status_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(_casino_status_l)
+
 
 ## 赌场设施活数据（pool = 0 视为歇业）
 func update_casino(pool: int, status: String) -> void:
@@ -1093,7 +1166,7 @@ func update_casino(pool: int, status: String) -> void:
 	if _casino_status_l != null and is_instance_valid(_casino_status_l):
 		_casino_status_l.text = status
 		_casino_status_l.add_theme_color_override("font_color",
-			UIKit.ACCENT if pool > 0 else UIKit.TEXT_DIM)
+			UIKit.ACCENT if pool > 0 else CASINO_FELT_TEXT)
 
 
 ## 战况轨：按行动顺序四家横排（现金由对局层刷新）
