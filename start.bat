@@ -39,6 +39,7 @@ where godot >nul 2>nul && (
 )
 rem 2) known install locations
 for %%P in (
+    "D:\Godot\Godot_v4.6.2-stable_win64.exe"
     "D:\develp\Godot\Godot_v4.6.2-stable_win64.exe"
     "%ProgramFiles%\Godot\Godot.exe"
     "%ProgramFiles(x86)%\Godot\Godot.exe"
@@ -49,6 +50,7 @@ for %%P in (
 if defined GODOT exit /b 0
 rem 3) last resort: search likely folders for any Godot_v*.exe
 for %%D in (
+    "D:\Godot"
     "D:\develp\Godot"
     "%LOCALAPPDATA%\Programs"
     "%ProgramFiles%"
