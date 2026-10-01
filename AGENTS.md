@@ -17,7 +17,10 @@
 ## 三、常用命令（PowerShell）
 
 ```powershell
-$G = "D:\develp\Godot\Godot_v4.6.2-stable_win64_console.exe"
+# Godot 路径因机器而异：start.bat 会按已知目录自动查找；下面这行改成你机器上的实际路径。
+# 注意要用 _console.exe（带控制台，才有 stdout；不带的那个看不到 print 输出）。
+$G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
+& $G --version                                            # 先确认路径可用
 & $G --path .                                             # 运行（或双击 start.bat）
 & $G --headless --path . --script tests/load_all.gd       # 脚本静态加载检查（改完先跑）
 & $G --headless --path . --script tests/rules_test.gd     # 规则单测
