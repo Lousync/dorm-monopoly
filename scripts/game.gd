@@ -16,6 +16,7 @@ var card_label: Label
 var status_label: Label
 var roll_btn: Button
 var mat_bar: PanelContainer
+var action_bar: PanelContainer   # 操作条：转动转盘 / 道具按钮（与视角无关，见 fix/v0.0.2）
 var ph1_lab: Label
 var ph2_lab: Label
 var log_head: Label
@@ -277,13 +278,28 @@ func _build_ui() -> void:
 	ph1_pill = ph1
 	ph2_pill = ph2
 	ph_arrow_l = ph_arrow
+
+	# 操作条（屏幕层，与视角无关）：转动转盘 / 道具按钮。
+	# 它原先挂在牌垫阶段条里，而阶段条在转离自己视角时会整条隐藏（牌垫贴自己
+	# 座位卡，转到别人视角就跑到屏幕外）。于是「按 Tab 看别人」会把自己的掷骰
+	# 按钮和道具栏一起收走，只能等 35 秒超时代掷（见 fix/v0.0.2）。
+	# 拆成独立一层：自己视角时仍贴在自己座位卡下沿，转离视角时改贴屏幕底部。
+	action_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
+	action_bar.visible = false
+	add_child(action_bar)
+	var abm := UIKit.margins(10, 8, 7, 7)
+	action_bar.add_child(abm)
+	var arow := HBoxContainer.new()
+	arow.add_theme_constant_override("separation", 8)
+	abm.add_child(arow)
 	roll_btn = UIKit.button("转动转盘", 15, "normal")
 	roll_btn.disabled = true
-	mrow.add_child(roll_btn)
+	arow.add_child(roll_btn)
 	item_btn_box = HBoxContainer.new()
 	item_btn_box.add_theme_constant_override("separation", 6)
 	item_btn_box.visible = false
-	mrow.add_child(item_btn_box)
+	arow.add_child(item_btn_box)
 
 	# 小卖部操作条（行动者的屏幕层按钮；货架公开显示在桌面设施上）
 	shop_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
@@ -3044,9 +3060,24 @@ func _process(_delta: float) -> void:
 		black_picker.visible = false
 		_black_sig = ""
 	mat_bar.visible = show and not shop_mine and not black_mine
+	# 操作条与视角无关：自己视角时与阶段条拼成原来那一行；转离自己视角时
+	# 牌垫跑到屏幕外，就改贴屏幕底部，保证任何时候都能掷骰 / 用道具。
+	var want_actions: bool = phase == "playing" and (roll_btn.visible or item_btn_box.visible)
+	action_bar.visible = want_actions and not shop_mine and not black_mine
 	if show and not shop_mine and not black_mine:
+		# 自己座位卡下沿只有一行的空间，两条必须并排而不是上下叠放，
+		# 否则操作条会被挤出屏幕底部（见 fix/v0.0.2）。
 		var r := board.home_card_screen_rect()
-		mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
+		if action_bar.visible:
+			var gap := 8.0
+			var total: float = mat_bar.size.x + gap + action_bar.size.x
+			var left: float = r.get_center().x - total * 0.5
+			mat_bar.position = Vector2(left, r.end.y + 10.0)
+			action_bar.position = Vector2(left + mat_bar.size.x + gap, r.end.y + 10.0)
+		else:
+			mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
+	elif action_bar.visible:
+		_place_overlay_bar(action_bar)
 	if dev_enabled:
 		_dev_refresh_panel()
 

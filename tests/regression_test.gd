@@ -68,6 +68,7 @@ func _run() -> void:
 	_test_round_counter(g)
 	_test_client_item_bar(g)
 	_test_shop_buttons(g)
+	await _test_roll_button_off_home_view(g)
 
 	if fails == 0:
 		print("REGRESSION TEST: ALL PASS")
@@ -153,3 +154,54 @@ func _test_shop_buttons(g) -> void:
 	_check(g.shop_bar.visible, "轮到自己逛小卖部时操作条显示")
 	_check(g.shop_btns.size() == 3 and g.shop_btns[0].visible, "有货的货架显示「买」按钮")
 	_check(g.shop_btns.size() == 3 and not g.shop_btns[1].visible, "空货架不显示「买」按钮")
+
+func _test_roll_button_off_home_view(g) -> void:
+	print("== 转离自己视角后仍能操作（「转动转盘」不再被一起隐藏） ==")
+	var pls := [
+		{"peer": 1, "name": "我", "color": 0, "bot": false, "alive": true, "money": 1000,
+			"items": [], "stamina": 3, "item_used": false},
+		{"peer": 2, "name": "乙", "color": 1, "bot": false, "alive": true, "money": 1000,
+			"items": [], "stamina": 3, "item_used": false},
+	]
+	g.hp = []
+	g.my_peer = 1
+	g.st = {
+		"phase": "playing", "turn": 1, "await": "roll", "await_peer": 1, "roll_epoch": 1,
+		"round": 1, "max_rounds": 30, "players": pls, "tiles": _fresh_tiles(),
+		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
+	}
+	g.board.build_seats(pls, 1)       # 建立座位（边 0 = 自己）
+	g._refresh_actions()              # 掷骰按钮的显隐/可用由状态决定
+	await process_frame
+	await process_frame               # 等容器布局算出真实尺寸
+	g._process(0.0)                   # 阶段条落到屏幕上（真实游戏每帧都会跑）
+	_check(g.roll_btn.is_visible_in_tree(), "自己视角下「转动转盘」可见")
+	# 布局：自己视角下阶段条仍在（牌垫贴自家座位卡），操作条接在它下面
+	_check(g.mat_bar.is_visible_in_tree(), "自己视角下阶段条显示")
+	# 自己视角：两条并排成原来那一行（座位卡下沿放不下两行）
+	var mb: Control = g.mat_bar
+	var vp0: Vector2 = g.get_viewport_rect().size
+	_check(g.action_bar.is_visible_in_tree() and absf(g.action_bar.position.y - mb.position.y) < 1.0,
+		"自己视角下阶段条与操作条同一行（mat_bar y %.0f / action_bar y %.0f）"
+			% [mb.position.y, g.action_bar.position.y])
+	_check(g.action_bar.position.x >= mb.position.x + mb.size.x - 1.0,
+		"自己视角下操作条排在阶段条右侧（mat_bar 右 %.0f / action_bar x %.0f）"
+			% [mb.position.x + mb.size.x, g.action_bar.position.x])
+	_check(mb.position.y + mb.size.y <= vp0.y + 1.0 \
+			and g.action_bar.position.y + g.action_bar.size.y <= vp0.y + 1.0,
+		"自己视角下整行仍在屏幕内（行底 %.0f / 屏高 %.0f）"
+			% [maxf(mb.position.y + mb.size.y, g.action_bar.position.y + g.action_bar.size.y), vp0.y])
+
+	g.board.rotate_to_edge(1, true)   # 硬转到别人座位视角
+	_check(not g.board.at_home_view(), "已转离自己视角")
+	g._process(0.0)
+	_check(g.roll_btn.is_visible_in_tree(), "转离视角后「转动转盘」仍在屏幕上可见")
+	_check(not g.roll_btn.disabled, "转离视角后「转动转盘」仍可点")
+	_check(not g.mat_bar.is_visible_in_tree(), "转离视角后阶段条隐藏（牌垫仍贴自家座位卡）")
+	var vp: Vector2 = g.get_viewport_rect().size
+	var ab: Control = g.action_bar
+	_check(ab.size.y > 1.0, "操作条已算出真实尺寸（h=%.0f）" % ab.size.y)
+	_check(ab.position.y >= 0.0 and ab.position.y + ab.size.y <= vp.y + 1.0,
+		"转离视角后操作条竖直在屏幕内（y=%.0f h=%.0f vp=%.0f）" % [ab.position.y, ab.size.y, vp.y])
+	_check(ab.position.x >= 0.0 and ab.position.x + ab.size.x <= vp.x + 1.0,
+		"转离视角后操作条水平在屏幕内（x=%.0f w=%.0f vp=%.0f）" % [ab.position.x, ab.size.x, vp.x])
