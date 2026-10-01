@@ -5,6 +5,16 @@
 # 打包产物（用导出命令重新生成）
 build/
 
+# 截图产物
+shots/
+
+# 临时补丁脚本
+_patch_*.py
+
+# Godot 生成文件（导入元数据 / 脚本 UID，打开编辑器自动重建）
+*.import
+*.uid
+
 # 系统杂项
 Thumbs.db
 .DS_Store
