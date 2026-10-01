@@ -30,7 +30,7 @@ const ITEMS := {
 	"黑卡": {"quality": "橙", "cost": 4, "type": "active", "unique": true, "cooldown": 4,
 		"desc": "接下来 3 次购买免费。", "implemented": true},
 	"空想者的香皂": {"quality": "橙", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
-		"desc": "免疫所有负面效果。10 回合后融化。", "implemented": false},
+		"desc": "免疫所有负面效果。10 回合后融化。", "implemented": true},
 	"蛋蛋节": {"quality": "橙", "cost": 1, "type": "consumable", "unique": true, "cooldown": 1,
 		"desc": "每位玩家都会获得一份礼物，每局游戏仅限一次。", "implemented": false},
 	"亡牌飞行员coco": {"quality": "橙", "cost": 3, "type": "consumable", "unique": true, "cooldown": 3,

@@ -1173,10 +1173,15 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 	var sp: Panel = slots[idx]
 	var key := ""
 	var count := -1
+	var melt := false
 	if item != null:
-		key = "%s|%d|%d" % [String(item.id), int(item.get("cd", 0)), int(item.get("charges", 0))]
+		key = "%s|%d|%d|%d" % [String(item.id), int(item.get("cd", 0)),
+			int(item.get("charges", 0)), int(item.get("melt_left", -1))]
 		if int(item.get("charges", 0)) > 0:
 			count = int(item.charges)  # 计数位替换冷却（§12）：黑卡=剩余次数
+		elif String(item.id) == "空想者的香皂":
+			count = int(item.get("melt_left", 10))  # 香皂=剩余融化回合
+			melt = count <= 5  # 融化占位表现：剩 5 回合内出融化带
 		elif int(item.get("cd", 0)) > 0:
 			count = int(item.cd)
 	if String(sp.get_meta("slot_key", "")) == key:
@@ -1185,7 +1190,7 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 	for c in sp.get_children():
 		c.queue_free()
 	if item != null:
-		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE, {"count": count}))
+		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE, {"count": count, "melt": melt}))
 	else:
 		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
 		plus.set_anchors_preset(Control.PRESET_FULL_RECT)

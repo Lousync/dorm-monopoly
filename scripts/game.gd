@@ -686,10 +686,14 @@ func _resolve_tile(p: Dictionary) -> void:
 			await _wait(BoardView.DECK_CARD_TIME + 0.1)
 			await _apply_card(p, card)
 		"fine":
-			_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#ef7b74")
-			s_card.rpc("【%s】强制缴费 %s" % [d.name, GameData.fmt_money(int(d.amount))], "bad")
-			await _wait(0.6)
-			_pay(p, int(d.amount), {})
+			if _immune_debuff(p):
+				_log("%s 的【空想者的香皂】挡下了强制缴费" % p.name, "#8fb7f2")
+				await _wait(0.4)
+			else:
+				_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#ef7b74")
+				s_card.rpc("【%s】强制缴费 %s" % [d.name, GameData.fmt_money(int(d.amount))], "bad")
+				await _wait(0.6)
+				_pay(p, int(d.amount), {})
 		"bonus":
 			p.money = int(p.money) + int(d.amount)
 			_log("%s 在【%s】赚到 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#74d188")
@@ -772,24 +776,35 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 		var m := int(card.money)
 		if m >= 0:
 			p.money = int(p.money) + m
+		elif _immune_debuff(p):
+			_log("%s 的【空想者的香皂】挡下了扣钱" % p.name, "#8fb7f2")
 		else:
 			_pay(p, -m, {})
 	if card.has("from_each"):
 		for o in hp:
 			if int(o.peer) != int(p.peer) and bool(o.alive):
+				if _immune_debuff(o):
+					_log("%s 的【空想者的香皂】挡下了红包" % o.name, "#8fb7f2")
+					continue
 				var amt: int = mini(int(card.from_each), int(o.money))
 				o.money = int(o.money) - amt
 				p.money = int(p.money) + amt
-	if card.has("to_each"):
+	if card.has("to_each") and not _immune_debuff(p):
 		for o in hp:
 			if int(o.peer) != int(p.peer) and bool(o.alive) and int(p.money) > 0:
 				var amt2: int = mini(int(card.to_each), int(p.money))
 				p.money = int(p.money) - amt2
 				o.money = int(o.money) + amt2
 	if card.has("go_jail"):
-		_log("%s 被查寝抄了近道，直接送宿委会" % p.name, "#c9a6ff")
-		_send_to_jail(p)
+		if _immune_debuff(p):
+			_log("%s 的【空想者的香皂】挡下了查寝" % p.name, "#8fb7f2")
+		else:
+			_log("%s 被查寝抄了近道，直接送宿委会" % p.name, "#c9a6ff")
+			_send_to_jail(p)
 	if card.has("move_steps"):
+		if int(card.move_steps) < 0 and _immune_debuff(p):
+			_log("%s 的【空想者的香皂】免除了后退" % p.name, "#8fb7f2")
+			return
 		var path := GameData.compute_path_steps(int(p.pos), int(card.move_steps))
 		for idx in path:
 			if idx == 0:
@@ -1612,6 +1627,20 @@ func _has_item(p: Dictionary, id: String) -> bool:
 			return true
 	return false
 
+## 香皂免疫：持有【空想者的香皂】时免疫一切带 debuff 标签的效果（§3 标签表）
+func _immune_debuff(p: Dictionary) -> bool:
+	return _has_item(p, "空想者的香皂")
+
+## 统一发放入口：背包满返回 false；香皂入场初始化融化计数（他人拾取重新计 10 回合）
+func _grant_item(p: Dictionary, id: String) -> bool:
+	if p.items.size() >= 5:
+		return false
+	var inst := {"id": id, "cd": 0}
+	if id == "空想者的香皂":
+		inst.melt_left = 10
+	p.items.append(inst)
+	return true
+
 func _item_pool(quality: String) -> Array:
 	var held := {}
 	for pl in hp:
@@ -1665,6 +1694,15 @@ func _item_turn_start(p: Dictionary) -> void:
 	for it in p.get("items", []):
 		if int(it.get("cd", 0)) > 0:
 			it.cd = int(it.cd) - 1
+	for it in p.get("items", []):
+		if String(it.id) == "空想者的香皂":
+			it.melt_left = int(it.get("melt_left", 10)) - 1
+	var melted: Array = (p.get("items", []) as Array).filter(func(it) -> bool:
+		return String(it.id) == "空想者的香皂" and int(it.get("melt_left", 10)) <= 0)
+	for m in melted:
+		p.items.erase(m)
+	if not melted.is_empty():
+		_log("%s 的【空想者的香皂】化没了，溜进了地缝（回池）" % p.name, "#8fb7f2")
 	if _has_item(p, "信托基金"):
 		p.money = int(p.money) + 100
 		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(100)], "#74d188")
@@ -1756,9 +1794,12 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 			var share := int(total / alive.size())
 			var rem := total - share * alive.size()
 			for a in alive:
+				if _immune_debuff(a):
+					continue  # 香皂免疫：不被拉平
 				a.money = share
 			for k in rem:
-				alive[k].money = int(alive[k].money) + 1
+				if not _immune_debuff(alive[k]):
+					alive[k].money = int(alive[k].money) + 1
 			_log("%s 发动【平均主义】，全场现金拉平！" % p.name, "#c9a6ff")
 		"交换生":
 			var target := _player_by_peer(arg)
@@ -1851,7 +1892,8 @@ func _shop_buy(peer: int, slot: int) -> void:
 		p.money = int(p.money) - price
 	else:
 		_log("%s 刷【黑卡】免单拿下【%s】" % [p.name, id], "#f0a0c0")
-	p.items.append({"id": id, "cd": 0})
+	if not _grant_item(p, id):
+		return
 	arr[slot] = ""
 	_log("%s 在小卖部买下了【%s】（%s）" % [p.name, id, GameData.fmt_money(price)], "#8fb7f2")
 	_broadcast_state()
@@ -2298,7 +2340,7 @@ func _dev_grant_item() -> void:
 	var id := _dev_selected_item()
 	if id == "":
 		return
-	_dev_edit_selected(func(p: Dictionary) -> void: p.items.append({"id": id, "cd": 0}))
+	_dev_edit_selected(func(p: Dictionary) -> void: _grant_item(p, id))
 
 func _dev_selected_item() -> String:
 	if dev_item_opt == null or dev_item_opt.selected < 0:
@@ -2318,7 +2360,7 @@ func _dev_force_use() -> void:
 	if p.is_empty() or id == "":
 		return
 	if not _has_item(p, id):
-		p.items.append({"id": id, "cd": 0})
+		_grant_item(p, id)
 	match id:
 		"作弊器":
 			p.cheat_roll = clampi(int(dev_roll_spin.value), 0, 12)
@@ -2331,9 +2373,12 @@ func _dev_force_use() -> void:
 			var share := int(total / alive.size())
 			var rem := total - share * alive.size()
 			for a in alive:
+				if _immune_debuff(a):
+					continue  # 香皂免疫：不被拉平
 				a.money = share
 			for k in rem:
-				alive[k].money = int(alive[k].money) + 1
+				if not _immune_debuff(alive[k]):
+					alive[k].money = int(alive[k].money) + 1
 			_log("[dev] 全场现金已拉平", "#7fd88f")
 		_:
 			_log("[dev] 【%s】效果尚未实装（被动持有即可生效 / 后续批次）" % id, "#7fd88f")
