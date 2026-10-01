@@ -115,6 +115,10 @@ func _run() -> void:
 	root.add_child(lobby)
 	_test_conn_lost_unpauses(g, lobby)
 
+	# 收尾：本测试自建的节点自己释放，否则退出时的 leak 警告会盖住结果
+	lobby.free()
+	g.free()
+
 	if fails == 0:
 		print("REGRESSION TEST: ALL PASS")
 		quit(0)
@@ -239,6 +243,8 @@ func _test_item_card_cooling_flag() -> void:
 	_check(counter.modulate != Color(0.6, 0.62, 0.7), "计数位（黑卡剩余次数）不压暗")
 	var cooling: Control = ic.make("作弊器", medium, {"count": 2, "cooling": true})
 	_check(cooling.modulate == Color(0.6, 0.62, 0.7), "显式 cooling 的卡才压暗")
+	counter.free()   # 这两张卡没进场景树，不自己释放会留 leak 警告
+	cooling.free()
 
 func _test_rotate_next_empty(g) -> void:
 	print("== 座位表为空时按 Tab 不应除零 ==")
