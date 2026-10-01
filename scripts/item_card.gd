@@ -32,10 +32,10 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(bg, int(size.y * 0.05), qc, 2, 6))
 
 	var pad := size.y * 0.035
-	var art_h := size.y * 0.44
+	var art_h := size.y * 0.40
 	var name_h := size.y * 0.115
-	var qual_h := size.y * 0.095
-	var gap := size.y * 0.028
+	var qual_h := size.y * 0.09
+	var gap := size.y * 0.026
 
 	# 图区（占位）
 	var art := Panel.new()
@@ -74,13 +74,22 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	name_bar.add_child(name_l)
 
 	# 描述
+	# 描述框：带边框 + 裁剪，文本先开换行再定尺寸（顺序反了会被长文本钳住不换行）
+	var desc_box := Panel.new()
+	desc_box.position = Vector2(pad * 1.2, pad + art_h + name_h + gap * 1.8)
+	desc_box.size = Vector2(size.x - pad * 2.4, size.y - art_h - name_h - qual_h - pad * 4.2)
+	desc_box.clip_contents = true
+	desc_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	desc_box.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0.32), 4,
+		Color(qc.r, qc.g, qc.b, 0.28), 1))
+	card.add_child(desc_box)
 	var desc_l := UIKit.label(String(d.get("desc", "")), maxi(int(size.y * 0.05), 8), UIKit.TEXT_DIM)
-	desc_l.position = Vector2(pad * 1.5, pad + art_h + name_h + gap * 2.0)
-	desc_l.size = Vector2(size.x - pad * 3.0, size.y - art_h - name_h - qual_h - pad * 4.5)
 	desc_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_l.position = Vector2(5, 4)
+	desc_l.size = desc_box.size - Vector2(10, 8)
 	desc_l.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	desc_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(desc_l)
+	desc_box.add_child(desc_l)
 
 	# 底部品质条
 	var qbar := Panel.new()
