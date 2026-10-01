@@ -227,6 +227,15 @@ func _build_ui() -> void:
 		if peer == my_peer:
 			board.go_home_follow(my_peer)  # 点自己座位卡：回自己视角并恢复镜头跟随
 	)
+	# 点桌面小卖部货架卡 = 购买（仅当前行动者有效，房主校验）
+	board.shop_slot_clicked.connect(func(slot: int) -> void:
+		if int(st.get("shop_peer", 0)) != my_peer:
+			return
+		if multiplayer.is_server():
+			_shop_buy(my_peer, slot)
+		else:
+			c_shop_buy.rpc(slot)
+	)
 
 	# 悬浮事件卡（非牌堆提示，屏幕空间不随视角旋转）
 	var hud := Control.new()
@@ -3015,10 +3024,10 @@ func _process(_delta: float) -> void:
 	if dev_enabled:
 		_dev_refresh_panel()
 
-## 交易面板贴在屏幕底部居中（避开底部行动条隐藏后的空档）
+## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内
 func _place_overlay_bar(c: Control) -> void:
-	var vp := get_viewport_rect().size
-	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, vp.y - 148.0)
+	var vp := size
+	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, maxf(vp.y - c.size.y - 16.0, 8.0))
 
 ## 小卖部操作条刷新：按货架给「买」按钮挂上货名/价格，并按现金/背包置灰
 func _refresh_shop_ui() -> void:
