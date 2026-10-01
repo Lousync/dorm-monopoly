@@ -136,6 +136,7 @@ var _prompt_token := -1
 const CASINO_STAKE := 800
 var _casino_epoch := 0
 var _casino_action := {"epoch": -1, "action": ""}
+var _casino_actor := 0          # 当前该出牌的玩家（校验 c_casino_action 来源）
 var _casino_layer: Control
 var _casino_log: RichTextLabel
 var _casino_pot_label: Label
@@ -1128,6 +1129,11 @@ func _answer(token: int, yes: bool) -> void:
 func c_decision(token: int, yes: bool) -> void:
 	if not multiplayer.is_server():
 		return
+	# 只有被询问的本人能回答：token 是自增小整数、状态又是全员广播的，
+	# 少了这道校验任何客户端都能替别人决定买地/装修（见 fix/v0.0.2）。
+	# 房主自己是走 _answer 直接赋值，不经过这里。
+	if multiplayer.get_remote_sender_id() != _awaiting_prompt:
+		return
 	_decision = {"token": token, "yes": yes}
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -1844,6 +1850,8 @@ func _grant_item(p: Dictionary, id: String) -> bool:
 func _item_pool(quality: String) -> Array:
 	var held := {}
 	for pl in hp:
+		if not bool(pl.get("alive", true)):
+			continue  # 破产玩家的背包不再占用唯一性，否则那件唯一道具永久退出池
 		for it in pl.get("items", []):
 			held[String(it.id)] = true
 	for k in shops:  # 货架在售的唯一道具同样占用唯一性（不同货架不会出现两件）
@@ -3172,6 +3180,11 @@ func _rebuild_black_picker(active: bool) -> void:
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
+	# 房主开菜单会 s_pause 全场暂停；若此时房主掉线，SceneTree.paused 不会被
+	# change_scene_to_file 重置，新主菜单会继承暂停态 → 按钮/Room 列表 Timer
+	# 全部不响应，界面看着正常却完全点不动（见 fix/v0.0.2）。
+	get_tree().paused = false
+	Engine.time_scale = 1.0
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _on_exit() -> void:
@@ -3277,6 +3290,7 @@ func _run_casino(p: Dictionary) -> void:
 	while running and table.size() > 1 and not deck.is_empty() and guard < 64:
 		guard += 1
 		var peer: int = table[idx]
+		_casino_actor = peer  # 本轮到谁出牌（c_casino_action 据此鉴权）
 		var pl := _player_by_peer(peer)
 		var epoch := _casino_next_epoch()
 		var can_peek: bool = not used_peek.has(peer)
@@ -3518,6 +3532,10 @@ func _on_casino_action(action: String) -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func c_casino_action(epoch: int, action: String) -> void:
 	if not multiplayer.is_server():
+		return
+	# epoch 通过 s_casino_turn 广播给所有人，不能用来鉴权；
+	# 必须确认来源就是当局出牌的玩家，否则旁观者能抢先替 TA 出牌（见 fix/v0.0.2）。
+	if multiplayer.get_remote_sender_id() != _casino_actor:
 		return
 	_casino_action = {"epoch": epoch, "action": action}
 

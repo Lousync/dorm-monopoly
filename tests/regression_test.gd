@@ -68,7 +68,14 @@ func _run() -> void:
 	_test_round_counter(g)
 	_test_client_item_bar(g)
 	_test_shop_buttons(g)
+	_test_authority_guards(g)
+	_test_dead_player_items_return_to_pool(g)
 	await _test_roll_button_off_home_view(g)
+
+	# 掉线路径会触发换场景，放到最后
+	var lobby = load("res://scenes/lobby.tscn").instantiate()
+	root.add_child(lobby)
+	_test_conn_lost_unpauses(g, lobby)
 
 	if fails == 0:
 		print("REGRESSION TEST: ALL PASS")
@@ -154,6 +161,43 @@ func _test_shop_buttons(g) -> void:
 	_check(g.shop_bar.visible, "轮到自己逛小卖部时操作条显示")
 	_check(g.shop_btns.size() == 3 and g.shop_btns[0].visible, "有货的货架显示「买」按钮")
 	_check(g.shop_btns.size() == 3 and not g.shop_btns[1].visible, "空货架不显示「买」按钮")
+
+func _test_authority_guards(g) -> void:
+	print("== 客户端→房主 RPC 的发送者校验 ==")
+	# c_decision：只有被询问的那个玩家能回答（直接调用时 sender = 0）
+	g._awaiting_prompt = 7
+	g._pending_token = 3
+	g._decision = {"token": -1, "yes": false}
+	g.c_decision(3, true)
+	_check(int(g._decision.token) == -1, "非当事玩家的 c_decision 被拒绝")
+	# c_casino_action：只有当局出牌的玩家能操作
+	g._casino_actor = 7
+	g._casino_epoch = 5
+	g._casino_action = {"epoch": -1, "action": ""}
+	g.c_casino_action(5, "top")
+	_check(String(g._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
+
+func _test_dead_player_items_return_to_pool(g) -> void:
+	print("== 破产玩家的唯一道具应回池 ==")
+	var dead := _mk_player(1, "甲")
+	dead.alive = false
+	dead.items = [{"id": "黑卡", "cd": 0, "charges": 1}]
+	g.hp = [dead, _mk_player(2, "乙")]
+	g.htiles = _fresh_tiles()
+	g.shops = {}
+	g._black_slots = []
+	g.items_consumed = {}
+	_check(g._item_pool("橙").has("黑卡"), "破产玩家持有的唯一道具回到可获取池")
+
+func _test_conn_lost_unpauses(g, lobby) -> void:
+	print("== 掉线回主菜单必须解除暂停 ==")
+	# 房主开菜单会全场暂停；此时房主掉线，客户端不能停在暂停的菜单上
+	g.get_tree().paused = true
+	g._on_conn_lost("房主已离开")
+	_check(not g.get_tree().paused, "对局场景掉线后解除暂停")
+	g.get_tree().paused = true
+	lobby._on_conn_lost("房主已离开")
+	_check(not lobby.get_tree().paused, "大厅场景掉线后解除暂停")
 
 func _test_roll_button_off_home_view(g) -> void:
 	print("== 转离自己视角后仍能操作（「转动转盘」不再被一起隐藏） ==")

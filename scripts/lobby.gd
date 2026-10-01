@@ -235,6 +235,9 @@ func _on_leave() -> void:
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
+	# 与对局场景同理：房主暂停中掉线时，新菜单会继承 paused 而完全无响应
+	get_tree().paused = false
+	Engine.time_scale = 1.0
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _send_chat() -> void:
