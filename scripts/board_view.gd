@@ -1162,7 +1162,7 @@ func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
 		if rank > 0:
 			slot.add_child(UIKit.rank_badge(rank, 28))
 
-## 道具牌位：公开背包（品质描边 + 名称 + 冷却标记）
+## 道具牌位：公开背包（定稿卡面模板小卡；空位显示 +）
 func set_seat_slot(peer: int, idx: int, item) -> void:
 	var e := int(_seat_of_peer.get(peer, -1))
 	if e == -1 or not _seats.has(e):
@@ -1171,57 +1171,56 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 	if idx < 0 or idx >= slots.size():
 		return
 	var sp: Panel = slots[idx]
-	var lab: Label = sp.get_child(0) if sp.get_child_count() > 0 else null
-	var q := "白"
-	var cd := 0
+	var key := ""
 	if item != null:
-		var d := ItemData.def(String(item.id))
-		q = String(d.get("quality", "白"))
-		cd = int(item.get("cd", 0))
-	if lab != null and is_instance_valid(lab):
-		if item == null:
-			lab.text = "+"
-			lab.add_theme_font_size_override("font_size", 34)
-			lab.add_theme_color_override("font_color", Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
-		else:
-			lab.text = String(item.id) + (("·冷%d" % cd) if cd > 0 else "")
-			lab.add_theme_font_size_override("font_size", 15)
-			lab.add_theme_color_override("font_color", ItemData.QUALITY_COLORS.get(q, UIKit.TEXT))
-			lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	var border := Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
+		key = "%s|%d" % [String(item.id), int(item.get("cd", 0))]
+	if String(sp.get_meta("slot_key", "")) == key:
+		return
+	sp.set_meta("slot_key", key)
+	for c in sp.get_children():
+		c.queue_free()
 	if item != null:
-		var qc: Color = ItemData.QUALITY_COLORS.get(q, UIKit.TEXT)
-		border = Color(qc.r, qc.g, qc.b, 0.7)
-	sp.add_theme_stylebox_override("panel", UIKit.stylebox(
-		Color(0.10, 0.11, 0.16, 0.7) if item != null else Color(1, 1, 1, 0.035), 10, border, 1))
+		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE, {"count": int(item.get("cd", 0))}))
+	else:
+		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
+		plus.set_anchors_preset(Control.PRESET_FULL_RECT)
+		plus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		plus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sp.add_child(plus)
 
-## 小卖部货架公开显示（桌面设施即商店）：active = 正在营业的格（-1 = 歇业）
+## 小卖部货架公开显示（桌面设施即商店）：active = 正在营业的格；歇业时展示第一家货架
 func set_shop_display(shops: Dictionary, refresh_price: int, active: int) -> void:
 	if _shop_refresh != null and is_instance_valid(_shop_refresh):
 		_shop_refresh.text = "刷新货架 · ¥%d" % refresh_price
-	var entries: Array = shops.get(active, {}).get("slots", [])
+	var show_idx := active
+	if show_idx < 0:
+		for k in shops:
+			show_idx = int(k)
+			break
+	var entries: Array = shops.get(show_idx, {}).get("slots", [])
 	for i in _shop_slots.size():
 		var e: Dictionary = _shop_slots[i]
 		var card: Panel = e.card
-		var lab: Label = e.plus_l
 		var price_l: Label = e.price_l
-		var id := String(entries[i]) if active >= 0 and i < entries.size() else ""
+		var id := String(entries[i]) if i < entries.size() else ""
+		if String(card.get_meta("slot_key", "")) == id:
+			price_l.text = ("¥%d" % ItemData.price(String(ItemData.def(id).quality))) if id != "" else "空货位"
+			continue
+		card.set_meta("slot_key", id)
+		for c in card.get_children():
+			c.queue_free()
 		if id == "":
-			lab.text = "＋"
-			lab.add_theme_font_size_override("font_size", 36)
-			lab.add_theme_color_override("font_color", Color(1, 1, 1, 0.13))
-			card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.05, 0.055, 0.08, 0.9), 10,
-				Color(SHOP_ACCENT.r, SHOP_ACCENT.g, SHOP_ACCENT.b, 0.26), 1))
-			price_l.text = "待上架"
+			var plus_l := UIKit.label("＋", 36, Color(0.93, 0.88, 0.75, 0.16))
+			plus_l.set_anchors_preset(Control.PRESET_FULL_RECT)
+			plus_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			plus_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			plus_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card.add_child(plus_l)
+			price_l.text = "空货位"
 		else:
-			var d := ItemData.def(id)
-			var qc: Color = ItemData.QUALITY_COLORS.get(String(d.get("quality", "白")), UIKit.TEXT)
-			lab.text = id
-			lab.add_theme_font_size_override("font_size", 16)
-			lab.add_theme_color_override("font_color", qc)
-			card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.05, 0.055, 0.08, 0.9), 10,
-				Color(qc.r, qc.g, qc.b, 0.6), 1))
-			price_l.text = "¥%d" % ItemData.price(String(d.get("quality", "白")))
+			card.add_child(ItemCard.make(id, ItemCard.SIZE_MEDIUM, {}))
+			price_l.text = "¥%d" % ItemData.price(String(ItemData.def(id).quality))
 
 ## 镜头调试信息（开发者面板）
 func cam_info() -> String:

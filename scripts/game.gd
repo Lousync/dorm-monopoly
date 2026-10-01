@@ -1615,6 +1615,10 @@ func _item_pool(quality: String) -> Array:
 	for pl in hp:
 		for it in pl.get("items", []):
 			held[String(it.id)] = true
+	for k in shops:  # 货架在售的唯一道具同样占用唯一性（不同货架不会出现两件）
+		for sid in shops[k].slots:
+			if String(sid) != "":
+				held[String(sid)] = true
 	var out := []
 	for id in ItemData.ITEMS:
 		var d: Dictionary = ItemData.ITEMS[id]
