@@ -11,7 +11,7 @@
 
 ## 怎么运行
 
-1. 安装 [Godot 4.3 及以上版本](https://godotengine.org/download)（本项目用 4.6.2 开发）。
+1. 安装 [Godot 4.6.2](https://godotengine.org/download)（`project.godot` 声明 `features=4.6`，低版本编辑器打不开；本项目用 4.6.2 开发）。
 2. 双击仓库根目录的 `start.bat` 启动（会自动找 Godot；也可 `start.bat "Godot.exe路径"` 指定）；
    或者用 Godot 编辑器打开本目录的 `project.godot` 按 **F5** 运行；
    或者用命令行：`Godot.exe --path "本目录"`。
@@ -104,16 +104,19 @@
 ```
 project.godot          引擎配置（GL Compatibility 渲染，窗口 1280×800）
 theme.tres             全局主题（SystemFont 中文字体：雅黑/苹方/思源黑）
-start.bat              Windows 双击启动（自动查找 Godot）
-export_presets.cfg     Windows 导出预设（模板指向 D:\develp\Godot\export_templates）
-build/                 打包产物（DormMonopoly.exe 单文件 + zip 分发包）
+start.bat              Windows 双击启动（自动查找 Godot；首次或脚本类名变动时自动 --import）
+export_presets.cfg     Windows 导出预设（custom_template 指向本机 4.6.2 模板目录，换机器需改）
+build/                 打包产物（DormMonopoly.exe 单文件 + zip 分发包）；已 gitignore
+shots/                 截图产物（--shot= 的输出目录，不是源码）；已 gitignore
 scenes/                main_menu / lobby / game 三个场景（根节点，UI 代码构建）
 scripts/
-  net.gd               自动加载：ENet 联机、大厅数据、UDP 广播搜索房间
-  net_addr.gd          纯函数地址工具（可单测）
+  net.gd               自动加载：ENet 联机、大厅名册与聊天、UDP 广播搜索房间
+  net_addr.gd          纯函数地址工具：地址解析/展示、发现报文解析（可单测）
   game_data.gd         56 格棋盘生成、事件卡、租金/路径/几何等纯规则（可单测）
-  game.gd              对局场景：房主权威回合状态机 + 全员状态同步 + HUD
-  board_view.gd        大棋盘渲染、缩放/平移/跟随镜头、棋子动画
+  item_data.gd         道具数据总表（品质/体力/冷却/唯一性；台账见 docs/道具系统设计.md）
+  item_card.gd         道具卡面控件（图鉴 / 牌位 / 货架共用）
+  game.gd              对局场景：房主权威回合状态机 + 全员状态同步 + HUD + 小游戏
+  board_view.gd        大棋盘渲染、缩放/平移/跟随镜头、围桌四座视角、棋子动画
   wheel_view.gd        棋盘中央 13 格转轮（0~12 点数来源）
   fx.gd                自动加载：程序合成音效、场景淡入淡出、震屏、飘字、彩带
   main_menu.gd         主菜单（昵称、创建/加入、房间搜索）
@@ -123,8 +126,13 @@ assets/                开源素材（授权与来源见 assets/CREDITS.md）
   pieces/              Kenney 桌游棋子（CC0）：玩家棋子与头像
   icons/               Twemoji 主题图标（CC-BY 4.0）：格子水印图标
   textures/            ambientCG 木纹（CC0）：棋盘桌面
+docs/                  设计文档与原型（.md 为活文档，.html/.drawio 为定稿原型）
 tests/
-  rules_test.gd        规则单元测试：godot --headless --script tests/rules_test.gd
+  rules_test.gd        规则单测（棋盘 / 租金 / 路径 / 地址解析 / 坐标闭合）
+  item_test.gd         道具单测（蛋蛋节 / 亡牌飞行员coco / 焦土与香皂）
+  blackshop_test.gd    黑市单测（地皮计价 / 挨打小黑屋 / bot / 机会卡池过滤）
+  regression_test.gd   回归单测（把审查发现的问题逐条钉住）
+  load_all.gd          脚本静态加载检查（自动扫描 scripts/，能抓出解析错误）
   net_probe.gd 等      ENet 双栈连通性探针
 ```
 
@@ -137,9 +145,10 @@ tests/
 
 ## 打包（导出独立 exe）
 
-前提：`D:\develp\Godot\export_templates\4.6.2.stable\` 里有对应版本的导出模板
-（从 godotengine.org 下载 `Godot_v4.6.2-stable_export_templates.tpz`，把里面
-`templates/` 的内容解压到该目录）。然后：
+前提：本机有对应版本的导出模板。`export_presets.cfg` 的 `custom_template/*`
+写死了开发机上的绝对路径（换机器必须改，或清空该字段让 Godot 回退到
+「编辑器设置 → 导出 → 模板目录」）。模板从 godotengine.org 下载
+`Godot_v4.6.2-stable_export_templates.tpz`，把里面 `templates/` 解压到目标目录。然后：
 
 ```bash
 Godot_console.exe --headless --path . --export-release "Windows Desktop"

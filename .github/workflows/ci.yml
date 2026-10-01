@@ -1,0 +1,53 @@
+name: CI
+
+# 覆盖 README「自动化测试」一节的全部命令。此仓库此前没有任何 CI，
+# 8023 行 GDScript 全靠手敲命令把关（见审查结论）。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: 4.6.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 Godot ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o godot.zip "$URL"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+          godot --version
+
+      # .godot/ 是 gitignore 的，游戏模式不会重建全局类缓存（start.bat 里踩过这个坑：
+      # 缓存陈旧会让 autoload 解析失败、所有按钮失灵），必须先导入一次。
+      # 首次导入可能返回非零，不因此判失败——真正的把关在下面的测试。
+      - name: 导入资源
+        run: godot --headless --import --path . || echo "import 返回非零，继续"
+
+      - name: 单测与回归
+        run: |
+          set -euo pipefail
+          for t in rules_test load_all item_test blackshop_test regression_test; do
+            echo "::group::$t"
+            godot --headless --path . --script "tests/$t.gd"
+            echo "::endgroup::"
+          done
+
+      # 房主即服务器：起一个后台房主，再跑一个客户端自动对打 3 轮
+      - name: 联机回归（房主 + 客户端 3 轮）
+        run: |
+          set -euo pipefail
+          godot --headless --path . -- --autotest=host --rounds=3 > host.log 2>&1 &
+          HOST_PID=$!
+          sleep 4
+          godot --headless --path . -- --autotest=client --rounds=3
+          wait "$HOST_PID"
+          cat host.log
+          grep -q "AUTOTEST HOST OK round=3" host.log
