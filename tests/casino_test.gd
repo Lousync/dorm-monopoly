@@ -89,7 +89,9 @@ func _test_round() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false
-	if g.board == null:
+	if g.board == null or g.casino == null:
+		# 脚本编译失败时成员会是 null；后续断言里的表达式先报错、根本走不到
+		# _check，整轮会假报「全过」（见 fix/v0.0.2）
 		_check(false, "对局场景可加载（脚本编译失败？）")
 		return
 	# 等 _host_setup 的 1.5s 与 _run_game 的 0.3s 都过去，确认自动对局已经停住
@@ -101,13 +103,13 @@ func _test_round() -> void:
 	g.htiles = _fresh_tiles()
 	g.shops = {}
 	g.items_consumed = {}
-	g._casino_layer = null
+	g.casino._casino_layer = null
 	g.running = true          # 赌场回合循环靠它推进（全场皆 bot，无需人工出牌）
 
 	var before := 0
 	for p in ps:
 		before += int(p.money)
-	await g._run_casino(ps[0])
+	await g.casino.run(ps[0])
 
 	var after := 0
 	var mx := -1
@@ -125,7 +127,8 @@ func _test_round() -> void:
 	_check(after == before, "奖池全额回到玩家手里（前 %d / 后 %d）" % [before, after])
 	_check(mx > mn, "产生了赢家（最低 %d / 最高 %d）" % [mn, mx])
 	_check(top == 1, "只有一个人通吃（实得 %d 人并列最高）" % top)
-	_check(g._casino_table_pot == 0, "结算后桌面奖池显示归零（实得 %d）" % g._casino_table_pot)
+	_check(g.casino._casino_table_pot == 0,
+		"结算后桌面奖池显示归零（实得 %d）" % g.casino._casino_table_pot)
 
 	g.running = false
 	g.free()

@@ -213,11 +213,11 @@ func _test_authority_guards(g) -> void:
 	g.c_decision(3, true)
 	_check(int(g._decision.token) == -1, "非当事玩家的 c_decision 被拒绝")
 	# c_casino_action：只有当局出牌的玩家能操作
-	g._casino_actor = 7
-	g._casino_epoch = 5
-	g._casino_action = {"epoch": -1, "action": ""}
-	g.c_casino_action(5, "top")
-	_check(String(g._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
+	g.casino._casino_actor = 7
+	g.casino._casino_epoch = 5
+	g.casino._casino_action = {"epoch": -1, "action": ""}
+	g.casino.c_casino_action(5, "top")
+	_check(String(g.casino._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
 
 func _test_card_sound_once(g) -> void:
 	print("== s_card 的音效只响一次 ==")
