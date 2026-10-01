@@ -11,14 +11,26 @@ const STEP_TIME := 0.15   # 每格跳子时长
 
 # ---------------- UI 引用 ----------------
 var board: BoardView
-var banner: Label
-var banner_pill: PanelContainer
 var card_panel: PanelContainer
 var card_label: Label
-var round_label: Label
 var status_label: Label
 var roll_btn: Button
-var follow_btn: Button
+var mat_bar: PanelContainer
+var ph1_lab: Label
+var ph2_lab: Label
+var log_head: Label
+var opt_btn: Button
+var menu_layer: Control
+var menu_panel: PanelContainer
+var menu_state: Label
+var settings_panel: PanelContainer
+var confirm_panel: PanelContainer
+var confirm_note: Label
+var vol_slider: HSlider
+var mute_check: CheckButton
+var pause_mask: ColorRect
+var audio_volume := 1.0
+var audio_mute := false
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
@@ -111,6 +123,11 @@ func _ready() -> void:
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	_chat_shown = Net.chat_history.size()
 	_refresh_chat()
+	var cfg := ConfigFile.new()
+	if cfg.load("user://settings.cfg") == OK:
+		audio_volume = clampf(float(cfg.get_value("audio", "volume", 1.0)), 0.0, 1.0)
+		audio_mute = bool(cfg.get_value("audio", "mute", false))
+	_apply_audio()
 
 func _exit_tree() -> void:
 	if at_mode != "":
@@ -129,36 +146,10 @@ func _build_ui() -> void:
 	board.overlay_bottom = 70
 	add_child(board)
 	board.tile_clicked.connect(_on_tile_clicked)
-	board.seat_clicked.connect(func(_peer: int) -> void: pass)  # 转视角已在视图内处理；预留扩展
-
-	# 顶栏：标题 / 回合横幅 / 轮次 / 退出
-	var top := HBoxContainer.new()
-	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top.offset_left = 12
-	top.offset_right = -12
-	top.offset_top = 6
-	top.offset_bottom = 40
-	add_child(top)
-	var title := UIKit.title_label("宿舍大富翁", 20)
-	top.add_child(title)
-
-	banner_pill = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.5), 1, 8)
-	banner_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	banner_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top.add_child(banner_pill)
-	var bm := UIKit.margins(14, 3, 3, 3)
-	bm.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	banner_pill.add_child(bm)
-	banner = UIKit.label("", 16, UIKit.TEXT)
-	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bm.add_child(banner)
-
-	round_label = UIKit.label("", 15, UIKit.TEXT)
-	top.add_child(round_label)
-	var exit_btn := UIKit.button("退出房间", 14, "danger")
-	exit_btn.pressed.connect(_on_exit)
-	top.add_child(exit_btn)
+	board.seat_clicked.connect(func(peer: int) -> void:
+		if peer == my_peer:
+			board.go_home_follow(my_peer)  # 点自己座位卡：回自己视角并恢复镜头跟随
+	)
 
 	# 悬浮事件卡（非牌堆提示，屏幕空间不随视角旋转）
 	var hud := Control.new()
@@ -182,46 +173,41 @@ func _build_ui() -> void:
 	cm.add_child(card_label)
 
 
-	# 底部行动条（屏幕层，正对自己座位）：状态 / 镜头与视角控制 / 转盘
-	var bar := UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.85), 14, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 6)
-	bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	bar.offset_left = -400
-	bar.offset_right = 400
-	bar.offset_top = -64
-	bar.offset_bottom = -10
-	add_child(bar)
-	var barm := UIKit.margins(12, 8, 12, 8)
-	bar.add_child(barm)
-	var bar_row := HBoxContainer.new()
-	bar_row.add_theme_constant_override("separation", 8)
-	barm.add_child(bar_row)
-	status_label = UIKit.label("", 15, UIKit.TEXT)
+	# 牌垫阶段条（屏幕层，锚定自己座位卡下沿）：状态 / 回合两阶段 / 转动转盘
+	mat_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
+	mat_bar.custom_minimum_size = Vector2(440, 46)
+	mat_bar.visible = false
+	add_child(mat_bar)
+	var mbm := UIKit.margins(12, 10, 7, 7)
+	mat_bar.add_child(mbm)
+	var mrow := HBoxContainer.new()
+	mrow.add_theme_constant_override("separation", 8)
+	mbm.add_child(mrow)
+	status_label = UIKit.label("", 13, UIKit.TEXT)
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	bar_row.add_child(status_label)
-	follow_btn = UIKit.button("跟随", 13)
-	follow_btn.toggle_mode = true
-	follow_btn.button_pressed = true
-	follow_btn.toggled.connect(_on_follow_toggled)
-	bar_row.add_child(follow_btn)
-	var over_btn := UIKit.button("全桌", 13)
-	over_btn.pressed.connect(func() -> void:
-		board.fit_overview()
-		follow_btn.button_pressed = false
-	)
-	bar_row.add_child(over_btn)
-	# 视角切换：对局中镜头跟着棋子走时座位卡常在屏幕外，这里提供常驻入口
-	for seat_btn in [["左家", 1], ["对家", 2], ["右家", 3]]:
-		var sb_btn := UIKit.button(seat_btn[0], 13)
-		var edge: int = seat_btn[1]
-		sb_btn.pressed.connect(func() -> void:
-			board.rotate_to_edge(edge)
-			follow_btn.button_pressed = false
-		)
-		bar_row.add_child(sb_btn)
-	roll_btn = UIKit.button("转动转盘", 17, "primary")
+	mrow.add_child(status_label)
+	var ph1 := UIKit.pill("① 转轮盘", UIKit.TEXT_DIM, 11)
+	mrow.add_child(ph1)
+	var ph2 := UIKit.pill("② 使用道具", UIKit.TEXT_DIM, 11)
+	mrow.add_child(ph2)
+	ph1_lab = _pill_label(ph1)
+	ph2_lab = _pill_label(ph2)
+	roll_btn = UIKit.button("转动转盘", 15, "normal")
 	roll_btn.disabled = true
-	bar_row.add_child(roll_btn)
+	mrow.add_child(roll_btn)
+
+	# 左上角：选项按钮（打开暂停菜单族，见 _build_menu_ui）
+	opt_btn = UIKit.button("☰ 选项", 13)
+	opt_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	opt_btn.offset_left = 12
+	opt_btn.offset_top = 10
+	opt_btn.offset_right = 92
+	opt_btn.offset_bottom = 38
+	opt_btn.pressed.connect(_open_menu)
+	add_child(opt_btn)
+	_build_menu_ui()
 
 	# 左下角：格子详情卡（点击棋盘格子弹出相关信息）
 	info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
@@ -245,12 +231,12 @@ func _build_ui() -> void:
 	iv.add_child(info_body)
 
 	# 右上：战报 / 聊天（可折叠，保持桌面干净）
-	log_toggle = UIKit.button("战报 ▾", 13)
+	log_toggle = UIKit.button("战报 ▴", 13)
 	log_toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	log_toggle.offset_left = -106
 	log_toggle.offset_right = -12
-	log_toggle.offset_top = 48
-	log_toggle.offset_bottom = 76
+	log_toggle.offset_top = 12
+	log_toggle.offset_bottom = 40
 	log_toggle.pressed.connect(_toggle_log)
 	add_child(log_toggle)
 
@@ -258,16 +244,17 @@ func _build_ui() -> void:
 	log_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	log_panel.offset_left = -352
 	log_panel.offset_right = -12
-	log_panel.offset_top = 48
-	log_panel.offset_bottom = -12
-	log_panel.visible = false
+	log_panel.offset_top = 46
+	log_panel.offset_bottom = 780
+	log_panel.visible = true
 	add_child(log_panel)
 	var lm := UIKit.margins(10, 10, 8, 8)
 	log_panel.add_child(lm)
 	var lv := VBoxContainer.new()
 	lv.add_theme_constant_override("separation", 4)
 	lm.add_child(lv)
-	lv.add_child(UIKit.label("战报 / 聊天", 13, UIKit.TEXT_DIM))
+	log_head = UIKit.label("第 1/30 轮 · 战报", 13, UIKit.TEXT_DIM)
+	lv.add_child(log_head)
 	log_text = RichTextLabel.new()
 	log_text.scroll_following = true
 	log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -765,7 +752,7 @@ func _log(line: String, color: String = "#dfe3ee") -> void:
 func s_state(state: Dictionary) -> void:
 	st = state
 	board.render(state)
-	round_label.text = "第 %d/%d 轮 · %s" % [int(state.round), int(state.max_rounds), Net.room_name]
+	log_head.text = "第 %d/%d 轮 · 战报" % [int(state.round), int(state.max_rounds)]
 	_refresh_players()
 	_refresh_actions()
 	_refresh_chat()
@@ -788,7 +775,7 @@ func s_roll(v: int) -> void:
 		_flair_roll(v)
 
 func _flair_roll(v: int) -> void:
-	await get_tree().create_timer(WheelView.SPIN_TIME).timeout
+	await get_tree().create_timer(WheelView.SPIN_TIME, false).timeout
 	if not is_inside_tree():
 		return
 	if v == 24:
@@ -835,7 +822,7 @@ func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 		Fx.play("bust", 0.0)
 
 func _hide_card_later(my_id: int) -> void:
-	await get_tree().create_timer(2.5).timeout
+	await get_tree().create_timer(2.5, false).timeout
 	if not is_inside_tree() or _card_tween_id != my_id:
 		return
 	var tw := create_tween()
@@ -848,7 +835,6 @@ func _hide_card_later(my_id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
 	log_text.append_text(line + "\n")
-	board.world_log_line(line)
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -870,11 +856,9 @@ func _refresh_players() -> void:
 		var pls: Array = st.get("players", [])
 		if not pls.is_empty():
 			board.build_seats(pls, my_peer)
-	if board.rank_count() == 0:
-		var pls2: Array = st.get("players", [])
-		if not pls2.is_empty():
-			board.build_rank(pls2)
 	var tiles_arr: Array = st.get("tiles", [])
+	var worth_map := {}
+	var est_map := {}
 	for p in st.get("players", []):
 		var peer := int(p.peer)
 		seen[peer] = true
@@ -937,6 +921,7 @@ func _refresh_players() -> void:
 				var pos := board.token_screen_pos(peer) + Vector2(0, -30)
 				Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
 				Fx.play("cash" if diff > 0 else "pay", -5.0)
+				_spawn_money_fly(peer, diff, ml)
 		# 顶部战况面板：现金 / 地产数 / 身家（与房主 _net_worth 同一公式）
 		var prop_n := 0
 		var worth := int(p.money)
@@ -945,11 +930,18 @@ func _refresh_players() -> void:
 			if int(td.get("owner", GameData.NO_OWNER)) == peer:
 				prop_n += 1
 				worth += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
-		board.update_rank_row(peer, int(p.money), "地产 ×%d · 身家 %s" % [prop_n, GameData.fmt_money(worth)])
+		est_map[peer] = "地产 ×%d · 身家 %s" % [prop_n, GameData.fmt_money(worth)]
+		worth_map[peer] = worth
 
 		if not bool(p.alive):
 			row.money_l.text = "已出局"
 			row.money_l.add_theme_color_override("font_color", UIKit.TEXT_DIM)
+
+	# 身家排名 → 座位徽章 + 地产/身家行
+	var order: Array = worth_map.keys()
+	order.sort_custom(func(a, b) -> bool: return int(worth_map[a]) > int(worth_map[b]))
+	for i in order.size():
+		board.update_seat_stats(int(order[i]), i + 1, String(est_map[int(order[i])]))
 
 	for peer in _player_rows.keys():
 		if not seen.has(peer):
@@ -962,6 +954,13 @@ func _refresh_actions() -> void:
 	roll_btn.disabled = not is_my_roll
 	roll_btn.visible = phase == "playing"
 	UIKit.restyle_button(roll_btn, "primary" if is_my_roll else "normal")
+	var my_turn := phase == "playing" and int(st.get("turn", -1)) == my_peer
+	if ph1_lab != null:
+		ph1_lab.add_theme_color_override("font_color",
+			UIKit.ACCENT if (my_turn and await_state == "roll") else UIKit.TEXT_DIM)
+	if ph2_lab != null:
+		ph2_lab.add_theme_color_override("font_color",
+			UIKit.ACCENT if (my_turn and await_state != "roll") else UIKit.TEXT_DIM)
 	var turn_name := _name_by_peer(int(st.get("turn", -1)))
 	match await_state:
 		"roll":
@@ -982,38 +981,19 @@ func _refresh_actions() -> void:
 				status_label.text = "%s 的回合" % turn_name
 			else:
 				status_label.text = "游戏结束"
-	_set_banner(status_label.text)
-
 	# 自动化测试：轮到自己时自动掷骰（用 roll_epoch 区分连掷的新请求）
 	if at_mode != "" and is_my_roll and int(st.get("roll_epoch", -1)) != _at_roll_epoch:
 		_at_roll_epoch = int(st.get("roll_epoch", -1))
 		_at_auto_roll()
-
-func _set_banner(text: String) -> void:
-	if banner.text == text:
-		return
-	banner.text = text
-	banner_pill.modulate.a = 0.0
-	banner_pill.pivot_offset = banner_pill.size * 0.5
-	banner_pill.scale = Vector2(0.96, 0.96)
-	var tw := create_tween()
-	tw.tween_property(banner_pill, "modulate:a", 1.0, 0.18)
-	tw.parallel().tween_property(banner_pill, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-func _on_follow_toggled(on: bool) -> void:
-	board.auto_follow = on
-	if on:
-		board.go_home_follow(my_peer)  # 转回自己视角并恢复行动跟随
 
 func _unhandled_input(event: InputEvent) -> void:
 	# 空格：视角转回自己座位；Tab：循环切到下一家视角
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_SPACE:
-			board.rotate_home()
+			board.go_home_follow(my_peer)
 		elif k.keycode == KEY_TAB:
 			board.rotate_next()
-			follow_btn.button_pressed = false
 
 ## 临时自测：合成一次对顶部座位卡的点击，验证视角旋转链路（--click-test）
 func _toggle_log() -> void:
@@ -1243,18 +1223,225 @@ func _refresh_chat() -> void:
 		var line := str(Net.chat_history[_chat_shown])
 		_chat_shown += 1
 		log_text.append_text("[color=#7f8699]%s[/color]\n" % line.replace("[", "［"))
-		board.world_log_line("[color=#7f8699]%s[/color]" % line.replace("[", "［"))
+	
+# ================= 选项菜单 / 房主暂停 / 设置 =================
+
+func _pill_label(p: Control) -> Label:
+	for c in p.find_children("", "Label", true, false):
+		return c as Label
+	return null
+
+func _build_menu_ui() -> void:
+	menu_layer = Control.new()
+	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_layer.process_mode = Node.PROCESS_MODE_WHEN_PAUSED
+	menu_layer.visible = false
+	add_child(menu_layer)
+
+	# 非房主看到的「房主已暂停」遮罩
+	pause_mask = ColorRect.new()
+	pause_mask.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_mask.color = Color(0.03, 0.03, 0.07, 0.62)
+	pause_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pause_mask.visible = false
+	pause_mask.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(pause_mask)
+	var pm_lab := UIKit.label("⏸ 房主已暂停 · 等待继续…", 20, UIKit.ACCENT)
+	pm_lab.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pm_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pm_lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	pm_lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pause_mask.add_child(pm_lab)
+
+	# 主菜单：继续 / 设置 / 退出
+	var mc := CenterContainer.new()
+	mc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_layer.add_child(mc)
+	menu_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
+	menu_panel.custom_minimum_size = Vector2(320, 0)
+	mc.add_child(menu_panel)
+	var mm := UIKit.margins(20, 20, 16, 14)
+	menu_panel.add_child(mm)
+	var mv := VBoxContainer.new()
+	mv.add_theme_constant_override("separation", 8)
+	mm.add_child(mv)
+	menu_state = UIKit.label("", 13, UIKit.TEXT_DIM)
+	mv.add_child(menu_state)
+	var cont_btn := UIKit.button("▶ 继续游戏", 15)
+	cont_btn.pressed.connect(_menu_resume)
+	mv.add_child(cont_btn)
+	var set_btn := UIKit.button("⚙ 设置", 15)
+	set_btn.pressed.connect(func() -> void:
+		menu_panel.visible = false
+		vol_slider.value = audio_volume * 100.0
+		mute_check.button_pressed = audio_mute
+		settings_panel.visible = true
+	)
+	mv.add_child(set_btn)
+	var quit_btn := UIKit.button("⏻ 退出游戏", 15, "danger")
+	quit_btn.pressed.connect(func() -> void:
+		confirm_note.text = "你是房主：退出后对局结束，所有人回到主菜单。" \
+			if multiplayer.is_server() else "退出后你的回合将由机器人接管，对局继续。"
+		menu_panel.visible = false
+		confirm_panel.visible = true
+	)
+	mv.add_child(quit_btn)
+
+	# 设置：音量 / 静音（后续会加更多设置项）
+	var sc := CenterContainer.new()
+	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_layer.add_child(sc)
+	settings_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
+	settings_panel.custom_minimum_size = Vector2(320, 0)
+	sc.add_child(settings_panel)
+	var sm := UIKit.margins(20, 20, 16, 14)
+	settings_panel.add_child(sm)
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 8)
+	sm.add_child(sv)
+	var vol_row := HBoxContainer.new()
+	vol_row.add_theme_constant_override("separation", 10)
+	sv.add_child(vol_row)
+	vol_row.add_child(UIKit.label("音效音量", 14, UIKit.TEXT))
+	vol_slider = HSlider.new()
+	vol_slider.min_value = 0
+	vol_slider.max_value = 100
+	vol_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vol_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	vol_slider.value_changed.connect(func(v: float) -> void:
+		audio_volume = v / 100.0
+		_apply_audio()
+	)
+	vol_row.add_child(vol_slider)
+	var mute_row := HBoxContainer.new()
+	mute_row.add_theme_constant_override("separation", 10)
+	sv.add_child(mute_row)
+	mute_row.add_child(UIKit.label("静音", 14, UIKit.TEXT))
+	mute_check = CheckButton.new()
+	mute_check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mute_check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	mute_check.toggled.connect(func(on: bool) -> void:
+		audio_mute = on
+		_apply_audio()
+	)
+	mute_row.add_child(mute_check)
+	sv.add_child(UIKit.label("—— 更多设置项（后续加入） ——", 12, UIKit.TEXT_DIM))
+	var back_btn := UIKit.button("‹ 返回", 14)
+	back_btn.pressed.connect(func() -> void:
+		settings_panel.visible = false
+		menu_panel.visible = true
+	)
+	sv.add_child(back_btn)
+
+	# 退出二次确认
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_layer.add_child(cc)
+	confirm_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.DANGER.r, UIKit.DANGER.g, UIKit.DANGER.b, 0.75), 1, 10)
+	confirm_panel.custom_minimum_size = Vector2(320, 0)
+	cc.add_child(confirm_panel)
+	var cm2 := UIKit.margins(20, 20, 16, 14)
+	confirm_panel.add_child(cm2)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 8)
+	cm2.add_child(cv)
+	cv.add_child(UIKit.label("确定要退出本局吗？", 15, UIKit.TEXT))
+	confirm_note = UIKit.label("", 12, UIKit.TEXT_DIM)
+	confirm_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cv.add_child(confirm_note)
+	var cbtn_row := HBoxContainer.new()
+	cbtn_row.add_theme_constant_override("separation", 10)
+	cv.add_child(cbtn_row)
+	var cancel_btn := UIKit.button("取消", 14)
+	cancel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cancel_btn.pressed.connect(func() -> void:
+		confirm_panel.visible = false
+		menu_panel.visible = true
+	)
+	cbtn_row.add_child(cancel_btn)
+	var sure_btn := UIKit.button("确认退出", 14, "danger")
+	sure_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sure_btn.pressed.connect(func() -> void:
+		get_tree().paused = false
+		_on_exit()
+	)
+	cbtn_row.add_child(sure_btn)
+
+func _open_menu() -> void:
+	if multiplayer.is_server():
+		s_pause.rpc(true)  # 房主打开菜单 = 全场暂停
+		menu_state.text = "⏸ 已暂停（全场）"
+	else:
+		menu_state.text = "对局进行中 · 仅房主可暂停"
+	menu_panel.visible = true
+	settings_panel.visible = false
+	confirm_panel.visible = false
+	menu_layer.visible = true
+
+func _menu_resume() -> void:
+	if multiplayer.is_server():
+		s_pause.rpc(false)
+	menu_layer.visible = false
+
+@rpc("authority", "call_local", "reliable")
+func s_pause(on: bool) -> void:
+	get_tree().paused = on
+	pause_mask.visible = on and not multiplayer.is_server()
+
+func _apply_audio() -> void:
+	AudioServer.set_bus_mute(0, audio_mute)
+	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(audio_volume, 0.0001)))
+
+## 飞钞：金额变动时账单在棋子与座位卡金额栏之间飞（Monopoly GO 式收支反馈）
+func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
+	var good := diff > 0
+	var card_at := ml.get_global_rect().get_center()
+	var token_at := board.token_screen_pos(peer) + Vector2(0, -18)
+	for i in 4:
+		var bill := Panel.new()
+		bill.size = Vector2(22, 12)
+		bill.z_index = 90
+		bill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bill.add_theme_stylebox_override("panel", UIKit.stylebox(
+			Color(0.5, 0.85, 0.6) if good else Color(0.9, 0.55, 0.52), 3, Color(0, 0, 0, 0.4), 1))
+		var start := token_at + Vector2(randf_range(-34, 34), randf_range(-16, 16)) if good \
+			else card_at + Vector2(randf_range(-10, 10), randf_range(-8, 8))
+		var goal := card_at + Vector2(randf_range(-10, 10), randf_range(-8, 8)) if good \
+			else token_at + Vector2(randf_range(-34, 34), randf_range(-16, 16))
+		bill.position = start
+		add_child(bill)
+		var tw := create_tween()
+		tw.tween_interval(0.05 + i * 0.08)
+		tw.tween_property(bill, "position", goal, 0.5) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		tw.parallel().tween_property(bill, "modulate:a", 0.0, 0.2).set_delay(0.36)
+		tw.tween_callback(bill.queue_free)
+
+func _process(_delta: float) -> void:
+	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
+	if mat_bar == null:
+		return
+	var show := board.seat_count() > 0 and board.at_home_view() \
+		and String(st.get("phase", "")) == "playing"
+	mat_bar.visible = show
+	if show:
+		var r := board.home_card_screen_rect()
+		mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _on_exit() -> void:
+	get_tree().paused = false
 	Net.leave()
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _wait(sec: float) -> void:
-	await get_tree().create_timer(sec).timeout
+	await get_tree().create_timer(sec, false).timeout
 
 func _take_shot(path: String) -> void:
 	await get_tree().create_timer(0.4).timeout

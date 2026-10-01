@@ -827,7 +827,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	root.add_child(money_l)
 
 	var stamina_row := HBoxContainer.new()
-	stamina_row.position = Vector2(14, 148)
+	stamina_row.position = Vector2(14, 152)
 	stamina_row.size = Vector2(224, 40)
 	stamina_row.add_theme_constant_override("separation", 5)
 	stamina_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -843,6 +843,18 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		pip.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.07), 4, Color(0, 0, 0, 0.25), 1))
 		stamina_row.add_child(pip)
 		pips.append(pip)
+
+	var est_l := UIKit.label("", 13, UIKit.TEXT_DIM)
+	est_l.position = Vector2(14, 132)
+	est_l.size = Vector2(166, 18)
+	est_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	est_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(est_l)
+	var badge_slot := Control.new()
+	badge_slot.position = Vector2(186, 127)
+	badge_slot.size = Vector2(30, 30)
+	badge_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(badge_slot)
 
 	var slots: Array = []
 	for i in 5:
@@ -862,14 +874,12 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		slots.append(sp)
 
 	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
+		"est_l": est_l, "badge_slot": badge_slot,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
 		"shown": int(p.money), "tw": null}
 
 # ---------------- 顶部区域：数据轨 + 小卖部 / 赌场两座常驻设施 ----------------
 
-var _rank_rows := []                # {peer, cell, name_l, money_l, prop_l}
-var _rank_box: HBoxContainer
-var _world_log: RichTextLabel
 var _casino_pool_l: Label
 var _casino_status_l: Label
 var _shop_slots: Array = []         # {card, price_l}（道具系统解冻后接货架存货）
@@ -885,18 +895,14 @@ const CASINO_FELT_TEXT := Color(0.72, 0.8, 0.68)   # 绿呢桌上的浅绿字
 ## 顶部空区：上层数据轨（战况四家横排 + 最近战报），下层左右两座常驻设施
 ## （左小卖部 / 右赌场，世界坐标随桌面旋转；小卖部为道具系统的桌面柜台壳子）
 func _build_top_panels() -> void:
-	var top := TABLE.position.y + BAND_TB + 36.0
+	# 顶区整条给两座常驻设施（数据轨已撤：战况下沉座位卡，战报在屏幕悬浮框）
+	var top := TABLE.position.y + BAND_TB + 14.0
 	var bot := BOARD_OFFSET.y - 36.0
 	var left := -HOLE_MX
 	var right := WORLD.x + HOLE_MX
 	var half := (right - left - 16.0) * 0.5
-	var rail_h := 88.0
-	_make_rank_rail(Rect2(left, top, half, rail_h))
-	_make_log_rail(Rect2(right - half, top, half, rail_h))
-	var fy := top + rail_h + 12.0
-	var fh := bot - fy
-	_make_shop(Rect2(left, fy, half, fh))
-	_make_casino(Rect2(right - half, fy, half, fh))
+	_make_shop(Rect2(left, top, half, bot - top))
+	_make_casino(Rect2(right - half, top, half, bot - top))
 
 func _zone_panel(rect: Rect2, sb: StyleBox) -> Panel:
 	var panel := Panel.new()
@@ -923,50 +929,6 @@ func _fixture_icon(icon_name: String) -> TextureRect:
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return t
-
-func _make_rank_rail(rect: Rect2) -> void:
-	var panel := _zone_panel(rect, UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.82), 16,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.5), 1))
-	var m := UIKit.margins(16, 12, 10, 8)
-	m.position = Vector2(16, 10)
-	m.size = rect.size - Vector2(32, 18)  # Panel 非容器，内衬需显式铺满
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 4)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(v)
-	var cap := UIKit.label("战况", 14, UIKit.TEXT_DIM)
-	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(cap)
-	_rank_box = HBoxContainer.new()
-	_rank_box.add_theme_constant_override("separation", 16)
-	_rank_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_rank_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(_rank_box)
-
-func _make_log_rail(rect: Rect2) -> void:
-	var panel := _zone_panel(rect, UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.82), 16,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.5), 1))
-	var m := UIKit.margins(16, 12, 10, 8)
-	m.position = Vector2(16, 10)
-	m.size = rect.size - Vector2(32, 18)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 4)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(v)
-	var cap := UIKit.label("最近战报", 14, UIKit.TEXT_DIM)
-	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(cap)
-	_world_log = RichTextLabel.new()
-	_world_log.bbcode_enabled = true
-	_world_log.scroll_following = true
-	_world_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_world_log.add_theme_font_size_override("normal_font_size", 15)
-	_world_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(_world_log)
 
 ## 小卖部（左半）：木柜台 + 绿白条纹雨棚 + 货架 3 格 + 品质图例 + 刷新按钮
 ## （道具系统解冻后接货架存货 / 刷新费用 / 购买操作，规格零迁移）
@@ -1041,11 +1003,11 @@ func _make_shop(rect: Rect2) -> void:
 	for i in 3:
 		var slot := VBoxContainer.new()
 		slot.add_theme_constant_override("separation", 5)
+		slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		shelf.add_child(slot)
 		var card := Panel.new()
-		card.custom_minimum_size = Vector2(150, 150)
-		card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		card.custom_minimum_size = Vector2(150, 210)
 		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.06, 0.045, 0.03, 0.95), 10,
 			Color(0.45, 0.32, 0.16, 0.55), 1))
@@ -1169,53 +1131,26 @@ func update_casino(pool: int, status: String) -> void:
 			UIKit.ACCENT if pool > 0 else CASINO_FELT_TEXT)
 
 
-## 战况轨：按行动顺序四家横排（现金由对局层刷新）
-func build_rank(players: Array) -> void:
-	for r in _rank_rows:
-		(r.cell as Control).queue_free()
-	_rank_rows.clear()
-	for p in players:
-		var cell := VBoxContainer.new()
-		cell.add_theme_constant_override("separation", 2)
-		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cell.add_child(row)
-		var chip := UIKit.chip(GameData.PLAYER_COLORS[int(p.color) % 4], 13)
-		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(chip)
-		var name_l := UIKit.label(String(p.name), 16, UIKit.TEXT)
-		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(name_l)
-		var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 16, UIKit.ACCENT)
-		money_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(money_l)
-		var prop_l := UIKit.label("", 12, UIKit.TEXT_DIM)
-		prop_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		prop_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cell.add_child(prop_l)
-		_rank_box.add_child(cell)
-		_rank_rows.append({"peer": int(p.peer), "cell": cell, "name_l": name_l,
-			"money_l": money_l, "prop_l": prop_l})
+## 座位卡统计：身家排名徽章 + 地产/身家行（数据由对局层刷新）
+func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
+	var e := int(_seat_of_peer.get(peer, -1))
+	if e == -1 or not _seats.has(e):
+		return
+	var sd: Dictionary = _seats[e]
+	var el: Label = sd.get("est_l")
+	if el != null and is_instance_valid(el):
+		el.text = est_text
+	var slot: Control = sd.get("badge_slot")
+	if slot != null and is_instance_valid(slot):
+		for c in slot.get_children():
+			c.queue_free()
+		if rank > 0:
+			slot.add_child(UIKit.rank_badge(rank, 28))
 
-func rank_count() -> int:
-	return _rank_rows.size()
-
-func update_rank_row(peer: int, money: int, prop_text: String) -> void:
-	for r in _rank_rows:
-		if int(r.peer) == peer:
-			(r.money_l as Label).text = GameData.fmt_money(money)
-			(r.prop_l as Label).text = prop_text
-			return
-
-## 最近战报镜像（世界面板）
-func world_log_line(bb: String) -> void:
-	if _world_log != null and is_instance_valid(_world_log):
-		_world_log.append_text(bb + "\n")
+## 自己座位卡（边 0）的屏幕矩形（自己视角下无旋转，用于锚定屏幕层牌垫条）
+func home_card_screen_rect() -> Rect2:
+	var wpos := _seat_bar(0).get_center() - SEAT_SIZE * 0.5
+	return Rect2(_view_from_world(wpos), SEAT_SIZE * _zoom)
 
 # ---------------- 渲染状态快照 ----------------
 
