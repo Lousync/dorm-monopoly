@@ -74,6 +74,7 @@ var _casino_btn_peek: Button
 var _casino_btn_top: Button
 var _casino_btn_bottom: Button
 var _casino_my_epoch := -1
+var _casino_table_pot := 0        # 桌面赌场设施显示中的奖池
 var _casino_order: Array = []
 
 # ---------------- 自动化测试 ----------------
@@ -1412,6 +1413,8 @@ func _run_casino(p: Dictionary) -> void:
 func s_casino_start(game_name: String, stake: int, pot: int, order: Array) -> void:
 	_close_casino()
 	_casino_order = order
+	_casino_table_pot = pot
+	board.update_casino(pot, "开局中 · %s" % game_name)
 	_casino_layer = Control.new()
 	_casino_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_casino_layer.z_index = 55
@@ -1504,6 +1507,7 @@ func s_casino_start(game_name: String, stake: int, pot: int, order: Array) -> vo
 
 @rpc("authority", "call_local", "reliable")
 func s_casino_turn(peer: int, epoch: int, defuse: Dictionary, fish: Dictionary, deck_left: int, interactive: bool) -> void:
+	board.update_casino(_casino_table_pot, "轮到 %s · 牌堆剩 %d 张" % [_name_by_peer(peer), deck_left])
 	if _casino_layer == null or not is_instance_valid(_casino_layer):
 		return
 	_casino_deck_label.text = "牌堆剩余 %d 张" % deck_left
@@ -1552,6 +1556,8 @@ func s_casino_peek(card: String) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func s_casino_end(winner_peer: int, pot: int) -> void:
+	_casino_table_pot = 0
+	board.update_casino(0, "歇业中")
 	if _casino_layer == null or not is_instance_valid(_casino_layer):
 		return
 	_casino_my_epoch = -1
