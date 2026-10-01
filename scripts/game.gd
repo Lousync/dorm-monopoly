@@ -32,7 +32,7 @@ var pause_mask: ColorRect
 var audio_volume := 1.0
 var audio_mute := false
 
-# ---------------- 道具系统（host 状态，详见 docs/道具系统设计.md） ----------------
+# ---------------- 道具系统（host 状态，详见 docs/gameplay/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
@@ -53,6 +53,7 @@ var target_btn_box: VBoxContainer
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
+var _shop_sig := ""
 var card_gallery: Control
 var card_gallery_flag := false
 
@@ -286,14 +287,15 @@ func _build_ui() -> void:
 	# 小卖部操作条（行动者的屏幕层按钮；货架公开显示在桌面设施上）
 	shop_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
 		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
-	shop_bar.custom_minimum_size = Vector2(440, 46)
+	shop_bar.custom_minimum_size = Vector2(380, 0)
 	shop_bar.visible = false
 	add_child(shop_bar)
-	var sbm := UIKit.margins(10, 8, 7, 7)
+	var sbm := UIKit.margins(12, 10, 10, 10)
 	shop_bar.add_child(sbm)
-	var srow := HBoxContainer.new()
-	srow.add_theme_constant_override("separation", 6)
-	sbm.add_child(srow)
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 6)
+	sbm.add_child(sv)
+	sv.add_child(UIKit.label("小卖部 · 选一件买下", 13, UIKit.ACCENT))
 	shop_btns = []
 	for i in 3:
 		var b := UIKit.button("买", 12)
@@ -305,8 +307,11 @@ func _build_ui() -> void:
 			else:
 				c_shop_buy.rpc(si)
 		)
-		srow.add_child(b)
+		sv.add_child(b)
 		shop_btns.append(b)
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 6)
+	sv.add_child(srow)
 	shop_refresh_btn = UIKit.button("刷新", 12)
 	shop_refresh_btn.pressed.connect(func() -> void:
 		if multiplayer.is_server():
@@ -2992,6 +2997,9 @@ func _process(_delta: float) -> void:
 	shop_bar.visible = shop_mine
 	if shop_mine:
 		_place_overlay_bar(shop_bar)
+		_refresh_shop_ui()
+	else:
+		_shop_sig = ""
 	var black_mine: bool = phase == "playing" and int(st.get("black_peer", 0)) == my_peer
 	black_bar.visible = black_mine
 	if black_mine:
@@ -3011,6 +3019,44 @@ func _process(_delta: float) -> void:
 func _place_overlay_bar(c: Control) -> void:
 	var vp := get_viewport_rect().size
 	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, vp.y - 148.0)
+
+## 小卖部操作条刷新：按货架给「买」按钮挂上货名/价格，并按现金/背包置灰
+func _refresh_shop_ui() -> void:
+	var tile := int(st.get("shop_open", -1))
+	var shops_state: Dictionary = st.get("shops", {})
+	var slots: Array = []
+	if tile >= 0 and shops_state.has(tile):
+		slots = shops_state.get(tile, {}).get("slots", [])
+	var me := {}
+	for pl in st.get("players", []):
+		if int(pl.peer) == my_peer:
+			me = pl
+			break
+	var money := int(me.get("money", 0))
+	var bag: int = (me.get("items", []) as Array).size()
+	var has_black := false
+	for it in me.get("items", []):
+		if String(it.id) == "黑卡" and int(it.get("charges", 0)) > 0:
+			has_black = true
+	var refresh := int(st.get("refresh_price", 0))
+	var sig := "%s|%d|%d|%s|%d" % [str(slots), money, bag, str(has_black), refresh]
+	if sig == _shop_sig:
+		return
+	_shop_sig = sig
+	for i in shop_btns.size():
+		var b: Button = shop_btns[i]
+		var id := String(slots[i]) if i < slots.size() else ""
+		if id == "":
+			b.visible = false
+			continue
+		b.visible = true
+		var q := String(ItemData.def(id).quality)
+		var price := ItemData.price(q)
+		b.text = "买【%s】 · %s（%s）" % [id, GameData.fmt_money(price), String(ItemData.QUALITY_NAMES.get(q, q))]
+		b.disabled = bag >= 5 or (not has_black and money < price)
+	if shop_refresh_btn != null:
+		shop_refresh_btn.text = "刷新 · %s" % GameData.fmt_money(refresh)
+		shop_refresh_btn.disabled = money < refresh
 
 ## 黑市面板刷新（缓存签名，避免每帧重建）
 func _refresh_black_ui() -> void:

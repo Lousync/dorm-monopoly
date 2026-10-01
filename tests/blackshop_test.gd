@@ -56,6 +56,7 @@ func _run() -> void:
 	_test_exit(g)
 	_test_refresh(g)
 	_test_bot(g)
+	_test_shop_ui(g)
 	_test_stock_unique(g)
 	_test_sleep(g)
 	_test_events(g)
@@ -156,6 +157,22 @@ func _test_bot(g) -> void:
 	_check(p.items.size() == 1 and String(p.items[0].id) == "黑卡", "bot 选最值的橙货")
 	_check(g._black_peer == 0, "bot 交完出口费离店")
 	_check((g.htiles[a].owner as int) == GameData.NO_OWNER, "bot 用地皮结账")
+
+func _test_shop_ui(g) -> void:
+	print("== 小卖部买按钮 ==")
+	g.st = {"phase": "playing", "turn": 1, "shop_open": 10, "shop_peer": 1, "refresh_price": 500,
+		"players": [{"peer": 1, "name": "甲", "money": 5000, "items": []}],
+		"shops": {10: {"slots": ["招财猫", "平均主义", ""]}}}
+	g.my_peer = 1
+	g._shop_sig = ""
+	g._refresh_shop_ui()
+	_check(g.shop_btns[0].visible and "招财猫" in String(g.shop_btns[0].text), "1 号货位按钮可见且带货名")
+	_check(g.shop_btns[2].visible == false, "空货位按钮隐藏")
+	_check(not g.shop_btns[0].disabled, "买得起时不置灰")
+	g.st.players[0].money = 100
+	g._shop_sig = ""
+	g._refresh_shop_ui()
+	_check(g.shop_btns[0].disabled and g.shop_btns[1].disabled, "买不起的货位置灰")
 
 func _test_stock_unique(g) -> void:
 	print("== 货架唯一性 ==")
