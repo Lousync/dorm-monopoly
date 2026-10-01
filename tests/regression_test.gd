@@ -70,6 +70,7 @@ func _run() -> void:
 	_test_shop_buttons(g)
 	_test_authority_guards(g)
 	_test_dead_player_items_return_to_pool(g)
+	_test_camera_state(g)
 	await _test_roll_button_off_home_view(g)
 
 	# 掉线路径会触发换场景，放到最后
@@ -199,6 +200,34 @@ func _test_conn_lost_unpauses(g, lobby) -> void:
 	lobby._on_conn_lost("房主已离开")
 	_check(not lobby.get_tree().paused, "大厅场景掉线后解除暂停")
 
+func _test_camera_state(g) -> void:
+	print("== 镜头状态：回自己视角 / 窗口缩放 ==")
+	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
+	g.board.build_seats(pls, 1)
+	g.board._process(0.0)             # 首次布局：fit_overview
+	_check(g.board.size.x > 10.0, "棋盘控件已布局（w=%.0f）" % g.board.size.x)
+	# 默认全景倍率下 _clamp_center 会退化成「恒等于桌面中心」，座座位目标无从区分
+	g.board._zoom = 1.2
+
+	# A) 回自己视角必须更新镜头目标，否则会沿用别人座位的旧目标，
+	#    与跟随镜头互相拉扯、_rotating 永不归位
+	g.board.rotate_to_edge(0, true)
+	var home_target: Vector2 = g.board._center_target
+	g.board.rotate_to_edge(1, true)
+	_check(g.board._center_target != home_target, "转到别人座位后镜头目标随之改变")
+	g.board.go_home_follow(1)
+	_check(g.board._center_target == home_target, "回自己视角后镜头目标回到自己座位")
+	for i in 180:
+		g.board._process(1.0 / 60.0)
+	_check(not g.board.is_rotating(), "回自己视角后镜头动画能收敛归位")
+
+	# B) 窗口尺寸变化不该把视角拽回全景并关掉跟随（对局中途改窗口/缩放）
+	g.board.rotate_to_edge(2, true)
+	g.board.emit_signal("resized")
+	g.board._process(0.016)
+	_check(absf(wrapf(g.board._rot, -PI, PI)) > 0.5,
+		"窗口尺寸变化后视角仍在别人座位（实得 %.2f rad）" % g.board._rot)
+
 func _test_roll_button_off_home_view(g) -> void:
 	print("== 转离自己视角后仍能操作（「转动转盘」不再被一起隐藏） ==")
 	var pls := [
@@ -215,6 +244,7 @@ func _test_roll_button_off_home_view(g) -> void:
 		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
 	}
 	g.board.build_seats(pls, 1)       # 建立座位（边 0 = 自己）
+	g.board.rotate_to_edge(0, true)   # 前面的镜头用例可能把视角留在别人座位
 	g._refresh_actions()              # 掷骰按钮的显隐/可用由状态决定
 	await process_frame
 	await process_frame               # 等容器布局算出真实尺寸

@@ -49,6 +49,7 @@ var _world: Control
 var _table: Node2D
 var _zoom := 0.5
 var _need_fit := true
+var _fitted := false         # 是否已做过首次全景取景（之后的 resized 只重算变换）
 var _dragging := false
 var _panning := false
 var _press_pos := Vector2.ZERO
@@ -139,10 +140,13 @@ func _apply_cam() -> void:
 	_table.rotation = _rot
 	_world.position = _visible_center().rotated(-_rot) - _center * _zoom
 
-## 注视点限制在桌面内容内（旋转 90° 倍数时可视宽高互换）
-func _clamp_center(c: Vector2) -> Vector2:
+## 注视点限制在桌面内容内（旋转 90° 倍数时可视宽高互换）。
+## rot 省略时用当前 _rot；但算「正要转去的那个视角」的目标时必须显式传 _rot_target，
+## 否则会拿旋转前的可视宽高去夹取，目标点偏出数百像素（见 fix/v0.0.2）。
+func _clamp_center(c: Vector2, rot: float = INF) -> Vector2:
 	var vr := _visible_rect()
-	var half := (vr.size.rotated(-_rot) * 0.5).abs() / _zoom
+	var r: float = _rot if is_inf(rot) else rot
+	var half := (vr.size.rotated(-r) * 0.5).abs() / _zoom
 	var mn := TABLE.position + half
 	var mx := TABLE.end - half
 	var out := c
@@ -487,7 +491,11 @@ func _build_ring() -> void:
 func _process(delta: float) -> void:
 	if _need_fit and size.x > 10.0:
 		_need_fit = false
-		fit_overview(true)  # 初始镜头：四人围桌全景
+		if not _fitted:
+			_fitted = true
+			fit_overview(true)  # 初始镜头：四人围桌全景
+		else:
+			_apply_cam()        # 仅重算变换：resized 不该把对局中途的视角/跟随清零
 	if auto_follow and _has_follow_pt:
 		_pan_toward(_follow_pt, delta)
 	elif auto_follow and _follow_peer != -1 and _tokens.has(_follow_peer):
@@ -496,10 +504,18 @@ func _process(delta: float) -> void:
 	if _rotating:
 		var k := 1.0 - exp(-7.0 * delta)
 		_rot = lerp_angle(_rot, _rot_target, k)
-		_center = _center.lerp(_center_target, k)
-		if absf(wrapf(_rot_target - _rot, -PI, PI)) < 0.004 and _center.distance_to(_center_target) < 1.0:
+		# 跟随镜头（_pan_toward）自己会驱动 _center，这里不要去抢：
+		# 两者同时写 _center 会互相拉扯，_center 永远到不了 _center_target，
+		# 于是 _rotating 卡在 true，对局层的回正逻辑被一直抑制（见 fix/v0.0.2）。
+		var follow_drives: bool = auto_follow and (_has_follow_pt \
+			or (_follow_peer != -1 and _tokens.has(_follow_peer)))
+		if not follow_drives:
+			_center = _center.lerp(_center_target, k)
+		if absf(wrapf(_rot_target - _rot, -PI, PI)) < 0.004 \
+				and (follow_drives or _center.distance_to(_center_target) < 1.0):
 			_rot = _rot_target
-			_center = _center_target
+			if not follow_drives:
+				_center = _center_target
 			_rotating = false
 	if _ring_peer != -1 and _tokens.has(_ring_peer):
 		var tk2: Control = _tokens[_ring_peer]
@@ -701,7 +717,7 @@ func rotate_to_edge(e: int, hard := false) -> void:
 		return
 	_view_edge = e
 	_rot_target = -e * PI * 0.5
-	_center_target = _clamp_center(_seat_center(e))
+	_center_target = _clamp_center(_seat_center(e), _rot_target)
 	if hard:
 		_rot = _rot_target
 		_center = _center_target
@@ -723,6 +739,9 @@ func go_home_follow(peer: int) -> void:
 	_has_follow_pt = false
 	_view_edge = 0
 	_rot_target = 0.0
+	# 必须同步更新注视点目标：否则旋转插值会把镜头拖回上一次（别人座位）
+	# 的旧目标，与跟随互相拉扯、_rotating 永不归位（见 fix/v0.0.2）。
+	_center_target = _clamp_center(_seat_center(0), _rot_target)
 	_rotating = true
 
 ## Tab：按行动顺序循环切换到下一个有人的座位视角
