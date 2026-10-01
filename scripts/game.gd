@@ -31,6 +31,25 @@ var mute_check: CheckButton
 var pause_mask: ColorRect
 var audio_volume := 1.0
 var audio_mute := false
+
+# ---------------- 道具系统（host 状态，详见 docs/道具系统设计.md） ----------------
+var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
+var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
+var _shop_peer := 0        # 正在逛小卖部的玩家（0 = 无）
+var _shop_tile := -1
+var _shop_epoch := 0
+var _awaiting_item := 0    # 道具阶段行动者（0 = 无）
+var _item_epoch := 0
+var _item_action := {}
+var item_btn_box: HBoxContainer
+var ph1_pill: Control
+var ph2_pill: Control
+var ph_arrow_l: Label
+var cheat_picker: Control
+var cheat_slot := -1
+var shop_bar: PanelContainer
+var shop_btns: Array = []
+var shop_refresh_btn: Button
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
@@ -190,13 +209,63 @@ func _build_ui() -> void:
 	mrow.add_child(status_label)
 	var ph1 := UIKit.pill("① 转轮盘", UIKit.TEXT_DIM, 11)
 	mrow.add_child(ph1)
+	var ph_arrow := UIKit.label("→", 12, UIKit.TEXT_DIM)
+	mrow.add_child(ph_arrow)
 	var ph2 := UIKit.pill("② 使用道具", UIKit.TEXT_DIM, 11)
 	mrow.add_child(ph2)
 	ph1_lab = _pill_label(ph1)
 	ph2_lab = _pill_label(ph2)
+	ph1_pill = ph1
+	ph2_pill = ph2
+	ph_arrow_l = ph_arrow
 	roll_btn = UIKit.button("转动转盘", 15, "normal")
 	roll_btn.disabled = true
 	mrow.add_child(roll_btn)
+	item_btn_box = HBoxContainer.new()
+	item_btn_box.add_theme_constant_override("separation", 6)
+	item_btn_box.visible = false
+	mrow.add_child(item_btn_box)
+
+	# 小卖部操作条（行动者的屏幕层按钮；货架公开显示在桌面设施上）
+	shop_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
+	shop_bar.custom_minimum_size = Vector2(440, 46)
+	shop_bar.visible = false
+	add_child(shop_bar)
+	var sbm := UIKit.margins(10, 8, 7, 7)
+	shop_bar.add_child(sbm)
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 6)
+	sbm.add_child(srow)
+	shop_btns = []
+	for i in 3:
+		var b := UIKit.button("买", 12)
+		b.visible = false
+		var si := i
+		b.pressed.connect(func() -> void:
+			if multiplayer.is_server():
+				_shop_buy(my_peer, si)
+			else:
+				c_shop_buy.rpc(si)
+		)
+		srow.add_child(b)
+		shop_btns.append(b)
+	shop_refresh_btn = UIKit.button("刷新", 12)
+	shop_refresh_btn.pressed.connect(func() -> void:
+		if multiplayer.is_server():
+			_shop_refresh(my_peer)
+		else:
+			c_shop_refresh.rpc()
+	)
+	srow.add_child(shop_refresh_btn)
+	var leave_btn := UIKit.button("离开", 12)
+	leave_btn.pressed.connect(func() -> void:
+		if multiplayer.is_server():
+			_shop_leave(my_peer)
+		else:
+			c_shop_leave.rpc()
+	)
+	srow.add_child(leave_btn)
 
 	# 左上角：选项按钮（打开暂停菜单族，见 _build_menu_ui）
 	opt_btn = UIKit.button("☰ 选项", 13)
@@ -287,10 +356,17 @@ func _host_setup() -> void:
 			"peer": int(p.peer), "name": String(p.name), "color": int(p.color),
 			"bot": bool(p.bot), "money": GameData.START_MONEY,
 			"pos": 0, "alive": true, "skip": 0,
+			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
 		})
 	htiles = []
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
+	shops = {}
+	refresh_count = 0
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			shops[i] = {"slots": ["", "", ""]}
+			_stock_shop(i)
 	_log("游戏开始！每人初始资金 %s，踏上起点领工资 %s" % [
 		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
 	_log("转盘决定步数（0~12）：转到 12 满值再动一次；连续三次 10+ 会被查寝抓走哦")
@@ -347,6 +423,8 @@ func _advance_turn() -> void:
 func _play_turn(p: Dictionary) -> void:
 	if at_mode != "":
 		print("AT turn start: r%d %s" % [round_no, p.name])
+	_item_turn_start(p)
+	_broadcast_state()
 	var chain := 0
 	while running:
 		_awaiting_roll = int(p.peer)
@@ -363,6 +441,10 @@ func _play_turn(p: Dictionary) -> void:
 		_awaiting_roll = 0
 
 		var roll := randi_range(0, 12)
+		if int(p.get("cheat_roll", -1)) >= 0:
+			roll = clampi(int(p.cheat_roll), 0, 12)
+			p.cheat_roll = -1
+			_log("%s 掏出【作弊器】——这次转盘他说了算" % p.name, "#8fb7f2")
 		if at_mode != "":
 			print("AT roll %s: %d" % [p.name, roll])
 		s_roll.rpc(roll)
@@ -385,7 +467,7 @@ func _play_turn(p: Dictionary) -> void:
 		var path := GameData.compute_path(int(p.pos), roll)
 		if path.is_empty():
 			_log("%s 转了个 0，原地待命一回合" % p.name, "#8a90a5")
-			return
+			break  # 待命也算完成投掷，仍可用道具
 		for idx in path:
 			if idx == 0:
 				p.money = int(p.money) + GameData.SALARY
@@ -404,7 +486,10 @@ func _play_turn(p: Dictionary) -> void:
 			_log("%s 转到 12 满值，奖励再动一次！" % p.name, "#f0c064")
 			await _wait(0.5)
 			continue
+		break
+	if not running:
 		return
+	await _item_phase(p)
 
 ## 真人玩家发呆太久由系统代掷，避免整局卡死
 func _arm_roll_timeout(epoch: int, peer: int) -> void:
@@ -448,6 +533,8 @@ func _resolve_tile(p: Dictionary) -> void:
 		"bonus":
 			p.money = int(p.money) + int(d.amount)
 			_log("%s 在【%s】赚到 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#74d188")
+		"shop":
+			await _run_shop(p, idx)
 		"casino":
 			_log("%s 踏进【宿舍赌场】，全员开赌！" % p.name, "#f0a0c0")
 			await _run_casino(p)
@@ -515,6 +602,8 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 	var op := _player_by_peer(int(htiles[idx].owner))
 	if op.is_empty() or not bool(op.alive):
 		return
+	if _has_item(op, "招财猫"):
+		rent += 50  # 【招财猫】：租金 +50
 	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name], "#ef7b74")
 	_pay(p, rent, op)
 
@@ -722,6 +811,8 @@ func _broadcast_state() -> void:
 		plist.append({
 			"peer": int(p.peer), "name": p.name, "color": int(p.color), "bot": bool(p.bot),
 			"money": int(p.money), "pos": int(p.pos), "alive": bool(p.alive), "skip": int(p.skip),
+			"stamina": int(p.get("stamina", 3)), "items": p.get("items", []),
+			"item_used": bool(p.get("item_used", false)),
 		})
 	var await_state := ""
 	var await_peer := -1
@@ -731,12 +822,20 @@ func _broadcast_state() -> void:
 	elif _awaiting_prompt != 0:
 		await_state = "prompt"
 		await_peer = _awaiting_prompt
+	elif _awaiting_item != 0:
+		await_state = "item"
+		await_peer = _awaiting_item
+	elif _shop_peer != 0:
+		await_state = "shop"
+		await_peer = _shop_peer
 	s_state.rpc({
 		"phase": "ended" if not running else "playing",
 		"round": round_no, "max_rounds": GameData.MAX_ROUNDS,
 		"turn": int(hp[turn_i].peer),
 		"await": await_state, "await_peer": await_peer,
 		"players": plist, "tiles": htiles,
+		"shops": shops, "refresh_price": _refresh_price(),
+		"shop_open": (_shop_tile if _shop_peer != 0 else -1),
 		"winner": winner, "roll_epoch": _roll_epoch,
 	})
 
@@ -752,6 +851,8 @@ func _log(line: String, color: String = "#dfe3ee") -> void:
 func s_state(state: Dictionary) -> void:
 	st = state
 	board.render(state)
+	board.set_shop_display(state.get("shops", {}), int(state.get("refresh_price", 0)),
+		int(state.get("shop_open", -1)))
 	log_head.text = "第 %d/%d 轮 · 战报" % [int(state.round), int(state.max_rounds)]
 	_refresh_players()
 	_refresh_actions()
@@ -899,6 +1000,11 @@ func _refresh_players() -> void:
 				Color(1.0, 0.85, 0.3, 0.85) if i < stamina else Color(1, 1, 1, 0.07),
 				4, Color(0, 0, 0, 0.25), 1))
 
+		# 道具牌位：公开背包（名字 + 品质描边 + 冷却标记）
+		var items: Array = p.get("items", [])
+		for i in (row.slots as Array).size():
+			board.set_seat_slot(peer, i, items[i] if i < items.size() else null)
+
 		# 金额：滚动数字 + 涨跌闪色 + 棋盘飘字
 		var target := int(p.money)
 		var shown := int(row.shown)
@@ -952,7 +1058,7 @@ func _refresh_actions() -> void:
 	var await_state := String(st.get("await", ""))
 	var is_my_roll := await_state == "roll" and int(st.get("turn", -1)) == my_peer
 	roll_btn.disabled = not is_my_roll
-	roll_btn.visible = phase == "playing"
+	roll_btn.visible = phase == "playing" and await_state == "roll"
 	UIKit.restyle_button(roll_btn, "primary" if is_my_roll else "normal")
 	var my_turn := phase == "playing" and int(st.get("turn", -1)) == my_peer
 	if ph1_lab != null:
@@ -961,8 +1067,15 @@ func _refresh_actions() -> void:
 	if ph2_lab != null:
 		ph2_lab.add_theme_color_override("font_color",
 			UIKit.ACCENT if (my_turn and await_state != "roll") else UIKit.TEXT_DIM)
+	_refresh_item_buttons(my_turn, await_state)
 	var turn_name := _name_by_peer(int(st.get("turn", -1)))
 	match await_state:
+		"item":
+			status_label.text = "轮到你使用道具！" if int(st.get("await_peer", -1)) == my_peer \
+				else "等待 %s 使用道具…" % turn_name
+		"shop":
+			status_label.text = "慢慢逛，看好就买" if int(st.get("await_peer", -1)) == my_peer \
+				else "%s 在小卖部购物…" % turn_name
 		"roll":
 			if is_my_roll:
 				status_label.text = "轮到你转盘了！"
@@ -1224,6 +1337,319 @@ func _refresh_chat() -> void:
 		_chat_shown += 1
 		log_text.append_text("[color=#7f8699]%s[/color]\n" % line.replace("[", "［"))
 	
+# ================= 道具系统：host 逻辑与 RPC（阶段一） =================
+
+func _refresh_price() -> int:
+	return ItemData.REFRESH_BASE + refresh_count * ItemData.REFRESH_STEP
+
+func _has_item(p: Dictionary, id: String) -> bool:
+	for it in p.get("items", []):
+		if String(it.id) == id:
+			return true
+	return false
+
+func _item_pool(quality: String) -> Array:
+	var held := {}
+	for pl in hp:
+		for it in pl.get("items", []):
+			held[String(it.id)] = true
+	var out := []
+	for id in ItemData.ITEMS:
+		var d: Dictionary = ItemData.ITEMS[id]
+		if not bool(d.implemented):
+			continue
+		if quality != "" and String(d.quality) != quality:
+			continue
+		if bool(d.unique) and held.has(id):
+			continue
+		out.append(String(id))
+	return out
+
+func _roll_quality() -> String:
+	var total := 0
+	for q in ItemData.SHOP_WEIGHTS:
+		total += int(ItemData.SHOP_WEIGHTS[q])
+	var r := randi_range(0, maxi(total - 1, 0))
+	for q in ItemData.SHOP_WEIGHTS:
+		r -= int(ItemData.SHOP_WEIGHTS[q])
+		if r < 0:
+			return q
+	return "白"
+
+func _stock_one() -> String:
+	var q := _roll_quality()
+	if q == "橙" and _item_pool("橙").is_empty():
+		q = "紫"  # 橙池空并入紫（定稿）
+	var pool := _item_pool(q)
+	if pool.is_empty():
+		return ""
+	return pool[randi_range(0, pool.size() - 1)]
+
+func _stock_shop(idx: int) -> void:
+	var arr: Array = shops[idx].slots
+	for i in arr.size():
+		if String(arr[i]) == "":
+			arr[i] = _stock_one()
+
+func _item_turn_start(p: Dictionary) -> void:
+	p.stamina = mini(int(p.get("stamina", 3)) + 1, 5)
+	p.item_used = false
+	for it in p.get("items", []):
+		if int(it.get("cd", 0)) > 0:
+			it.cd = int(it.cd) - 1
+	if _has_item(p, "信托基金"):
+		p.money = int(p.money) + 100
+		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(100)], "#74d188")
+
+func _has_usable(p: Dictionary) -> bool:
+	if bool(p.get("item_used", false)):
+		return false
+	for it in p.get("items", []):
+		var d := ItemData.def(String(it.id))
+		if String(d.type) == "passive" or not bool(d.implemented):
+			continue
+		if int(it.get("cd", 0)) > 0:
+			continue
+		if int(p.get("stamina", 0)) < int(d.cost):
+			continue
+		return true
+	return false
+
+func _item_phase(p: Dictionary) -> void:
+	if not running or not bool(p.alive) or not _has_usable(p):
+		return
+	_item_epoch += 1
+	var epoch := _item_epoch
+	_awaiting_item = int(p.peer)
+	_item_action = {"epoch": -1}
+	_broadcast_state()
+	if bool(p.bot):
+		_item_action = {"epoch": epoch, "action": "skip"}  # 机器人道具策略后续批次
+	else:
+		_arm_item_timeout(epoch, int(p.peer))
+	while running and _awaiting_item == int(p.peer) and int(_item_action.get("epoch", -1)) != epoch:
+		await _wait(0.1)
+	if not running:
+		return
+	_awaiting_item = 0
+	_broadcast_state()
+
+func _arm_item_timeout(epoch: int, peer: int) -> void:
+	await _wait(ItemData.ITEM_TIMEOUT)
+	if running and _awaiting_item == peer and int(_item_action.get("epoch", -1)) != epoch:
+		_log("%s 在道具阶段发呆，跳过" % _name_by_peer(peer), "#8a90a5")
+		_item_action = {"epoch": epoch, "action": "skip"}
+
+func _use_item(peer: int, slot: int, arg: int) -> void:
+	var p := _player_by_peer(peer)
+	if p.is_empty() or _awaiting_item != peer or bool(p.get("item_used", false)):
+		return
+	var items: Array = p.get("items", [])
+	if slot < 0 or slot >= items.size():
+		return
+	var it: Dictionary = items[slot]
+	var d := ItemData.def(String(it.id))
+	if String(d.type) == "passive" or not bool(d.implemented):
+		return
+	if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < int(d.cost):
+		return
+	p.stamina = int(p.stamina) - int(d.cost)
+	it.cd = int(d.cooldown)
+	p.item_used = true
+	match String(it.id):
+		"作弊器":
+			p.cheat_roll = clampi(arg, 0, 12)
+			_log("%s 掏出【作弊器】，下一次转盘他说了算" % p.name, "#8fb7f2")
+		"平均主义":
+			var alive: Array = hp.filter(func(x) -> bool: return bool(x.alive))
+			var total := 0
+			for a in alive:
+				total += int(a.money)
+			var share := int(total / alive.size())
+			var rem := total - share * alive.size()
+			for a in alive:
+				a.money = share
+			for k in rem:
+				alive[k].money = int(alive[k].money) + 1
+			_log("%s 发动【平均主义】，全场现金拉平！" % p.name, "#c9a6ff")
+		_:
+			p.item_used = false
+			p.stamina = int(p.stamina) + int(d.cost)
+			return
+	_item_action = {"epoch": _item_epoch, "action": "used"}
+	_broadcast_state()
+
+func _run_shop(p: Dictionary, idx: int) -> void:
+	_shop_tile = idx
+	_shop_peer = int(p.peer)
+	_shop_epoch += 1
+	var epoch := _shop_epoch
+	if not shops.has(idx):
+		shops[idx] = {"slots": ["", "", ""]}
+	_stock_shop(idx)
+	_broadcast_state()
+	if bool(p.bot):
+		_bot_shop(p, idx)
+	else:
+		_arm_shop_timeout(epoch, int(p.peer))
+	while running and _shop_peer == int(p.peer) and _shop_epoch == epoch:
+		await _wait(0.1)
+	if not running:
+		return
+	_shop_peer = 0
+	_broadcast_state()
+
+func _arm_shop_timeout(epoch: int, peer: int) -> void:
+	await _wait(ItemData.SHOP_TIMEOUT)
+	if running and _shop_peer == peer and _shop_epoch == epoch:
+		_log("%s 在小卖部逛太久，被老板请了出去" % _name_by_peer(peer), "#8a90a5")
+		_shop_peer = 0
+
+func _bot_shop(p: Dictionary, idx: int) -> void:
+	var arr: Array = shops[idx].slots
+	var best := -1
+	var best_price := 0
+	for i in arr.size():
+		var id := String(arr[i])
+		if id == "":
+			continue
+		var price := ItemData.price(String(ItemData.def(id).quality))
+		if int(p.money) >= price and p.items.size() < 5 and price > best_price:
+			best = i
+			best_price = price
+	if best != -1:
+		_shop_buy(int(p.peer), best)
+	_shop_leave(int(p.peer))
+
+func _shop_buy(peer: int, slot: int) -> void:
+	if _shop_peer != peer or _shop_tile < 0 or not shops.has(_shop_tile):
+		return
+	var arr: Array = shops[_shop_tile].slots
+	if slot < 0 or slot >= arr.size() or String(arr[slot]) == "":
+		return
+	var id := String(arr[slot])
+	var price := ItemData.price(String(ItemData.def(id).quality))
+	var p := _player_by_peer(peer)
+	if p.is_empty() or p.items.size() >= 5 or int(p.money) < price:
+		return
+	p.money = int(p.money) - price
+	p.items.append({"id": id, "cd": 0})
+	arr[slot] = ""
+	_log("%s 在小卖部买下了【%s】（%s）" % [p.name, id, GameData.fmt_money(price)], "#8fb7f2")
+	_broadcast_state()
+
+func _shop_refresh(peer: int) -> void:
+	if _shop_peer != peer or _shop_tile < 0 or not shops.has(_shop_tile):
+		return
+	var p := _player_by_peer(peer)
+	var cost := _refresh_price()
+	if p.is_empty() or int(p.money) < cost:
+		return
+	p.money = int(p.money) - cost
+	refresh_count += 1
+	_stock_shop(_shop_tile)
+	_log("%s 花 %s 刷新了货架（全场刷新价上涨）" % [p.name, GameData.fmt_money(cost)], "#8a90a5")
+	_broadcast_state()
+
+func _shop_leave(peer: int) -> void:
+	if _shop_peer != peer:
+		return
+	_log("%s 走出了小卖部" % _name_by_peer(peer), "#8a90a5")
+	_shop_peer = 0
+	_broadcast_state()
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_use_item(slot: int, arg: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == _awaiting_item:
+		_use_item(sender, slot, arg)
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_item_skip() -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == _awaiting_item:
+		_item_action = {"epoch": _item_epoch, "action": "skip"}
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_shop_buy(slot: int) -> void:
+	if not multiplayer.is_server():
+		return
+	_shop_buy(multiplayer.get_remote_sender_id(), slot)
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_shop_refresh() -> void:
+	if not multiplayer.is_server():
+		return
+	_shop_refresh(multiplayer.get_remote_sender_id())
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_shop_leave() -> void:
+	if not multiplayer.is_server():
+		return
+	_shop_leave(multiplayer.get_remote_sender_id())
+
+func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
+	if item_btn_box == null:
+		return
+	var mine: bool = my_turn and await_state == "item"
+	ph1_pill.visible = not mine
+	ph2_pill.visible = not mine
+	ph_arrow_l.visible = not mine
+	roll_btn.visible = roll_btn.visible and not mine
+	item_btn_box.visible = mine
+	if not mine:
+		return
+	for c in item_btn_box.get_children():
+		c.queue_free()
+	var p := _player_by_peer(my_peer)
+	if p.is_empty():
+		return
+	var items: Array = p.get("items", [])
+	for i in items.size():
+		var it: Dictionary = items[i]
+		var d := ItemData.def(String(it.id))
+		if String(d.type) == "passive" or not bool(d.implemented):
+			continue
+		var usable: bool = int(it.get("cd", 0)) == 0 \
+			and int(p.get("stamina", 0)) >= int(d.cost) and not bool(p.get("item_used", false))
+		var b := UIKit.button("%s ⚡%d" % [String(it.id), int(d.cost)], 12)
+		b.disabled = not usable
+		var slot := i
+		var iid := String(it.id)
+		b.pressed.connect(func() -> void:
+			if iid == "作弊器":
+				_open_cheat_picker(slot)
+			else:
+				_send_use_item(slot, -1)
+		)
+		item_btn_box.add_child(b)
+	var skip := UIKit.button("跳过", 12)
+	skip.pressed.connect(func() -> void:
+		if multiplayer.is_server():
+			_item_action = {"epoch": _item_epoch, "action": "skip"}
+		else:
+			c_item_skip.rpc()
+	)
+	item_btn_box.add_child(skip)
+
+func _send_use_item(slot: int, arg: int) -> void:
+	_close_cheat_picker()
+	if multiplayer.is_server():
+		_use_item(my_peer, slot, arg)
+	else:
+		c_use_item.rpc(slot, arg)
+
+func _open_cheat_picker(slot: int) -> void:
+	cheat_slot = slot
+	cheat_picker.visible = true
+
+func _close_cheat_picker() -> void:
+	cheat_picker.visible = false
+
 # ================= 选项菜单 / 房主暂停 / 设置 =================
 
 func _pill_label(p: Control) -> Label:
@@ -1370,6 +1796,43 @@ func _build_menu_ui() -> void:
 	)
 	cbtn_row.add_child(sure_btn)
 
+	# 作弊器点数选框（0~12，本地弹出）
+	cheat_picker = Control.new()
+	cheat_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cheat_picker.visible = false
+	add_child(cheat_picker)
+	var cd_dim := ColorRect.new()
+	cd_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cd_dim.color = Color(0.04, 0.04, 0.08, 0.55)
+	cheat_picker.add_child(cd_dim)
+	var cc2 := CenterContainer.new()
+	cc2.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cheat_picker.add_child(cc2)
+	var cp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.8), 1, 10)
+	cc2.add_child(cp)
+	var cpm := UIKit.margins(20, 20, 14, 12)
+	cp.add_child(cpm)
+	var cv2 := VBoxContainer.new()
+	cv2.add_theme_constant_override("separation", 8)
+	cpm.add_child(cv2)
+	cv2.add_child(UIKit.label("选定下一次转盘点数（0~12）", 14, UIKit.ACCENT))
+	var grid := GridContainer.new()
+	grid.columns = 7
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	cv2.add_child(grid)
+	for v in 13:
+		var vb := UIKit.button(str(v), 14)
+		var vv := v
+		vb.pressed.connect(func() -> void:
+			_send_use_item(cheat_slot, vv)
+		)
+		grid.add_child(vb)
+	var cv_cancel := UIKit.button("取消", 13)
+	cv_cancel.pressed.connect(_close_cheat_picker)
+	cv2.add_child(cv_cancel)
+
 func _open_menu() -> void:
 	if multiplayer.is_server():
 		s_pause.rpc(true)  # 房主打开菜单 = 全场暂停
@@ -1426,8 +1889,14 @@ func _process(_delta: float) -> void:
 		return
 	var show := board.seat_count() > 0 and board.at_home_view() \
 		and String(st.get("phase", "")) == "playing"
-	mat_bar.visible = show
-	if show:
+	var shop_mine: bool = show and int(st.get("shop_peer", 0)) == my_peer \
+		and int(st.get("shop_open", -1)) >= 0
+	shop_bar.visible = shop_mine
+	if shop_mine:
+		var r2 := board.home_card_screen_rect()
+		shop_bar.position = Vector2(r2.get_center().x - shop_bar.size.x * 0.5, r2.end.y + 10.0)
+	mat_bar.visible = show and not shop_mine
+	if show and not shop_mine:
 		var r := board.home_card_screen_rect()
 		mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
 

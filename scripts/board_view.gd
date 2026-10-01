@@ -192,7 +192,7 @@ const TILE_ICONS := {
 		"sport": "sport", "teach": "teach", "dorm": "dorm", "fun": "fun",
 		"night": "night", "health": "health"},
 	"event": {"机会": "luck", "命运": "fate"},
-	"fine": "fine", "bonus": "bonus", "rest": "rest", "casino": "casino",
+	"fine": "fine", "bonus": "bonus", "rest": "rest", "casino": "casino", "shop": "daily",
 	"start": "start", "jail": "jail", "go_jail": "gojail",
 }
 
@@ -220,7 +220,7 @@ func _build_tiles() -> void:
 		var strip := Panel.new()
 		strip.position = Vector2(3, 3)
 		strip.size = Vector2(TILE - GAP * 2.0 - 6, 9)
-		var strip_c: Color = UIKit.ACCENT if corner else (Color(0.93, 0.30, 0.55) if d.type == "casino" else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566")))
+		var strip_c: Color = UIKit.ACCENT if corner else (Color(0.93, 0.30, 0.55) if d.type == "casino" 			else (SHOP_ACCENT if d.type == "shop" else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566"))))
 		strip.add_theme_stylebox_override("panel", UIKit.stylebox(strip_c.lightened(0.06), 2))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
@@ -241,7 +241,8 @@ func _build_tiles() -> void:
 				ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				p.add_child(ic)
 
-		var name_l := UIKit.label(d.name, 18, UIKit.ACCENT if corner else (Color(0.98, 0.58, 0.78) if casino else UIKit.TEXT))
+		var name_c: Color = Color(0.98, 0.58, 0.78) if casino else (SHOP_ACCENT if d.type == "shop" else UIKit.TEXT)
+		var name_l := UIKit.label(d.name, 18, UIKit.ACCENT if corner else name_c)
 		name_l.position = Vector2(5, 18)
 		name_l.size = Vector2(TILE - GAP * 2.0 - 10, 44)
 		name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1016,12 +1017,13 @@ func _make_shop(rect: Rect2) -> void:
 		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(cc)
-		cc.add_child(UIKit.label("＋", 36, Color(0.93, 0.88, 0.75, 0.16)))
+		var plus_l := UIKit.label("＋", 36, Color(0.93, 0.88, 0.75, 0.16))
+		cc.add_child(plus_l)
 		var price_l := UIKit.label("待上架", 13, SHOP_WOOD_TEXT)
 		price_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		price_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot.add_child(price_l)
-		_shop_slots.append({"card": card, "price_l": price_l})
+		_shop_slots.append({"card": card, "price_l": price_l, "plus_l": plus_l})
 	var foot := HBoxContainer.new()
 	foot.add_theme_constant_override("separation", 10)
 	foot.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1146,6 +1148,67 @@ func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
 			c.queue_free()
 		if rank > 0:
 			slot.add_child(UIKit.rank_badge(rank, 28))
+
+## 道具牌位：公开背包（品质描边 + 名称 + 冷却标记）
+func set_seat_slot(peer: int, idx: int, item) -> void:
+	var e := int(_seat_of_peer.get(peer, -1))
+	if e == -1 or not _seats.has(e):
+		return
+	var slots: Array = _seats[e].slots
+	if idx < 0 or idx >= slots.size():
+		return
+	var sp: Panel = slots[idx]
+	var lab: Label = sp.get_child(0) if sp.get_child_count() > 0 else null
+	var q := "白"
+	var cd := 0
+	if item != null:
+		var d := ItemData.def(String(item.id))
+		q = String(d.get("quality", "白"))
+		cd = int(item.get("cd", 0))
+	if lab != null and is_instance_valid(lab):
+		if item == null:
+			lab.text = "+"
+			lab.add_theme_font_size_override("font_size", 34)
+			lab.add_theme_color_override("font_color", Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
+		else:
+			lab.text = String(item.id) + (("·冷%d" % cd) if cd > 0 else "")
+			lab.add_theme_font_size_override("font_size", 15)
+			lab.add_theme_color_override("font_color", ItemData.QUALITY_COLORS.get(q, UIKit.TEXT))
+			lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var border := Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
+	if item != null:
+		var qc: Color = ItemData.QUALITY_COLORS.get(q, UIKit.TEXT)
+		border = Color(qc.r, qc.g, qc.b, 0.7)
+	sp.add_theme_stylebox_override("panel", UIKit.stylebox(
+		Color(0.10, 0.11, 0.16, 0.7) if item != null else Color(1, 1, 1, 0.035), 10, border, 1))
+
+## 小卖部货架公开显示（桌面设施即商店）：active = 正在营业的格（-1 = 歇业）
+func set_shop_display(shops: Dictionary, refresh_price: int, active: int) -> void:
+	if _shop_refresh != null and is_instance_valid(_shop_refresh):
+		_shop_refresh.text = "刷新货架 · ¥%d" % refresh_price
+	var entries: Array = shops.get(active, {}).get("slots", [])
+	for i in _shop_slots.size():
+		var e: Dictionary = _shop_slots[i]
+		var card: Panel = e.card
+		var lab: Label = e.plus_l
+		var price_l: Label = e.price_l
+		var id := String(entries[i]) if active >= 0 and i < entries.size() else ""
+		if id == "":
+			lab.text = "＋"
+			lab.add_theme_font_size_override("font_size", 36)
+			lab.add_theme_color_override("font_color", Color(1, 1, 1, 0.13))
+			card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.05, 0.055, 0.08, 0.9), 10,
+				Color(SHOP_ACCENT.r, SHOP_ACCENT.g, SHOP_ACCENT.b, 0.26), 1))
+			price_l.text = "待上架"
+		else:
+			var d := ItemData.def(id)
+			var qc: Color = ItemData.QUALITY_COLORS.get(String(d.get("quality", "白")), UIKit.TEXT)
+			lab.text = id
+			lab.add_theme_font_size_override("font_size", 16)
+			lab.add_theme_color_override("font_color", qc)
+			card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.05, 0.055, 0.08, 0.9), 10,
+				Color(qc.r, qc.g, qc.b, 0.6), 1))
+			price_l.text = "¥%d" % ItemData.price(String(d.get("quality", "白")))
 
 ## 自己座位卡（边 0）的屏幕矩形（自己视角下无旋转，用于锚定屏幕层牌垫条）
 func home_card_screen_rect() -> Rect2:

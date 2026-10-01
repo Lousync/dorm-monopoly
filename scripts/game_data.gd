@@ -97,6 +97,7 @@ const TILE_DESC := {
 	"bonus": "天降横财，直接入账",
 	"casino": "全员下注玩小游戏，赢家通吃",
 	"property": "可购买 / 升级 / 收租金",
+	"shop": "三栏货架 · 每家独立补货 · 落地即可逛",
 }
 
 ## 事件卡：t=文本；money=收支；from_each=每位其他室友给你；to_each=你给每位室友；
@@ -218,6 +219,8 @@ static func _build_tiles() -> Array:
 			"E":
 				t[i] = {"type": "event", "name": "命运" if ei % 2 == 1 else "机会"}
 				ei += 1
+			"S":
+				t[i] = {"type": "shop", "name": "小卖部"}
 			"F":
 				var f: Array = FINES[fi % FINES.size()]
 				t[i] = {"type": "fine", "name": f[0], "amount": f[1]}
@@ -236,10 +239,10 @@ static func _build_tiles() -> Array:
 	return t
 
 static func _x_sequence() -> Array:
-	var a := ["E", "B", "F", "C", "R", "B"]
-	var b := ["E", "B", "F", "E", "R", "B"]
-	var c := ["E", "B", "R", "C", "F", "B", "E", "R", "F", "E"]
-	return a + b + c  # E6 / B6 / F4 / R4 / C2（赌场格），共 22
+	var a := ["S", "B", "F", "C", "R", "B"]
+	var b := ["E", "B", "F", "S", "R", "B"]
+	var c := ["S", "B", "R", "C", "F", "B", "E", "R", "F", "S"]
+	return a + b + c  # E2 / S4（小卖部）/ B6 / F4 / R4 / C2（赌场格），共 22
 
 ## 装修升级费用（每级）
 static func upgrade_cost(idx: int) -> int:
