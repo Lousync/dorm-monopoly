@@ -2397,8 +2397,8 @@ func c_shop_leave() -> void:
 		return
 	_shop_leave(multiplayer.get_remote_sender_id())
 
-## 蛋蛋节：全员送礼（规则 §4：他人白/绿/蓝三档均分，使用者紫 70%/橙 30%，
-## 礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
+## 蛋蛋节：全员送礼（规则见 docs/gameplay/道具图鉴.md：他人白/绿/蓝三档均分，
+## 使用者紫 70%/橙 30%；礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
 func _apply_egg_festival(p: Dictionary) -> void:
 	_log("%s 点燃了【蛋蛋节】，礼物撒满全场！" % p.name, "#f0a0c0")
 	for o in hp:
