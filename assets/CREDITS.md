@@ -12,7 +12,10 @@
 - 路径：`assets/icons/`
 - 授权：**CC-BY 4.0**。版权所有 Twitter, Inc 及贡献者。仅需保留本署名说明即可商用
 - 来源：https://github.com/twitter/twemoji（经由 cdnjs 分发的 14.0.2 版 PNG）
-- 用途：棋盘格子的主题图标（餐饮🍜、学习📚、医院🏥、查寝👮 等 18 个）
+- 用途：棋盘格子的主题图标（餐饮🍜、学习📚、医院🏥、查寝👮 等 18 个，
+  文件名即主题名：`canteen.png` / `study.png` …）
+- 用途：HUD 图标（`ui_*.png`：规则说明📖 / 战报📜 / 掷骰🎲 / 设置⚙ / 暂停⏸ /
+  金额💰 / 目标🎯），取自同一次 cdnjs 14.0.2 分发
 
 ## ambientCG — WoodFloor064
 - 路径：`assets/textures/wood_floor.jpg`

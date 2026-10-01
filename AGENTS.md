@@ -29,6 +29,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/shop_test.gd      # 小卖部单测
 & $G --headless --path . --script tests/casino_test.gd    # 赌场单测
 & $G --headless --path . --script tests/regression_test.gd # 回归单测（审查发现的问题逐条钉住）
+& $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
+& $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
 

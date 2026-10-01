@@ -487,11 +487,18 @@ func _test_roll_button_off_home_view(g) -> void:
 	g._process(0.0)
 	_check(g.roll_btn.is_visible_in_tree(), "转离视角后「转动转盘」仍在屏幕上可见")
 	_check(not g.roll_btn.disabled, "转离视角后「转动转盘」仍可点")
-	_check(not g.mat_bar.is_visible_in_tree(), "转离视角后阶段条隐藏（牌垫仍贴自家座位卡）")
+	# fix/v0.1.0 起底栏改成「屏幕底部一条固定操作坞」，不再贴自家座位卡，
+	# 所以转离视角后阶段条仍然在（比旧行为更强：阶段与状态任何时候都看得见）
+	_check(g.mat_bar.is_visible_in_tree(), "转离视角后阶段条仍显示（底栏已固定贴底）")
 	var vp: Vector2 = g.get_viewport_rect().size
 	var ab: Control = g.action_bar
+	var mb2: Control = g.mat_bar
 	_check(ab.size.y > 1.0, "操作条已算出真实尺寸（h=%.0f）" % ab.size.y)
 	_check(ab.position.y >= 0.0 and ab.position.y + ab.size.y <= vp.y + 1.0,
 		"转离视角后操作条竖直在屏幕内（y=%.0f h=%.0f vp=%.0f）" % [ab.position.y, ab.size.y, vp.y])
 	_check(ab.position.x >= 0.0 and ab.position.x + ab.size.x <= vp.x + 1.0,
 		"转离视角后操作条水平在屏幕内（x=%.0f w=%.0f vp=%.0f）" % [ab.position.x, ab.size.x, vp.x])
+	_check(mb2.position.x >= 0.0 and mb2.position.x + mb2.size.x <= vp.x + 1.0,
+		"转离视角后阶段条水平在屏幕内（x=%.0f w=%.0f vp=%.0f）" % [mb2.position.x, mb2.size.x, vp.x])
+	_check(absf(ab.position.y - mb2.position.y) < 1.0,
+		"转离视角后两条仍在同一行（mat_bar y %.0f / action_bar y %.0f）" % [mb2.position.y, ab.position.y])

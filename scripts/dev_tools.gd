@@ -373,10 +373,12 @@ func take_shot(path: String) -> void:
 		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
 	if path.contains("pause"):
 		g._open_menu()           # 摆拍：打开暂停菜单
-	if not path.contains("plain"):
+	if not path.contains("plain") or path.contains("card"):
 		g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 		g.board.spin_wheel(12)
-		# 赌局界面预览（单行假数据，验证布局用）
+	if not path.contains("plain") and not path.contains("card"):
+		# 赌局界面预览（单行假数据，验证布局用）。路径带 card 时跳过赌局，
+		# 否则弹层会盖住正在翻的抽卡
 		g.casino.s_casino_start.rpc("炸弹猫", 800, 3200, [g.my_peer])
 		g.casino.s_casino_turn.rpc(g.my_peer, 1, {g.my_peer: 1}, {g.my_peer: 2}, 9, true)
 		g.casino.s_casino_event.rpc("你 摸到一张【拆除】揣进兜里", "move")

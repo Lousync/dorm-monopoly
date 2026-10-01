@@ -96,7 +96,7 @@ static func build_play_ui(g: Node) -> void:
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 8)
 	abm.add_child(arow)
-	g.roll_btn = UIKit.button("转动转盘", 15, "normal")
+	g.roll_btn = UIKit.with_icon(UIKit.button("转动转盘", 15, "primary"), "dice", 20)
 	g.roll_btn.disabled = true
 	arow.add_child(g.roll_btn)
 	g.item_btn_box = HBoxContainer.new()
@@ -194,7 +194,7 @@ static func build_play_ui(g: Node) -> void:
 	bbv.add_child(g.black_hint)
 
 	# 左上角：暂停按钮（打开暂停菜单族，见 g._build_menu_ui）
-	g.opt_btn = UIKit.button("⏸ 暂停", 13)
+	g.opt_btn = UIKit.with_icon(UIKit.button("暂停", 13), "pause", 15)
 	g.opt_btn.tooltip_text = "暂停对局（房主暂停全场）"
 	g.opt_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	g.opt_btn.offset_left = 12
@@ -232,7 +232,7 @@ static func build_play_ui(g: Node) -> void:
 	iv.add_child(g.info_body)
 
 	# 右上：战报 / 聊天（可折叠，保持桌面干净）
-	g.log_toggle = UIKit.button("战报 ▴", 13)
+	g.log_toggle = UIKit.with_icon(UIKit.button("战报 ▴", 13), "report", 17)
 	g.log_toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	g.log_toggle.offset_left = -106
 	g.log_toggle.offset_right = -12
@@ -339,7 +339,7 @@ static func build_menu_ui(g: Node) -> void:
 	var cont_btn := UIKit.button("▶ 继续游戏", 15)
 	cont_btn.pressed.connect(g._menu_resume)
 	mv.add_child(cont_btn)
-	var set_btn := UIKit.button("⚙ 设置", 15)
+	var set_btn := UIKit.with_icon(UIKit.button("设置", 15), "gear", 18)
 	set_btn.pressed.connect(func() -> void:
 		g.vol_slider.value = g.audio_volume * 100.0
 		g.mute_check.button_pressed = g.audio_mute

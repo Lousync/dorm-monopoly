@@ -17,7 +17,7 @@ static func build(g: Node) -> void:
 
 ## 收起态：左下角一个按钮（占据原「操作提示」的位置）
 static func _build_button(g: Node) -> void:
-	g.rules_btn = UIKit.button("📖 规则说明", 13)
+	g.rules_btn = UIKit.with_icon(UIKit.button("规则说明", 13), "rules", 17)
 	g.rules_btn.tooltip_text = "查看操作提示与完整游戏规则"
 	g.rules_btn.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	g.rules_btn.offset_left = 14
@@ -51,7 +51,7 @@ static func _build_panel(g: Node) -> void:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
 	v.add_child(head)
-	head.add_child(UIKit.label("📖 规则说明", 16, UIKit.ACCENT))
+	head.add_child(UIKit.icon_title("rules", "规则说明", 16, UIKit.ACCENT))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE

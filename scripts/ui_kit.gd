@@ -47,6 +47,38 @@ static func icon(name: String) -> Texture2D:
 static func piece_tex(color_idx: int) -> Texture2D:
 	return tex("res://assets/pieces/piece%s_05.png" % PIECE_COLORS[clampi(color_idx, 0, 3)])
 
+## HUD 图标（assets/icons/ui_*.png，Twemoji CC-BY 4.0）：规则/战报/骰子/设置…
+static func ui_icon(name: String) -> Texture2D:
+	return tex("res://assets/icons/ui_%s.png" % name)
+
+## 给按钮挂 HUD 图标。图标缺货时静默跳过——按钮本身照常可用，
+## 不会因为少一张 png 就少一个按钮（素材未导入时 UIKit.tex 会直接读文件兜底）。
+static func with_icon(b: Button, icon_name: String, side := 18) -> Button:
+	var t := ui_icon(icon_name)
+	if t != null:
+		b.icon = t
+		b.expand_icon = false
+		b.add_theme_constant_override("icon_max_width", side)
+		b.add_theme_constant_override("h_separation", 6)
+	return b
+
+## 图标 + 标题（面板小标题用）；图标缺货时只剩文字，不会报错
+static func icon_title(icon_name: String, text: String, size := 16, color: Color = ACCENT) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 7)
+	var t := ui_icon(icon_name)
+	if t != null:
+		var tr := TextureRect.new()
+		tr.texture = t
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.custom_minimum_size = Vector2(size + 4, size + 4)
+		tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(tr)
+	row.add_child(label(text, size, color))
+	return row
+
 # ---------------- 基础控件 ----------------
 
 static func label(text: String, size: int = 15, color: Color = TEXT) -> Label:

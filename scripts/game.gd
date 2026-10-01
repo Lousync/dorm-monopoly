@@ -185,6 +185,7 @@ func _ready() -> void:
 	if at_mode != "" and not dev_flag:
 		dev.enabled = false
 	_apply_audio()
+	_hud_intro()
 	dev.apply_mode()
 	for a2 in OS.get_cmdline_user_args():
 		if a2 == "--menu-probe":
@@ -2277,6 +2278,17 @@ func s_pause(on: bool) -> void:
 	get_tree().paused = on
 	pause_mask.visible = on and not multiplayer.is_server()
 
+# ================= HUD 入场 =================
+
+## 入场：棋盘与两侧栏错落淡入，别让 HUD 在一帧之间「啪」地全糊上来。
+## 底栏不参与——它要等开局（phase=playing）才出现，淡入会跟它的显隐打架。
+func _hud_intro() -> void:
+	for it in [[board, 0.0], [opt_btn, 0.04], [log_toggle, 0.08], [log_panel, 0.12],
+			[rules_btn, 0.18]]:
+		var c: Control = it[0]
+		if c != null and is_instance_valid(c):
+			Fx.animate_in(c, float(it[1]))
+
 # ================= 规则说明面板（左下角） =================
 
 ## 展开/收起规则说明。展开时它占据左下角，格子详情卡让位（隐藏）——
@@ -2334,11 +2346,13 @@ func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 
 
 func _process(_delta: float) -> void:
-	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
+	# 底栏（牌垫阶段条 + 操作条）统一成屏幕底部一条固定操作坞，不再锚在自己座位卡下沿：
+	# 原来「自己视角贴座位卡、转开视角改贴屏幕底」，按钮会跟着镜头满屏跳，转视角时
+	# 阶段条还会整条消失（fix/v0.0.2 打的补丁）。固定之后位置恒定、阶段永远可见。
 	if mat_bar == null:
 		return
 	var phase := String(st.get("phase", ""))
-	var show := board.seat_count() > 0 and board.at_home_view() and phase == "playing"
+	var show := board.seat_count() > 0 and phase == "playing"
 	# 交易面板独立于视角：底栏居中，保证行动者一定能操作（相机可能停在棋子上而非自家座位）
 	var shop_mine: bool = phase == "playing" and int(st.get("shop_peer", 0)) == my_peer \
 		and int(st.get("shop_open", -1)) >= 0
@@ -2355,27 +2369,34 @@ func _process(_delta: float) -> void:
 		black_picker.visible = false
 		_black_sig = ""
 	mat_bar.visible = show and not shop_mine and not black_mine
-	# 操作条与视角无关：自己视角时与阶段条拼成原来那一行；转离自己视角时
-	# 牌垫跑到屏幕外，就改贴屏幕底部，保证任何时候都能掷骰 / 用道具。
 	var want_actions: bool = phase == "playing" and (roll_btn.visible or item_btn_box.visible)
 	action_bar.visible = want_actions and not shop_mine and not black_mine
-	if show and not shop_mine and not black_mine:
-		# 自己座位卡下沿只有一行的空间，两条必须并排而不是上下叠放，
-		# 否则操作条会被挤出屏幕底部（见 fix/v0.0.2）。
-		var r := board.home_card_screen_rect()
-		var band := _dock_band()
-		if action_bar.visible:
-			var gap := 8.0
-			var total: float = mat_bar.size.x + gap + action_bar.size.x
-			var left: float = _clamp_dock_x(r.get_center().x - total * 0.5, total, band)
-			mat_bar.position = Vector2(left, r.end.y + 10.0)
-			action_bar.position = Vector2(left + mat_bar.size.x + gap, r.end.y + 10.0)
-		else:
-			mat_bar.position = Vector2(
-				_clamp_dock_x(r.get_center().x - mat_bar.size.x * 0.5, mat_bar.size.x, band),
-				r.end.y + 10.0)
-	elif action_bar.visible:
-		_place_overlay_bar(action_bar)
+	if not shop_mine and not black_mine:
+		_place_dock()
+	if dev.enabled:
+		dev.refresh_panel()
+
+## 底栏统一贴底居中：可见的两条并排成一条操作坞，横向夹进可用带；
+## 顶边对齐（两条容器高度差一两像素，对齐顶边看起来才是一条）。
+func _place_dock() -> void:
+	var parts: Array = []
+	for c in [mat_bar, action_bar]:
+		if c != null and c.visible:
+			parts.append(c)
+	if parts.is_empty():
+		return
+	var gap := 8.0
+	var total := 0.0
+	var tallest := 0.0
+	for c in parts:
+		total += c.size.x
+		tallest = maxf(tallest, c.size.y)
+	total += gap * float(parts.size() - 1)
+	var left := _clamp_dock_x(size.x * 0.5 - total * 0.5, total, _dock_band())
+	var top := size.y - 16.0 - tallest
+	for c in parts:
+		c.position = Vector2(left, top)
+		left += c.size.x + gap
 
 ## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
 ## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。
@@ -2394,8 +2415,6 @@ func _dock_band() -> Vector2:
 ## 把底栏左边缘夹进可用带内（带太窄时以左边缘为准，宁可溢出也不推到屏幕外）
 func _clamp_dock_x(want: float, width: float, band: Vector2) -> float:
 	return clampf(want, band.x, maxf(band.x, band.y - width))
-	if dev.enabled:
-		dev.refresh_panel()
 
 ## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内；
 ## 横向同样夹进可用带，免得展开规则说明后被压住
