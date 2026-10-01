@@ -133,7 +133,19 @@ const EVENTS := [
 	{"t": "被拉去当运动会裁判，补贴 +380", "money": 380},
 	{"t": "游戏皮肤大促，没忍住 -500", "money": -500},
 	{"t": "帮室友带饭一周，饭钱赚回来了 +700", "money": 700},
+	# ---- 机会卡专属事件（only 标记：只在「机会」格出现；命运格不发） ----
+	{"t": "路过小卖部，被老板拉进店里逛逛", "enter_shop": true, "only": "机会"},
+	{"t": "在公告栏后面捡到一张道具券", "gain_item_quality": "蓝", "only": "机会"},
+	{"t": "收到一条神秘短信：后门等你——黑市开张", "enter_blackshop": true, "only": "机会"},
 ]
+
+## 按格子类型取事件卡池：无 only 的通用卡 + only 命中当前格类型的专属卡（§8）
+static func events_for(kind: String) -> Array:
+	var out := []
+	for e in EVENTS:
+		if not e.has("only") or String(e.only) == kind:
+			out.append(e)
+	return out
 
 ## 四角格位置：0 起点(右下) / 34 宿委会(左下) / 56 卧谈会(左上) / 90 查寝(右上)
 static func corner_indices() -> Array:

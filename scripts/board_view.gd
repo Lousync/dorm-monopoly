@@ -65,6 +65,7 @@ var _sub_labels: Array = []
 var _star_labels: Array = []
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
 var _levels: Array = []        # 上一次渲染的等级（用于星级弹跳）
+var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
 var _tile_tw := {}             # 每格进行中的补间
 var _tokens := {}              # peer -> 棋子 Panel
 var _animating := {}           # peer -> bool
@@ -275,6 +276,7 @@ func _build_tiles() -> void:
 
 		_owners.append(-2)
 		_levels.append(-1)
+		_soils.append(false)
 
 func _world_descend(l: Label) -> void:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1254,11 +1256,14 @@ func render(state: Dictionary) -> void:
 	for i in _tile_sb.size():
 		var owner_id := GameData.NO_OWNER
 		var level := 0
+		var soil := false
 		if i < tiles.size():
 			owner_id = int(tiles[i].get("owner", GameData.NO_OWNER))
 			level = int(tiles[i].get("level", 0))
-		if owner_id != _owners[i]:
+			soil = bool(tiles[i].get("soil", false))
+		if owner_id != _owners[i] or soil != _soils[i]:
 			_owners[i] = owner_id
+			_soils[i] = soil
 			_animate_tile(i, _hover == i)
 		if level != _levels[i]:
 			_levels[i] = level
@@ -1285,6 +1290,12 @@ func render(state: Dictionary) -> void:
 				sub.text = "?"
 			"casino":
 				sub.text = "全员豪赌"
+
+	for i2 in mini(tiles.size(), _tile_sb.size()):
+		if bool(tiles[i2].get("soil", false)):
+			var prog: int = int(tiles[i2].get("soil_prog", 0))
+			var target: int = int(GameData.TILES[i2].price)
+			_sub_labels[i2].text = "焦土 %d/%d" % [prog, target]
 
 	var phase := String(state.get("phase", "playing"))
 	if phase == "ended":
@@ -1334,12 +1345,17 @@ func _animate_tile(i: int, hovered: bool) -> void:
 	var base := Color("#38301c") if corner else Color("#242a39")
 	var border := Color("#3c4254")
 	var border_w := 1
-	var owner_id := int(_owners[i])
-	if owner_id >= 0 and _owner_color_map.has(owner_id):
-		var oc: Color = _owner_color_map[owner_id]
-		base = base.lerp(oc, 0.20)
-		border = oc
-		border_w = 3
+	if i < _soils.size() and bool(_soils[i]):
+		base = Color(0.13, 0.11, 0.09)
+		border = Color(0.5, 0.34, 0.18)
+		border_w = 2
+	else:
+		var owner_id := int(_owners[i])
+		if owner_id >= 0 and _owner_color_map.has(owner_id):
+			var oc: Color = _owner_color_map[owner_id]
+			base = base.lerp(oc, 0.20)
+			border = oc
+			border_w = 3
 	if hovered:
 		base = base.lerp(Color(1, 1, 1), 0.12)
 	var sb: StyleBoxFlat = _tile_sb[i]

@@ -157,6 +157,10 @@ Godot_console.exe --headless --path . --export-release "Windows Desktop"
 Godot_console.exe --headless --path . --script tests/rules_test.gd
 # 脚本静态加载检查
 Godot_console.exe --headless --path . --script tests/load_all.gd
+# 道具单测（蛋蛋节礼物分发/焚毁、亡牌飞行员coco 焦土状态机）
+Godot_console.exe --headless --path . --script tests/item_test.gd
+# 黑市单测（地皮计价/逐块交地/挨打小黑屋/bot/机会卡过滤）
+Godot_console.exe --headless --path . --script tests/blackshop_test.gd
 # 双实例联机回归（房主+客户端自动打 3 轮，含机器人、购买决策、断线接管）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 &
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3

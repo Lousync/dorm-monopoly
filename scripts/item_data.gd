@@ -14,7 +14,15 @@ const QUALITY_PRICES := {"白": 600, "绿": 1000, "蓝": 1800, "紫": 3000, "橙
 const REFRESH_BASE := 500   # 小卖部刷新价起点：全局递增、整局不重置（待数值专场）
 const REFRESH_STEP := 300
 const SHOP_TIMEOUT := 20.0  # 逛店发呆兜底
+const SOIL_DONATE := 400    # 落地焦土自动捐款（待数值专场）；恢复目标 = 地价 × 1.0
 const ITEM_TIMEOUT := 12.0  # 道具阶段发呆兜底
+
+# ---------------- 黑市（§8：仅由机会卡进入，一切消费用地产） ----------------
+const BLACK_WEIGHTS := {"紫": 70, "橙": 30}   # 货架品质权重（紫/橙起步）
+const BLACK_COST := {"紫": 1, "橙": 2}        # 每件货的地皮价
+const BLACK_REFRESH_COST := 1                  # 刷新固定 1 块地皮（不涨价）
+const BLACK_EXIT_COST := 1                     # 出口费 1 块地皮
+const BLACK_TIMEOUT := 20.0                    # 逛黑市发呆兜底
 
 const ITEMS := {
 	"平均主义": {"quality": "紫", "cost": 5, "type": "active", "unique": false, "cooldown": 5,
@@ -32,9 +40,9 @@ const ITEMS := {
 	"空想者的香皂": {"quality": "橙", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "免疫所有负面效果。10 回合后融化。", "implemented": true},
 	"蛋蛋节": {"quality": "橙", "cost": 1, "type": "consumable", "unique": true, "cooldown": 1,
-		"desc": "每位玩家都会获得一份礼物，每局游戏仅限一次。", "implemented": false},
+		"desc": "每位玩家都会获得一份礼物，每局游戏仅限一次。", "implemented": true},
 	"亡牌飞行员coco": {"quality": "橙", "cost": 3, "type": "consumable", "unique": true, "cooldown": 3,
-		"desc": "每位玩家都有一块随机地皮被摧毁，每局游戏仅限一次。", "implemented": false},
+		"desc": "每位玩家都有一块随机地皮被摧毁，每局游戏仅限一次。", "implemented": true},
 	"园中叶": {"quality": "橙", "cost": 0, "type": "active", "unique": true, "cooldown": 0,
 		"desc": "？？？", "implemented": false},
 }

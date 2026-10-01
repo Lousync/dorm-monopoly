@@ -34,6 +34,7 @@ var audio_mute := false
 
 # ---------------- 道具系统（host 状态，详见 docs/道具系统设计.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
+var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
 var _shop_peer := 0        # 正在逛小卖部的玩家（0 = 无）
 var _shop_tile := -1
@@ -54,6 +55,22 @@ var shop_btns: Array = []
 var shop_refresh_btn: Button
 var card_gallery: Control
 var card_gallery_flag := false
+
+# ---------------- 黑市（host 状态，§8；仅由机会卡进入，地皮计价） ----------------
+var blackshop_enabled := true   # 开局设置开关（面板后续批次接；关闭后机会卡池过滤该事件）
+var _black_peer := 0            # 正在逛黑市的玩家（0 = 无）
+var _black_epoch := 0
+var _black_slots: Array = ["", "", ""]   # 3 栏货架（紫/橙）
+var _black_pay_mode := ""       # "" / "buy" / "refresh" / "exit"：正在选地皮支付
+var _black_pay_slot := -1
+var _black_pay_need := 0        # 需交地皮数
+var _black_pay_got := 0         # 已交地皮数
+var black_bar: PanelContainer
+var black_btns: Array = []
+var black_hint: Label
+var black_picker: Control
+var black_picker_box: VBoxContainer
+var _black_sig := ""
 
 # ---------------- 开发者模式 ----------------
 var dev_enabled := false
@@ -307,6 +324,54 @@ func _build_ui() -> void:
 	)
 	srow.add_child(leave_btn)
 
+	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
+	black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,
+		Color(0.96, 0.55, 0.3, 0.6), 1, 8)
+	black_bar.custom_minimum_size = Vector2(360, 0)
+	black_bar.visible = false
+	add_child(black_bar)
+	var bbm := UIKit.margins(12, 10, 10, 10)
+	black_bar.add_child(bbm)
+	var bbv := VBoxContainer.new()
+	bbv.add_theme_constant_override("separation", 6)
+	bbm.add_child(bbv)
+	bbv.add_child(UIKit.label("黑市 · 只收地皮（紫1 / 橙2 / 刷新1 / 出口1）", 12, Color(0.98, 0.7, 0.4)))
+	black_btns = []
+	for i in 3:
+		var bb := UIKit.button("买", 12)
+		var bi := i
+		bb.pressed.connect(func() -> void:
+			if multiplayer.is_server():
+				_black_buy(my_peer, bi)
+			else:
+				c_black_buy.rpc(bi)
+		)
+		bbv.add_child(bb)
+		black_btns.append(bb)
+	var brow := HBoxContainer.new()
+	brow.add_theme_constant_override("separation", 6)
+	bbv.add_child(brow)
+	var bref := UIKit.button("刷新（1地）", 12)
+	bref.pressed.connect(func() -> void:
+		if multiplayer.is_server():
+			_black_refresh(my_peer)
+		else:
+			c_black_refresh.rpc()
+	)
+	brow.add_child(bref)
+	var bleave := UIKit.button("出口（1地）", 12)
+	bleave.pressed.connect(func() -> void:
+		if multiplayer.is_server():
+			_black_leave(my_peer)
+		else:
+			c_black_leave.rpc()
+	)
+	brow.add_child(bleave)
+	black_hint = UIKit.label("", 11, Color(0.95, 0.5, 0.45))
+	black_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	black_hint.custom_minimum_size = Vector2(336, 0)
+	bbv.add_child(black_hint)
+
 	# 左上角：选项按钮（打开暂停菜单族，见 _build_menu_ui）
 	opt_btn = UIKit.button("☰ 选项", 13)
 	opt_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
@@ -515,7 +580,7 @@ func _host_setup() -> void:
 		hp.append({
 			"peer": int(p.peer), "name": String(p.name), "color": int(p.color),
 			"bot": bool(p.bot), "money": GameData.START_MONEY,
-			"pos": 0, "alive": true, "skip": 0,
+			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
 			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
 		})
 	htiles = []
@@ -583,7 +648,10 @@ func _advance_turn() -> void:
 func _play_turn(p: Dictionary) -> void:
 	if at_mode != "":
 		print("AT turn start: r%d %s" % [round_no, p.name])
-	_item_turn_start(p)
+	var sleeping := _is_sleeping(p)
+	if sleeping:
+		_log("%s 在小黑屋反省，本回合强制保守托管" % p.name, "#c9a6ff")
+	_item_turn_start(p)  # 休眠=保守托管：被动与自动结算照常（§1）
 	_broadcast_state()
 	var chain := 0
 	while running:
@@ -591,7 +659,7 @@ func _play_turn(p: Dictionary) -> void:
 		_roll_epoch += 1
 		var epoch := _roll_epoch
 		_broadcast_state()
-		if bool(p.bot):
+		if bool(p.bot) or sleeping:
 			_bot_roll_later()
 		else:
 			_arm_roll_timeout(epoch, int(p.peer))
@@ -649,6 +717,10 @@ func _play_turn(p: Dictionary) -> void:
 		break
 	if not running:
 		return
+	if sleeping:
+		p.sleep = maxi(0, int(p.get("sleep", 0)) - 1)  # 休眠一回合到期
+		_broadcast_state()
+		return
 	await _item_phase(p)
 
 ## 真人玩家发呆太久由系统代掷，避免整局卡死
@@ -672,14 +744,31 @@ func _resolve_tile(p: Dictionary) -> void:
 	match String(d.type):
 		"property":
 			var t: Dictionary = htiles[idx]
-			if int(t.owner) == GameData.NO_OWNER:
+			if bool(t.get("soil", false)):
+				if _immune_debuff(p):
+					_log("%s 的【空想者的香皂】挡下了焦土捐款，进度不涨" % p.name, "#8fb7f2")
+					await _wait(0.4)
+					return
+				var amt: int = mini(ItemData.SOIL_DONATE, int(p.money))
+				p.money = int(p.money) - amt
+				t.soil_prog = int(t.get("soil_prog", 0)) + amt
+				var target: int = int(GameData.TILES[idx].price)
+				_log("%s 往【%s】的焦土投了 %s 捐款（%d/%d）" % [p.name,
+					String(GameData.TILES[idx].name), GameData.fmt_money(amt), int(t.soil_prog), target], "#8a90a5")
+				if int(t.soil_prog) >= target:
+					t.soil = false
+					t.owner = GameData.NO_OWNER
+					t.level = 0  # 恢复为无主：等级清零，重新购买从 Lv0 起
+					t.soil_prog = 0
+					_log("【%s】的焦土修复完成，恢复为无主地产！" % String(GameData.TILES[idx].name), "#74d188")
+			elif int(t.owner) == GameData.NO_OWNER:
 				await _resolve_buy(p, idx)
 			elif int(t.owner) == int(p.peer):
 				await _resolve_upgrade(p, idx)
 			else:
 				await _resolve_rent(p, idx)
 		"event":
-			var card: Dictionary = GameData.EVENTS.pick_random()
+			var card: Dictionary = _draw_event(String(d.name))
 			# 仿桌游：机会/命运卡从棋盘中央对应牌堆抽出展示
 			s_card.rpc(String(card.t), _card_kind(card), String(d.name))
 			_log("%s 抽到事件：%s" % [p.name, card.t])
@@ -715,6 +804,15 @@ func _resolve_tile(p: Dictionary) -> void:
 	if not bool(p.alive):
 		_check_end()
 
+## 按格子类型（机会/命运）取卡池；黑市关闭时过滤进入黑市的卡（§8）
+func _draw_event(kind: String) -> Dictionary:
+	var pool := GameData.events_for(kind)
+	if not blackshop_enabled:
+		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_blackshop"))
+	if pool.is_empty():
+		pool = GameData.events_for(kind)
+	return pool.pick_random()
+
 func _card_kind(card: Dictionary) -> String:
 	if card.has("go_jail"):
 		return "jail"
@@ -722,9 +820,11 @@ func _card_kind(card: Dictionary) -> String:
 		return "move"
 	if card.has("money"):
 		return "good" if int(card.money) >= 0 else "bad"
-	if card.has("from_each"):
+	if card.has("from_each") or card.has("gain_item") or card.has("gain_item_quality"):
 		return "good"
 	if card.has("to_each"):
+		return "bad"
+	if card.has("enter_blackshop"):
 		return "bad"
 	return "info"
 
@@ -816,7 +916,37 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 			await _wait(0.25 + path.size() * 0.09)
 		# 移动后的落点照常结算
 		await _resolve_tile(p)
+	if card.has("gain_item"):
+		_grant_card_item(p, String(card.gain_item))
+	if card.has("gain_item_quality"):
+		_grant_card_quality(p, String(card.gain_item_quality))
+	if card.has("enter_shop"):
+		var shop_keys: Array = shops.keys()
+		if not shop_keys.is_empty():
+			await _run_shop(p, int(shop_keys.pick_random()))
+	if card.has("enter_blackshop"):
+		await _run_blackshop(p)
 	_check_end()
+
+## 机会卡发道具（指定 id / 指定品质）；背包满则作废提示，唯一池过滤照旧
+func _grant_card_item(p: Dictionary, id: String) -> void:
+	if p.items.size() >= 5:
+		_log("%s 背包已满，道具【%s】作废了" % [p.name, id], "#8a90a5")
+		return
+	if _grant_item(p, id):
+		_log("%s 从机会卡获得道具【%s】" % [p.name, id], "#74d188")
+
+func _grant_card_quality(p: Dictionary, q: String) -> void:
+	if p.items.size() >= 5:
+		_log("%s 背包已满，到手的道具作废了" % p.name, "#8a90a5")
+		return
+	var pool := _item_pool(q)
+	if pool.is_empty():
+		_log("%s 想领道具，可惜【%s】缺货" % [p.name, q], "#8a90a5")
+		return
+	var id: String = pool[randi_range(0, pool.size() - 1)]
+	_grant_item(p, id)
+	_log("%s 从机会卡获得道具【%s】" % [p.name, id], "#74d188")
 
 func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 	var paid: int = mini(amount, maxi(int(p.money), 0))
@@ -910,6 +1040,8 @@ func _bot_decide(kind: String, amount: int, money: int) -> bool:
 
 ## 向目标玩家询问（房主弹窗 / 客户端 RPC / 机器人自动决策），超时视为拒绝
 func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String, ok_text: String) -> bool:
+	if _is_sleeping(p):
+		return false  # 休眠=保守托管：买地/升级一律拒绝
 	if bool(p.bot):
 		return _bot_decide(kind, amount, int(p.money))
 	_pending_token += 1
@@ -986,6 +1118,7 @@ func _broadcast_state() -> void:
 		plist.append({
 			"peer": int(p.peer), "name": p.name, "color": int(p.color), "bot": bool(p.bot),
 			"money": int(p.money), "pos": int(p.pos), "alive": bool(p.alive), "skip": int(p.skip),
+			"sleep": int(p.get("sleep", 0)),
 			"stamina": int(p.get("stamina", 3)), "items": p.get("items", []),
 			"item_used": bool(p.get("item_used", false)),
 		})
@@ -1003,6 +1136,9 @@ func _broadcast_state() -> void:
 	elif _shop_peer != 0:
 		await_state = "shop"
 		await_peer = _shop_peer
+	elif _black_peer != 0:
+		await_state = "black"
+		await_peer = _black_peer
 	s_state.rpc({
 		"phase": "ended" if not running else "playing",
 		"round": round_no, "max_rounds": GameData.MAX_ROUNDS,
@@ -1011,6 +1147,10 @@ func _broadcast_state() -> void:
 		"players": plist, "tiles": htiles,
 		"shops": shops, "refresh_price": _refresh_price(),
 		"shop_open": (_shop_tile if _shop_peer != 0 else -1),
+		"shop_peer": _shop_peer,
+		"black_peer": _black_peer, "black_slots": _black_slots,
+		"black_pay_mode": _black_pay_mode, "black_pay_need": _black_pay_need,
+		"black_pay_got": _black_pay_got,
 		"winner": winner, "roll_epoch": _roll_epoch,
 	})
 
@@ -1158,6 +1298,8 @@ func _refresh_players() -> void:
 			tags += "（破产）"
 		elif int(p.skip) > 0:
 			tags += "（反省中）"
+		elif int(p.get("sleep", 0)) > 0:
+			tags += "（小黑屋）"
 		row.name_l.text = String(p.name) + tags
 
 		# 棋子（Kenney 小人 / 纯色圆片）：破产时整体置灰
@@ -1251,6 +1393,9 @@ func _refresh_actions() -> void:
 		"shop":
 			status_label.text = "慢慢逛，看好就买" if int(st.get("await_peer", -1)) == my_peer \
 				else "%s 在小卖部购物…" % turn_name
+		"black":
+			status_label.text = "黑市开张：用你的地皮结账！" if int(st.get("await_peer", -1)) == my_peer \
+				else "%s 在黑市交易…" % turn_name
 		"roll":
 			if is_my_roll:
 				status_label.text = "轮到你转盘了！"
@@ -1314,7 +1459,12 @@ func _on_tile_clicked(idx: int) -> void:
 	var body := String(GameData.TILE_DESC.get(t, "宿舍一角，岁月静好"))
 	match t:
 		"property":
-			accent = GameData.GROUP_COLORS.get(String(d.group), UIKit.ACCENT)
+			if idx < tiles.size() and bool(tiles[idx].get("soil", false)):
+				accent = Color(0.55, 0.35, 0.2)
+				body = "焦土恢复中……\n落地自动捐款 · 已筹 %s / %s\n修复完成后变为无主地产" % [
+					GameData.fmt_money(int(tiles[idx].get("soil_prog", 0))), GameData.fmt_money(int(d.price))]
+			else:
+				accent = GameData.GROUP_COLORS.get(String(d.group), UIKit.ACCENT)
 			var owner_name := "无主 · 踩到可购买"
 			if owner_id != GameData.NO_OWNER:
 				owner_name = _name_by_peer(owner_id)
@@ -1650,11 +1800,16 @@ func _item_pool(quality: String) -> Array:
 		for sid in shops[k].slots:
 			if String(sid) != "":
 				held[String(sid)] = true
+	for sid in _black_slots:  # 黑市在售的唯一道具同样占用唯一性
+		if String(sid) != "":
+			held[String(sid)] = true
 	var out := []
 	for id in ItemData.ITEMS:
 		var d: Dictionary = ItemData.ITEMS[id]
 		if not bool(d.implemented):
 			continue
+		if items_consumed.has(String(id)):
+			continue  # 焚毁的一次性道具永久离池
 		if quality != "" and String(d.quality) != quality:
 			continue
 		if bool(d.unique) and held.has(id):
@@ -1740,6 +1895,9 @@ func _item_phase(p: Dictionary) -> void:
 			if String(it.id) == "黑卡":
 				_use_item(int(p.peer), i, -1)
 				used = true
+			elif String(it.id) == "蛋蛋节" or String(it.id) == "亡牌飞行员coco":
+				_use_item(int(p.peer), i, -1)
+				used = true
 			elif String(it.id) == "交换生":
 				var targets: Array = _swap_targets(int(p.peer))
 				if not targets.is_empty():
@@ -1819,6 +1977,14 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 		"黑卡":
 			it.charges = 3
 			_log("%s 使用【黑卡】，接下来 3 次购买免单！" % p.name, "#f0a0c0")
+		"蛋蛋节":
+			items_consumed[String(it.id)] = true  # 用后焚毁不回池（先焚毁腾位再发礼物）
+			items.remove_at(slot)
+			_apply_egg_festival(p)
+		"亡牌飞行员coco":
+			items_consumed[String(it.id)] = true
+			items.remove_at(slot)
+			_apply_coco(p)
 		_:
 			p.item_used = false
 			p.stamina = int(p.stamina) + int(d.cost)
@@ -1836,7 +2002,9 @@ func _run_shop(p: Dictionary, idx: int) -> void:
 		shops[idx] = {"slots": ["", "", ""]}
 	_stock_shop(idx)
 	_broadcast_state()
-	if bool(p.bot):
+	if _is_sleeping(p):
+		_shop_leave(int(p.peer))  # 休眠=商店自动离开
+	elif bool(p.bot):
 		_bot_shop(p, idx)
 	else:
 		_arm_shop_timeout(epoch, int(p.peer))
@@ -1918,6 +2086,269 @@ func _shop_leave(peer: int) -> void:
 	_shop_peer = 0
 	_broadcast_state()
 
+# ================= 黑市（§8：仅由机会卡进入，一切消费用地产） =================
+
+func _is_sleeping(p: Dictionary) -> bool:
+	return int(p.get("sleep", 0)) > 0
+
+## 需要系统代为决策（机器人 / 休眠托管）
+func _is_managed(p: Dictionary) -> bool:
+	return bool(p.bot) or _is_sleeping(p)
+
+func _prop_indices_of(peer: int) -> Array:
+	var out := []
+	for i in htiles.size():
+		if int(htiles[i].get("owner", GameData.NO_OWNER)) == peer \
+				and not bool(htiles[i].get("soil", false)) \
+				and String(GameData.TILES[i].get("type", "")) == "property":
+			out.append(i)
+	return out
+
+func _prop_indices_sorted(peer: int) -> Array:
+	var out := _prop_indices_of(peer)
+	out.sort_custom(func(a: int, b: int) -> bool:
+		return int(GameData.TILES[a].price) < int(GameData.TILES[b].price))
+	return out
+
+func _black_roll_quality() -> String:
+	var total := 0
+	for q in ItemData.BLACK_WEIGHTS:
+		total += int(ItemData.BLACK_WEIGHTS[q])
+	var r := randi_range(0, maxi(total - 1, 0))
+	for q in ItemData.BLACK_WEIGHTS:
+		r -= int(ItemData.BLACK_WEIGHTS[q])
+		if r < 0:
+			return q
+	return "紫"
+
+func _black_stock_one() -> String:
+	var q := _black_roll_quality()
+	if _item_pool(q).is_empty():
+		q = "橙" if q == "紫" else "紫"
+	var pool := _item_pool(q)
+	if pool.is_empty():
+		return ""
+	return pool[randi_range(0, pool.size() - 1)]
+
+func _black_stock() -> void:
+	if _black_slots.size() != 3:
+		_black_slots = ["", "", ""]
+	for i in _black_slots.size():
+		if String(_black_slots[i]) == "":
+			_black_slots[i] = _black_stock_one()
+
+func _run_blackshop(p: Dictionary) -> void:
+	_black_epoch += 1
+	var epoch := _black_epoch
+	_black_peer = int(p.peer)
+	_black_pay_mode = ""
+	_black_pay_got = 0
+	_black_stock()
+	_broadcast_state()
+	_log("%s 被拽进了【黑市】——这里只收地皮" % p.name, "#ef7b74")
+	s_card.rpc("【黑市】欢迎光临，请用你的地皮结账", "bad")
+	# 带着 0 块地皮进店 = 进店即挨打
+	if _prop_indices_of(int(p.peer)).is_empty():
+		_black_beat(p, "一块地皮都没有")
+		return
+	await _wait(0.6)
+	if bool(p.bot) or _is_sleeping(p):
+		_bot_blackshop(p)
+	else:
+		_arm_black_timeout(epoch, int(p.peer))
+	while running and _black_peer == int(p.peer) and _black_epoch == epoch:
+		await _wait(0.1)
+	if not running:
+		return
+	_black_peer = 0
+	_black_pay_mode = ""
+	_broadcast_state()
+
+func _arm_black_timeout(epoch: int, peer: int) -> void:
+	await _wait(ItemData.BLACK_TIMEOUT)
+	if running and _black_peer == peer and _black_epoch == epoch:
+		_log("%s 在黑市里发愣，被看场子的请了出去" % _name_by_peer(peer), "#8a90a5")
+		_black_force_exit(peer)
+
+func _black_beat(p: Dictionary, reason: String) -> void:
+	var lost := int(int(p.money) / 2)
+	p.money = int(p.money) - lost
+	p.sleep = maxi(1, int(p.get("sleep", 0)))
+	_black_peer = 0
+	_black_pay_mode = ""
+	_log("%s %s，挨了一顿打：损失 %s，还被关进小黑屋（休眠一回合）" % [
+		p.name, reason, GameData.fmt_money(lost)], "#ef7b74")
+	s_card.rpc("%s 在黑市挨打：损失 %s + 小黑屋" % [p.name, GameData.fmt_money(lost)], "bust")
+	_broadcast_state()
+
+func _black_buy(peer: int, slot: int) -> void:
+	if _black_peer != peer or _black_pay_mode != "":
+		return
+	if slot < 0 or slot >= _black_slots.size() or String(_black_slots[slot]) == "":
+		return
+	var p := _player_by_peer(peer)
+	if p.is_empty() or p.items.size() >= 5:
+		_log("%s 背包已满，买不了" % _name_by_peer(peer), "#8a90a5")
+		return
+	var id := String(_black_slots[slot])
+	var cost := int(ItemData.BLACK_COST.get(String(ItemData.def(id).quality), 1))
+	if _prop_indices_of(peer).size() < cost:
+		_black_beat(p, "凑不出货钱")
+		return
+	_black_pay_mode = "buy"
+	_black_pay_slot = slot
+	_black_pay_need = cost
+	_black_pay_got = 0
+	_broadcast_state()
+
+func _black_refresh(peer: int) -> void:
+	if _black_peer != peer or _black_pay_mode != "":
+		return
+	var p := _player_by_peer(peer)
+	if p.is_empty():
+		return
+	if _prop_indices_of(peer).size() < ItemData.BLACK_REFRESH_COST:
+		_black_beat(p, "掏不出刷新费")
+		return
+	_black_pay_mode = "refresh"
+	_black_pay_slot = -1
+	_black_pay_need = ItemData.BLACK_REFRESH_COST
+	_black_pay_got = 0
+	_broadcast_state()
+
+func _black_leave(peer: int) -> void:
+	if _black_peer != peer or _black_pay_mode != "":
+		return
+	var p := _player_by_peer(peer)
+	if p.is_empty():
+		return
+	if _prop_indices_of(peer).size() < ItemData.BLACK_EXIT_COST:
+		_black_beat(p, "交不起出口费")
+		return
+	_black_pay_mode = "exit"
+	_black_pay_slot = -1
+	_black_pay_need = ItemData.BLACK_EXIT_COST
+	_black_pay_got = 0
+	_broadcast_state()
+
+## 玩家点选一块地皮交出去（逐块支付，凑齐后结算挂起的动作）
+func _black_pay(peer: int, prop_idx: int) -> void:
+	if _black_peer != peer or _black_pay_mode == "":
+		return
+	if prop_idx < 0 or prop_idx >= htiles.size():
+		return
+	if int(htiles[prop_idx].get("owner", GameData.NO_OWNER)) != peer:
+		return
+	if bool(htiles[prop_idx].get("soil", false)):
+		return
+	if String(GameData.TILES[prop_idx].get("type", "")) != "property":
+		return
+	htiles[prop_idx].owner = GameData.NO_OWNER  # 被收地皮回归无主、可再购买（定稿）
+	htiles[prop_idx].level = 0
+	_black_pay_got += 1
+	_log("%s 交出【%s】抵账" % [_name_by_peer(peer), String(GameData.TILES[prop_idx].name)], "#c9a6ff")
+	if _black_pay_got >= _black_pay_need:
+		_black_settle(peer)
+	else:
+		_broadcast_state()
+
+func _black_settle(peer: int) -> void:
+	var p := _player_by_peer(peer)
+	var mode := _black_pay_mode
+	var slot := _black_pay_slot
+	_black_pay_mode = ""
+	_black_pay_slot = -1
+	_black_pay_got = 0
+	_black_pay_need = 0
+	match mode:
+		"buy":
+			var id := String(_black_slots[slot])
+			_black_slots[slot] = ""
+			_grant_item(p, id)
+			_log("%s 在黑市拿下了【%s】" % [p.name, id], "#8fb7f2")
+		"refresh":
+			_black_stock()
+			_log("%s 花地皮刷新了黑市货架" % p.name, "#8a90a5")
+		"exit":
+			_black_peer = 0
+			_log("%s 交完出口费，走出了黑市" % p.name, "#8a90a5")
+	_broadcast_state()
+
+## 超时托管：先把挂起的动作付完，再自动用最便宜的地皮付出口费
+func _black_force_exit(peer: int) -> void:
+	var p := _player_by_peer(peer)
+	if p.is_empty():
+		return
+	while _black_pay_mode != "" and _black_peer == peer:
+		var props := _prop_indices_sorted(peer)
+		if props.is_empty():
+			_black_beat(p, "凑不出地皮")
+			return
+		_black_pay(peer, int(props[0]))
+	if _black_peer != peer:
+		return
+	_black_leave(peer)
+	while _black_pay_mode == "exit" and _black_peer == peer:
+		var ps := _prop_indices_sorted(peer)
+		if ps.is_empty():
+			_black_beat(p, "凑不出地皮")
+			return
+		_black_pay(peer, int(ps[0]))
+
+## bot 策略：留 1 块地皮付出口费，用余下地皮买最值的一件，然后交费走人
+func _bot_blackshop(p: Dictionary) -> void:
+	var props := _prop_indices_sorted(int(p.peer))
+	var best_slot := -1
+	var best_val := -1
+	for i in _black_slots.size():
+		var id := String(_black_slots[i])
+		if id == "":
+			continue
+		var cost := int(ItemData.BLACK_COST.get(String(ItemData.def(id).quality), 1))
+		if props.size() - cost < 1:
+			continue
+		var val := int(ItemData.QUALITY_PRICES.get(String(ItemData.def(id).quality), 0))
+		if val > best_val:
+			best_val = val
+			best_slot = i
+	if best_slot >= 0 and p.items.size() < 5:
+		_black_buy(int(p.peer), best_slot)
+		while _black_pay_mode == "buy" and _black_peer == int(p.peer):
+			var ps := _prop_indices_sorted(int(p.peer))
+			if ps.is_empty():
+				break
+			_black_pay(int(p.peer), int(ps[0]))
+	_black_leave(int(p.peer))
+	while _black_pay_mode == "exit" and _black_peer == int(p.peer):
+		var ps2 := _prop_indices_sorted(int(p.peer))
+		if ps2.is_empty():
+			break
+		_black_pay(int(p.peer), int(ps2[0]))
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_black_buy(slot: int) -> void:
+	if not multiplayer.is_server():
+		return
+	_black_buy(multiplayer.get_remote_sender_id(), slot)
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_black_refresh() -> void:
+	if not multiplayer.is_server():
+		return
+	_black_refresh(multiplayer.get_remote_sender_id())
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_black_leave() -> void:
+	if not multiplayer.is_server():
+		return
+	_black_leave(multiplayer.get_remote_sender_id())
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_black_pay(prop_idx: int) -> void:
+	if not multiplayer.is_server():
+		return
+	_black_pay(multiplayer.get_remote_sender_id(), prop_idx)
+
 @rpc("any_peer", "call_remote", "reliable")
 func c_use_item(slot: int, arg: int) -> void:
 	if not multiplayer.is_server():
@@ -1951,6 +2382,62 @@ func c_shop_leave() -> void:
 	if not multiplayer.is_server():
 		return
 	_shop_leave(multiplayer.get_remote_sender_id())
+
+## 蛋蛋节：全员送礼（规则 §4：他人白/绿/蓝三档均分，使用者紫 70%/橙 30%，
+## 礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
+func _apply_egg_festival(p: Dictionary) -> void:
+	_log("%s 点燃了【蛋蛋节】，礼物撒满全场！" % p.name, "#f0a0c0")
+	for o in hp:
+		if int(o.peer) == int(p.peer) or not bool(o.alive):
+			continue
+		if o.items.size() >= 5:
+			o.money = int(o.money) + 100
+			_log("%s 背包已满，改收 %s 现金" % [o.name, GameData.fmt_money(100)], "#74d188")
+			continue
+		var q: String = ["白", "绿", "蓝"][randi_range(0, 2)]
+		var pool := _item_pool(q)
+		if pool.is_empty():
+			o.money = int(o.money) + 100
+			_log("%s 的礼物缺货，改收 %s 现金" % [o.name, GameData.fmt_money(100)], "#74d188")
+			continue
+		var id: String = pool[randi_range(0, pool.size() - 1)]
+		_grant_item(o, id)
+		_log("%s 收到礼物【%s】" % [o.name, id], "#74d188")
+	var my_q: String = "紫" if randi_range(1, 100) <= 70 else "橙"
+	var my_pool := _item_pool(my_q)
+	if my_pool.is_empty():
+		my_pool = _item_pool("紫") + _item_pool("橙")
+	if not my_pool.is_empty():
+		var id2: String = my_pool[randi_range(0, my_pool.size() - 1)]
+		_grant_item(p, id2)
+		_log("%s 自己抽到了【%s】！" % [p.name, id2], "#f0a0c0")
+
+## 亡牌飞行员coco：每名玩家（含使用者）随机一块地皮化为焦土（§五 焦土状态机）
+func _apply_coco(p: Dictionary) -> void:
+	_log("%s 召唤了【亡牌飞行员coco】，轰炸开始！" % p.name, "#ef7b74")
+	Fx.shake(self, 7.0, 0.3)
+	for o in hp:
+		if not bool(o.alive):
+			continue
+		if _immune_debuff(o):
+			_log("%s 的【空想者的香皂】挡下了轰炸" % o.name, "#8fb7f2")
+			continue
+		var owned: Array = []
+		for i in htiles.size():
+			if int(htiles[i].get("owner", GameData.NO_OWNER)) == int(o.peer) \
+					and not bool(htiles[i].get("soil", false)) \
+					and String(GameData.TILES[i].get("type", "")) == "property":
+				owned.append(i)
+		if owned.is_empty():
+			_log("%s 名下没有地皮，逃过一劫" % o.name, "#8a90a5")
+			continue
+		var idx: int = owned[randi_range(0, owned.size() - 1)]
+		var t: Dictionary = htiles[idx]
+		t.soil = true
+		t.soil_prog = 0
+		t.owner = GameData.NO_OWNER
+		t.level = 0
+		_log("%s 的【%s】被炸成了焦土！落地捐款可以修复它" % [o.name, String(GameData.TILES[idx].name)], "#ef7b74")
 
 func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 	if item_btn_box == null:
@@ -2249,6 +2736,32 @@ func _build_menu_ui() -> void:
 	tv_cancel.pressed.connect(_close_target_picker)
 	tv.add_child(tv_cancel)
 
+	# 黑市交地选择器（逐块选自有地皮抵账）
+	black_picker = Control.new()
+	black_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
+	black_picker.visible = false
+	add_child(black_picker)
+	var bd_dim := ColorRect.new()
+	bd_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bd_dim.color = Color(0.04, 0.03, 0.05, 0.6)
+	black_picker.add_child(bd_dim)
+	var bcc := CenterContainer.new()
+	bcc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	black_picker.add_child(bcc)
+	var bcp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(0.96, 0.55, 0.3, 0.85), 1, 10)
+	bcp.custom_minimum_size = Vector2(340, 0)
+	bcc.add_child(bcp)
+	var bcpm := UIKit.margins(20, 20, 14, 12)
+	bcp.add_child(bcpm)
+	var bcv := VBoxContainer.new()
+	bcv.add_theme_constant_override("separation", 8)
+	bcpm.add_child(bcv)
+	bcv.add_child(UIKit.label("选择要交出的地皮", 14, Color(0.98, 0.7, 0.4)))
+	black_picker_box = VBoxContainer.new()
+	black_picker_box.add_theme_constant_override("separation", 6)
+	bcv.add_child(black_picker_box)
+
 func _open_menu() -> void:
 	if multiplayer.is_server():
 		s_pause.rpc(true)  # 房主打开菜单 = 全场暂停
@@ -2380,6 +2893,18 @@ func _dev_force_use() -> void:
 				if not _immune_debuff(alive[k]):
 					alive[k].money = int(alive[k].money) + 1
 			_log("[dev] 全场现金已拉平", "#7fd88f")
+		"蛋蛋节":
+			items_consumed["蛋蛋节"] = true
+			for i in range(p.items.size() - 1, -1, -1):
+				if String(p.items[i].id) == "蛋蛋节":
+					p.items.remove_at(i)
+			_apply_egg_festival(p)
+		"亡牌飞行员coco":
+			items_consumed["亡牌飞行员coco"] = true
+			for i in range(p.items.size() - 1, -1, -1):
+				if String(p.items[i].id) == "亡牌飞行员coco":
+					p.items.remove_at(i)
+			_apply_coco(p)
 		_:
 			_log("[dev] 【%s】效果尚未实装（被动持有即可生效 / 后续批次）" % id, "#7fd88f")
 	_broadcast_state()
@@ -2459,20 +2984,90 @@ func _process(_delta: float) -> void:
 	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
 	if mat_bar == null:
 		return
-	var show := board.seat_count() > 0 and board.at_home_view() \
-		and String(st.get("phase", "")) == "playing"
-	var shop_mine: bool = show and int(st.get("shop_peer", 0)) == my_peer \
+	var phase := String(st.get("phase", ""))
+	var show := board.seat_count() > 0 and board.at_home_view() and phase == "playing"
+	# 交易面板独立于视角：底栏居中，保证行动者一定能操作（相机可能停在棋子上而非自家座位）
+	var shop_mine: bool = phase == "playing" and int(st.get("shop_peer", 0)) == my_peer \
 		and int(st.get("shop_open", -1)) >= 0
 	shop_bar.visible = shop_mine
 	if shop_mine:
-		var r2 := board.home_card_screen_rect()
-		shop_bar.position = Vector2(r2.get_center().x - shop_bar.size.x * 0.5, r2.end.y + 10.0)
-	mat_bar.visible = show and not shop_mine
-	if show and not shop_mine:
+		_place_overlay_bar(shop_bar)
+	var black_mine: bool = phase == "playing" and int(st.get("black_peer", 0)) == my_peer
+	black_bar.visible = black_mine
+	if black_mine:
+		_place_overlay_bar(black_bar)
+		_refresh_black_ui()
+	else:
+		black_picker.visible = false
+		_black_sig = ""
+	mat_bar.visible = show and not shop_mine and not black_mine
+	if show and not shop_mine and not black_mine:
 		var r := board.home_card_screen_rect()
 		mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
 	if dev_enabled:
 		_dev_refresh_panel()
+
+## 交易面板贴在屏幕底部居中（避开底部行动条隐藏后的空档）
+func _place_overlay_bar(c: Control) -> void:
+	var vp := get_viewport_rect().size
+	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, vp.y - 148.0)
+
+## 黑市面板刷新（缓存签名，避免每帧重建）
+func _refresh_black_ui() -> void:
+	var slots: Array = st.get("black_slots", [])
+	var pay_mode := String(st.get("black_pay_mode", ""))
+	var need := int(st.get("black_pay_need", 0))
+	var got := int(st.get("black_pay_got", 0))
+	var sig := "%s|%s|%d|%d" % [str(slots), pay_mode, need, got]
+	if sig == _black_sig:
+		return
+	_black_sig = sig
+	for i in black_btns.size():
+		var b: Button = black_btns[i]
+		var id := String(slots[i]) if i < slots.size() else ""
+		if id == "":
+			b.text = "（已售）"
+			b.disabled = true
+		else:
+			var q := String(ItemData.def(id).quality)
+			var cost := int(ItemData.BLACK_COST.get(q, 1))
+			b.text = "买【%s】·%s（%d地）" % [id, String(ItemData.QUALITY_NAMES.get(q, q)), cost]
+			b.disabled = pay_mode != ""
+	if pay_mode == "":
+		black_hint.text = "选一件商品，或直接交费离开。"
+	else:
+		var what := String({"buy": "购买", "refresh": "刷新", "exit": "出口"}.get(pay_mode, pay_mode))
+		black_hint.text = "正在结【%s】的账：已交 %d/%d 块地皮，点下方列表选择地皮。" % [what, got, need]
+	_rebuild_black_picker(pay_mode != "")
+
+func _rebuild_black_picker(active: bool) -> void:
+	black_picker.visible = active
+	for c in black_picker_box.get_children():
+		c.free()
+	if not active:
+		return
+	var tiles_arr: Array = st.get("tiles", [])
+	var added := 0
+	for i in mini(tiles_arr.size(), GameData.TILES.size()):
+		var d: Dictionary = GameData.TILES[i]
+		if String(d.get("type", "")) != "property":
+			continue
+		var t: Dictionary = tiles_arr[i]
+		if int(t.get("owner", GameData.NO_OWNER)) != my_peer or bool(t.get("soil", false)):
+			continue
+		var b := UIKit.button("交出【%s】Lv%d · 地价 %s" % [
+			String(d.name), int(t.get("level", 0)), GameData.fmt_money(int(d.price))], 13)
+		var idx := i
+		b.pressed.connect(func() -> void:
+			if multiplayer.is_server():
+				_black_pay(my_peer, idx)
+			else:
+				c_black_pay.rpc(idx)
+		)
+		black_picker_box.add_child(b)
+		added += 1
+	if added == 0:
+		black_picker_box.add_child(UIKit.label("没有可用地皮", 12, UIKit.TEXT_DIM))
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
@@ -2584,9 +3179,9 @@ func _run_casino(p: Dictionary) -> void:
 		var pl := _player_by_peer(peer)
 		var epoch := _casino_next_epoch()
 		var can_peek: bool = not used_peek.has(peer)
-		s_casino_turn.rpc(peer, epoch, defuse, fish, int(deck.size()), not bool(pl.bot) and can_peek)
+		s_casino_turn.rpc(peer, epoch, defuse, fish, int(deck.size()), not _is_managed(pl) and can_peek)
 		var drew := "top"
-		if bool(pl.bot):
+		if _is_managed(pl):
 			await _wait(0.7)
 		else:
 			drew = await _casino_wait_action(epoch, 9.0)
