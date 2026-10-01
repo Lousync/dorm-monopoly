@@ -53,6 +53,7 @@ var target_btn_box: VBoxContainer
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
+var _shop_btn_sig := ""     # 小卖部「买」按钮刷新签名（避免每帧重建）
 var card_gallery: Control
 var card_gallery_flag := false
 
@@ -107,6 +108,7 @@ var hp: Array = []          # 玩家 [{peer,name,color,bot,money,pos,alive,skip}
 var htiles: Array = []      # 地块 [{owner,level}]
 var turn_i := 0
 var round_no := 1
+var _turns_taken := 0       # 本圈已行动人数：走满一圈（存活者各行动一次）记一轮
 var running := false
 var winner := -1
 var _awaiting_roll := 0
@@ -619,6 +621,8 @@ func _run_game() -> void:
 		var p: Dictionary = hp[turn_i]
 		if not bool(p.alive):
 			_advance_turn()
+			if _rounds_exhausted():
+				return
 			continue
 		if int(p.skip) > 0:
 			p.skip = int(p.skip) - 1
@@ -628,22 +632,44 @@ func _run_game() -> void:
 			if not running:
 				return
 			_advance_turn()
+			if _rounds_exhausted():
+				return
 			continue
 		await _play_turn(p)
 		if not running:
 			return
 		_advance_turn()
-		if turn_i == 0:
-			round_no += 1
-			if round_no > GameData.MAX_ROUNDS:
-				_end_by_wealth()
-				return
+		if _rounds_exhausted():
+			return
+
+## 轮数用尽 → 按身家结算。回合计数已由 _advance_turn 按圈维护（见 fix/v0.0.2）。
+func _rounds_exhausted() -> bool:
+	if round_no <= GameData.MAX_ROUNDS:
+		return false
+	_end_by_wealth()
+	return true
 
 func _advance_turn() -> void:
 	for k in hp.size():
 		turn_i = (turn_i + 1) % hp.size()
 		if bool(hp[turn_i].alive):
 			break
+	# 每走完一圈（所有存活者各行动一次）记一轮。
+	# 不能用 turn_i == 0 判定：0 号位是房主，他破产或被查寝跳过时那一圈永远
+	# 轮不到 0，round_no 会彻底冻结 → MAX_ROUNDS 结算不可达、对局可能永不结束，
+	# _autotest_watch 也会挂死（见 fix/v0.0.2）。
+	_turns_taken += 1
+	var alive := _alive_count()
+	if alive > 0 and _turns_taken >= alive:
+		_turns_taken = 0
+		round_no += 1
+
+func _alive_count() -> int:
+	var n := 0
+	for p in hp:
+		if bool(p.alive):
+			n += 1
+	return n
 
 func _play_turn(p: Dictionary) -> void:
 	if at_mode != "":
@@ -982,6 +1008,14 @@ func _group_complete_for(idx: int, owner: int) -> bool:
 
 func _player_by_peer(peer: int) -> Dictionary:
 	for p in hp:
+		if int(p.peer) == peer:
+			return p
+	return {}
+
+## 取「已同步」的玩家字典（st.players）。房主与客户端都可用；
+## 客户端没有 hp，凡是要在客户端渲染的玩家信息都必须走这里（见 fix/v0.0.2）。
+func _state_player(peer: int) -> Dictionary:
+	for p in st.get("players", []):
 		if int(p.peer) == peer:
 			return p
 	return {}
@@ -2452,7 +2486,10 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 		return
 	for c in item_btn_box.get_children():
 		c.queue_free()
-	var p := _player_by_peer(my_peer)
+	# 必须读「已同步的」状态：hp 只在房主 _host_setup 里填充，
+	# 客户端 hp 恒为空 → 道具栏一个按钮都建不出来，真人整局无法使用道具，
+	# 只能等房主 12 秒超时跳过（见 fix/v0.0.2）。
+	var p := _state_player(my_peer)
 	if p.is_empty():
 		return
 	var items: Array = p.get("items", [])
@@ -2502,9 +2539,14 @@ func _close_cheat_picker() -> void:
 	cheat_picker.visible = false
 
 func _swap_targets(exclude_peer: int) -> Array:
-	return hp.filter(func(x) -> bool:
-		return bool(x.alive) and int(x.peer) != exclude_peer \
-			and not (x.get("items", []) as Array).is_empty())
+	# 与道具栏同理：hp 只在房主填充，客户端为空会让「交换生」永远置灰、换人列表为空，
+	# 必须读已同步的 st（见 fix/v0.0.2）。
+	var out: Array = []
+	for x in st.get("players", []):
+		if bool(x.get("alive", true)) and int(x.peer) != exclude_peer \
+				and not (x.get("items", []) as Array).is_empty():
+			out.append(x)
+	return out
 
 func _open_target_picker(slot: int) -> void:
 	_close_cheat_picker()
@@ -2992,6 +3034,7 @@ func _process(_delta: float) -> void:
 	shop_bar.visible = shop_mine
 	if shop_mine:
 		_place_overlay_bar(shop_bar)
+		_refresh_shop_buttons()
 	var black_mine: bool = phase == "playing" and int(st.get("black_peer", 0)) == my_peer
 	black_bar.visible = black_mine
 	if black_mine:
@@ -3011,6 +3054,33 @@ func _process(_delta: float) -> void:
 func _place_overlay_bar(c: Control) -> void:
 	var vp := get_viewport_rect().size
 	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, vp.y - 148.0)
+
+## 小卖部「买」按钮：按货架逐格显隐 + 标价 + 可买判定（缓存签名，避免每帧重建）。
+## 这三个按钮创建时 visible=false，此前没有任何代码把它们打开过，
+## 于是真人踩到小卖部格只能「刷新 / 离开」、买不了任何东西（见 fix/v0.0.2）。
+func _refresh_shop_buttons() -> void:
+	var open := int(st.get("shop_open", -1))
+	var shops_d: Dictionary = st.get("shops", {})
+	var slots: Array = []
+	if shops_d.has(open):
+		slots = shops_d[open].get("slots", [])
+	var mine: Dictionary = _state_player(my_peer)
+	var money := int(mine.get("money", 0))
+	var bag: Array = mine.get("items", [])
+	var sig := "%d|%s|%d|%d" % [open, str(slots), money, bag.size()]
+	if sig == _shop_btn_sig:
+		return
+	_shop_btn_sig = sig
+	for i in shop_btns.size():
+		var b: Button = shop_btns[i]
+		var id := String(slots[i]) if i < slots.size() else ""
+		if id == "":
+			b.visible = false
+			continue
+		var price := ItemData.price(String(ItemData.def(id).quality))
+		b.visible = true
+		b.text = "买 %s %s" % [id, GameData.fmt_money(price)]
+		b.disabled = money < price or bag.size() >= 5
 
 ## 黑市面板刷新（缓存签名，避免每帧重建）
 func _refresh_black_ui() -> void:

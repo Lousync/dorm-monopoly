@@ -89,6 +89,12 @@ func _reset_peer() -> void:
 	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	# 残留清理：players 不清空会让 s_lobby 的「首次进房」判定
+	#（had := players.size() > 0）永久失效——被踢或连接失败后再加入任何房间，
+	# lobby_joined 都不再触发，界面永久卡在「正在连接…」，_hello_retry 也会
+	# 因 players 非空提前返回而不报错。只能重启程序（见 fix/v0.0.2）。
+	players = []
+	chat_history = []
 
 # ---------------- 大厅（房主权威） ----------------
 

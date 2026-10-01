@@ -161,6 +161,8 @@ Godot_console.exe --headless --path . --script tests/load_all.gd
 Godot_console.exe --headless --path . --script tests/item_test.gd
 # 黑市单测（地皮计价/逐块交地/挨打小黑屋/bot/机会卡过滤）
 Godot_console.exe --headless --path . --script tests/blackshop_test.gd
+# 回归单测（被踢后重置残留/回合计数/客户端道具栏/小卖部购买按钮）
+Godot_console.exe --headless --path . --script tests/regression_test.gd
 # 双实例联机回归（房主+客户端自动打 3 轮，含机器人、购买决策、断线接管）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 &
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3
