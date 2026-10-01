@@ -87,6 +87,13 @@ func _run() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false  # 冻结主循环：本测试手动摆状态
+	# 场景/脚本编译失败时成员是 null，后续断言里的表达式会先报错、根本走不到
+	# _check，于是整轮「全过」——必须在这里显式拦下（见 fix/v0.0.2）
+	if g.board == null or g.item_btn_box == null or g.shop_btns.is_empty():
+		printerr("  FAIL - 对局场景未正确加载（脚本编译失败？）")
+		print("REGRESSION TEST: SCENE LOAD FAILED")
+		quit(1)
+		return
 
 	_test_round_counter(g)
 	_test_client_item_bar(g)
@@ -94,6 +101,10 @@ func _run() -> void:
 	_test_authority_guards(g)
 	_test_dead_player_items_return_to_pool(g)
 	_test_roster_marks_disconnected_bots(g, _net)
+	_test_card_sound_once(g)
+	_test_item_card_cooling_flag()
+	_test_rotate_next_empty(g)
+	_test_turn_ring_first_render(g)
 	_test_hot_chain(g)
 	_test_shop_refresh_full_shelf(g)
 	_test_camera_state(g)
@@ -203,6 +214,57 @@ func _test_authority_guards(g) -> void:
 	g._casino_action = {"epoch": -1, "action": ""}
 	g.c_casino_action(5, "top")
 	_check(String(g._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
+
+func _test_card_sound_once(g) -> void:
+	print("== s_card 的音效只响一次 ==")
+	var fx = root.get_node_or_null("Fx")
+	_check(fx != null, "Fx 单例可用")
+	if fx == null:
+		return
+	var before: int = int(fx._pool_i)
+	g.s_card("强制缴费", "info", "")   # 非牌堆路径：此前这里会再播一次
+	var n: int = int(fx._pool_i) - before
+	_check(n == 1, "一次 s_card 只播一次音效（实得 %d 次）" % n)
+
+func _test_item_card_cooling_flag() -> void:
+	print("== 黑卡带剩余次数时不应画成「冷却中」 ==")
+	# 必须 load 而不是直接写 ItemCard：--script 主脚本编译期解析不到 autoload，
+	# 而 ItemCard → UIKit → Fx 这条依赖链会把整个测试编译搞崩。
+	var ic = load("res://scripts/item_card.gd")
+	if ic == null:
+		_check(false, "item_card.gd 可加载")
+		return
+	var medium: Vector2 = ic.SIZE_MEDIUM
+	var counter: Control = ic.make("黑卡", medium, {"count": 2})
+	_check(counter.modulate != Color(0.6, 0.62, 0.7), "计数位（黑卡剩余次数）不压暗")
+	var cooling: Control = ic.make("作弊器", medium, {"count": 2, "cooling": true})
+	_check(cooling.modulate == Color(0.6, 0.62, 0.7), "显式 cooling 的卡才压暗")
+
+func _test_rotate_next_empty(g) -> void:
+	print("== 座位表为空时按 Tab 不应除零 ==")
+	_check(g.board._next_edge([], 0) == -1, "空座位表返回 -1（不除零）")
+	_check(g.board._next_edge([0, 1, 2], 0) == 1, "切到下一个座位")
+	_check(g.board._next_edge([0, 1, 2], 2) == 0, "末尾回环到第一个")
+	_check(g.board._next_edge([0, 1, 2], 9) == 0, "当前不在表内则取第一个")
+
+func _test_turn_ring_first_render(g) -> void:
+	print("== 首个行动玩家的脉冲光环应亮起 ==")
+	var pls := [_mk_player(1, "我"), _mk_player(2, "乙")]
+	_rebuild_seats(g, pls)
+	g.st = {
+		"phase": "playing", "turn": 1, "round": 1, "max_rounds": 30,
+		"players": [
+			{"peer": 1, "name": "我", "color": 0, "pos": 0, "money": 1000, "alive": true,
+				"items": [], "stamina": 3, "skip": 0, "sleep": 0},
+			{"peer": 2, "name": "乙", "color": 1, "pos": 0, "money": 1000, "alive": true,
+				"items": [], "stamina": 3, "skip": 0, "sleep": 0},
+		],
+		"tiles": _fresh_tiles(),
+	}
+	g.board.render(g.st)
+	_check(g.board._ring.visible, "首次渲染后光环亮起（实得 %s）" % str(g.board._ring.visible))
+	g.board.render(g.st)
+	_check(g.board._ring.visible, "再次渲染后光环仍亮")
 
 func _test_hot_chain(g) -> void:
 	print("== 「连续三次 10+」必须跨回合累计 ==")

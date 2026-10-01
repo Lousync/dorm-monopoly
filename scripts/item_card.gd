@@ -136,8 +136,9 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	else:
 		rb.visible = false
 
-	# 状态表现
-	if count > 0:
+	# 状态表现：是否冷却必须显式给出。count 同时承载「剩余次数(黑卡)/融化回合(香皂)/
+	# 冷却回合」，单看 count > 0 会把还有次数的黑卡也画成冷却中（见 fix/v0.0.2）。
+	if bool(state.get("cooling", false)):
 		card.modulate = Color(0.6, 0.62, 0.7)  # 冷却中：画面压暗
 	if bool(state.get("dim", false)):
 		card.modulate = Color(0.46, 0.46, 0.5)  # 买不起

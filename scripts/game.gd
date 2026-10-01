@@ -1297,7 +1297,6 @@ func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 	card_panel.pivot_offset = card_panel.size * 0.5
 	card_panel.scale = Vector2(0.7, 0.7)
 	card_panel.modulate.a = 0.0
-	Fx.play("card", -4.0)
 	_card_tween_id += 1
 	var my_id := _card_tween_id
 	var tw := create_tween()
@@ -1800,7 +1799,7 @@ func _open_card_gallery() -> void:
 	]))
 	gv.add_child(_card_section("货架尺寸（中 · 150×210）· 状态一览", [
 		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {}, "普通"),
-		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2}, "冷却中 · 右上剩 2 回合·压暗"),
+		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2, "cooling": true}, "冷却中 · 右上剩 2 回合·压暗"),
 		_card_cell("黑卡", ItemCard.SIZE_MEDIUM, {"count": 2}, "计数中 · 剩 2 次购买"),
 		_card_cell("空想者的香皂", ItemCard.SIZE_MEDIUM, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
 		_card_cell("蛋蛋节", ItemCard.SIZE_MEDIUM, {}, "一次性 · 用后焚毁"),

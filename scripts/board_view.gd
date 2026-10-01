@@ -748,8 +748,17 @@ func go_home_follow(peer: int) -> void:
 func rotate_next() -> void:
 	var order: Array = _seats.keys()
 	order.sort()
-	var i: int = order.find(_view_edge)
-	rotate_to_edge(int(order[(i + 1) % order.size()]))
+	var nxt := _next_edge(order, _view_edge)
+	if nxt < 0:
+		return
+	rotate_to_edge(nxt)
+
+## 行动顺序里当前座位的下一个（末尾回环；当前不在表内则取第一个）。
+static func _next_edge(order: Array, cur: int) -> int:
+	if order.is_empty():
+		return -1  # 座位还没建好（首个 s_state 之前按 Tab）：% 0 会直接报除零
+	var i: int = order.find(cur)
+	return int(order[(i + 1) % order.size()])
 
 func is_rotating() -> bool:
 	return _rotating
@@ -1211,7 +1220,10 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 	for c in sp.get_children():
 		c.queue_free()
 	if item != null:
-		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE, {"count": count, "melt": melt}))
+		# count 是「计数位」（黑卡次数/香皂融化回合/冷却回合），只有冷却才压暗
+		var cooling: bool = int(item.get("charges", 0)) <= 0 and int(item.get("cd", 0)) > 0
+		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE,
+			{"count": count, "melt": melt, "cooling": cooling}))
 	else:
 		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
 		plus.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1317,10 +1329,6 @@ func render(state: Dictionary) -> void:
 			_sub_labels[i2].text = "焦土 %d/%d" % [prog, target]
 
 	var phase := String(state.get("phase", "playing"))
-	if phase == "ended":
-		_set_ring(-1)
-	else:
-		_set_ring(int(state.get("turn", -1)))
 
 	# 棋子：新建带弹入，动画中的不动
 	var seen := {}
@@ -1348,6 +1356,14 @@ func render(state: Dictionary) -> void:
 		if not seen.has(peer):
 			_tokens[peer].queue_free()
 			_tokens.erase(peer)
+
+	# 行动光环必须在棋子建好之后再上：_set_ring 会缓存 _ring_peer，
+	# 若在 _tokens 还空着时先调，本回合的光环会被记成「已设置」而永远不亮
+	#（只有换到别的玩家后才恢复，见 fix/v0.0.2）。
+	if phase == "ended":
+		_set_ring(-1)
+	else:
+		_set_ring(int(state.get("turn", -1)))
 
 func _short_money(v: int) -> String:
 	if v >= 1000:
