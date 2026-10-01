@@ -105,6 +105,7 @@ func _run() -> void:
 	_test_item_card_cooling_flag()
 	_test_rotate_next_empty(g)
 	_test_turn_ring_first_render(g)
+	_test_ui_widgets_applied(g)
 	_test_dev_panel(g)
 	_test_hot_chain(g)
 	_test_shop_refresh_full_shelf(g)
@@ -272,6 +273,22 @@ func _test_turn_ring_first_render(g) -> void:
 	_check(g.board._ring.visible, "首次渲染后光环亮起（实得 %s）" % str(g.board._ring.visible))
 	g.board.render(g.st)
 	_check(g.board._ring.visible, "再次渲染后光环仍亮")
+
+func _test_ui_widgets_applied(g) -> void:
+	print("== HUD 控件回填（TableHud → game 同名成员）==")
+	# _build_ui 现在靠 set(k, w[k]) 回填，名字对不上是「静默失败」——
+	# 控件为 null 也不会报错，只会界面缺一块。这里逐个钉住。
+	var names := ["board", "mat_bar", "action_bar", "roll_btn", "item_btn_box",
+		"shop_bar", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
+		"log_text", "log_head", "log_toggle", "info_panel", "info_title",
+		"info_body", "info_sb", "status_label", "chat_edit", "card_panel",
+		"card_label", "opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",
+		"ph_arrow_l", "black_btns", "black_hint"]
+	var missing: Array = []
+	for n in names:
+		if g.get(n) == null:
+			missing.append(n)
+	_check(missing.is_empty(), "全部 %d 个控件已回填（缺失：%s）" % [names.size(), str(missing)])
 
 func _test_dev_panel(g) -> void:
 	print("== 开发者面板（已搬到 dev_tools.gd）==")
