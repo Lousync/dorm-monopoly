@@ -105,6 +105,7 @@ func _run() -> void:
 	_test_item_card_cooling_flag()
 	_test_rotate_next_empty(g)
 	_test_turn_ring_first_render(g)
+	_test_dev_panel(g)
 	_test_hot_chain(g)
 	_test_shop_refresh_full_shelf(g)
 	_test_camera_state(g)
@@ -271,6 +272,24 @@ func _test_turn_ring_first_render(g) -> void:
 	_check(g.board._ring.visible, "首次渲染后光环亮起（实得 %s）" % str(g.board._ring.visible))
 	g.board.render(g.st)
 	_check(g.board._ring.visible, "再次渲染后光环仍亮")
+
+func _test_dev_panel(g) -> void:
+	print("== 开发者面板（已搬到 dev_tools.gd）==")
+	_check(g.dev != null, "dev 节点已建立")
+	if g.dev == null:
+		return
+	_check(g.dev.dev_panel != null, "面板已在 _build_ui 里构建")
+	g.dev.enabled = true
+	g.dev.apply_mode()
+	_check(g.dev.dev_panel.visible, "开启后面板可见")
+	g.hp = [_mk_player(1, "甲")]
+	g.turn_i = 0
+	g.dev.dev_sel_peer = 1
+	g.dev._dev_add_money(1000)
+	_check(int(g.hp[0].money) == 2000, "开发者加钱生效（实得 %d）" % int(g.hp[0].money))
+	g.dev.enabled = false
+	g.dev.apply_mode()
+	_check(not g.dev.dev_panel.visible, "关闭后面板隐藏")
 
 func _test_hot_chain(g) -> void:
 	print("== 「连续三次 10+」必须跨回合累计 ==")

@@ -75,21 +75,6 @@ var black_picker_box: VBoxContainer
 var _black_sig := ""
 
 # ---------------- 开发者模式 ----------------
-var dev_enabled := false
-var dev_panel: PanelContainer
-var dev_state_l: Label
-var dev_cam_l: Label
-var dev_players: HBoxContainer
-var dev_pbtns: Array = []
-var dev_sel_peer := 0
-var dev_item_opt: OptionButton
-var dev_item_desc: Label
-var dev_stam_s: HSlider
-var dev_tp_spin: SpinBox
-var dev_roll_spin: SpinBox
-var dev_ts_l: Label
-var dev_inject_box: VBoxContainer
-var menu_probe := false
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
@@ -108,6 +93,7 @@ var my_peer := 1
 var hp: Array = []          # 玩家 [{peer,name,color,bot,money,pos,alive,skip}]
 var htiles: Array = []      # 地块 [{owner,level}]
 var casino: Node             # 赌桌小游戏（scripts/casino.gd，见 _ready）
+var dev: Node                # 开发者面板 / 截图工具（scripts/dev_tools.gd，见 _ready）
 var turn_i := 0
 var round_no := 1
 var _turns_taken := 0       # 本圈已行动人数：走满一圈（存活者各行动一次）记一轮
@@ -157,6 +143,12 @@ func _ready() -> void:
 	if at_mode != "":
 		Engine.time_scale = 3.0
 
+	# 开发者面板/截图工具独立成子节点。必须先于 _build_ui：面板是 _build_ui 建的
+	dev = preload("res://scripts/dev_tools.gd").new()
+	dev.name = "DevTools"
+	dev.g = self
+	add_child(dev)
+
 	_build_ui()
 
 	# 赌桌小游戏独立成子节点（board 已就绪；两端都在这里建同名节点，
@@ -181,22 +173,22 @@ func _ready() -> void:
 	if cfg.load("user://settings.cfg") == OK:
 		audio_volume = clampf(float(cfg.get_value("audio", "volume", 1.0)), 0.0, 1.0)
 		audio_mute = bool(cfg.get_value("audio", "mute", false))
-		dev_enabled = bool(cfg.get_value("dev", "enabled", false)) or dev_flag
+		dev.enabled = bool(cfg.get_value("dev", "enabled", false)) or dev_flag
 	if at_mode != "" and not dev_flag:
-		dev_enabled = false
+		dev.enabled = false
 	_apply_audio()
-	_apply_dev_mode()
+	dev.apply_mode()
 	for a2 in OS.get_cmdline_user_args():
 		if a2 == "--menu-probe":
-			menu_probe = true
-	if menu_probe:
-		_menu_probe_run()
+			dev.menu_probe = true
+	if dev.menu_probe:
+		dev.menu_probe_run()
 	for a3 in OS.get_cmdline_user_args():
 		if a3 == "--card-gallery":
 			card_gallery_flag = true
 	if card_gallery_flag:
-		dev_enabled = true
-		_apply_dev_mode()
+		dev.enabled = true
+		dev.apply_mode()
 		_open_card_gallery()
 
 func _exit_tree() -> void:
@@ -392,125 +384,7 @@ func _build_ui() -> void:
 	add_child(opt_btn)
 	_build_menu_ui()
 
-	# 开发者模式面板（左侧；注入区仅房主可见）
-	dev_panel = UIKit.panel_container(Color(0.05, 0.06, 0.1, 0.94), 12, Color(0.45, 0.85, 0.55, 0.5), 1)
-	dev_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	dev_panel.offset_left = 8
-	dev_panel.offset_top = 56
-	dev_panel.offset_right = 276
-	dev_panel.offset_bottom = 720
-	dev_panel.visible = false
-	add_child(dev_panel)
-	var dm := UIKit.margins(10, 12, 10, 10)
-	dev_panel.add_child(dm)
-	var dv := VBoxContainer.new()
-	dv.add_theme_constant_override("separation", 6)
-	dm.add_child(dv)
-	dv.add_child(UIKit.label("开发者模式（F1 显隐）", 13, Color(0.5, 0.9, 0.5)))
-	dev_state_l = UIKit.label("", 11, UIKit.TEXT)
-	dv.add_child(dev_state_l)
-	dev_cam_l = UIKit.label("", 11, UIKit.TEXT_DIM)
-	dv.add_child(dev_cam_l)
-	dv.add_child(UIKit.label("玩家（点选后注入）", 11, UIKit.TEXT_DIM))
-	dev_players = HBoxContainer.new()
-	dev_players.add_theme_constant_override("separation", 4)
-	dv.add_child(dev_players)
-	dev_inject_box = VBoxContainer.new()
-	dev_inject_box.add_theme_constant_override("separation", 5)
-	dv.add_child(dev_inject_box)
-	var mrow1 := HBoxContainer.new()
-	mrow1.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(mrow1)
-	for amt in [["+1千", 1000], ["+1万", 10000], ["-1千", -1000]]:
-		var ab := UIKit.button(String(amt[0]), 11)
-		var av: int = amt[1]
-		ab.pressed.connect(func() -> void: _dev_add_money(av))
-		mrow1.add_child(ab)
-	var irow := HBoxContainer.new()
-	irow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(irow)
-	dev_item_opt = OptionButton.new()
-	for id in ItemData.ITEMS:
-		dev_item_opt.add_item(id)
-	dev_item_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	dev_item_opt.item_selected.connect(func(_i: int) -> void: _dev_item_desc_update())
-	irow.add_child(dev_item_opt)
-	dev_item_desc = UIKit.label("", 10, UIKit.TEXT_DIM)
-	dev_item_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	dev_item_desc.custom_minimum_size = Vector2(0, 26)
-	dev_inject_box.add_child(dev_item_desc)
-	var irow2 := HBoxContainer.new()
-	irow2.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(irow2)
-	var give_btn := UIKit.button("发放", 11)
-	give_btn.pressed.connect(_dev_grant_item)
-	irow2.add_child(give_btn)
-	var use_btn := UIKit.button("强制使用", 11)
-	use_btn.pressed.connect(_dev_force_use)
-	irow2.add_child(use_btn)
-	var clear_bag := UIKit.button("清背包", 11)
-	clear_bag.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.items = []))
-	irow2.add_child(clear_bag)
-	var dsrow := HBoxContainer.new()
-	dsrow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(dsrow)
-	dsrow.add_child(UIKit.label("体力", 11, UIKit.TEXT_DIM))
-	dev_stam_s = HSlider.new()
-	dev_stam_s.min_value = 0
-	dev_stam_s.max_value = 5
-	dev_stam_s.step = 1
-	dev_stam_s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	dev_stam_s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	dsrow.add_child(dev_stam_s)
-	var cds_btn := UIKit.button("清冷却", 11)
-	cds_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void:
-		for it in p.get("items", []):
-			it.cd = 0
-	))
-	dsrow.add_child(cds_btn)
-	var trow := HBoxContainer.new()
-	trow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(trow)
-	trow.add_child(UIKit.label("传送格", 11, UIKit.TEXT_DIM))
-	dev_tp_spin = SpinBox.new()
-	dev_tp_spin.min_value = 0
-	dev_tp_spin.max_value = int(GameData.TILES.size()) - 1
-	dev_tp_spin.custom_minimum_size = Vector2(64, 0)
-	trow.add_child(dev_tp_spin)
-	var tp_btn := UIKit.button("传送", 11)
-	tp_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.pos = int(dev_tp_spin.value)))
-	trow.add_child(tp_btn)
-	trow.add_child(UIKit.label("点数", 11, UIKit.TEXT_DIM))
-	dev_roll_spin = SpinBox.new()
-	dev_roll_spin.min_value = 0
-	dev_roll_spin.max_value = 12
-	dev_roll_spin.custom_minimum_size = Vector2(56, 0)
-	trow.add_child(dev_roll_spin)
-	var fr_btn := UIKit.button("强制", 11)
-	fr_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.cheat_roll = int(dev_roll_spin.value)))
-	trow.add_child(fr_btn)
-	var erow := HBoxContainer.new()
-	erow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(erow)
-	var end_btn := UIKit.button("结束当前等待", 11)
-	end_btn.pressed.connect(_dev_end_wait)
-	erow.add_child(end_btn)
-	erow.add_child(UIKit.label("时间倍率", 11, UIKit.TEXT_DIM))
-	for ts in [[".25", 0.25], ["1", 1.0], ["4", 4.0], ["8", 8.0]]:
-		var tb := UIKit.button(String(ts[0]), 11)
-		var tv: float = ts[1]
-		tb.pressed.connect(func() -> void:
-			Engine.time_scale = tv
-			_dev_ts_update()
-		)
-		erow.add_child(tb)
-	dev_ts_l = UIKit.label("当前 1x", 11, UIKit.TEXT_DIM)
-	erow.add_child(dev_ts_l)
-	var gal_btn := UIKit.button("道具卡图鉴", 11)
-	gal_btn.pressed.connect(_open_card_gallery)
-	dev_inject_box.add_child(gal_btn)
-	if not multiplayer.is_server():
-		dev_inject_box.visible = false  # 客户端：仅观察
+	dev.build_panel()
 
 	# 左下角：格子详情卡（点击棋盘格子弹出相关信息）
 	info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
@@ -1245,7 +1119,7 @@ func s_state(state: Dictionary) -> void:
 			get_tree().quit(0)
 	elif _shot_path != "" and not _shot_taken and (int(state.round) >= 2 or at_mode == ""):
 		_shot_taken = true
-		_take_shot(_shot_path)
+		dev.take_shot(_shot_path)
 	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
 		print("AUTOTEST CLIENT OK round=", state.round)
 		get_tree().quit(0)
@@ -1489,7 +1363,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_F1:
-			_toggle_dev()
+			dev.toggle()
 		elif k.keycode == KEY_SPACE:
 			board.go_home_follow(my_peer)
 		elif k.keycode == KEY_TAB:
@@ -2893,173 +2767,6 @@ func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 		tw.parallel().tween_property(bill, "modulate:a", 0.0, 0.2).set_delay(0.36)
 		tw.tween_callback(bill.queue_free)
 
-# ================= 开发者模式 =================
-
-func _apply_dev_mode() -> void:
-	if dev_panel != null and is_instance_valid(dev_panel):
-		dev_panel.visible = dev_enabled
-	if board != null:
-		board.dev_tile_index = dev_enabled
-	_dev_ts_update()
-
-func _toggle_dev() -> void:
-	dev_enabled = not dev_enabled
-	var cfg := ConfigFile.new()
-	cfg.load("user://settings.cfg")
-	cfg.set_value("dev", "enabled", dev_enabled)
-	cfg.save("user://settings.cfg")
-	_apply_dev_mode()
-
-func _dev_ts_update() -> void:
-	if dev_ts_l != null and is_instance_valid(dev_ts_l):
-		dev_ts_l.text = "当前 " + String.num(Engine.time_scale, 2) + "x"
-
-func _dev_selected() -> Dictionary:
-	var p := _player_by_peer(dev_sel_peer)
-	return p
-
-func _dev_edit_selected(edit: Callable) -> void:
-	if not multiplayer.is_server():
-		return
-	var p := _dev_selected()
-	if p.is_empty():
-		return
-	edit.call(p)
-	_broadcast_state()
-
-func _dev_add_money(amount: int) -> void:
-	_dev_edit_selected(func(p: Dictionary) -> void: p.money = int(p.money) + amount)
-
-func _dev_grant_item() -> void:
-	var id := _dev_selected_item()
-	if id == "":
-		return
-	_dev_edit_selected(func(p: Dictionary) -> void: _grant_item(p, id))
-
-func _dev_selected_item() -> String:
-	if dev_item_opt == null or dev_item_opt.selected < 0:
-		return ""
-	return String(ItemData.ITEMS.keys()[dev_item_opt.selected])
-
-func _dev_item_desc_update() -> void:
-	var d := ItemData.def(_dev_selected_item())
-	dev_item_desc.text = "%s · %d⚡ · %s" % [String(d.get("quality", "?")), int(d.get("cost", 0)), String(d.get("desc", ""))] \
-		if String(d.get("type", "")) == "active" else "%s · 被动 · %s" % [String(d.get("quality", "?")), String(d.get("desc", ""))]
-
-func _dev_force_use() -> void:
-	if not multiplayer.is_server():
-		return
-	var id := _dev_selected_item()
-	var p := _dev_selected()
-	if p.is_empty() or id == "":
-		return
-	if not _has_item(p, id):
-		_grant_item(p, id)
-	match id:
-		"作弊器":
-			p.cheat_roll = clampi(int(dev_roll_spin.value), 0, 12)
-			_log("[dev] %s 的下一次转盘点数被锁成 %d" % [p.name, int(dev_roll_spin.value)], "#7fd88f")
-		"平均主义":
-			var alive: Array = hp.filter(func(x) -> bool: return bool(x.alive))
-			var total := 0
-			for a in alive:
-				total += int(a.money)
-			var share := int(total / alive.size())
-			var rem := total - share * alive.size()
-			for a in alive:
-				if _immune_debuff(a):
-					continue  # 香皂免疫：不被拉平
-				a.money = share
-			for k in rem:
-				if not _immune_debuff(alive[k]):
-					alive[k].money = int(alive[k].money) + 1
-			_log("[dev] 全场现金已拉平", "#7fd88f")
-		"蛋蛋节":
-			items_consumed["蛋蛋节"] = true
-			for i in range(p.items.size() - 1, -1, -1):
-				if String(p.items[i].id) == "蛋蛋节":
-					p.items.remove_at(i)
-			_apply_egg_festival(p)
-		"亡牌飞行员coco":
-			items_consumed["亡牌飞行员coco"] = true
-			for i in range(p.items.size() - 1, -1, -1):
-				if String(p.items[i].id) == "亡牌飞行员coco":
-					p.items.remove_at(i)
-			_apply_coco(p)
-		_:
-			_log("[dev] 【%s】效果尚未实装（被动持有即可生效 / 后续批次）" % id, "#7fd88f")
-	_broadcast_state()
-
-func _dev_end_wait() -> void:
-	if not multiplayer.is_server():
-		return
-	match String(st.get("await", "")):
-		"roll":
-			roll_received.emit()
-		"item":
-			_item_action = {"epoch": _item_epoch, "action": "skip"}
-		"shop":
-			_shop_leave(_shop_peer)
-
-func _dev_refresh_panel() -> void:
-	if dev_panel == null or not is_instance_valid(dev_panel) or not dev_panel.visible:
-		return
-	var lines := ["第%d/%d轮 · await=%s" % [int(st.get("round", 0)), int(st.get("max_rounds", 0)), String(st.get("await", ""))]]
-	for p in st.get("players", []):
-		var its := []
-		for it in p.get("items", []):
-			its.append(String(it.id) + (("·%d" % int(it.cd)) if int(it.cd) > 0 else ""))
-		lines.append("%s ¥%d ⚡%d 格%d %s" % [String(p.name), int(p.money), int(p.get("stamina", 0)),
-			int(p.pos), " ".join(its)])
-	var shop_txt := ""
-	for k in st.get("shops", {}):
-		var arr: Array = st.shops[k].slots
-		var names := []
-		for id in arr:
-			names.append("空" if String(id) == "" else String(id))
-		shop_txt += "[%s]" % ",".join(names)
-	lines.append("刷¥%d %s" % [int(st.get("refresh_price", 0)), shop_txt])
-	dev_state_l.text = "\n".join(lines)
-	dev_cam_l.text = board.cam_info()
-	# 玩家选择按钮懒建 + 文本刷新
-	if dev_pbtns.is_empty() and board.seat_count() > 0:
-		for p in st.get("players", []):
-			var peer := int(p.peer)
-			var b := UIKit.button(String(p.name), 11)
-			b.toggle_mode = true
-			b.pressed.connect(func() -> void:
-				dev_sel_peer = peer
-				_dev_sel_refresh()
-			)
-			dev_players.add_child(b)
-			dev_pbtns.append({"peer": peer, "btn": b})
-	_dev_sel_refresh()
-
-func _dev_sel_refresh() -> void:
-	if dev_sel_peer == 0 and not dev_pbtns.is_empty():
-		dev_sel_peer = int(dev_pbtns[0].peer)
-	for e in dev_pbtns:
-		var btn: Button = e.btn
-		btn.button_pressed = int(e.peer) == dev_sel_peer
-
-func _menu_probe_run() -> void:
-	await _wait(2.0)
-	print("PROBE open menu...")
-	_open_menu()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE paused=", get_tree().paused, " menu_visible=", menu_layer.visible,
-		" panel=", menu_panel.visible, " state=", menu_state.text)
-	_menu_resume()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE resumed paused=", get_tree().paused, " menu_visible=", menu_layer.visible)
-	_open_menu()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE reopen paused=", get_tree().paused, " menu_visible=", menu_layer.visible)
-	_menu_resume()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE final paused=", get_tree().paused)
-	print("PROBE DONE")
-	get_tree().quit(0)
 
 func _process(_delta: float) -> void:
 	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
@@ -3101,8 +2808,8 @@ func _process(_delta: float) -> void:
 			mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
 	elif action_bar.visible:
 		_place_overlay_bar(action_bar)
-	if dev_enabled:
-		_dev_refresh_panel()
+	if dev.enabled:
+		dev.refresh_panel()
 
 ## 交易面板贴在屏幕底部居中（避开底部行动条隐藏后的空档）
 func _place_overlay_bar(c: Control) -> void:
@@ -3211,44 +2918,3 @@ func _on_exit() -> void:
 func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec, false).timeout
 
-func _take_shot(path: String) -> void:
-	await get_tree().create_timer(0.4).timeout
-	while board.is_showing_deck_card():
-		await get_tree().create_timer(0.25).timeout
-	board.fit_overview()
-	await get_tree().create_timer(0.2).timeout
-	board.cam_locked = true  # 摆拍期间锁住自动镜头，避免对局推进拽走视角
-	if _shot_rot > 0:
-		board.rotate_to_edge(_shot_rot, true)  # 摆拍：转到对应座位的视角
-		await get_tree().create_timer(0.15).timeout
-	if not path.contains("table"):
-		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
-		board.focus_grid(27, 0.8, true)
-		await get_tree().create_timer(0.15).timeout
-		_on_tile_clicked(27)  # 顺便展示格子详情卡
-	if not path.contains("plain"):
-		board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
-		board.spin_wheel(12)
-		# 赌局界面预览（单行假数据，验证布局用）
-		casino.s_casino_start.rpc("炸弹猫", 800, 3200, [my_peer])
-		casino.s_casino_turn.rpc(my_peer, 1, {my_peer: 1}, {my_peer: 2}, 9, true)
-		casino.s_casino_event.rpc("你 摸到一张【拆除】揣进兜里", "move")
-		casino.s_casino_event.rpc("你 摸到炸弹，紧急打出【拆除】化解！", "move")
-		casino.s_casino_event.rpc("你 摸到一条小鱼", "good")
-	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
-	for i in 3:
-		await get_tree().create_timer(0.6).timeout
-		await RenderingServer.frame_post_draw
-		var p := path if i == 0 else path.replace(".png", "_%d.png" % i)
-		get_viewport().get_texture().get_image().save_png(p)
-		print("SHOT SAVED ", p)
-	get_tree().quit(0)
-
-func _dev_player_edit(edit: Callable) -> void:
-	if not multiplayer.is_server():
-		return
-	var p := _dev_selected()
-	if p.is_empty():
-		return
-	edit.call(p)
-	_broadcast_state()
