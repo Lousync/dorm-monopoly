@@ -22,6 +22,8 @@ var ph2_lab: Label
 var log_head: Label
 var opt_btn: Button
 var menu_layer: Control
+var menu_dim: ColorRect
+var menu_wraps := {}          # 面板名 -> 外层全屏容器（切换时连外层一起切，见 _menu_show）
 var menu_panel: PanelContainer
 var menu_state: Label
 var settings_panel: PanelContainer
@@ -2228,21 +2230,35 @@ func _pill_label(p: Control) -> Label:
 
 func _build_menu_ui() -> void:
 	TableHud.build_menu_ui(self)
+## 切换暂停菜单族的当前面板（""=全部收起）。
+##
+## 三块面板（主菜单 / 设置 / 退出确认）各套一个全屏 CenterContainer，**必须连外层
+## 容器一起切**：外层是 set_anchors_preset(FULL_RECT) + 默认 mouse_filter=STOP 的容器，
+## 只切内层 *_panel.visible 的话，最后那块（退出确认的）全屏容器依旧可见，
+## 会把整屏点击全部吃掉 —— 对局里点开暂停后「界面卡死、按钮全点不动」的真凶
+##（见 fix/v0.1.0 与 tests/pause_menu_test.gd）。
+func _menu_show(which: String) -> void:
+	menu_layer.visible = which != ""
+	for k in menu_wraps:
+		var e: Dictionary = menu_wraps[k]
+		# wrap 负责吃输入（全屏 STOP），panel 负责「当前显示哪块」的可查询状态
+		for key in ["wrap", "panel"]:
+			var c: Control = e[key]
+			if c != null and is_instance_valid(c):
+				c.visible = k == which
+
 func _open_menu() -> void:
 	if multiplayer.is_server():
 		s_pause.rpc(true)  # 房主打开菜单 = 全场暂停
 		menu_state.text = "⏸ 已暂停（全场）"
 	else:
 		menu_state.text = "对局进行中 · 仅房主可暂停"
-	menu_panel.visible = true
-	settings_panel.visible = false
-	confirm_panel.visible = false
-	menu_layer.visible = true
+	_menu_show("menu")
 
 func _menu_resume() -> void:
 	if multiplayer.is_server():
 		s_pause.rpc(false)
-	menu_layer.visible = false
+	_menu_show("")
 
 @rpc("authority", "call_local", "reliable")
 func s_pause(on: bool) -> void:

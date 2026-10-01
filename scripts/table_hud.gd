@@ -193,8 +193,9 @@ static func build_play_ui(g: Node) -> void:
 	g.black_hint.custom_minimum_size = Vector2(336, 0)
 	bbv.add_child(g.black_hint)
 
-	# 左上角：选项按钮（打开暂停菜单族，见 g._build_menu_ui）
-	g.opt_btn = UIKit.button("☰ 选项", 13)
+	# 左上角：暂停按钮（打开暂停菜单族，见 g._build_menu_ui）
+	g.opt_btn = UIKit.button("⏸ 暂停", 13)
+	g.opt_btn.tooltip_text = "暂停对局（房主暂停全场）"
 	g.opt_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	g.opt_btn.offset_left = 12
 	g.opt_btn.offset_top = 10
@@ -289,6 +290,16 @@ static func build_menu_ui(g: Node) -> void:
 	g.menu_layer.visible = false
 	g.add_child(g.menu_layer)
 
+	# 全屏压暗底：视觉上压暗棋盘，同时替菜单吞掉落在面板外的点击（模态）
+	g.menu_dim = ColorRect.new()
+	g.menu_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.menu_dim.color = Color(0.03, 0.035, 0.062, 0.62)
+	g.menu_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	g.menu_layer.add_child(g.menu_dim)
+
+	# 面板名 -> {wrap, panel}，构建完三块面板后统一登记（见本函数末尾）
+	g.menu_wraps = {}
+
 	# 非房主看到的「房主已暂停」遮罩
 	g.pause_mask = ColorRect.new()
 	g.pause_mask.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -307,6 +318,7 @@ static func build_menu_ui(g: Node) -> void:
 	# 主菜单：继续 / 设置 / 退出
 	var mc := CenterContainer.new()
 	mc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	mc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.menu_layer.add_child(mc)
 	g.menu_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
@@ -324,24 +336,23 @@ static func build_menu_ui(g: Node) -> void:
 	mv.add_child(cont_btn)
 	var set_btn := UIKit.button("⚙ 设置", 15)
 	set_btn.pressed.connect(func() -> void:
-		g.menu_panel.visible = false
 		g.vol_slider.value = g.audio_volume * 100.0
 		g.mute_check.button_pressed = g.audio_mute
-		g.settings_panel.visible = true
+		g._menu_show("settings")
 	)
 	mv.add_child(set_btn)
 	var quit_btn := UIKit.button("⏻ 退出游戏", 15, "danger")
 	quit_btn.pressed.connect(func() -> void:
 		g.confirm_note.text = "你是房主：退出后对局结束，所有人回到主菜单。" \
 			if g.multiplayer.is_server() else "退出后你的回合将由机器人接管，对局继续。"
-		g.menu_panel.visible = false
-		g.confirm_panel.visible = true
+		g._menu_show("confirm")
 	)
 	mv.add_child(quit_btn)
 
 	# 设置：音量 / 静音（后续会加更多设置项）
 	var sc := CenterContainer.new()
 	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.menu_layer.add_child(sc)
 	g.settings_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
@@ -380,15 +391,13 @@ static func build_menu_ui(g: Node) -> void:
 	mute_row.add_child(g.mute_check)
 	sv.add_child(UIKit.label("—— 更多设置项（后续加入） ——", 12, UIKit.TEXT_DIM))
 	var back_btn := UIKit.button("‹ 返回", 14)
-	back_btn.pressed.connect(func() -> void:
-		g.settings_panel.visible = false
-		g.menu_panel.visible = true
-	)
+	back_btn.pressed.connect(func() -> void: g._menu_show("menu"))
 	sv.add_child(back_btn)
 
 	# 退出二次确认
 	var cc := CenterContainer.new()
 	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.menu_layer.add_child(cc)
 	g.confirm_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
 		Color(UIKit.DANGER.r, UIKit.DANGER.g, UIKit.DANGER.b, 0.75), 1, 10)
@@ -408,10 +417,7 @@ static func build_menu_ui(g: Node) -> void:
 	cv.add_child(cbtn_row)
 	var cancel_btn := UIKit.button("取消", 14)
 	cancel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cancel_btn.pressed.connect(func() -> void:
-		g.confirm_panel.visible = false
-		g.menu_panel.visible = true
-	)
+	cancel_btn.pressed.connect(func() -> void: g._menu_show("menu"))
 	cbtn_row.add_child(cancel_btn)
 	var sure_btn := UIKit.button("确认退出", 14, "danger")
 	sure_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -420,6 +426,14 @@ static func build_menu_ui(g: Node) -> void:
 		g._on_exit()
 	)
 	cbtn_row.add_child(sure_btn)
+
+	# 面板名 -> {外层全屏容器, 内层面板}。切换一律走 game.gd:_menu_show，
+	# 它把两者一起切；漏切外层 = 整屏点击被那个全屏 STOP 容器吃光（见 fix/v0.1.0）
+	g.menu_wraps = {
+		"menu": {"wrap": mc, "panel": g.menu_panel},
+		"settings": {"wrap": sc, "panel": g.settings_panel},
+		"confirm": {"wrap": cc, "panel": g.confirm_panel},
+	}
 
 	# 作弊器点数选框（0~12，本地弹出）
 	g.cheat_picker = Control.new()
