@@ -135,6 +135,7 @@ var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
 var _chat_shown := 0
 var _prompt_dlg: Control
 var _prompt_tw: Tween
+var _prompt_bar: ProgressBar
 var _prompt_token := -1
 
 # ---------------- 自动化测试 ----------------
@@ -417,8 +418,9 @@ func _play_turn(p: Dictionary) -> void:
 
 ## 真人玩家发呆太久由系统代掷，避免整局卡死
 func _arm_roll_timeout(epoch: int, peer: int) -> void:
-	await _wait(GameData.ROLL_TIMEOUT)
-	if running and _roll_epoch == epoch and _awaiting_roll == peer:
+	var timed_out := await _await_turn_window("roll",
+		func() -> bool: return _roll_epoch == epoch and _awaiting_roll == peer)
+	if timed_out:
 		var pl := _player_by_peer(peer)
 		_log("%s 发呆太久，系统代掷一步" % String(pl.get("name", "?")), "#8a90a5")
 		roll_received.emit()
@@ -755,16 +757,11 @@ func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String,
 		_show_prompt(tok, title, text, ok_text)
 	else:
 		s_prompt.rpc_id(int(p.peer), tok, title, text, ok_text)
-	var waited := 0.0
-	while waited < GameData.PROMPT_TIMEOUT:
-		await _wait(0.1)
-		if not running:
-			return false
-		waited += 0.1
-		if int(_decision.token) == tok:
-			break
+	var timed_out := await _await_turn_window("prompt",
+		func() -> bool: return int(_decision.token) != tok,
+		func(sec: float) -> void: _prompt_bar_arm(tok, sec))
 	_awaiting_prompt = 0
-	if int(_decision.token) != tok:
+	if timed_out and int(_decision.token) != tok:
 		_log("%s 思考超时，放弃了" % p.name, "#8a90a5")
 	return int(_decision.token) == tok and bool(_decision.yes)
 
@@ -874,6 +871,8 @@ func s_state(state: Dictionary) -> void:
 	var tier := String(state.get("timeout_tier", GameSettings.TIER_CURRENT))
 	if tier != _settings.timeout_tier:
 		_settings.timeout_tier = tier
+		if _prompt_token != -1:   # 弹窗开着 → 按新挡位重启倒计时条
+			_prompt_bar_arm(_prompt_token, GameSettings.turn_seconds(tier, "prompt"))
 	board.render(state)
 	board.set_shop_display(state.get("shops", {}), int(state.get("refresh_price", 0)),
 		int(state.get("shop_open", -1)))
@@ -1430,13 +1429,8 @@ func _show_prompt(token: int, title: String, text: String, ok_text: String) -> v
 		_answer(token, false)
 		_close_prompt()
 	)
-	_prompt_tw = create_tween()
-	_prompt_tw.tween_property(bar, "value", 0.0, GameData.PROMPT_TIMEOUT - 1.0)
-	_prompt_tw.tween_callback(func() -> void:
-		if _prompt_token == token:
-			_answer(token, false)
-			_close_prompt()
-	)
+	_prompt_bar = bar
+	_prompt_bar_arm(token, GameSettings.turn_seconds(_settings.timeout_tier, "prompt"))
 
 func _close_prompt() -> void:
 	if _prompt_tw != null and _prompt_tw.is_valid():
@@ -1445,7 +1439,28 @@ func _close_prompt() -> void:
 	if _prompt_dlg != null and is_instance_valid(_prompt_dlg):
 		_prompt_dlg.queue_free()
 	_prompt_dlg = null
+	_prompt_bar = null
 	_prompt_token = -1
+
+## （重）启动弹窗倒计时条。sec <= 0（不限时）则只隐藏条子、不自动拒绝。
+## 挡位中途变化时房主与客户端都会重新调用它（见 _await_turn_window / s_state）。
+func _prompt_bar_arm(token: int, sec: float) -> void:
+	if _prompt_tw != null and _prompt_tw.is_valid():
+		_prompt_tw.kill()
+	if _prompt_bar == null or not is_instance_valid(_prompt_bar) or _prompt_token != token:
+		return
+	if sec <= 0.0:
+		_prompt_bar.visible = false
+		return
+	_prompt_bar.visible = true
+	_prompt_bar.value = 100.0
+	_prompt_tw = create_tween()
+	_prompt_tw.tween_property(_prompt_bar, "value", 0.0, maxf(0.5, sec - 1.0))
+	_prompt_tw.tween_callback(func() -> void:
+		if _prompt_token == token:
+			_answer(token, false)
+			_close_prompt()
+	)
 
 func _refresh_chat() -> void:
 	# 对局期间的聊天并入战报（弱化颜色），避免错过消息
@@ -1710,8 +1725,9 @@ func _item_phase(p: Dictionary) -> void:
 	_broadcast_state()
 
 func _arm_item_timeout(epoch: int, peer: int) -> void:
-	await _wait(ItemData.ITEM_TIMEOUT)
-	if running and _awaiting_item == peer and int(_item_action.get("epoch", -1)) != epoch:
+	var timed_out := await _await_turn_window("item",
+		func() -> bool: return _awaiting_item == peer and int(_item_action.get("epoch", -1)) != epoch)
+	if timed_out:
 		_log("%s 在道具阶段发呆，跳过" % _name_by_peer(peer), "#8a90a5")
 		_item_action = {"epoch": epoch, "action": "skip"}
 
@@ -1808,8 +1824,9 @@ func _run_shop(p: Dictionary, idx: int) -> void:
 	_broadcast_state()
 
 func _arm_shop_timeout(epoch: int, peer: int) -> void:
-	await _wait(ItemData.SHOP_TIMEOUT)
-	if running and _shop_peer == peer and _shop_epoch == epoch:
+	var timed_out := await _await_turn_window("shop",
+		func() -> bool: return _shop_peer == peer and _shop_epoch == epoch)
+	if timed_out:
 		_log("%s 在小卖部逛太久，被老板请了出去" % _name_by_peer(peer), "#8a90a5")
 		_shop_peer = 0
 
@@ -1963,8 +1980,9 @@ func _run_blackshop(p: Dictionary) -> void:
 	_broadcast_state()
 
 func _arm_black_timeout(epoch: int, peer: int) -> void:
-	await _wait(ItemData.BLACK_TIMEOUT)
-	if running and _black_peer == peer and _black_epoch == epoch:
+	var timed_out := await _await_turn_window("black",
+		func() -> bool: return _black_peer == peer and _black_epoch == epoch)
+	if timed_out:
 		_log("%s 在黑市里发愣，被看场子的请了出去" % _name_by_peer(peer), "#8a90a5")
 		_black_force_exit(peer)
 
@@ -2647,4 +2665,24 @@ func _on_exit() -> void:
 
 func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec, false).timeout
+
+## 等一个环节的操作窗口。返回 true = 真超时（该自动托管）；false = 环节已结束。
+## 挡位变化（_timeout_rev 变）会按新秒数重计时；挡位为「不限时」则不托管。
+## on_arm(sec) 在每次窗口（重）开始时调一次——弹窗倒计时条据此重启。
+func _await_turn_window(kind: String, alive: Callable, on_arm := Callable()) -> bool:
+	while running and alive.call():
+		var rev := _timeout_rev
+		var sec := GameSettings.turn_seconds(_settings.timeout_tier, kind)
+		if on_arm.is_valid():
+			on_arm.call(sec)
+		# 分片等待（0.25 秒一探，开销可忽略）：环节结束、挡位变化、到点超时都能及时响应。
+		# 不能整段 `await _wait(sec)`——那样挡位中途变化要等满一整段才按新值重计时。
+		# sec <= 0（不限时）→ 没有到期时刻，只等前两种。
+		var waited := 0.0
+		while running and alive.call() and _timeout_rev == rev:
+			if sec > 0.0 and waited >= sec:
+				return true
+			await _wait(0.25)
+			waited += 0.25
+	return false
 

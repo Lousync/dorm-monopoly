@@ -18,6 +18,7 @@ func _run() -> void:
 	print("== 操作限时挡位 ==")
 	_test_mapping()
 	_test_broadcast()
+	await _test_window()   # 协程：不等它跑完 quit() 会先执行，断言全部落空（假绿）
 	print("SETTINGS TEST: %s" % ("PASS" if fails == 0 else "%d FAILURES" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -62,6 +63,10 @@ func _test_broadcast() -> void:
 	_check(lobby != null, "测试环境能取到 autoload Net")
 	_check(g._settings != lobby.game_settings, "房主用配置副本，非 autoload 同一对象")
 	_check(lobby.game_settings.timeout_tier == GameSettings.TIER_CURRENT, "对局内改挡不回写大厅")
+	# s_state 的同步分支：快照里的挡位变化要落进本地 _settings（房主 call_local 与客户端同一段代码）
+	g.s_state({"phase": "playing", "round": 1, "max_rounds": 30, "turn": 1,
+		"players": [], "tiles": [], "timeout_tier": "60"})
+	_check(g._settings.timeout_tier == "60", "快照挡位由 30 变 60 → 本地 _settings 同步")
 	g.queue_free()
 
 func _test_mapping() -> void:
@@ -84,3 +89,60 @@ func _test_mapping() -> void:
 	_check(GameSettings.TIERS.size() == 5 and GameSettings.TIERS[0] == cur, "挡位清单 5 项、首位是现状")
 	for t in GameSettings.TIERS:
 		_check(GameSettings.TIER_LABELS.has(t), "挡位 %s 有中文标签" % t)
+
+## 探针：跑一次 _await_turn_window，结果写进 out[0]，arm 次数写进 arm[0]
+func _probe(g: Node, kind: String, alive_ref: Array, out: Array, arm: Array) -> void:
+	# g 是 Node 类型，动态调用返回 Variant，不能写 `:=`（类型推不出来）
+	var r: bool = await g._await_turn_window(kind,
+		func() -> bool: return bool(alive_ref[0]),
+		func(_sec: float) -> void: arm[0] = int(arm[0]) + 1)
+	out[0] = r
+
+func _test_window() -> void:
+	var g := _host_game(7797)
+	if g == null:
+		return
+	g.running = true   # _await_turn_window 以 running 为前置；此时对局循环已退出，不会来抢
+
+	# 不限时：不会托管；环节一结束立刻返回 false
+	g._settings.timeout_tier = GameSettings.TIER_NONE
+	var alive := [true]
+	var out := [null]
+	var arm := [0]
+	_probe(g, "roll", alive, out, arm)
+	await create_timer(0.6).timeout
+	_check(out[0] == null, "不限时：0.6 秒内不自动托管")
+	_check(int(arm[0]) == 1, "不限时：窗口只 arm 一次")
+	alive[0] = false
+	await create_timer(0.5).timeout
+	_check(out[0] == false, "不限时：环节结束后返回 false")
+
+	# 固定档：不会提前托管；挡位一变就重计时（on_arm 再被调一次）
+	g._settings.timeout_tier = "60"
+	var alive2 := [true]
+	var out2 := [null]
+	var arm2 := [0]
+	_probe(g, "roll", alive2, out2, arm2)
+	await create_timer(0.3).timeout
+	_check(int(arm2[0]) == 1, "60 秒档：窗口 arm 一次")
+	g._timeout_rev += 1
+	await create_timer(0.4).timeout
+	_check(int(arm2[0]) == 2, "挡位变化 → 按新值重计时（重新 arm）")
+	_check(out2[0] == null, "60 秒档不会提前托管")
+	alive2[0] = false
+	await create_timer(0.5).timeout
+	_check(out2[0] == false, "固定档：环节结束后返回 false")
+
+	# 到点真该托管：15 秒档靠 Engine.time_scale 压成不到 1 秒真实时间
+	# （_wait 走 SceneTree 计时器、吃 time_scale；本段自己的等待用 ignore_time_scale 免被压缩）
+	Engine.time_scale = 20.0
+	g._settings.timeout_tier = "15"
+	var alive3 := [true]
+	var out3 := [null]
+	var arm3 := [0]
+	_probe(g, "roll", alive3, out3, arm3)
+	await create_timer(2.0, true, false, true).timeout
+	_check(out3[0] == true, "15 秒档：到点返回 true（该自动托管）")
+	_check(int(arm3[0]) == 1, "15 秒档：到点前只 arm 一次")
+	Engine.time_scale = 1.0
+	g.queue_free()
