@@ -207,6 +207,8 @@ func apply_mode() -> void:
 	_dev_ts_update()
 
 func toggle() -> void:
+	if not OS.is_debug_build():
+		return   # 正式导出版没有开发者模式：F1 不能把开关拨回来（面板也从未显示）
 	enabled = not enabled
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")

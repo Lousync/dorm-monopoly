@@ -249,7 +249,10 @@ func _ready() -> void:
 	if cfg.load("user://settings.cfg") == OK:
 		audio_volume = clampf(float(cfg.get_value("audio", "volume", 1.0)), 0.0, 1.0)
 		audio_mute = bool(cfg.get_value("audio", "mute", false))
-		dev.enabled = bool(cfg.get_value("dev", "enabled", false)) or dev_flag
+		# 正式导出版（release）不带开发者模式：F1 面板 / --dev / --lab 全部只在
+		# 编辑器或调试构建里存在（见 dev_tools.toggle 与主菜单入口的同款门控）。
+		dev.enabled = (bool(cfg.get_value("dev", "enabled", false)) or dev_flag) \
+			and OS.is_debug_build()
 	if at_mode != "" and not dev_flag:
 		dev.enabled = false
 	_apply_audio()

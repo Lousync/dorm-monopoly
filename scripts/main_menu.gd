@@ -31,8 +31,8 @@ func _ready() -> void:
 			Net.my_name = "房主"
 			Net.host_game(7793)
 			get_tree().change_scene_to_file.call_deferred("res://scenes/game.tscn")
-		elif a == "--lab":
-			# 道具试验场：独立沙盒（item_lab 内部自己 host + 内嵌 game.tscn）
+		elif a == "--lab" and OS.is_debug_build():
+			# 道具试验场：独立沙盒（item_lab 内部自己 host + 内嵌 game.tscn）；正式版无此入口
 			get_tree().change_scene_to_file.call_deferred("res://scenes/item_lab.tscn")
 
 	var cfg := ConfigFile.new()
@@ -183,11 +183,13 @@ func _ready() -> void:
 	_status.custom_minimum_size = Vector2(0, 22)
 	root.add_child(_status)
 
-	# 开发者入口：仅在开发模式下显示（dev 开关：启动带 --dev，或设置里 dev.enabled=true）
+	# 开发者入口：仅在开发模式下显示（dev 开关：启动带 --dev，或设置里 dev.enabled=true；
+	# 正式导出版一律关闭——OS.is_debug_build() 门控，见 game.gd 的同款处理）
 	var dev_on := bool(cfg.get_value("dev", "enabled", false))
 	for a0 in OS.get_cmdline_user_args():
 		if a0 == "--dev":
 			dev_on = true
+	dev_on = dev_on and OS.is_debug_build()
 	if dev_on:
 		var lab_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
 		var lm := UIKit.margins(10, 10, 8, 8)
