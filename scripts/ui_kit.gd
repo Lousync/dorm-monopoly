@@ -301,6 +301,30 @@ static func chip(color: Color, side: float = 16.0) -> Control:
 	c.add_child(p)
 	return c
 
+## 一排单选 chips（ids + id->文案）；点选回调 on_pick(id)。
+## 建出来的 HBox 带 meta "chips" = {id: Button}，用 chip_select() 刷新高亮。
+static func chip_row(ids: Array, labels: Dictionary, on_pick: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var map := {}
+	for id in ids:
+		var sid := String(id)
+		var b := button(String(labels.get(sid, sid)), 14)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(func() -> void: on_pick.call(sid))
+		row.add_child(b)
+		map[sid] = b
+	row.set_meta("chips", map)
+	return row
+
+## 高亮某个 chip，其余回普通样式
+static func chip_select(row: HBoxContainer, id: String) -> void:
+	if row == null:
+		return
+	var map: Dictionary = row.get_meta("chips", {})
+	for k in map:
+		restyle_button(map[k], "primary" if String(k) == id else "normal")
+
 ## 圆角小徽章（「已准备」等），fg 决定文字与描边色调
 static func pill(text: String, fg: Color, size := 12) -> PanelContainer:
 	var p := PanelContainer.new()

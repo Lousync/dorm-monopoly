@@ -11,6 +11,11 @@ var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
 var _room_label: Label
 
+# 房主开局设置弹窗（见 docs/gameplay/开局设置.md §三之一）
+var _set_wrap: Control
+var _set_chips: HBoxContainer
+var _set_tier := GameSettings.TIER_CURRENT
+
 var _at_mode := ""
 var _shot_path := ""
 
@@ -142,6 +147,7 @@ func _ready() -> void:
 
 	_refresh()
 	_refresh_chat()
+	_build_settings_dialog()
 
 	if _at_mode == "host":
 		_autotest_host()
@@ -227,7 +233,59 @@ func _i_am_ready() -> bool:
 			return bool(p.ready)
 	return false
 
+## 房主「开始游戏！」前的极简设置弹窗：只放「操作限时」一排 chips
+func _build_settings_dialog() -> void:
+	_set_wrap = Control.new()
+	_set_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_set_wrap.visible = false
+	add_child(_set_wrap)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP   # 模态：吞掉落在面板外的点击
+	_set_wrap.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_set_wrap.add_child(center)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 12)
+	panel.custom_minimum_size = Vector2(420, 0)
+	center.add_child(panel)
+	var m := UIKit.margins(20, 20, 16, 14)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	m.add_child(v)
+	v.add_child(UIKit.title_label("游戏设置", 20))
+	v.add_child(UIKit.label("操作限时：轮到你时超过该时间没操作，就由系统托管", 13, UIKit.TEXT_DIM))
+	_set_chips = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
+		func(id: String) -> void:
+			_set_tier = id
+			UIKit.chip_select(_set_chips, id))
+	v.add_child(_set_chips)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	v.add_child(row)
+	var cancel := UIKit.button("取消", 15)
+	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cancel.pressed.connect(func() -> void: _set_wrap.visible = false)
+	row.add_child(cancel)
+	var ok := UIKit.button("开始游戏！", 16, "primary")
+	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ok.pressed.connect(_on_settings_confirm)
+	row.add_child(ok)
+
 func _on_start() -> void:
+	if not multiplayer.is_server():
+		return
+	_set_tier = Net.game_settings.timeout_tier
+	UIKit.chip_select(_set_chips, _set_tier)
+	_set_wrap.visible = true
+
+func _on_settings_confirm() -> void:
+	Net.game_settings.timeout_tier = _set_tier
+	_set_wrap.visible = false
 	Net.start_game()
 
 func _on_leave() -> void:
