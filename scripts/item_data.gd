@@ -25,6 +25,7 @@ const BLACK_EXIT_COST := 1                     # 出口费 1 块地皮
 const BLACK_TIMEOUT := 20.0                    # 逛黑市发呆兜底
 
 ## target: "player" = 需选玩家；"tile" = 需点地图选格；缺省 = 自身/全体。
+## then: "own_prop" = 选完玩家后再点他名下的一块地皮（两段式，如强拆令/抄家队）。
 const ITEMS := {
 	# ---- 首批（已实装）----
 	"平均主义": {"quality": "紫", "cost": 5, "type": "active", "unique": false, "cooldown": 5,
@@ -120,7 +121,7 @@ const ITEMS := {
 	"时光倒流": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "下一次转盘可以重掷一次，取更高点数。", "implemented": true, "icon": "item_rewind"},
 	"抄家队": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
-		"desc": "指定一名玩家的随机一块地皮降 1 级。", "implemented": true, "target": "player", "icon": "item_raiders"},
+		"desc": "指定一名玩家的一块地皮降 1 级。", "implemented": true, "target": "player", "then": "own_prop", "icon": "item_raiders"},
 	"拼车": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "立刻移动到一名指定玩家所在的格子。", "implemented": true, "target": "player", "icon": "item_carpool"},
 	"保安队长": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
@@ -146,7 +147,7 @@ const ITEMS := {
 	"快递直达": {"quality": "紫", "cost": 4, "type": "active", "unique": false, "cooldown": 4,
 		"desc": "立刻移动到地图上的任意一格。", "implemented": true, "target": "tile", "icon": "item_rocket"},
 	"强拆令": {"quality": "紫", "cost": 4, "type": "active", "unique": false, "cooldown": 4,
-		"desc": "指定一名玩家的一块地皮变为无主。", "implemented": true, "target": "player", "icon": "item_demolish"},
+		"desc": "指定一名玩家的一块地皮变为无主。", "implemented": true, "target": "player", "then": "own_prop", "icon": "item_demolish"},
 	"时间暂停": {"quality": "紫", "cost": 4, "type": "active", "unique": false, "cooldown": 5,
 		"desc": "指定一名玩家下一回合休眠。", "implemented": true, "target": "player", "icon": "item_pause"},
 	"学费上涨": {"quality": "紫", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,

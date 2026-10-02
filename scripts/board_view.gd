@@ -11,12 +11,14 @@ signal item_slot_clicked(peer: int, slot: int)   # 牌垫道具卡点选（阶�
 signal item_discard_clicked(peer: int, slot: int) # 卡片右上角「✕」丢弃
 signal phase_spin_clicked()          # 牌垫上的「转转盘」
 signal phase_use_clicked()           # 牌垫上的「使用道具」
+signal cancel_clicked()              # 右键单击（未拖拽平移）：取消当前选择
 
 const TILE := 112.0
 static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (2016, 1344)
 const GAP := 5.0
 const MIN_ZOOM := 0.22
 const MAX_ZOOM := 1.25
+const SELECT_COLOR := Color(1.0, 0.86, 0.35)   # 指向性道具「可选中」高亮（金）
 ## 抽卡展示的四个相位：抽出 → 翻面 → 停留 → 收回
 const DECK_OUT := 0.34
 const DECK_FLIP := 0.30
@@ -77,12 +79,14 @@ var _star_labels: Array = []
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
 var _levels: Array = []        # 上一次渲染的等级（用于星级弹跳）
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
+var _tile_hl: Array = []       # 每格「可选中」高亮叠层（选地块/两段式时显示）
 var _tile_tw := {}             # 每格进行中的补间
 var _tokens := {}              # peer -> 棋子 Panel
 var _animating := {}           # peer -> bool
 var _ring: Panel
 var _ring_peer := -1
 var _ring_tw: Tween
+var _select_tw: Tween          # 「可选中」高亮的呼吸补间
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
 # 镜头对点跟随（抽卡时对准牌堆）与牌堆抽卡动画
@@ -234,6 +238,16 @@ func _build_tiles() -> void:
 		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_world.add_child(p)
 		_tile_sb.append(sb)
+
+		var hl := Panel.new()
+		hl.position = p.position
+		hl.size = p.size
+		hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hl.visible = false
+		hl.add_theme_stylebox_override("panel",
+			UIKit.stylebox(Color(0, 0, 0, 0), 7, SELECT_COLOR, 3, 0))
+		_world.add_child(hl)
+		_tile_hl.append(hl)
 
 		# 色带：加宽到 12 并用渐变卡样式，让产业分组一眼可辨
 		var strip := Panel.new()
@@ -783,6 +797,8 @@ func _gui_input(ev: InputEvent) -> void:
 						if idx >= 0:
 							Fx.play("click", -10.0)
 							tile_clicked.emit(idx)
+				elif mb.button_index == MOUSE_BUTTON_RIGHT and not _panning:
+					cancel_clicked.emit()   # 右键单击（非拖拽平移）取消当前选择
 				if not (mb.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)):
 					_dragging = false
 					_panning = false
@@ -991,6 +1007,15 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	card.add_theme_stylebox_override("panel", sb)
 	root.add_child(card)
 
+	# 「可选中」高亮叠层：指向性道具选玩家时点亮（世界坐标，随座位旋转）
+	var seat_hl := Panel.new()
+	seat_hl.size = SEAT_SIZE
+	seat_hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	seat_hl.visible = false
+	seat_hl.add_theme_stylebox_override("panel",
+		UIKit.stylebox(Color(0, 0, 0, 0), 16, SELECT_COLOR, 3, 0))
+	root.add_child(seat_hl)
+
 	var chip: Control
 	var piece := UIKit.piece_tex(int(p.color) % 4)
 	if piece != null:
@@ -1094,7 +1119,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		pv.add_child(_phase_use)
 
 	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
-		"est_l": est_l, "badge_slot": badge_slot,
+		"est_l": est_l, "badge_slot": badge_slot, "hl": seat_hl,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
 		"shown": int(p.money), "tw": null}
 
@@ -1588,6 +1613,53 @@ func set_phase_buttons(spin_text: String, spin_style: String, spin_disabled: boo
 
 func set_self_peer(peer: int) -> void:
 	self_peer = peer
+
+## 指向性道具：高亮可选玩家座位卡 / 可选格子（世界坐标；两者互斥）
+func set_select_peers(peers: Array) -> void:
+	_set_hl_tiles([])
+	_set_hl_peers(peers)
+	_pulse_select(not peers.is_empty())
+
+func set_select_tiles(idxs: Array) -> void:
+	_set_hl_peers([])
+	_set_hl_tiles(idxs)
+	_pulse_select(not idxs.is_empty())
+
+func clear_select() -> void:
+	_set_hl_peers([])
+	_set_hl_tiles([])
+	_pulse_select(false)
+
+func _set_hl_peers(peers: Array) -> void:
+	for e in _seats:
+		var sd: Dictionary = _seats[e]
+		var hl = sd.get("hl", null)
+		if hl != null and is_instance_valid(hl):
+			(hl as Panel).visible = int(sd.get("peer", -1)) in peers
+
+func _set_hl_tiles(idxs: Array) -> void:
+	for i in _tile_hl.size():
+		var hl = _tile_hl[i]
+		if hl != null and is_instance_valid(hl):
+			(hl as Panel).visible = i in idxs
+
+func _pulse_select(on: bool) -> void:
+	if _select_tw != null and _select_tw.is_valid():
+		_select_tw.kill()
+		_select_tw = null
+	if not on:
+		return
+	var apply := func(a: float) -> void:
+		for e in _seats:
+			var hl = _seats[e].get("hl", null)
+			if hl != null and is_instance_valid(hl) and (hl as Panel).visible:
+				hl.modulate.a = a
+		for hl in _tile_hl:
+			if hl != null and is_instance_valid(hl) and (hl as Panel).visible:
+				hl.modulate.a = a
+	_select_tw = create_tween().set_loops()
+	_select_tw.tween_method(apply, 1.0, 0.45, 0.7).set_trans(Tween.TRANS_SINE)
+	_select_tw.tween_method(apply, 0.45, 1.0, 0.7).set_trans(Tween.TRANS_SINE)
 
 ## 丢弃待确认：把那张卡的「✕」点亮成红色
 func mark_discard_pending(peer: int, slot: int) -> void:

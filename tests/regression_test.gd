@@ -111,6 +111,7 @@ func _run() -> void:
 	_test_shop_refresh_full_shelf(g)
 	_test_camera_state(g)
 	await _test_roll_button_off_home_view(g)
+	await _test_targeting(g)
 
 	# 掉线路径会触发换场景，放到最后
 	var lobby = load("res://scenes/lobby.tscn").instantiate()
@@ -471,3 +472,58 @@ func _test_roll_button_off_home_view(g) -> void:
 	_check(not g.board.at_home_view(), "已转离自己视角")
 	g._process(0.0)
 	_check(g.board._phase_spin != null, "转离视角后牌垫按钮对象仍在（随桌世界）")
+
+## 指向性道具：点棋盘选玩家 / 两段式手选地块（本轮返工）
+func _test_targeting(g) -> void:
+	print("== 指向性道具：选玩家 / 两段式手选地块 ==")
+	var p1 := _mk_player(1, "我")
+	var p2 := _mk_player(2, "乙")
+	var p3 := _mk_player(3, "丙")
+	g.my_peer = 1
+	var tiles := _fresh_tiles()
+	var pa := _prop_idx(0)
+	var pb := _prop_idx(1)
+	tiles[pa]["owner"] = 2
+	tiles[pa]["level"] = 2
+	tiles[pb]["owner"] = 2
+	tiles[pb]["level"] = 1
+	g.st = {
+		"phase": "playing", "turn": 1, "await": "item", "await_peer": 1, "roll_epoch": 1,
+		"round": 1, "max_rounds": 30, "players": [p1, p2, p3], "tiles": tiles,
+		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
+	}
+	# 选玩家：其他两名存活玩家；两段式只列「名下有地」的玩家
+	_check(g._item_targets(1).size() == 2, "选玩家列表 = 其他两名存活玩家")
+	_check(g._selectable_props(2) == [pa, pb], "乙名下两块地皮（读已同步的 st.tiles）")
+	_check(g._selectable_props(3).is_empty(), "丙名下无地皮")
+
+	# 两段式：强拆令 选乙 → 指定 pa → 只有 pa 归无主（而非随机）
+	g.hp = [p1, p2, p3]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0, "soil": false})
+	g.htiles[pa]["owner"] = 2
+	g.htiles[pa]["level"] = 2
+	g.htiles[pb]["owner"] = 2
+	g.htiles[pb]["level"] = 1
+	var inst := {"id": "强拆令", "cd": 0}
+	var ok: bool = await g._apply_item_effect(p1, inst, 2, pa)
+	_check(ok, "强拆令（两段式）返回成功")
+	_check(int(g.htiles[pa].owner) == GameData.NO_OWNER, "指定的 pa 归为无主")
+	_check(int(g.htiles[pb].owner) == 2, "未指定的 pb 不受影响（不是随机乱拆）")
+	_check(int(g.htiles[pa].level) == 0, "被强拆的地皮等级清零")
+
+	# 抄家队：两段式指定 pb → 只降 pb 一级
+	g.htiles[pa]["owner"] = 2
+	g.htiles[pa]["level"] = 2
+	g.htiles[pb]["owner"] = 2
+	g.htiles[pb]["level"] = 2
+	var inst2 := {"id": "抄家队", "cd": 0}
+	var ok2: bool = await g._apply_item_effect(p1, inst2, 2, pb)
+	_check(ok2, "抄家队（两段式）返回成功")
+	_check(int(g.htiles[pb].level) == 1, "指定的 pb 降 1 级")
+	_check(int(g.htiles[pa].level) == 2, "未指定的 pa 不受影响")
+
+	# 非法 arg2（不属于目标）→ 回落随机，不崩
+	var ok3: bool = await g._apply_item_effect(p1, inst2, 2, 9999)
+	_check(ok3, "非法 arg2 回落随机仍返回成功")

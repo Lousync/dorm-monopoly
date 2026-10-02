@@ -422,10 +422,13 @@ func _update_hint() -> void:
 		return
 	var d := ItemData.def(sel_item)
 	var tgt := String(d.get("target", ""))
+	var then := String(d.get("then", ""))
 	var need := ""
 	if tgt == "player":
 		need = "\n→ 需点左侧「🎯 设为目标」选目标" + \
 			("（当前：%s）" % String(g.hp[target_i].get("name", "?")) if target_i >= 0 else "（未选）")
+		if then == "own_prop":
+			need += "\n→ 再点棋盘选他名下的一块地"
 	elif tgt == "tile":
 		need = "\n→ 需点棋盘选目标格" + ("（当前：#%d）" % target_tile if target_tile >= 0 else "（未选）")
 	_desc_l.text = "%s · %s · %s\n%s%s" % [sel_item, String(d.get("quality", "?")),
@@ -456,11 +459,18 @@ func _use(consume: bool) -> void:
 	var tgt := String(d.get("target", ""))
 	# 目标 / 参数
 	var arg := -1
+	var arg2 := -1
+	var then := String(d.get("then", ""))
 	if tgt == "player":
 		if target_i < 0:
 			_log("【%s】需要选目标玩家（点左侧玩家卡）" % sel_item)
 			return
 		arg = int(g.hp[target_i].peer)
+		if then == "own_prop":
+			if target_tile < 0:
+				_log("【%s】需点棋盘选他名下的一块地" % sel_item)
+				return
+			arg2 = target_tile
 	elif tgt == "tile":
 		if target_tile < 0:
 			_log("【%s】需要点棋盘选格" % sel_item)
@@ -493,7 +503,7 @@ func _use(consume: bool) -> void:
 			"不耗能量" if free_energy else "扣体力 ⚡%d" % cost,
 			"冷却已关" if no_cooldown else "冷却 %d" % int(d.get("cooldown", 0))])
 	var before := _snap_dict()
-	var ok: bool = await g._apply_item_effect(p, inst, arg)
+	var ok: bool = await g._apply_item_effect(p, inst, arg, arg2)
 	if not ok:
 		_log("【%s】效果前置条件不满足（未生效）" % sel_item)
 		_after(before)

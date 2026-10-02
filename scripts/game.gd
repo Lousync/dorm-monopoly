@@ -54,9 +54,12 @@ var ph2_pill: Control
 var ph_arrow_l: Label
 var cheat_picker: Control
 var cheat_slot := -1
-var _tile_pick_slot := -1   # 点地选格待用道具的槽位（快递直达）
-var target_picker: Control
-var target_btn_box: VBoxContainer
+var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1=无）
+var _tgt_stage := ""        # ""=无 / "peer"=选玩家 / "tile"=选地块
+var _tgt_peer := -1         # 两段式：已选定的目标玩家
+var _tgt_tiles: Array = []  # 当前可选的地块 idx
+var target_hint: Control
+var target_hint_l: Label
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
@@ -189,6 +192,7 @@ func _ready() -> void:
 	board.item_discard_clicked.connect(_on_discard_clicked)
 	board.phase_spin_clicked.connect(_on_roll_pressed)
 	board.phase_use_clicked.connect(_on_use_pressed)
+	board.cancel_clicked.connect(_cancel_target)
 	if use_phase_btn != null:
 		use_phase_btn.pressed.connect(_on_use_pressed)
 	Net.chat_received.connect(_refresh_chat)
@@ -1301,9 +1305,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		var k := event as InputEventKey
 		if k.keycode == KEY_F1:
 			dev.toggle()
-		elif k.keycode == KEY_ESCAPE and _tile_pick_slot >= 0:
-			_tile_pick_slot = -1
-			_log("已取消选格", "#8a90a5")
+		elif k.keycode == KEY_ESCAPE and _tgt_stage != "":
+			_cancel_target()
 		elif k.keycode == KEY_SPACE:
 			board.go_home_follow(my_peer)
 		elif k.keycode == KEY_TAB:
@@ -1325,11 +1328,11 @@ func _at_auto_roll() -> void:
 			c_roll.rpc_id(1)
 
 func _on_tile_clicked(idx: int) -> void:
-	if _tile_pick_slot >= 0:
-		var s := _tile_pick_slot
-		_tile_pick_slot = -1
-		_log("选定目标格 #%d" % idx, "#f0c064")
-		_send_use_item(s, idx)
+	if _tgt_stage == "tile":
+		if idx in _tgt_tiles:
+			_finish_tile_target(idx)
+		else:
+			_log("该格不在可选范围内", "#8a90a5")
 		return
 	var d: Dictionary = GameData.TILES[idx]
 	var t := String(d.type)
@@ -1925,7 +1928,7 @@ func _item_phase(p: Dictionary) -> void:
 		if String(_item_action.get("action", "")) == "skip":
 			break
 
-## 机器人用一次道具：选第一件可用；需选目标的挑一名随机存活对手；选地块的（快递直达）跳过
+## 机器人用一次道具：选第一件可用；需选目标的挑一名随机存活对手（两段式再挑一块地）；选地块的随机瞬移
 func _bot_use_one(p: Dictionary) -> bool:
 	for i in p.get("items", []).size():
 		var it: Dictionary = p.items[i]
@@ -1935,16 +1938,23 @@ func _bot_use_one(p: Dictionary) -> bool:
 		if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < _item_cost(p, it):
 			continue
 		var arg := -1
-		if String(d.get("target", "")) == "player":
+		var arg2 := -1
+		var tgt := String(d.get("target", ""))
+		if tgt == "player":
 			var others := _item_targets(int(p.peer))
+			if String(d.get("then", "")) == "own_prop":
+				others = others.filter(func(x) -> bool: return not _own_props(int(x.peer)).is_empty())
+			if String(it.id) == "交换生":
+				others = others.filter(func(x) -> bool: return not (x.get("items", []) as Array).is_empty())
 			if others.is_empty():
 				continue
 			arg = int(others[randi_range(0, others.size() - 1)].peer)
-			if String(it.id) == "交换生" and (_player_by_peer(arg).get("items", []) as Array).is_empty():
-				continue
-		elif String(d.get("target", "")) == "tile":
-			continue
-		_use_item(int(p.peer), i, arg)
+			if String(d.get("then", "")) == "own_prop":
+				var props := _own_props(arg)
+				arg2 = props[randi_range(0, props.size() - 1)]
+		elif tgt == "tile":
+			arg = randi_range(0, GameData.TILES.size() - 1)
+		_use_item(int(p.peer), i, arg, arg2)
 		return true
 	return false
 
@@ -1954,7 +1964,7 @@ func _arm_item_timeout(epoch: int, peer: int) -> void:
 		_log("%s 在道具阶段发呆，跳过" % _name_by_peer(peer), "#8a90a5")
 		_item_action = {"epoch": epoch, "action": "skip"}
 
-func _use_item(peer: int, slot: int, arg: int) -> void:
+func _use_item(peer: int, slot: int, arg: int, arg2: int = -1) -> void:
 	var p := _player_by_peer(peer)
 	if p.is_empty() or _awaiting_item != peer:
 		return
@@ -1979,7 +1989,7 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 		items.remove_at(slot)
 	p.stamina = int(p.stamina) - cost
 	it.cd = int(d.cooldown)
-	if not await _apply_item_effect(p, it, arg):
+	if not await _apply_item_effect(p, it, arg, arg2):
 		# 前置条件不满足 → 退还体力/冷却
 		it.cd = prev_cd
 		p.stamina = int(p.stamina) + cost
@@ -2009,7 +2019,7 @@ func _own_props(peer: int) -> Array:
 
 ## 道具效果本体（不含体力/冷却/每回合/焚毁；对局与试验场共用）。
 ## 返回 true = 效果已发生；false = 前置条件不满足（调用方退还体力/冷却）。
-func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int) -> bool:
+func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1) -> bool:
 	var id := String(it.id)
 	var t := _player_by_peer(arg)
 	var need_target: bool = String(ItemData.def(id).get("target", "")) != ""
@@ -2185,7 +2195,7 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int) -> bool:
 			if _immune_debuff(t):
 				_log("%s 被香皂/护盾挡下了抄家" % t.name, "#8fb7f2")
 			else:
-				var pi: int = props[randi_range(0, props.size() - 1)]
+				var pi: int = arg2 if (arg2 in props) else props[randi_range(0, props.size() - 1)]
 				htiles[pi].level = maxi(0, int(htiles[pi].level) - 1)
 				_log("%s 抄了 %s 的【%s】（降 1 级）" % [p.name, t.name, String(GameData.TILES[pi].name)], "#c9a6ff")
 		"拼车":
@@ -2248,7 +2258,7 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int) -> bool:
 			if _immune_debuff(t):
 				_log("%s 被香皂/护盾挡下了强拆" % t.name, "#8fb7f2")
 			else:
-				var si: int = tp2[randi_range(0, tp2.size() - 1)]
+				var si: int = arg2 if (arg2 in tp2) else tp2[randi_range(0, tp2.size() - 1)]
 				htiles[si].owner = GameData.NO_OWNER
 				htiles[si].level = 0
 				_log("%s 强拆了 %s 的【%s】（归为无主）" % [p.name, t.name, String(GameData.TILES[si].name)], "#c9a6ff")
@@ -2644,12 +2654,12 @@ func c_black_pay(prop_idx: int) -> void:
 	_black_pay(multiplayer.get_remote_sender_id(), prop_idx)
 
 @rpc("any_peer", "call_remote", "reliable")
-func c_use_item(slot: int, arg: int) -> void:
+func c_use_item(slot: int, arg: int, arg2: int = -1) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if sender == _awaiting_item:
-		_use_item(sender, slot, arg)
+		_use_item(sender, slot, arg, arg2)
 
 @rpc("any_peer", "call_remote", "reliable")
 func c_item_skip() -> void:
@@ -2739,10 +2749,12 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 	if use_phase_btn != null:
 		use_phase_btn.visible = false   # 坞里的停用；阶段按钮已上牌垫
 	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
-	# 非道具阶段 → 清掉选中（绿光收掉）
+	# 非道具阶段 → 清掉选中（绿光收掉）与未完成的选目标态
 	if not using and selected_slot >= 0:
 		selected_slot = -1
 		board.set_item_selected(-1, -1)
+	if not using and _tgt_stage != "":
+		_cancel_target()
 	# 「使用道具」按钮三态：未选=跳过 / 选中可用=绿 / 选中不可用（含被动）=灰
 	var use_txt := "使用道具"
 	var use_style := "normal"
@@ -2799,24 +2811,25 @@ func _on_use_pressed() -> void:
 		return
 	var iid := String(items[selected_slot].id)
 	var tgt := String(ItemData.def(iid).get("target", ""))
+	var then := String(ItemData.def(iid).get("then", ""))
 	var slot := selected_slot
 	selected_slot = -1
 	if board != null:
 		board.set_item_selected(-1, -1)
 	if iid == "作弊器":
 		_open_cheat_picker(slot)
-	elif iid == "交换生":
-		_open_target_picker(slot)
 	elif tgt == "player":
-		_open_item_target_picker(slot)
+		# 交换生：只能选「持有道具」的玩家；两段式道具：只能选「名下有地」的玩家
+		_begin_peer_target(slot, iid == "交换生", then == "own_prop")
 	elif tgt == "tile":
-		_start_tile_pick(slot)
+		_begin_tile_target(slot, range(GameData.TILES.size()))
 	else:
 		_send_use_item(slot, -1)
 
 func _on_skip_pressed() -> void:
 	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
 		return
+	_cancel_target()
 	if multiplayer.is_server():
 		_item_action = {"epoch": _item_epoch, "action": "skip"}
 	else:
@@ -2861,12 +2874,13 @@ func c_discard(slot: int) -> void:
 		return
 	_discard_item(sender, slot)
 
-func _send_use_item(slot: int, arg: int) -> void:
+func _send_use_item(slot: int, arg: int, arg2: int = -1) -> void:
+	_cancel_target()
 	_close_cheat_picker()
 	if multiplayer.is_server():
-		_use_item(my_peer, slot, arg)
+		_use_item(my_peer, slot, arg, arg2)
 	else:
-		c_use_item.rpc(slot, arg)
+		c_use_item.rpc(slot, arg, arg2)
 
 func _open_cheat_picker(slot: int) -> void:
 	cheat_slot = slot
@@ -2875,34 +2889,9 @@ func _open_cheat_picker(slot: int) -> void:
 func _close_cheat_picker() -> void:
 	cheat_picker.visible = false
 
-func _swap_targets(exclude_peer: int) -> Array:
-	# 与道具栏同理：hp 只在房主填充，客户端为空会让「交换生」永远置灰、换人列表为空，
-	# 必须读已同步的 st（见 fix/v0.0.2）。
-	var out: Array = []
-	for x in st.get("players", []):
-		if bool(x.get("alive", true)) and int(x.peer) != exclude_peer \
-				and not (x.get("items", []) as Array).is_empty():
-			out.append(x)
-	return out
+# ---------------- 指向性道具：点棋盘选目标（选玩家 / 选地块 / 两段式） ----------------
 
-func _open_target_picker(slot: int) -> void:
-	_close_cheat_picker()
-	for c in target_btn_box.get_children():
-		c.queue_free()
-	for t in _swap_targets(my_peer):
-		var b := UIKit.button("%s（%d 件道具）" % [String(t.name), (t.get("items", []) as Array).size()], 13)
-		var tp := int(t.peer)
-		b.pressed.connect(func() -> void:
-			_close_target_picker()
-			_send_use_item(slot, tp)
-		)
-		target_btn_box.add_child(b)
-	target_picker.visible = true
-
-func _close_target_picker() -> void:
-	target_picker.visible = false
-
-## 通用「选玩家」道具的目标列表（所有其他存活玩家）
+## 通用「选玩家」道具的目标列表（所有其他存活玩家；读已同步的 st，客户端也准）
 func _item_targets(exclude_peer: int) -> Array:
 	var out: Array = []
 	for x in st.get("players", []):
@@ -2910,23 +2899,108 @@ func _item_targets(exclude_peer: int) -> Array:
 			out.append(x)
 	return out
 
-func _open_item_target_picker(slot: int) -> void:
-	_close_cheat_picker()
-	for c in target_btn_box.get_children():
-		c.queue_free()
-	for t in _item_targets(my_peer):
-		var b := UIKit.button(String(t.name), 13)
-		var tp := int(t.peer)
-		b.pressed.connect(func() -> void:
-			_close_target_picker()
-			_send_use_item(slot, tp))
-		target_btn_box.add_child(b)
-	target_picker.visible = true
+## 某玩家名下可拆/可降的地皮序号（读已同步的 st.tiles，客户端也准）
+func _selectable_props(peer: int) -> Array:
+	var out: Array = []
+	var tiles: Array = st.get("tiles", [])
+	for i in tiles.size():
+		if int(tiles[i].get("owner", GameData.NO_OWNER)) == peer \
+				and String(GameData.TILES[i].get("type", "")) == "property" \
+				and not bool(tiles[i].get("soil", false)):
+			out.append(i)
+	return out
 
-## 点地选格（快递直达）
-func _start_tile_pick(slot: int) -> void:
-	_tile_pick_slot = slot
-	_log("点地图选择目标格（Esc 取消）", "#f0c064")
+## 进入「选玩家」阶段。only_with_items=交换生（目标须持有道具）；then_prop=两段式（目标须有地）
+func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> void:
+	var peers: Array = []
+	for t in _item_targets(my_peer):
+		if only_with_items and (t.get("items", []) as Array).is_empty():
+			continue
+		if then_prop and _selectable_props(int(t.peer)).is_empty():
+			continue
+		peers.append(int(t.peer))
+	if peers.is_empty():
+		_log("没有可选目标（退体力/冷却）", "#8a90a5")
+		return
+	_tgt_slot = slot
+	_tgt_stage = "peer"
+	_tgt_peer = -1
+	_tgt_tiles = []
+	_show_target_hint("点棋盘上的玩家卡选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
+	if board != null:
+		board.set_select_peers(peers)
+
+## 进入「选地块」阶段（快递直达：任意格）
+func _begin_tile_target(slot: int, idxs) -> void:
+	var arr: Array = []
+	for i in idxs:
+		arr.append(int(i))
+	if arr.is_empty():
+		return
+	_tgt_slot = slot
+	_tgt_stage = "tile"
+	_tgt_peer = -1
+	_tgt_tiles = arr
+	_show_target_hint("点地图选择目标格（Esc/右键取消）")
+	if board != null:
+		board.set_select_tiles(arr)
+
+## 选玩家完成（棋盘座位卡点击）
+func _on_seat_clicked(peer: int) -> void:
+	if _tgt_stage == "peer" and peer != my_peer:
+		var then := String(ItemData.def(_target_item_id()).get("then", ""))
+		if then == "own_prop":
+			# 两段式：进入选地块，只高亮该玩家名下地皮
+			var props := _selectable_props(peer)
+			if props.is_empty():
+				_log("该玩家名下没有可指定的地皮", "#8a90a5")
+				return
+			_tgt_peer = peer
+			_tgt_stage = "tile"
+			_tgt_tiles = props
+			_show_target_hint("点选 %s 名下的一块地（Esc/右键取消）" % _name_by_peer(peer))
+			if board != null:
+				board.set_select_tiles(props)
+			return
+		_log("选定目标：%s" % _name_by_peer(peer), "#f0c064")
+		_send_use_item(_tgt_slot, peer)
+		return
+	# 非选目标态：点自己座位卡 = 回自己视角并恢复跟随
+	if peer == my_peer and board != null:
+		board.go_home_follow(my_peer)
+
+## 选地块完成（棋盘格子点击）
+func _finish_tile_target(idx: int) -> void:
+	var slot := _tgt_slot
+	var peer := _tgt_peer
+	_log("选定目标格 #%d" % idx, "#f0c064")
+	_send_use_item(slot, peer if peer >= 0 else idx, idx if peer >= 0 else -1)
+
+func _target_item_id() -> String:
+	var p := _state_player(my_peer)
+	var items: Array = p.get("items", [])
+	if _tgt_slot < 0 or _tgt_slot >= items.size():
+		return ""
+	return String(items[_tgt_slot].id)
+
+func _show_target_hint(text: String) -> void:
+	if target_hint == null:
+		return
+	target_hint.visible = true
+	if target_hint_l != null:
+		target_hint_l.text = text
+
+func _cancel_target() -> void:
+	if _tgt_stage == "":
+		return
+	_tgt_slot = -1
+	_tgt_stage = ""
+	_tgt_peer = -1
+	_tgt_tiles = []
+	if target_hint != null:
+		target_hint.visible = false
+	if board != null:
+		board.clear_select()
 
 # ================= 选项菜单 / 房主暂停 / 设置 =================
 
