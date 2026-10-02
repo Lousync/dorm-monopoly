@@ -35,6 +35,13 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
 
+> **联机回归必须放在同一条命令里跑**（`host ... &` → 等它就绪 → `client ...`），
+> 不要分两次工具调用：代理沙箱会把不同调用隔离到各自的网络命名空间，两个进程
+> 谁也看不见谁。表现是 client 报 `NET: connection_failed`、host 那边
+> `AUTOTEST LOBBY humans=1` 直接补机器人开打——**看着像联机坏了，其实是调用方式的问题**。
+> CI（`.github/workflows/ci.yml`）在同一个 `run:` 块里跑，不受影响。
+> 本机实测：同一次调用内 host 报 `humans=2`、两侧 `OK round=3`，全程无 SCRIPT ERROR。
+
 ## 四、硬性约定
 
 - **房主权威**：玩法逻辑只在房主（`scripts/game.gd` 的 host 侧）计算；客户端只发 `c_*` 请求 + 渲染，绝不直接改 `hp/htiles`。
