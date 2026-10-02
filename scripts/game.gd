@@ -568,8 +568,6 @@ func _resolve_upgrade(p: Dictionary, idx: int) -> void:
 	if int(t.level) >= GameData.MAX_LEVEL or int(p.money) < cost:
 		return
 	var next_rent := int(d.rent) * (2 + int(t.level))
-	if _group_complete_for(idx, int(p.peer)):
-		next_rent *= 2
 	var ok := await _ask(p, "upgrade", cost, "升级地产",
 		"要装修自己的【%s】吗？\nLv%d → Lv%d · 费用 %s\n升级后租金 %s" % [
 			d.name, int(t.level), int(t.level) + 1, GameData.fmt_money(cost), GameData.fmt_money(next_rent)],
@@ -691,13 +689,6 @@ func _send_to_jail(p: Dictionary) -> void:
 func s_tp(peer: int, idx: int) -> void:
 	board.set_teleport_target(peer, idx)
 	board.play_move(peer, [], 0.0)
-
-func _group_complete_for(idx: int, owner: int) -> bool:
-	var group: String = GameData.TILES[idx].group
-	for i in GameData.TILES.size():
-		if GameData.TILES[i].get("group", "") == group and int(htiles[i].owner) != owner:
-			return false
-	return true
 
 func _player_by_peer(peer: int) -> Dictionary:
 	for p in hp:
@@ -1350,13 +1341,14 @@ func _on_tile_clicked(idx: int) -> void:
 				accent = Color(0.55, 0.35, 0.2)
 				body = "焦土恢复中……\n落地自动捐款 · 已筹 %s / %s\n修复完成后变为无主地产" % [
 					GameData.fmt_money(int(tiles[idx].get("soil_prog", 0))), GameData.fmt_money(int(d.price))]
-			else:
-				accent = GameData.GROUP_COLORS.get(String(d.group), UIKit.ACCENT)
 			var owner_name := "无主 · 踩到可购买"
 			if owner_id != GameData.NO_OWNER:
 				owner_name = _name_by_peer(owner_id)
-			body = "%s产业 · 售价 %s\n当前租金 %s · 装修 Lv%d（%s）\n持有：%s" % [
-				GameData.GROUP_NAMES.get(String(d.group), "?"), GameData.fmt_money(int(d.price)),
+				var op := _player_by_peer(owner_id)
+				if not op.is_empty():
+					accent = GameData.PLAYER_COLORS[int(op.color) % GameData.PLAYER_COLORS.size()]
+			body = "售价 %s · 租金 %s\n装修 Lv%d（%s）\n持有：%s" % [
+				GameData.fmt_money(int(d.price)),
 				GameData.fmt_money(GameData.rent_for(idx, tiles)), level, GameData.level_name(level),
 				owner_name]
 		"fine":

@@ -29,17 +29,17 @@ func _fresh_tiles() -> Array:
 		tiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	return tiles
 
-## 找某组的所有地产下标（按路径序）
-func _group_indices(group: String) -> Array:
+## 所有地产的下标（按路径序）
+func _prop_indices() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
-		if GameData.TILES[i].get("group", "") == group:
+		if GameData.TILES[i].type == "property":
 			out.append(i)
 	return out
 
 func _test_rent() -> void:
-	var idxs: Array = _group_indices("canteen")
-	_check(idxs.size() == 3 or idxs.size() == 6, "餐饮组存在")
+	var idxs: Array = _prop_indices()
+	_check(idxs.size() == 30, "30 块地产（实得 %d）" % idxs.size())
 	var a: int = idxs[0]
 	var tiles := _fresh_tiles()
 	_check(GameData.rent_for(a, tiles) == 0, "无主地块租金为 0")
@@ -48,11 +48,12 @@ func _test_rent() -> void:
 	_check(GameData.rent_for(a, tiles) == base, "基础租金")
 	tiles[a].level = 2
 	_check(GameData.rent_for(a, tiles) == base * 3, "等级租金 Lv2")
+	# 每块地彼此独立：把全场都买下也不会出现「成套翻倍」（该机制已废除）
 	for j in idxs:
 		tiles[j].owner = 1
-	_check(GameData.rent_for(a, tiles) == base * 3 * 2, "集齐整组双倍")
+	_check(GameData.rent_for(a, tiles) == base * 3, "买满全场也不再有成套翻倍")
 	tiles[idxs[1]].owner = 2
-	_check(GameData.rent_for(a, tiles) == base * 3, "组被拆散后取消双倍")
+	_check(GameData.rent_for(a, tiles) == base * 3, "别的地块易主不影响本块租金")
 	var any_prop := -1
 	for i in GameData.TILES.size():
 		if GameData.TILES[i].type == "property":
@@ -89,12 +90,10 @@ func _test_board_shape() -> void:
 	var rests := 0
 	var casinos := 0
 	var shops := 0
-	var groups := {}
 	for t in GameData.TILES:
 		match String(t.type):
 			"property":
 				props += 1
-				groups[t.group] = groups.get(t.group, 0) + 1
 			"event":
 				events += 1
 			"fine":
@@ -114,11 +113,33 @@ func _test_board_shape() -> void:
 	_check(bonus == 6, "6 个兼职/奖励格")
 	_check(rests == 5, "5 个休息格（4 空教室 + 角上卧谈会）")
 	_check(casinos == 2, "2 个宿舍赌场格")
-	var all3 := groups.size() == 10
-	for g in groups:
-		if groups[g] != 3:
-			all3 = false
-	_check(all3, "10 组各 3 块地产")
+	# 30 块地沿路径由便宜到贵：价格与租金都严格递增（不再有分组与成套翻倍）
+	var mono := true
+	var prev_p := -1
+	var prev_r := -1
+	for i in GameData.TILES.size():
+		if GameData.TILES[i].type != "property":
+			continue
+		var p := int(GameData.TILES[i].price)
+		var r := int(GameData.TILES[i].rent)
+		if p <= prev_p or r <= prev_r:
+			mono = false
+		prev_p = p
+		prev_r = r
+	_check(mono, "地价与租金沿路径严格递增")
+	# 公式与数据必须一致：改 PROB_* 常量时不会忘了同步 TILES
+	var pi: Array = _prop_indices()
+	_check(int(GameData.TILES[pi[0]].price) == GameData.prop_price(0)
+		and int(GameData.TILES[pi[29]].price) == GameData.prop_price(29),
+		"首末地价与 prop_price 公式一致")
+	_check(int(GameData.TILES[pi[pi.size() - 1]].rent) == GameData.prop_rent(pi.size() - 1),
+		"末块租金与 prop_rent 公式一致")
+	# 地产没有 group 字段了（拆分组后不应残留）
+	var leftover := 0
+	for i in GameData.TILES.size():
+		if GameData.TILES[i].type == "property" and GameData.TILES[i].has("group"):
+			leftover += 1
+	_check(leftover == 0, "地产已无 group 字段（实得 %d 块残留）" % leftover)
 	# 事件卡移动步数合法性
 	for e in GameData.EVENTS:
 		if e.has("move_steps"):

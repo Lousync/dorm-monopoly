@@ -118,33 +118,32 @@ static func _board() -> String:
 		"· 四角：起点（右下）、宿委会（左下）、卧谈会（免费休息）、查寝！（右上，直接送宿委会）",
 		"",
 		_h("格型"),
-		"· 地产 %d（%d 组 × 3 块）· 机会/命运 %d · 小卖部 %d" % [
-			_count_of("property"), GameData.GROUP_TILES.size(),
-			_count_of("event"), _count_of("shop")],
+		"· 地产 %d 块（各自独立，无分组）· 机会/命运 %d · 小卖部 %d" % [
+			_count_of("property"), _count_of("event"), _count_of("shop")],
 		"· 强制缴费 %d · 兼职奖励 %d · 免费休息 %d · 宿舍赌场 %d" % [
 			_count_of("fine"), _count_of("bonus"), _count_of("rest"), _count_of("casino")],
 		"",
 		_h("地产：沿路径由便宜到贵"),
 	]
-	var order := ["daily", "service", "canteen", "study", "sport", "teach", "dorm", "fun", "night", "health"]
-	for key in order:
-		lines.append("· %s　地价 %s　基础租金 %s" % [
-			String(GameData.GROUP_NAMES[key]),
-			GameData.fmt_money(int(GameData.GROUP_PRICES[key])),
-			GameData.fmt_money(int(GameData.GROUP_RENTS[key])),
-		])
+	var n := GameData.PROPERTY_NAMES.size()
+	var k_lo := GameData.prop_price(0)
+	var k_hi := GameData.prop_price(n - 1)
+	lines.append("· 共 %d 块，地价 %s ~ %s（越往后越贵）" % [
+		n, GameData.fmt_money(k_lo), GameData.fmt_money(k_hi)])
+	lines.append("· 每块地各自独立：租金 = 自己的地价 × %d％（另有装修加成）" % [
+		int(roundf(GameData.PROP_RENT_RATIO * 100.0))])
+	lines.append("· %s" % _d("没有「集齐成套」一说——买下哪块就只按哪块结算"))
 	lines.append_array([
 		"",
 		_h("买 / 升级 / 收租"),
 		"· 买入价 = 地价；落到自己地块可装修升级",
 		# 注意：这里的 50％ 用全角，写成半角 % 会被 String % 运算符当成格式符解析
 		"· 升级费 = 地价 × 50％／级，上限 %d 级" % GameData.MAX_LEVEL,
-		"· 租金 = 基础租金 × (1 + 装修等级) × （集齐同组 3 块再 ×2）",
-		"· %s" % _d("集齐同组 3 块即「垄断」，被拆散立刻取消"),
+		"· 租金 = 基础租金 × (1 + 装修等级)",
 		"",
 		_h("出局与焦土"),
 		"· 付不起钱即出局：现金清零、名下地产收归无主且等级清零",
-		"· 焦土：被「亡牌飞行员coco」炸毁的地皮无归属、不产租、不算垄断；",
+		"· 焦土：被「亡牌飞行员coco」炸毁的地皮无归属、不产租；",
 		"  任何玩家落地都要自动捐款累进进度，达标后恢复成%s地产" % _d("无主"),
 	])
 	return "\n".join(lines)

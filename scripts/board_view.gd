@@ -69,6 +69,8 @@ var _center_target := WORLD * 0.5
 
 var _tile_sb: Array = []       # 每格 StyleBoxFlat
 var _sub_labels: Array = []
+var _strips: Array = []        # 每格顶带 Panel（有主时显示拥有者颜色）
+var _strip_cols: Array = []    # 每格顶带当前颜色（避免悬停时反复重建 stylebox）
 var _house_icons: Array = []   # 每格一个程序绘制的「房子」图标（装修等级）
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
 var _levels: Array = []        # 上一次渲染的等级（用于房子弹跳）
@@ -200,20 +202,40 @@ func _build_backdrop() -> void:
 	_world.add_child(bg)
 
 ## 格子类型 → Twemoji 主题图标名（assets/icons/，CC-BY 4.0）
+## 地产的图标逐块放在数据里（d.icon），不再按组查表（组已废除）。
 const TILE_ICONS := {
-	"property": {"daily": "daily", "service": "service", "canteen": "canteen", "study": "study",
-		"sport": "sport", "teach": "teach", "dorm": "dorm", "fun": "fun",
-		"night": "night", "health": "health"},
 	"event": {"机会": "luck", "命运": "fate"},
 	"fine": "fine", "bonus": "bonus", "rest": "rest", "casino": "casino", "shop": "daily",
 	"start": "start", "jail": "jail", "go_jail": "gojail",
 }
 
+## 顶带的「识别色」：只由格型决定（四角金 / 赌场粉 / 小卖部菜绿 / 其余中性）。
+## 地产的拥有者颜色不在这里，见 _strip_color_for。
+func _strip_base_color(d: Dictionary) -> Color:
+	match String(d.type):
+		"start", "jail", "rest", "go_jail":
+			return UIKit.ACCENT
+		"casino":
+			return Color(0.93, 0.30, 0.55)
+		"shop":
+			return SHOP_ACCENT
+		_:
+			return NEUTRAL_STRIP
+
+## 第 i 格顶带当前该用的颜色：地产看归属，其余格恒为自身识别色
+func _strip_color_for(i: int, owner_id: int) -> Color:
+	var d: Dictionary = GameData.TILES[i]
+	if String(d.type) == "property" and owner_id >= 0 and _owner_color_map.has(owner_id):
+		return _owner_color_map[owner_id]
+	return _strip_base_color(d)
+
 func _tile_icon_name(d: Dictionary) -> String:
 	var t := String(d.type)
+	if t == "property":
+		return String(d.get("icon", "dorm"))
 	var v = TILE_ICONS.get(t, "")
 	if v is Dictionary:
-		return v.get(String(d.get("group", d.get("name", ""))), "")
+		return v.get(String(d.get("name", "")), "")
 	return v
 
 func _build_tiles() -> void:
@@ -231,15 +253,18 @@ func _build_tiles() -> void:
 		_world.add_child(p)
 		_tile_sb.append(sb)
 
-		# 色带：加宽到 12 并用渐变卡样式，让产业分组一眼可辨
+		# 顶带：地标格（四角 / 赌场 / 小卖部）保留自己的识别色；
+		# 地产则显示「拥有者颜色」——无主时是中性带，等于没有颜色标记。
 		var strip := Panel.new()
 		strip.position = Vector2(3, 3)
 		strip.size = Vector2(TILE - GAP * 2.0 - 6, 12)
-		var strip_c: Color = UIKit.ACCENT if corner else (Color(0.93, 0.30, 0.55) if d.type == "casino" 			else (SHOP_ACCENT if d.type == "shop" else GameData.GROUP_COLORS.get(d.get("group", ""), Color("#566"))))
+		var strip_c := _strip_base_color(d)
 		strip.add_theme_stylebox_override("panel",
 			UIKit.card_stylebox(strip_c.lightened(0.06), 3, strip_c.darkened(0.35), 1, 0))
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
+		_strips.append(strip)
+		_strip_cols.append(strip_c)
 		var idx_l := UIKit.label(str(i), 10, Color(1, 1, 1, 0.6))
 		idx_l.position = Vector2(TILE - GAP * 2.0 - 22.0, 0)
 		idx_l.visible = dev_tile_index
@@ -1114,6 +1139,7 @@ var dev_tile_index := false:
 var _shop_refresh: Button
 
 const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部：菜绿
+const NEUTRAL_STRIP := Color(0.333, 0.4, 0.4)   # #566：无主地产与普通格的中性顶带
 const CASINO_ACCENT := Color(0.93, 0.3, 0.55)   # 赌场：与赌场格同色
 const SHOP_QUALITIES := [Color(0.93, 0.93, 0.93), Color(0.42, 0.78, 0.55),
 	Color(0.36, 0.6, 0.92), Color(0.66, 0.47, 0.92), Color(0.96, 0.62, 0.25)]  # 白绿蓝紫橙
@@ -1573,17 +1599,23 @@ func _animate_tile(i: int, hovered: bool) -> void:
 	var base := Color("#38301c") if corner else Color("#242a39")
 	var border := Color("#3c4254")
 	var border_w := 1
+	var owner_id := int(_owners[i])
 	if i < _soils.size() and bool(_soils[i]):
 		base = Color(0.13, 0.11, 0.09)
 		border = Color(0.5, 0.34, 0.18)
 		border_w = 2
-	else:
-		var owner_id := int(_owners[i])
-		if owner_id >= 0 and _owner_color_map.has(owner_id):
-			var oc: Color = _owner_color_map[owner_id]
-			base = base.lerp(oc, 0.20)
-			border = oc
-			border_w = 3
+	elif owner_id >= 0 and _owner_color_map.has(owner_id):
+		var oc: Color = _owner_color_map[owner_id]
+		base = base.lerp(oc, 0.20)
+		border = oc
+		border_w = 3
+	# 顶带跟着归属走：有主显示拥有者颜色，无主回中性带
+	if i < _strips.size():
+		var sc := _strip_color_for(i, owner_id)
+		if _strip_cols[i] != sc:
+			_strip_cols[i] = sc
+			(_strips[i] as Panel).add_theme_stylebox_override("panel",
+				UIKit.card_stylebox(sc.lightened(0.06), 3, sc.darkened(0.35), 1, 0))
 	if hovered:
 		base = base.lerp(Color(1, 1, 1), 0.12)
 	var sb: StyleBoxFlat = _tile_sb[i]

@@ -38,54 +38,39 @@ const PLAYER_COLORS := [
 	Color(0.961, 0.620, 0.043),  # 黄
 ]
 
-const GROUP_NAMES := {
-	"daily": "便利店",
-	"service": "生活服务",
-	"canteen": "餐饮",
-	"study": "学习",
-	"sport": "运动",
-	"teach": "教学",
-	"dorm": "宿舍楼",
-	"fun": "娱乐",
-	"night": "夜宵",
-	"health": "健康",
-}
+## 地产沿路径由便宜到贵：价格线性递增，租金 = 价格 × 比例。
+## 原先的「10 组 × 3 块 + 集齐同组租金翻倍」已废除 —— 30 块地彼此独立。
+const PROP_BASE_PRICE := 1500    # 第 1 块地的价格
+const PROP_PRICE_STEP := 130     # 沿路径每块递增
+const PROP_RENT_RATIO := 0.34    # 租金 / 地价（原 30.5%；拆掉翻倍后上调补回一部分）
 
-const GROUP_COLORS := {
-	"daily": Color(0.878, 0.482, 0.224),
-	"service": Color(0.290, 0.624, 0.910),
-	"canteen": Color(0.851, 0.325, 0.310),
-	"study": Color(0.314, 0.631, 0.310),
-	"sport": Color(0.910, 0.773, 0.227),
-	"teach": Color(0.608, 0.349, 0.714),
-	"dorm": Color(0.161, 0.678, 0.624),
-	"fun": Color(0.859, 0.388, 0.624),
-	"night": Color(0.400, 0.459, 0.863),
-	"health": Color(0.925, 0.514, 0.529),
-}
+## 30 块地的名字，按路径顺序（底边 → 左边 → 顶边 → 右边）。
+const PROPERTY_NAMES := [
+	"小卖部", "奶茶店", "水果摊",
+	"快递驿站", "公共澡堂", "打印店",
+	"食堂一楼", "食堂二楼", "咖啡屋",
+	"图书馆", "自习室", "电子机房",
+	"大操场", "篮球场", "体育馆",
+	"教学楼A", "教学楼B", "实验楼",
+	"一号楼", "二号楼", "三号楼",
+	"桌游吧", "网吧", "KTV",
+	"夜宵摊", "炸鸡店", "麻辣烫",
+	"校医院", "心理咨询", "牙科室",
+]
 
-## 每组地价 / 基础租金（约 30%），沿路径由便宜到贵
-const GROUP_PRICES := {
-	"daily": 1600, "service": 1900, "canteen": 2200, "study": 2600, "sport": 3000,
-	"teach": 3400, "dorm": 3800, "fun": 4200, "night": 4700, "health": 5200,
-}
-const GROUP_RENTS := {
-	"daily": 500, "service": 600, "canteen": 700, "study": 800, "sport": 900,
-	"teach": 1000, "dorm": 1150, "fun": 1300, "night": 1400, "health": 1600,
-}
+## 每块地的水印图标：沿用原先按「地段风格」给的 10 枚，每 3 块共用一枚。
+## 只影响观感，不参与任何计费。
+const PROPERTY_ICONS := [
+	"daily", "service", "canteen", "study", "sport",
+	"teach", "dorm", "fun", "night", "health",
+]
 
-const GROUP_TILES := {
-	"daily": ["小卖部", "奶茶店", "水果摊", "面包房", "文具店", "便利店"],
-	"service": ["快递驿站", "公共澡堂", "打印店", "理发店", "洗衣房", "修车铺"],
-	"canteen": ["食堂一楼", "食堂二楼", "咖啡屋", "兰州拉面", "烧烤摊", "火锅店"],
-	"study": ["图书馆", "自习室", "电子机房", "通宵教室", "朗读亭", "考研教室"],
-	"sport": ["大操场", "篮球场", "体育馆", "游泳池", "网球场", "健身房"],
-	"teach": ["教学楼A", "教学楼B", "实验楼", "报告厅", "美术画室", "琴房"],
-	"dorm": ["一号楼", "二号楼", "三号楼", "四号楼", "五号楼", "六号楼"],
-	"fun": ["桌游吧", "网吧", "KTV", "台球厅", "电竞馆", "剧本杀"],
-	"night": ["夜宵摊", "炸鸡店", "麻辣烫", "关东煮", "煎饼摊", "烤冷面"],
-	"health": ["校医院", "心理咨询", "牙科室", "校药店", "体检中心", "理疗室"],
-}
+## 第 k 块地（k = 0..29，按路径序）的价格与租金
+static func prop_price(k: int) -> int:
+	return PROP_BASE_PRICE + PROP_PRICE_STEP * k
+
+static func prop_rent(k: int) -> int:
+	return int(roundf(float(prop_price(k)) * PROP_RENT_RATIO / 10.0)) * 10
 
 ## 强制缴费格（按铺设顺序取用）
 const FINES := [
@@ -214,23 +199,19 @@ static func _build_tiles() -> Array:
 	t[corners[2]] = {"type": "rest", "name": "卧谈会"}
 	t[corners[3]] = {"type": "go_jail", "name": "查寝！"}
 
-	# 每组一排 3 连（10 组 = 10 排），沿路径由便宜到贵
+	# 30 块地产沿路径铺：每 3 块一排（共 10 排），名字 / 地价 / 租金逐块给
 	var runs := [
 		1, 5, 9, 14,          # 底边
 		18, 23,               # 左边
 		29, 34, 40,           # 顶边
 		50,                   # 右边
 	]
-	var order := ["daily", "service", "canteen", "study", "sport", "teach", "dorm", "fun", "night", "health"]
-	for g in order.size():
-		var gname: String = order[g]
-		var names: Array = GROUP_TILES[gname]
-		var base: int = runs[g]
-		for j in 3:
-			t[base + j] = {
-				"type": "property", "name": names[j], "group": gname,
-				"price": GROUP_PRICES[gname], "rent": GROUP_RENTS[gname],
-			}
+	for k in PROPERTY_NAMES.size():
+		t[runs[int(k / 3)] + (k % 3)] = {
+			"type": "property", "name": PROPERTY_NAMES[k],
+			"icon": PROPERTY_ICONS[int(k / 3)],
+			"price": prop_price(k), "rent": prop_rent(k),
+		}
 
 	# 剩余格按确定性序列填充：E=机会/命运 F=缴费 B=兼职 R=免费休息
 	var xseq := _x_sequence()
@@ -300,7 +281,7 @@ static func compute_path_steps(start: int, steps: int) -> Array:
 		path.append(cur)
 	return path
 
-## 当前租金 = 基础租金 × (1+装修等级) × (垄断该组则 ×2)
+## 当前租金 = 基础租金 × (1 + 装修等级)。每块地独立，没有组与翻倍。
 static func rent_for(idx: int, tiles: Array) -> int:
 	var d: Dictionary = TILES[idx]
 	if d.type != "property":
@@ -308,17 +289,8 @@ static func rent_for(idx: int, tiles: Array) -> int:
 	var t: Dictionary = tiles[idx]
 	if t.get("owner", NO_OWNER) == NO_OWNER:
 		return 0
-	var rent: int = d.rent * (1 + int(t.get("level", 0)))
-	if _group_complete(idx, tiles):
-		rent *= 2
-	return rent
+	return int(d.rent) * (1 + int(t.get("level", 0)))
 
-static func _group_complete(idx: int, tiles: Array) -> bool:
-	var group: String = TILES[idx].group
-	for i in TILES.size():
-		if TILES[i].get("group", "") == group and tiles[i].get("owner", NO_OWNER - 1) != tiles[idx].get("owner", NO_OWNER):
-			return false
-	return true
 
 ## 千分位金额显示
 static func fmt_money(v: int) -> String:
