@@ -35,6 +35,10 @@ var pause_mask: ColorRect
 var audio_volume := 1.0
 var audio_mute := false
 
+# ---------------- 开局设置（房主权威，见 docs/gameplay/开局设置.md §三之一） ----------------
+var _settings: GameSettings          # 房主：来自大厅配置；客户端：从状态快照同步
+var _timeout_rev := 0                # 挡位变化计数：等待中的环节据此重计时
+
 # ---------------- 道具系统（host 状态，详见 docs/gameplay/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
@@ -171,6 +175,9 @@ func _ready() -> void:
 	casino.name = "CasinoTable"
 	casino.g = self
 	add_child(casino)
+
+	# 房主用自己的配置副本（中途改动不回写大厅），客户端先取默认值、随后由快照覆盖
+	_settings = Net.game_settings.copy() if Net.game_settings != null else GameSettings.new()
 
 	if multiplayer.is_server():
 		_host_setup()
@@ -849,6 +856,7 @@ func _broadcast_state() -> void:
 		"black_peer": _black_peer, "black_slots": _black_slots,
 		"black_pay_mode": _black_pay_mode, "black_pay_need": _black_pay_need,
 		"black_pay_got": _black_pay_got,
+		"timeout_tier": _settings.timeout_tier,
 		"winner": winner, "roll_epoch": _roll_epoch,
 	})
 
@@ -863,6 +871,9 @@ func _log(line: String, color: String = "#dfe3ee") -> void:
 @rpc("authority", "call_local", "reliable")
 func s_state(state: Dictionary) -> void:
 	st = state
+	var tier := String(state.get("timeout_tier", GameSettings.TIER_CURRENT))
+	if tier != _settings.timeout_tier:
+		_settings.timeout_tier = tier
 	board.render(state)
 	board.set_shop_display(state.get("shops", {}), int(state.get("refresh_price", 0)),
 		int(state.get("shop_open", -1)))

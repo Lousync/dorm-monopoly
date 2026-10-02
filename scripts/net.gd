@@ -27,6 +27,7 @@ var room_name := "宿舍房间"
 var host_port := 0             # 房主实际使用的端口
 var last_error := ""           # 返回主菜单时展示给玩家看
 
+var game_settings: GameSettings = GameSettings.new()   # 房主配置，大厅写、对局读（见 开局设置.md §三之一）
 var players: Array = []        # [{peer:int, name:String, color:int, bot:bool, ready:bool}]
 var chat_history: Array = []   # ["名字：文本", ...]
 

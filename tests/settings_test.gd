@@ -17,8 +17,52 @@ func _check(cond: bool, what: String) -> void:
 func _run() -> void:
 	print("== 操作限时挡位 ==")
 	_test_mapping()
+	_test_broadcast()
 	print("SETTINGS TEST: %s" % ("PASS" if fails == 0 else "%d FAILURES" % fails))
 	quit(0 if fails == 0 else 1)
+
+func _mk_player(peer: int, nm: String) -> Dictionary:
+	return {"peer": peer, "name": nm, "color": peer - 1, "bot": false, "money": 5000,
+		"pos": 0, "alive": true, "skip": 0, "sleep": 0, "stamina": 3, "items": [],
+		"item_used": false, "cheat_roll": -1}
+
+## 起一个房主对局实例；running 关掉，只测状态快照（不跑自动回合循环）。
+## 顺序照抄 tests/shop_test.gd：先起服务器再挂节点，_host_setup() 里的
+## `await _wait(1.5)` 之后 running 已是 false，_run_game() 直接退出。
+func _host_game(port: int) -> Node:
+	var peer := ENetMultiplayerPeer.new()
+	if peer.create_server(port, 3) != OK:
+		printerr("server create failed"); quit(1); return null
+	var mp := MultiplayerAPI.create_default_interface()
+	mp.multiplayer_peer = peer
+	set_multiplayer(mp, "/root")
+	var g = load("res://scenes/game.tscn").instantiate()
+	root.add_child(g)
+	g.my_peer = 1
+	g.running = false
+	g.hp = [_mk_player(1, "甲")]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0})
+	return g
+
+func _test_broadcast() -> void:
+	var g := _host_game(7796)
+	if g == null:
+		return
+	g._broadcast_state()
+	_check(String(g.st.get("timeout_tier", "")) == GameSettings.TIER_CURRENT,
+		"开局快照带 timeout_tier = 现状")
+	g._settings.timeout_tier = "30"
+	g._broadcast_state()
+	_check(String(g.st.get("timeout_tier", "")) == "30", "房主改挡后快照同步为 30")
+	# GameSettings.copy() 的首个消费方：房主拿的是副本，对局内改挡不回写大厅
+	# （autoload 标识符在 --script 主脚本里编译不过，按 hud_test 的写法运行时取节点）
+	var lobby := root.get_node_or_null("Net")
+	_check(lobby != null, "测试环境能取到 autoload Net")
+	_check(g._settings != lobby.game_settings, "房主用配置副本，非 autoload 同一对象")
+	_check(lobby.game_settings.timeout_tier == GameSettings.TIER_CURRENT, "对局内改挡不回写大厅")
+	g.queue_free()
 
 func _test_mapping() -> void:
 	var cur := GameSettings.TIER_CURRENT
