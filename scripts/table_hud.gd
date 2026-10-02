@@ -50,10 +50,7 @@ static func build_play_ui(g: Node) -> void:
 		else:
 			g.c_shop_buy.rpc(slot)
 	)
-	g.board.seat_clicked.connect(func(peer: int) -> void:
-		if peer == g.my_peer:
-			g.board.go_home_follow(g.my_peer)  # 点自己座位卡：回自己视角并恢复镜头跟随
-	)
+	g.board.seat_clicked.connect(g._on_seat_clicked)
 
 	# 屏幕层：不随摄像机旋转的悬浮控件都挂这里
 	var hud := Control.new()
@@ -106,6 +103,10 @@ static func build_play_ui(g: Node) -> void:
 	g.ph1_pill = ph1
 	g.ph2_pill = ph2
 	g.ph_arrow_l = ph_arrow
+	# 阶段提示改由牌垫上的两个按钮承担（当前阶段黄/点完灰），旧的 pills 隐去
+	ph1.visible = false
+	ph2.visible = false
+	ph_arrow.visible = false
 
 	# 操作条（屏幕层，与视角无关）：转动转盘 / 道具按钮。
 	# 它原先挂在牌垫阶段条里，而阶段条在转离自己视角时会整条隐藏（牌垫贴自己
@@ -120,11 +121,15 @@ static func build_play_ui(g: Node) -> void:
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 8)
 	abm.add_child(arow)
-	g.roll_btn = UIKit.with_icon(UIKit.button("转动转盘", 15, "primary"), "dice", 20)
+	# 阶段按钮：转转盘 / 使用道具（当前阶段黄、点完灰），外加小「跳过」
+	g.roll_btn = UIKit.button("转转盘", 13)
 	g.roll_btn.disabled = true
 	arow.add_child(g.roll_btn)
+	g.use_phase_btn = UIKit.button("使用道具", 13)
+	g.use_phase_btn.disabled = true
+	arow.add_child(g.use_phase_btn)
+	# 兼容旧引用：逐件按钮盒不再使用（改为点牌垫道具卡选）
 	g.item_btn_box = HBoxContainer.new()
-	g.item_btn_box.add_theme_constant_override("separation", 6)
 	g.item_btn_box.visible = false
 	arow.add_child(g.item_btn_box)
 
@@ -599,34 +604,30 @@ static func build_menu_ui(g: Node) -> void:
 	cv_cancel.pressed.connect(g._close_cheat_picker)
 	cv2.add_child(cv_cancel)
 
-	# 目标玩家选择器（交换生等选玩家类道具）
-	g.target_picker = Control.new()
-	g.target_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
-	g.target_picker.visible = false
-	g.add_child(g.target_picker)
-	var td_dim := ColorRect.new()
-	td_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	td_dim.color = Color(0.04, 0.04, 0.08, 0.55)
-	g.target_picker.add_child(td_dim)
-	var tc := CenterContainer.new()
-	tc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	g.target_picker.add_child(tc)
-	var tp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(0.66, 0.47, 0.92, 0.8), 1, 10)
-	tp.custom_minimum_size = Vector2(320, 0)
-	tc.add_child(tp)
-	var tpm := UIKit.margins(20, 20, 14, 12)
-	tp.add_child(tpm)
-	var tv := VBoxContainer.new()
-	tv.add_theme_constant_override("separation", 8)
-	tpm.add_child(tv)
-	tv.add_child(UIKit.label("选择目标玩家", 14, UIKit.ACCENT))
-	g.target_btn_box = VBoxContainer.new()
-	g.target_btn_box.add_theme_constant_override("separation", 6)
-	tv.add_child(g.target_btn_box)
-	var tv_cancel := UIKit.button("取消", 13)
-	tv_cancel.pressed.connect(g._close_target_picker)
-	tv.add_child(tv_cancel)
+	# 指向性道具目标提示条（顶部居中）：点棋盘上的玩家卡/格子选目标；
+	# 取消 = 点此「取消」或 Esc / 右键单击（拖拽平移不触发）
+	g.target_hint = Control.new()
+	g.target_hint.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.target_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.target_hint.visible = false
+	g.add_child(g.target_hint)
+	var th_wrap := CenterContainer.new()
+	th_wrap.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	th_wrap.offset_top = 52
+	th_wrap.offset_bottom = 100
+	th_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.target_hint.add_child(th_wrap)
+	var th := UIKit.panel_container(UIKit.PANEL_GLASS, 12,
+		Color(1.0, 0.86, 0.35, 0.85), 1, 8)
+	th_wrap.add_child(th)
+	var th_row := HBoxContainer.new()
+	th_row.add_theme_constant_override("separation", 12)
+	th.add_child(th_row)
+	g.target_hint_l = UIKit.label("", 15, UIKit.ACCENT)
+	th_row.add_child(g.target_hint_l)
+	var th_cancel := UIKit.button("取消", 13)
+	th_cancel.pressed.connect(g._cancel_target)
+	th_row.add_child(th_cancel)
 
 	# 黑市交地选择器（逐块选自有地皮抵账）
 	g.black_picker = Control.new()

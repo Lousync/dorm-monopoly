@@ -7,12 +7,18 @@ class_name BoardView
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
 signal shop_slot_clicked(slot: int)   # 点击桌面小卖部货架卡（行动者购买）
+signal item_slot_clicked(peer: int, slot: int)   # 牌垫道具卡点选（阶段二选道具）
+signal item_discard_clicked(peer: int, slot: int) # 卡片右上角「✕」丢弃
+signal phase_spin_clicked()          # 牌垫上的「转转盘」
+signal phase_use_clicked()           # 牌垫上的「使用道具」
+signal cancel_clicked()              # 右键单击（未拖拽平移）：取消当前选择
 
 const TILE := 112.0
 static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (2016, 1344)
 const GAP := 5.0
 const MIN_ZOOM := 0.22
 const MAX_ZOOM := 1.25
+const SELECT_COLOR := Color(1.0, 0.86, 0.35)   # 指向性道具「可选中」高亮（金）
 ## 抽卡展示的四个相位：抽出 → 翻面 → 停留 → 收回
 const DECK_OUT := 0.34
 const DECK_FLIP := 0.30
@@ -75,6 +81,7 @@ var _house_icons: Array = []   # 每格一个程序绘制的「房子」图标�
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
 var _levels: Array = []        # 上一次渲染的等级（用于房子弹跳）
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
+var _tile_hl: Array = []       # 每格「可选中」高亮叠层（选地块/两段式时显示）
 var _tile_tw := {}             # 每格进行中的补间
 var _tokens := {}              # peer -> 棋子 Panel
 var _token_tip: PanelContainer # 悬停棋子时浮出的信息条（屏幕空间，不随镜头旋转）
@@ -86,6 +93,7 @@ var _animating := {}           # peer -> bool
 var _ring: Panel
 var _ring_peer := GameData.NO_PEER
 var _ring_tw: Tween
+var _select_tw: Tween          # 「可选中」高亮的呼吸补间
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
 # 镜头对点跟随（抽卡时对准牌堆）与牌堆抽卡动画
@@ -238,6 +246,16 @@ func _build_tiles() -> void:
 		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_world.add_child(p)
 		_tile_sb.append(sb)
+
+		var hl := Panel.new()
+		hl.position = p.position
+		hl.size = p.size
+		hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hl.visible = false
+		hl.add_theme_stylebox_override("panel",
+			UIKit.stylebox(Color(0, 0, 0, 0), 7, SELECT_COLOR, 3, 0))
+		_world.add_child(hl)
+		_tile_hl.append(hl)
 
 		# 顶带 = 唯一的归属标记：只有「已售出的地产」才显示，颜色即拥有者颜色。
 		# 无主地产、以及所有非卖的活动格（小卖部 / 赌场 / 四角等）一律不显示。
@@ -834,7 +852,7 @@ func focus_peer(peer: int, hard := false) -> void:
 
 func _zoom_at(factor: float, anchor: Vector2) -> void:
 	var before := _world_from_view(anchor)
-	_zoom = clampf(_zoom * factor, MIN_ZOOM, MAX_ZOOM)
+	_zoom = clampf(_zoom * factor, MIN_ZOOM, _zoom_clamp_max)
 	_center = _clamp_center(before - (anchor - _visible_center()).rotated(-_rot) / _zoom)
 	_apply_cam()
 
@@ -862,6 +880,8 @@ func _gui_input(ev: InputEvent) -> void:
 						if idx >= 0:
 							Fx.play("click", -10.0)
 							tile_clicked.emit(idx)
+				elif mb.button_index == MOUSE_BUTTON_RIGHT and not _panning:
+					cancel_clicked.emit()   # 右键单击（非拖拽平移）取消当前选择
 				if not (mb.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)):
 					_dragging = false
 					_panning = false
@@ -1071,6 +1091,15 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	card.add_theme_stylebox_override("panel", sb)
 	root.add_child(card)
 
+	# 「可选中」高亮叠层：指向性道具选玩家时点亮（世界坐标，随座位旋转）
+	var seat_hl := Panel.new()
+	seat_hl.size = SEAT_SIZE
+	seat_hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	seat_hl.visible = false
+	seat_hl.add_theme_stylebox_override("panel",
+		UIKit.stylebox(Color(0, 0, 0, 0), 16, SELECT_COLOR, 3, 0))
+	root.add_child(seat_hl)
+
 	var chip: Control
 	var piece := UIKit.piece_tex(int(p.color) % 4)
 	if piece != null:
@@ -1133,11 +1162,12 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	root.add_child(badge_slot)
 
 	var slots: Array = []
+	var speer := int(p.peer)
 	for i in 5:
 		var sp := Panel.new()
 		sp.position = Vector2(254.0 + float(i) * (SLOT_SIZE.x + 10.0), 12)
 		sp.size = SLOT_SIZE
-		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sp.mouse_filter = Control.MOUSE_FILTER_STOP   # 可点选
 		sp.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.035), 10,
 			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55), 1))
 		root.add_child(sp)
@@ -1147,10 +1177,33 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 		plus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sp.add_child(plus)
+		var si := i
+		sp.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				item_slot_clicked.emit(speer, si))
 		slots.append(sp)
 
+	# 牌垫右端的两个阶段按钮（竖排；只挂在自己座位；随桌子世界旋转）
+	if e == 0:
+		var pv := VBoxContainer.new()
+		pv.position = Vector2(bar.get_center().x + SEAT_SIZE.x * 0.5 + 12.0,
+			bar.get_center().y - SEAT_SIZE.y * 0.5 + 10.0)
+		pv.custom_minimum_size = Vector2(184, 0)
+		pv.add_theme_constant_override("separation", 16)
+		pv.mouse_filter = Control.MOUSE_FILTER_PASS
+		holder.add_child(pv)
+		_phase_spin = UIKit.button("转转盘", 22, "primary")
+		_phase_spin.custom_minimum_size = Vector2(184, 92)
+		_phase_spin.pressed.connect(func() -> void: phase_spin_clicked.emit())
+		pv.add_child(_phase_spin)
+		_phase_use = UIKit.button("使用道具", 22)
+		_phase_use.custom_minimum_size = Vector2(184, 92)
+		_phase_use.pressed.connect(func() -> void: phase_use_clicked.emit())
+		pv.add_child(_phase_use)
+
 	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
-		"est_l": est_l, "badge_slot": badge_slot,
+		"est_l": est_l, "badge_slot": badge_slot, "hl": seat_hl,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
 		"shown": int(p.money), "tw": null}
 
@@ -1158,6 +1211,17 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 
 var _casino_pool_l: Label
 var _casino_status_l: Label
+# 赌场演出：相机聚焦 + 抽游戏 + 投骰子
+var _casino_rect := Rect2()
+var _casino_scene: Control
+var _casino_reel: Panel
+var _casino_track: Control
+var _casino_dice_row: HBoxContainer
+var _casino_hint_l: Label
+var _casino_dice := {}          # peer -> Label
+var _casino_order_ui: Array = []
+var _casino_names := {}         # peer -> 名字
+var _zoom_clamp_max := MAX_ZOOM
 var _shop_slots: Array = []         # {card, price_l, plus_l}
 var _tile_idx_labels: Array = []    # 开发者模式：格子编号叠层
 var dev_tile_index := false:
@@ -1339,6 +1403,7 @@ func _make_shop(rect: Rect2) -> void:
 
 ## 赌场（右半）：绿呢牌桌 + 金色滚边 + 两张卡背，奖池/状态活数据；对局玩法仍在弹层
 func _make_casino(rect: Rect2) -> void:
+	_casino_rect = rect
 	var panel := _zone_panel(rect, UIKit.card_stylebox(Color(0.062, 0.155, 0.105, 0.97), 18,
 		Color(UIKit.ACCENT_DEEP.r, UIKit.ACCENT_DEEP.g, UIKit.ACCENT_DEEP.b), 2, 14))
 	# 牌桌内圈金线
@@ -1421,6 +1486,180 @@ func update_casino(pool: int, status: String) -> void:
 			UIKit.ACCENT if pool > 0 else CASINO_FELT_TEXT)
 
 
+# ================= 赌场演出：相机聚焦 + 抽游戏 + 投骰子 =================
+
+const CASINO_ZOOM_MAX := 4.0
+
+## 相机移到赌场区域并放大（之后仍可拖拽平移 / 滚轮缩放，非定死）
+func focus_casino() -> void:
+	if cam_locked or _casino_rect.size == Vector2.ZERO:
+		return
+	auto_follow = false
+	_follow_peer = -1
+	_has_follow_pt = false
+	_rot_target = 0.0
+	_rotating = false
+	_zoom_clamp_max = CASINO_ZOOM_MAX
+	var vr := _visible_rect()
+	var z: float = minf(vr.size.x / _casino_rect.size.x, vr.size.y / _casino_rect.size.y) * 0.98
+	_zoom = clampf(z, MIN_ZOOM, CASINO_ZOOM_MAX)
+	_center = _casino_rect.get_center()
+	_center_target = _center
+	_apply_cam()
+
+## 进入赌场：铺好本局场景（卷轴 + 骰子行）
+func casino_enter(order: Array, pot: int, names: Dictionary) -> void:
+	_casino_order_ui = order
+	_casino_names = names
+	_casino_dice = {}
+	_build_casino_scene(pot)
+	if _casino_scene != null and is_instance_valid(_casino_scene):
+		_casino_scene.visible = true
+
+## 抽游戏：CSGO 式横向卷轴，定格在命中的游戏
+func casino_play_draw(hit: String) -> void:
+	if _casino_track == null or not is_instance_valid(_casino_track):
+		return
+	for c in _casino_track.get_children():
+		c.queue_free()
+	var names := [hit, "❓ 敬请期待", "❓ 敬请期待", "❓ 敬请期待"]
+	var cw := 200.0
+	var n := 28
+	var hit_idx := 23
+	for i in n:
+		var nm: String = names[0] if i == hit_idx else names[(i % 3) + 1]
+		var card := Panel.new()
+		card.position = Vector2(i * cw, 0)
+		card.size = Vector2(cw - 12, _casino_reel.size.y)
+		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+			Color(0.13, 0.19, 0.29), 10, Color(0.28, 0.38, 0.55), 2, 8))
+		var lab := UIKit.label(nm, 22, UIKit.ACCENT_HI if i == hit_idx else UIKit.TEXT_DIM)
+		lab.set_anchors_preset(Control.PRESET_FULL_RECT)
+		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		card.add_child(lab)
+		_casino_track.add_child(card)
+	_casino_track.position = Vector2(0, 0)
+	var target := -(hit_idx * cw + cw * 0.5 - _casino_reel.size.x * 0.5)
+	var tw := create_tween()
+	tw.tween_property(_casino_track, "position:x", target - 28.0, 2.6)\
+		.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_casino_track, "position:x", target, 0.25)
+	Fx.play("card", -2.0)
+
+## 掷骰：为每位玩家起一颗骰子，先滚后定
+func casino_show_rolls(vals: Dictionary) -> void:
+	if _casino_dice_row == null or not is_instance_valid(_casino_dice_row):
+		return
+	for c in _casino_dice_row.get_children():
+		c.queue_free()
+	_casino_dice = {}
+	var faces := ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+	for peer in _casino_order_ui:
+		var col := VBoxContainer.new()
+		col.alignment = BoxContainer.ALIGNMENT_CENTER
+		var dl := UIKit.label("⚀", 44, UIKit.TEXT)
+		dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(dl)
+		var nm := UIKit.label(String(_casino_names.get(int(peer), str(peer))), 15, UIKit.TEXT_DIM)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(nm)
+		_casino_dice_row.add_child(col)
+		_casino_dice[int(peer)] = dl
+	var tw := create_tween()
+	for i in 8:
+		tw.tween_callback(func() -> void:
+			for k in _casino_dice:
+				var l: Label = _casino_dice[k]
+				if is_instance_valid(l):
+					l.text = faces[randi_range(0, 5)]).set_delay(0.08)
+	tw.tween_callback(func() -> void:
+		for k in _casino_dice:
+			var l: Label = _casino_dice[k]
+			if is_instance_valid(l):
+				l.text = faces[clampi(int(vals.get(k, 1)) - 1, 0, 5)])
+	Fx.play("card", -2.0)
+
+## 高亮赢家（平分时多人高亮）
+func casino_mark_winners(winners: Array) -> void:
+	for k in _casino_dice:
+		var l: Label = _casino_dice[k]
+		if not is_instance_valid(l):
+			continue
+		l.add_theme_color_override("font_color",
+			UIKit.ACCENT if winners.has(int(k)) else UIKit.TEXT)
+
+## 底部结果提示
+func casino_set_hint(text: String) -> void:
+	if _casino_hint_l != null and is_instance_valid(_casino_hint_l):
+		_casino_hint_l.text = text
+
+## 离场：收场景、相机回总览
+func casino_leave() -> void:
+	if _casino_scene != null and is_instance_valid(_casino_scene):
+		_casino_scene.visible = false
+	_zoom_clamp_max = MAX_ZOOM
+	fit_overview()
+
+func _build_casino_scene(pot: int) -> void:
+	if _casino_scene == null or not is_instance_valid(_casino_scene):
+		_casino_scene = Control.new()
+		_casino_scene.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_casino_scene.position = _casino_rect.position
+		_casino_scene.size = _casino_rect.size
+		_world.add_child(_casino_scene)
+	for c in _casino_scene.get_children():
+		c.queue_free()
+	_casino_dice = {}
+	var bg := Panel.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.05, 0.13, 0.08, 0.98), 16,
+		Color(UIKit.ACCENT_DEEP.r, UIKit.ACCENT_DEEP.g, UIKit.ACCENT_DEEP.b), 2, 12))
+	_casino_scene.add_child(bg)
+	var title := UIKit.label("宿舍赌场 · 抽游戏", 28, UIKit.ACCENT_HI)
+	title.position = Vector2(28, 18)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_casino_scene.add_child(title)
+	var pool := UIKit.label("奖池 %s" % GameData.fmt_money(pot), 22, UIKit.ACCENT)
+	pool.position = Vector2(maxf(_casino_rect.size.x - 280.0, 300.0), 24)
+	pool.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_casino_scene.add_child(pool)
+	_casino_reel = Panel.new()
+	_casino_reel.position = Vector2(40, _casino_rect.size.y * 0.30)
+	_casino_reel.size = Vector2(_casino_rect.size.x - 80, _casino_rect.size.y * 0.36)
+	_casino_reel.clip_contents = true
+	_casino_reel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_casino_reel.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+		Color(0.03, 0.08, 0.05, 0.7), 10,
+		Color(UIKit.ACCENT_HI.r, UIKit.ACCENT_HI.g, UIKit.ACCENT_HI.b, 0.4), 1, 8))
+	_casino_scene.add_child(_casino_reel)
+	_casino_track = Control.new()
+	_casino_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_casino_reel.add_child(_casino_track)
+	var mark := Panel.new()
+	mark.position = Vector2(_casino_reel.size.x * 0.5 - 2, 0)
+	mark.size = Vector2(4, _casino_reel.size.y)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.add_theme_stylebox_override("panel", UIKit.stylebox(UIKit.ACCENT, 0, Color(0, 0, 0, 0), 0))
+	_casino_reel.add_child(mark)
+	_casino_dice_row = HBoxContainer.new()
+	_casino_dice_row.add_theme_constant_override("separation", 48)
+	_casino_dice_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_casino_dice_row.position = Vector2(0, _casino_rect.size.y * 0.72)
+	_casino_dice_row.size = Vector2(_casino_rect.size.x, _casino_rect.size.y * 0.2)
+	_casino_dice_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_casino_scene.add_child(_casino_dice_row)
+	_casino_hint_l = UIKit.label("", 22, UIKit.ACCENT)
+	_casino_hint_l.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_casino_hint_l.offset_top = -48
+	_casino_hint_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_casino_hint_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_casino_scene.add_child(_casino_hint_l)
+
+
 ## 座位卡统计：身家排名徽章 + 地产/身家行（数据由对局层刷新）
 func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
 	var e := int(_seat_of_peer.get(peer, -1))
@@ -1436,6 +1675,108 @@ func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
 			c.queue_free()
 		if rank > 0:
 			slot.add_child(UIKit.rank_badge(rank, 28))
+
+## 被选中的道具卡（绿光）：peer=-1 表示无
+var item_selected := {"peer": -1, "slot": -1}
+var self_peer := 1                    # 本地玩家（其道具卡上才挂「✕」丢弃）
+var _discard_hl := {"peer": -1, "slot": -1}
+var _phase_spin: Button               # 牌垫上的「转转盘」
+var _phase_use: Button                # 牌垫上的「使用道具」
+
+## 更新牌垫阶段按钮的文案/配色/可用（style: primary=黄 normal=灰 good=绿）
+func set_phase_buttons(spin_text: String, spin_style: String, spin_disabled: bool,
+		use_text: String, use_style: String, use_disabled: bool) -> void:
+	if _phase_spin != null and is_instance_valid(_phase_spin):
+		_phase_spin.text = spin_text
+		_phase_spin.disabled = spin_disabled
+		UIKit.restyle_button(_phase_spin, spin_style)
+	if _phase_use != null and is_instance_valid(_phase_use):
+		_phase_use.text = use_text
+		_phase_use.disabled = use_disabled
+		UIKit.restyle_button(_phase_use, use_style)
+
+func set_self_peer(peer: int) -> void:
+	self_peer = peer
+
+## 指向性道具：高亮可选玩家座位卡 / 可选格子（世界坐标；两者互斥）
+func set_select_peers(peers: Array) -> void:
+	_set_hl_tiles([])
+	_set_hl_peers(peers)
+	_pulse_select(not peers.is_empty())
+
+func set_select_tiles(idxs: Array) -> void:
+	_set_hl_peers([])
+	_set_hl_tiles(idxs)
+	_pulse_select(not idxs.is_empty())
+
+func clear_select() -> void:
+	_set_hl_peers([])
+	_set_hl_tiles([])
+	_pulse_select(false)
+
+func _set_hl_peers(peers: Array) -> void:
+	for e in _seats:
+		var sd: Dictionary = _seats[e]
+		var hl = sd.get("hl", null)
+		if hl != null and is_instance_valid(hl):
+			(hl as Panel).visible = int(sd.get("peer", -1)) in peers
+
+func _set_hl_tiles(idxs: Array) -> void:
+	for i in _tile_hl.size():
+		var hl = _tile_hl[i]
+		if hl != null and is_instance_valid(hl):
+			(hl as Panel).visible = i in idxs
+
+func _pulse_select(on: bool) -> void:
+	if _select_tw != null and _select_tw.is_valid():
+		_select_tw.kill()
+		_select_tw = null
+	if not on:
+		return
+	var apply := func(a: float) -> void:
+		for e in _seats:
+			var hl = _seats[e].get("hl", null)
+			if hl != null and is_instance_valid(hl) and (hl as Panel).visible:
+				hl.modulate.a = a
+		for hl in _tile_hl:
+			if hl != null and is_instance_valid(hl) and (hl as Panel).visible:
+				hl.modulate.a = a
+	_select_tw = create_tween().set_loops()
+	_select_tw.tween_method(apply, 1.0, 0.45, 0.7).set_trans(Tween.TRANS_SINE)
+	_select_tw.tween_method(apply, 0.45, 1.0, 0.7).set_trans(Tween.TRANS_SINE)
+
+## 丢弃待确认：把那张卡的「✕」点亮成红色
+func mark_discard_pending(peer: int, slot: int) -> void:
+	_discard_hl = {"peer": peer, "slot": slot}
+	for e in _seats:
+		var sd: Dictionary = _seats[e]
+		if int(sd.get("peer", -1)) != self_peer:
+			continue
+		var sls: Array = sd.get("slots", [])
+		for i in sls.size():
+			var sp: Panel = sls[i]
+			if not is_instance_valid(sp):
+				continue
+			var b := sp.get_node_or_null("disc_x")
+			if b != null:
+				(b as Button).modulate = Color(1, 0.45, 0.45) \
+					if (int(peer) == self_peer and int(slot) == i) else Color(1, 1, 1, 0.78)
+
+func set_item_selected(peer: int, slot: int) -> void:
+	item_selected = {"peer": peer, "slot": slot}
+	for e in _seats:
+		var sd: Dictionary = _seats[e]
+		var s_peer := int(sd.get("peer", -1))
+		var sls: Array = sd.get("slots", [])
+		for i in sls.size():
+			var sp: Panel = sls[i]
+			if not is_instance_valid(sp):
+				continue
+			var on := int(item_selected.peer) == s_peer and int(item_selected.slot) == i
+			sp.add_theme_stylebox_override("panel", UIKit.stylebox(
+				Color(0.42, 0.85, 0.55, 0.14) if on else Color(1, 1, 1, 0.035), 10,
+				Color(0.42, 0.85, 0.55, 0.95) if on else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55),
+				2 if on else 1))
 
 ## 道具牌位：公开背包（定稿卡面模板小卡；空位显示 +）
 func set_seat_slot(peer: int, idx: int, item) -> void:
@@ -1469,6 +1810,18 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 		var cooling: bool = int(item.get("charges", 0)) <= 0 and int(item.get("cd", 0)) > 0
 		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE,
 			{"count": count, "melt": melt, "cooling": cooling}))
+		# 本地玩家的卡右上角挂「✕」丢弃（点两次确认）
+		if peer == self_peer:
+			var disc := Button.new()
+			disc.name = "disc_x"
+			disc.text = "✕"
+			disc.position = Vector2(SLOT_SIZE.x - 26, 2)
+			disc.size = Vector2(24, 22)
+			disc.add_theme_font_size_override("font_size", 13)
+			disc.mouse_filter = Control.MOUSE_FILTER_STOP
+			disc.modulate = Color(1, 1, 1, 0.78)
+			disc.pressed.connect(func() -> void: item_discard_clicked.emit(peer, idx))
+			sp.add_child(disc)
 	else:
 		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
 		plus.set_anchors_preset(Control.PRESET_FULL_RECT)

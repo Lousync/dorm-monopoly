@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型：牌垫阶段按钮 + 道具点选</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #dfe3ee; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	#stage { width: 1280px; height: 800px; flex: none; position: relative; overflow: hidden;
+		background: radial-gradient(ellipse at 50% 25%, #1b2030 0%, #10121c 55%, #0a0c13 100%); }
+
+	/* 桌面示意 */
+	#table { position: absolute; left: 140px; top: 60px; width: 1000px; height: 470px;
+		border-radius: 18px; background:
+			repeating-linear-gradient(93deg, rgba(0,0,0,.10) 0 3px, rgba(0,0,0,0) 3px 48px),
+			linear-gradient(180deg, #6e4d2c, #59391d 55%, #4a2e16);
+		box-shadow: 0 0 0 3px #3a2410, 0 18px 50px rgba(0,0,0,.55); }
+	#table .hint { position: absolute; left: 0; right: 0; top: 46%; text-align: center;
+		color: rgba(255,255,255,.18); font-size: 15px; letter-spacing: 3px; }
+
+	/* ---------- 牌垫（底部） ---------- */
+	#mat { position: absolute; left: 150px; bottom: 40px; width: 980px; height: 168px;
+		display: flex; gap: 14px; padding: 12px 14px;
+		background: rgba(8, 12, 20, .82); border: 1px solid rgba(245,179,66,.35);
+		border-radius: 14px; box-shadow: 0 12px 30px rgba(0,0,0,.5); }
+
+	/* 玩家信息 */
+	.pinfo { width: 190px; flex: none; display: flex; flex-direction: column; gap: 6px;
+		background: rgba(255,255,255,.04); border-radius: 10px; padding: 10px; }
+	.pinfo .row { display: flex; align-items: center; gap: 8px; }
+	.chip { width: 18px; height: 18px; border-radius: 50%; background: #e5484d; }
+	.pinfo .nm { font-size: 16px; }
+	.pinfo .mn { font-size: 20px; color: #f5b342; }
+	.pinfo .sub { font-size: 12px; color: #8b93ad; }
+	.stam { display: flex; gap: 3px; }
+	.stam s { width: 8px; height: 12px; border-radius: 2px; background: #3a3f55; text-decoration: none; }
+	.stam s.on { background: #f5d342; }
+
+	/* 道具卡位 */
+	.slots { flex: 1; display: flex; gap: 10px; }
+	.slot { width: 96px; height: 140px; border-radius: 9px; position: relative; cursor: pointer;
+		background: linear-gradient(180deg,#232838,#161a26); border: 2px solid #46506a;
+		display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+		transition: border-color .15s, box-shadow .15s, transform .1s; }
+	.slot .gi { font-size: 30px; }
+	.slot .gn { font-size: 12px; color: #cfe0ff; text-align: center; }
+	.slot .q { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 12px;
+		border-radius: 3px; font-size: 9px; line-height: 12px; text-align: center; color: #0d0f17; font-weight: bold; }
+	.slot .st { position: absolute; right: 5px; top: 5px; font-size: 10px; color: #8b93ad; }
+	.slot.empty { border-style: dashed; border-color: #333a52; cursor: default; }
+	.slot.empty .gi { color: #333a52; }
+	.slot:not(.empty):hover { border-color: #6f86b8; }
+	/* 选中的绿光 */
+	.slot.sel { border-color: #6bc78c; box-shadow: 0 0 0 2px rgba(107,199,140,.35), 0 0 22px rgba(107,199,140,.85);
+		animation: glow 1.2s ease-in-out infinite; }
+	@keyframes glow { 0%,100% { box-shadow: 0 0 0 2px rgba(107,199,140,.35), 0 0 16px rgba(107,199,140,.7); }
+		50% { box-shadow: 0 0 0 2px rgba(107,199,140,.5), 0 0 26px rgba(107,199,140,.95); } }
+	.slot.spent { opacity: .35; cursor: default; filter: grayscale(.6); }
+	.slot .x { position: absolute; right: 4px; top: 4px; width: 20px; height: 20px; border-radius: 5px;
+		background: rgba(0,0,0,.35); color: #b9c2d6; font-size: 13px; line-height: 20px; text-align: center;
+		display: none; cursor: pointer; }
+	.slot:hover .x, .slot.sel .x { display: block; }
+	.slot .x:hover { background: rgba(220,80,80,.5); color: #fff; }
+	.slot .x.confirm { display: block; background: #d86060; color: #fff; }
+
+	/* 阶段按钮区 */
+	.phase { width: 150px; flex: none; display: flex; flex-direction: column; gap: 12px;
+		justify-content: center; }
+	.pbtn { height: 58px; border-radius: 12px; font-size: 17px; font-weight: bold; cursor: pointer;
+		border: 2px solid #333a52; color: #dfe3ee; background: #1d2131; user-select: none;
+		display: flex; align-items: center; justify-content: center; gap: 6px; transition: all .15s; }
+	/* 当前阶段：黄 */
+	.pbtn.active { background: linear-gradient(180deg,#ffd88a,#f0a72e); color: #3a2405; border-color: #f5b342;
+		box-shadow: 0 0 20px rgba(245,179,66,.6); }
+	/* 已完成：灰 */
+	.pbtn.done { background: #171a24; color: #565d75; border-color: #2a3046; }
+	/* 未到阶段：暗 */
+	.pbtn.todo { background: #1a1e2b; color: #6b7690; border-color: #2a3046; }
+
+	/* 「使用道具」按钮两态 */
+	.pbtn.use-empty { background: #232838; color: #8b93ad; border-color: #3a4058; cursor: not-allowed; }
+	.pbtn.use-ready { background: linear-gradient(180deg,#8fe0a6,#4fb873); color: #06240f; border-color: #6bc78c;
+		box-shadow: 0 0 22px rgba(107,199,140,.7); }
+
+	/* 屏幕提示 */
+	#tip { position: absolute; left: 50%; bottom: 224px; transform: translateX(-50%);
+		font-size: 13px; color: #f5b342; background: rgba(8,12,20,.85);
+		border: 1px solid #333a52; border-radius: 8px; padding: 6px 14px; }
+	#status { position: absolute; left: 24px; top: 20px; z-index: 20; font-size: 14px; color: #cfe0ff;
+		background: rgba(8,12,20,.8); border: 1px solid #333a52; border-radius: 8px; padding: 7px 14px; }
+	#status b { color: #f5b342; }
+	#ctl { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); z-index: 20;
+		display: flex; gap: 8px; align-items: center; background: rgba(8,12,20,.85);
+		border: 1px solid #333a52; border-radius: 10px; padding: 8px 12px; }
+	#ctl button { font-size: 12px; color: #cfe0ff; background: #1d2131; border: 1px solid #333a52;
+		border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+	#ctl button:hover { border-color: #f5b342; color: #ffd88a; }
+	#note { position: absolute; right: 16px; bottom: 224px; width: 320px; z-index: 20;
+		background: rgba(8,20,12,.9); border: 1px dashed #4e8f5c; border-radius: 8px;
+		padding: 8px 11px; font-size: 10.5px; color: #9fd3ab; line-height: 15px; }
+	#note b { color: #cfe8d4; }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+	<div id="table"><div class="hint">（棋盘 / 桌面）</div></div>
+
+	<!-- 牌垫 -->
+	<div id="mat">
+		<div class="pinfo">
+			<div class="row"><div class="chip"></div><div class="nm">房主 ▶</div></div>
+			<div class="mn">¥18,400</div>
+			<div class="sub">地产 ×3 · 格 12</div>
+			<div class="stam">
+				<s class="on"></s><s class="on"></s><s class="on"></s><s></s><s></s>
+			</div>
+			<div class="sub">体力 3/5</div>
+		</div>
+		<div class="slots" id="slots"></div>
+		<div class="phase">
+			<div class="pbtn active" id="b-spin">🎡 转转盘</div>
+			<div class="pbtn todo" id="b-use">🎒 使用道具</div>
+		</div>
+	</div>
+
+	<div id="status">阶段：<b>① 转转盘</b></div>
+	<div id="tip">点阶段按钮推进（原型）</div>
+	<div id="note">
+		<b>原型说明</b><br>
+		· 两个阶段按钮放在牌垫上；**当前阶段=黄**，**点完=灰**，未到=暗。<br>
+		· 道具：**先点卡片选中**（绿光），再点「使用道具」。<br>
+		· 「使用道具」按钮按状态变身：**未选卡**=「跳过」（可点）；**选中且可用**=绿「使用『XX』」；**选中但不可用/被动**=灰不可点（再点卡片可取消选中）。<br>
+		· **被动道具**（招财猫/信托基金）**可选中但不能「使用」**（按钮灰），仍可**丢弃**。<br>
+		· **丢弃**：卡片**右上角「✕」**（悬停/选中时显示），**任何时候都能丢**；点一次✕变红「确认」、再点才真丢（二次确认）。<br>
+		· 顶栏控制条用于模拟阶段推进。
+	</div>
+
+	<div id="ctl">
+		<button onclick="reset()">⟲ 重来</button>
+		<button onclick="toSpinDone()">掷轮完成</button>
+		<button onclick="toItemDone()">使用道具完成</button>
+	</div>
+</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const ITEMS = [
+	{ name: "招财猫", icon: "🐱", q: "白", color: "#ececec", spent: false, usable: false, passive: true }, // 被动：可选但不可用
+	{ name: "作弊器", icon: "🎯", q: "蓝", color: "#4e8fe0", spent: false, usable: true },
+	{ name: "交换生", icon: "🔄", q: "蓝", color: "#4e8fe0", spent: false, usable: true },
+	{ name: "信托基金", icon: "🏦", q: "绿", color: "#58c468", spent: false, usable: false, passive: true },
+	{ name: "", icon: "", q: "", color: "", spent: false, usable: false },
+];
+let phase = 0;          // 0=转转盘 1=使用道具 2=结束
+	let sel = -1;           // 选中的卡槽
+let discardPending = -1;   // 「✕」待确认丢弃的卡槽
+
+function render() {
+	const box = $("slots"); box.innerHTML = "";
+	ITEMS.forEach((it, i) => {
+		const d = document.createElement("div");
+		d.className = "slot" + (it.name === "" ? " empty" : "") + (sel === i && it.name !== "" ? " sel" : "")
+			+ (it.spent ? " spent" : "");
+		if (it.name === "") { d.innerHTML = '<div class="gi">＋</div>'; }
+		else {
+			d.innerHTML = '<div class="st">' + (it.spent ? "已用" : "") + '</div>' +
+				'<div class="gi">' + it.icon + '</div><div class="gn">' + it.name + '</div>' +
+				'<div class="q" style="background:' + it.color + '">' + it.q + '</div>' +
+				(it.spent ? '' : '<div class="x' + (discardPending === i ? ' confirm' : '') + '">✕</div>');
+			d.onclick = () => { if (!it.spent) { sel = (sel === i ? -1 : i); discardPending = -1; render(); } };
+			const x = d.querySelector(".x");
+			if (x) x.onclick = (ev) => {
+				ev.stopPropagation();
+				if (discardPending === i) { it.spent = true; discardPending = -1; if (sel === i) sel = -1; }
+				else { discardPending = i; }
+				render();
+			};
+		}
+		box.appendChild(d);
+	});
+	// 阶段按钮
+	const bs = $("b-spin"), bu = $("b-use");
+	bs.className = "pbtn " + (phase === 0 ? "active" : (phase >= 1 ? "done" : "todo"));
+	// 「使用道具」按钮按状态变身（未选=跳过 / 选中可用=绿 / 选中不可用=灰）
+	if (phase === 2) { bu.className = "pbtn done"; bu.textContent = "🎒 使用道具"; }
+	else if (phase === 1) {
+		if (sel < 0) { bu.className = "pbtn"; bu.textContent = "⏭ 跳过"; }
+		else if (ITEMS[sel].usable) { bu.className = "pbtn use-ready"; bu.textContent = "🎒 使用『" + ITEMS[sel].name + "』"; }
+		else { bu.className = "pbtn use-empty"; bu.textContent = "🎒 使用「" + ITEMS[sel].name + "」"; }
+	} else { bu.className = "pbtn todo"; bu.textContent = "🎒 使用道具"; }
+
+	$("status").innerHTML = "阶段：<b>" + ["① 转转盘", "② 使用道具", "本回合结束"][phase] + "</b>";
+	$("tip").textContent = phase === 0 ? "点「转转盘」（黄）开始"
+		: (phase === 1
+			? (sel < 0 ? "未选道具 → 按钮是「跳过」；点一张卡片选中"
+				: (ITEMS[sel].usable ? "已选『" + ITEMS[sel].name + "』→ 绿色按钮可点使用" : "『" + ITEMS[sel].name + "』不可用 → 按钮灰；再点卡片取消选中"))
+			: "本回合已结束");
+}
+
+// 交互
+$("b-spin").onclick = () => { if (phase === 0) { phase = 1; render(); } };
+$("b-use").onclick = () => {
+	if (phase !== 1) return;
+	if (sel < 0) { phase = 2; render(); return; }   // 未选卡 = 跳过
+	if (!ITEMS[sel].usable) return;                  // 不可用：灰，点了没用
+	ITEMS[sel].spent = true; sel = -1;
+	phase = 2; render();
+};
+function toSpinDone() { if (phase === 0) phase = 1; render(); }
+function toItemDone() { phase = 2; render(); }
+function reset() { phase = 0; sel = -1; discardPending = -1; ITEMS.forEach(it => it.spent = false); render(); }
+
+render();
+function fit() { const s = Math.min(innerWidth / 1280, innerHeight / 800); $("stage").style.transform = "scale(" + s + ")"; }
+addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>

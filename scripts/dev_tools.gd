@@ -164,6 +164,16 @@ func build_panel() -> void:
 	var fr_btn := UIKit.button("强制", 11)
 	fr_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.cheat_roll = int(dev_roll_spin.value)))
 	trow.add_child(fr_btn)
+	# 快速到特殊格：传送选中玩家并触发落点结算（赌场会直接跑一局演出）
+	var jrow := HBoxContainer.new()
+	jrow.add_theme_constant_override("separation", 4)
+	dev_inject_box.add_child(jrow)
+	jrow.add_child(UIKit.label("快速到", 11, UIKit.TEXT_DIM))
+	for e in [["赌场", "casino"], ["小卖部", "shop"], ["机会", "event"], ["起点", "start"]]:
+		var jb := UIKit.button(String(e[0]), 11)
+		var jk: String = String(e[1])
+		jb.pressed.connect(func() -> void: _dev_jump(jk))
+		jrow.add_child(jb)
 	var erow := HBoxContainer.new()
 	erow.add_theme_constant_override("separation", 4)
 	dev_inject_box.add_child(erow)
@@ -304,7 +314,7 @@ func refresh_panel() -> void:
 		for it in p.get("items", []):
 			its.append(String(it.id) + (("·%d" % int(it.cd)) if int(it.cd) > 0 else ""))
 		lines.append("%s ¥%d ⚡%d 格%d %s" % [String(p.name), int(p.money), int(p.get("stamina", 0)),
-			int(p.pos), " ".join(its)])
+			int(p.get("pos", -1)), " ".join(its)])
 	var shop_txt := ""
 	for k in g.st.get("shops", {}):
 		var arr: Array = g.st.shops[k].slots
@@ -395,11 +405,8 @@ func take_shot(path: String) -> void:
 	if not path.contains("plain") and not path.contains("card"):
 		# 赌局界面预览（单行假数据，验证布局用）。路径带 card 时跳过赌局，
 		# 否则弹层会盖住正在翻的抽卡
-		g.casino.s_casino_start.rpc("炸弹猫", 800, 3200, [g.my_peer])
-		g.casino.s_casino_turn.rpc(g.my_peer, 1, {g.my_peer: 1}, {g.my_peer: 2}, 9, true)
-		g.casino.s_casino_event.rpc("你 摸到一张【拆除】揣进兜里", "move")
-		g.casino.s_casino_event.rpc("你 摸到炸弹，紧急打出【拆除】化解！", "move")
-		g.casino.s_casino_event.rpc("你 摸到一条小鱼", "good")
+		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
+		g.casino.s_casino_roll.rpc({g.my_peer: 5})
 	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
 	for i in 3:
 		await get_tree().create_timer(0.6).timeout
@@ -417,3 +424,25 @@ func _dev_player_edit(edit: Callable) -> void:
 		return
 	edit.call(p)
 	_broadcast_state()
+
+## 找到第一种指定格型的路径序号（找不到返回 -1）
+func _find_tile(kind: String) -> int:
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == kind:
+			return i
+	return -1
+
+## 快速传送：选中玩家移到目标格并触发落点结算（赌场→跑一局演出；小卖部→开店）
+func _dev_jump(kind: String) -> void:
+	if not multiplayer.is_server():
+		return
+	var idx := _find_tile(kind)
+	var p := _dev_selected()
+	if idx < 0 or p.is_empty():
+		_log("[dev] 找不到「%s」格" % kind, "#7fd88f")
+		return
+	p.pos = idx
+	_broadcast_state()
+	g.board.focus_grid(idx, 0.9, true)
+	_log("[dev] %s 传送到「%s」（格 %d），触发落点结算" % [String(p.name), kind, idx], "#7fd88f")
+	await g._resolve_tile(p)

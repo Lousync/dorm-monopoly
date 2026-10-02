@@ -111,6 +111,7 @@ func _run() -> void:
 	_test_shop_refresh_full_shelf(g)
 	_test_camera_state(g)
 	await _test_roll_button_off_home_view(g)
+	await _test_targeting(g)
 
 	# 掉线路径会触发换场景，放到最后
 	var lobby = load("res://scenes/lobby.tscn").instantiate()
@@ -165,29 +166,30 @@ func _test_round_counter(g) -> void:
 	_check(g.round_no == 1, "0 号位破产后三人一圈仍记一轮（实得 %d）" % g.round_no)
 
 func _test_client_item_bar(g) -> void:
-	print("== 客户端道具栏（真人可用道具） ==")
+	print("== 牌垫道具（点选→使用 三态） ==")
+	var pls := [
+		{"peer": 2, "name": "我", "color": 1, "bot": false, "alive": true, "money": 1000,
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false,
+			"items": [{"id": "作弊器", "cd": 0}, {"id": "交换生", "cd": 0}]},
+		{"peer": 3, "name": "乙", "color": 2, "bot": false, "alive": true, "money": 1000,
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": [{"id": "招财猫", "cd": 0}]},
+	]
 	g.hp = []          # 客户端没有房主的 hp（hp 只在 _host_setup 里填充）
 	g.my_peer = 2
-	g.st = {
-		"phase": "playing", "turn": 2, "await": "item", "await_peer": 2,
-		"players": [
-			{"peer": 2, "name": "我", "alive": true, "money": 1000, "stamina": 3,
-				"item_used": false, "items": [{"id": "作弊器", "cd": 0}, {"id": "交换生", "cd": 0}]},
-			# 交换生的可换目标（有道具的存活玩家）
-			{"peer": 3, "name": "乙", "alive": true, "money": 1000, "stamina": 3,
-				"item_used": false, "items": [{"id": "招财猫", "cd": 0}]},
-		],
-	}
+	g.st = {"phase": "playing", "turn": 2, "await": "item", "await_peer": 2, "players": pls}
+	g.board.set_self_peer(2)
+	_rebuild_seats(g, pls)            # 建座位（边 0 = 自己），牌垫按钮随之生成
 	g._refresh_item_buttons(true, "item")
-	_check(g.item_btn_box.get_child_count() > 0,
-		"轮到客户端时道具栏有按钮（实得 %d 个）" % g.item_btn_box.get_child_count())
-	var swap_btn: Button = null
-	for c in g.item_btn_box.get_children():
-		if c is Button and String(c.text).begins_with("交换生"):
-			swap_btn = c as Button
-	_check(swap_btn != null, "客户端道具栏含「交换生」按钮")
-	if swap_btn != null:
-		_check(not swap_btn.disabled, "客户端上「交换生」可用（有可换目标时不置灰）")
+	_check(g.board._phase_use != null, "牌垫上有「使用道具」按钮")
+	_check(String(g.board._phase_use.text) == "跳过" and not g.board._phase_use.disabled,
+		"未选卡时该按钮为「跳过」（可点）")
+	# 点牌垫上的「交换生」（槽 1）→ 选中（绿光）
+	g._on_item_slot_clicked(2, 1)
+	_check(int(g.board.item_selected.get("peer", -1)) == 2 \
+		and int(g.board.item_selected.get("slot", -1)) == 1,
+		"点牌垫道具卡后选中该槽（绿光）")
+	_check(not g.board._phase_use.disabled and String(g.board._phase_use.text).contains("交换生"),
+		"选中后按钮变可用并显示道具名（形态二）")
 
 func _test_shop_buttons(g) -> void:
 	print("== 小卖部购买按钮 ==")
@@ -214,12 +216,7 @@ func _test_authority_guards(g) -> void:
 	g._decision = {"token": -1, "yes": false}
 	g.c_decision(3, true)
 	_check(int(g._decision.token) == -1, "非当事玩家的 c_decision 被拒绝")
-	# c_casino_action：只有当局出牌的玩家能操作
-	g.casino._casino_actor = 7
-	g.casino._casino_epoch = 5
-	g.casino._casino_action = {"epoch": -1, "action": ""}
-	g.casino.c_casino_action(5, "top")
-	_check(String(g.casino._casino_action.action) != "top", "非当局玩家的 c_casino_action 被拒绝")
+	# 注：赌场改「投骰子」后已无 c_casino_action（房主全权掷骰），该鉴权测试随之移除
 
 func _test_card_sound_once(g) -> void:
 	print("== s_card 的音效只响一次 ==")
@@ -446,12 +443,12 @@ func _test_camera_state(g) -> void:
 		"窗口尺寸变化后视角仍在别人座位（实得 %.2f rad）" % g.board._rot)
 
 func _test_roll_button_off_home_view(g) -> void:
-	print("== 转离自己视角后仍能操作（「转动转盘」不再被一起隐藏） ==")
+	print("== 阶段按钮在牌垫上（世界坐标，随视角；本人掷轮时可点） ==")
 	var pls := [
 		{"peer": 1, "name": "我", "color": 0, "bot": false, "alive": true, "money": 1000,
-			"items": [], "stamina": 3, "item_used": false},
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": []},
 		{"peer": 2, "name": "乙", "color": 1, "bot": false, "alive": true, "money": 1000,
-			"items": [], "stamina": 3, "item_used": false},
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": []},
 	]
 	g.hp = []
 	g.my_peer = 1
@@ -462,44 +459,71 @@ func _test_roll_button_off_home_view(g) -> void:
 	}
 	_rebuild_seats(g, pls)            # 建立座位（边 0 = 自己）
 	g.board.rotate_to_edge(0, true)   # 前面的镜头用例可能把视角留在别人座位
-	g._refresh_actions()              # 掷骰按钮的显隐/可用由状态决定
+	g._refresh_actions()              # 阶段按钮的状态由状态决定
 	await process_frame
 	await process_frame               # 等容器布局算出真实尺寸
-	g._process(0.0)                   # 阶段条落到屏幕上（真实游戏每帧都会跑）
-	_check(g.roll_btn.is_visible_in_tree(), "自己视角下「转动转盘」可见")
-	# 布局：自己视角下阶段条仍在（牌垫贴自家座位卡），操作条接在它下面
-	_check(g.mat_bar.is_visible_in_tree(), "自己视角下阶段条显示")
-	# 自己视角：两条并排成原来那一行（座位卡下沿放不下两行）
-	var mb: Control = g.mat_bar
-	var vp0: Vector2 = g.get_viewport_rect().size
-	_check(g.action_bar.is_visible_in_tree() and absf(g.action_bar.position.y - mb.position.y) < 1.0,
-		"自己视角下阶段条与操作条同一行（mat_bar y %.0f / action_bar y %.0f）"
-			% [mb.position.y, g.action_bar.position.y])
-	_check(g.action_bar.position.x >= mb.position.x + mb.size.x - 1.0,
-		"自己视角下操作条排在阶段条右侧（mat_bar 右 %.0f / action_bar x %.0f）"
-			% [mb.position.x + mb.size.x, g.action_bar.position.x])
-	_check(mb.position.y + mb.size.y <= vp0.y + 1.0 \
-			and g.action_bar.position.y + g.action_bar.size.y <= vp0.y + 1.0,
-		"自己视角下整行仍在屏幕内（行底 %.0f / 屏高 %.0f）"
-			% [maxf(mb.position.y + mb.size.y, g.action_bar.position.y + g.action_bar.size.y), vp0.y])
-
-	g.board.rotate_to_edge(1, true)   # 硬转到别人座位视角
+	g._process(0.0)
+	_check(g.board._phase_spin != null and g.board._phase_spin.is_visible_in_tree(),
+		"牌垫上有「转转盘」按钮")
+	_check(not g.board._phase_spin.disabled, "轮到我掷轮时「转转盘」可点")
+	_check(g.mat_bar.is_visible_in_tree(), "状态条仍显示")
+	# 牌垫按钮是世界坐标：转到别人视角后仍存在（随桌世界旋转/可能转出画面，但对象在）
+	g.board.rotate_to_edge(1, true)
 	_check(not g.board.at_home_view(), "已转离自己视角")
 	g._process(0.0)
-	_check(g.roll_btn.is_visible_in_tree(), "转离视角后「转动转盘」仍在屏幕上可见")
-	_check(not g.roll_btn.disabled, "转离视角后「转动转盘」仍可点")
-	# fix/v0.1.0 起底栏改成「屏幕底部一条固定操作坞」，不再贴自家座位卡，
-	# 所以转离视角后阶段条仍然在（比旧行为更强：阶段与状态任何时候都看得见）
-	_check(g.mat_bar.is_visible_in_tree(), "转离视角后阶段条仍显示（底栏已固定贴底）")
-	var vp: Vector2 = g.get_viewport_rect().size
-	var ab: Control = g.action_bar
-	var mb2: Control = g.mat_bar
-	_check(ab.size.y > 1.0, "操作条已算出真实尺寸（h=%.0f）" % ab.size.y)
-	_check(ab.position.y >= 0.0 and ab.position.y + ab.size.y <= vp.y + 1.0,
-		"转离视角后操作条竖直在屏幕内（y=%.0f h=%.0f vp=%.0f）" % [ab.position.y, ab.size.y, vp.y])
-	_check(ab.position.x >= 0.0 and ab.position.x + ab.size.x <= vp.x + 1.0,
-		"转离视角后操作条水平在屏幕内（x=%.0f w=%.0f vp=%.0f）" % [ab.position.x, ab.size.x, vp.x])
-	_check(mb2.position.x >= 0.0 and mb2.position.x + mb2.size.x <= vp.x + 1.0,
-		"转离视角后阶段条水平在屏幕内（x=%.0f w=%.0f vp=%.0f）" % [mb2.position.x, mb2.size.x, vp.x])
-	_check(absf(ab.position.y - mb2.position.y) < 1.0,
-		"转离视角后两条仍在同一行（mat_bar y %.0f / action_bar y %.0f）" % [mb2.position.y, ab.position.y])
+	_check(g.board._phase_spin != null, "转离视角后牌垫按钮对象仍在（随桌世界）")
+
+## 指向性道具：点棋盘选玩家 / 两段式手选地块（本轮返工）
+func _test_targeting(g) -> void:
+	print("== 指向性道具：选玩家 / 两段式手选地块 ==")
+	var p1 := _mk_player(1, "我")
+	var p2 := _mk_player(2, "乙")
+	var p3 := _mk_player(3, "丙")
+	g.my_peer = 1
+	var tiles := _fresh_tiles()
+	var pa := _prop_idx(0)
+	var pb := _prop_idx(1)
+	tiles[pa]["owner"] = 2
+	tiles[pa]["level"] = 2
+	tiles[pb]["owner"] = 2
+	tiles[pb]["level"] = 1
+	g.st = {
+		"phase": "playing", "turn": 1, "await": "item", "await_peer": 1, "roll_epoch": 1,
+		"round": 1, "max_rounds": 30, "players": [p1, p2, p3], "tiles": tiles,
+		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
+	}
+	# 选玩家：其他两名存活玩家；两段式只列「名下有地」的玩家
+	_check(g._item_targets(1).size() == 2, "选玩家列表 = 其他两名存活玩家")
+	_check(g._selectable_props(2) == [pa, pb], "乙名下两块地皮（读已同步的 st.tiles）")
+	_check(g._selectable_props(3).is_empty(), "丙名下无地皮")
+
+	# 两段式：强拆令 选乙 → 指定 pa → 只有 pa 归无主（而非随机）
+	g.hp = [p1, p2, p3]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0, "soil": false})
+	g.htiles[pa]["owner"] = 2
+	g.htiles[pa]["level"] = 2
+	g.htiles[pb]["owner"] = 2
+	g.htiles[pb]["level"] = 1
+	var inst := {"id": "强拆令", "cd": 0}
+	var ok: bool = await g._apply_item_effect(p1, inst, 2, pa)
+	_check(ok, "强拆令（两段式）返回成功")
+	_check(int(g.htiles[pa].owner) == GameData.NO_OWNER, "指定的 pa 归为无主")
+	_check(int(g.htiles[pb].owner) == 2, "未指定的 pb 不受影响（不是随机乱拆）")
+	_check(int(g.htiles[pa].level) == 0, "被强拆的地皮等级清零")
+
+	# 抄家队：两段式指定 pb → 只降 pb 一级
+	g.htiles[pa]["owner"] = 2
+	g.htiles[pa]["level"] = 2
+	g.htiles[pb]["owner"] = 2
+	g.htiles[pb]["level"] = 2
+	var inst2 := {"id": "抄家队", "cd": 0}
+	var ok2: bool = await g._apply_item_effect(p1, inst2, 2, pb)
+	_check(ok2, "抄家队（两段式）返回成功")
+	_check(int(g.htiles[pb].level) == 1, "指定的 pb 降 1 级")
+	_check(int(g.htiles[pa].level) == 2, "未指定的 pa 不受影响")
+
+	# 非法 arg2（不属于目标）→ 回落随机，不崩
+	var ok3: bool = await g._apply_item_effect(p1, inst2, 2, 9999)
+	_check(ok3, "非法 arg2 回落随机仍返回成功")

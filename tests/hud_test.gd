@@ -126,7 +126,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	g._process(0.0)
-	_check(g.mat_bar.visible and g.action_bar.visible, "底栏两条可见")
+	_check(g.mat_bar.visible, "底栏（状态条）可见；阶段按钮已移到牌垫上")
 	_check(g.dock_plate.visible, "底板随底栏一起出现")
 	var band: Vector2 = g._dock_band()
 	_check(g.dock_plate.position.x >= band.x - 0.5, "底板左缘不越过可用带（实得 %.0f / 带左 %.0f）"
@@ -140,7 +140,7 @@ func _run() -> void:
 	g._process(0.0)
 	await process_frame
 	_check(g.shop_bar.visible, "小卖部操作条可见")
-	_check(not g.mat_bar.visible and not g.action_bar.visible, "底栏两条让位")
+	_check(not g.mat_bar.visible, "底栏让位")
 	_check(not g.dock_plate.visible, "底板一并收掉（不会留一块空底板）")
 
 	print("== 战报：默认收起 + 消息在屏幕上方弹出 ==")

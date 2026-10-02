@@ -16,6 +16,8 @@
   文件名即主题名：`canteen.png` / `study.png` …）
 - 用途：HUD 图标（`ui_*.png`：规则说明📖 / 战报📜 / 掷骰🎲 / 设置⚙ / 暂停⏸ /
   金额💰 / 目标🎯），取自同一次 cdnjs 14.0.2 分发
+- 用途：道具卡面图案（`item_*.png` 全部 61 件，2026-10-02；由 jsdelivr 同版本 SVG 经 Godot
+  烘焙为 256px PNG，招财猫/亡牌飞行员coco/夜跑 为双 emoji 合成）
 
 ## ambientCG — WoodFloor064
 - 路径：`assets/textures/wood_floor.jpg`

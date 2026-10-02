@@ -31,6 +31,9 @@ func _ready() -> void:
 			Net.my_name = "房主"
 			Net.host_game(7793)
 			get_tree().change_scene_to_file.call_deferred("res://scenes/game.tscn")
+		elif a == "--lab":
+			# 道具试验场：独立沙盒（item_lab 内部自己 host + 内嵌 game.tscn）
+			get_tree().change_scene_to_file.call_deferred("res://scenes/item_lab.tscn")
 
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")
@@ -179,6 +182,25 @@ func _ready() -> void:
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status.custom_minimum_size = Vector2(0, 22)
 	root.add_child(_status)
+
+	# 开发者入口：仅在开发模式下显示（dev 开关：启动带 --dev，或设置里 dev.enabled=true）
+	var dev_on := bool(cfg.get_value("dev", "enabled", false))
+	for a0 in OS.get_cmdline_user_args():
+		if a0 == "--dev":
+			dev_on = true
+	if dev_on:
+		var lab_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
+		var lm := UIKit.margins(10, 10, 8, 8)
+		lab_panel.add_child(lm)
+		var lv := VBoxContainer.new()
+		lv.add_theme_constant_override("separation", 6)
+		lm.add_child(lv)
+		lv.add_child(UIKit.label("开发者模式已开启", 12, Color(0.55, 0.9, 0.65)))
+		var lab_btn := UIKit.button("🧪 道具试验场", 15, "primary")
+		lab_btn.pressed.connect(func() -> void:
+			get_tree().change_scene_to_file.call_deferred("res://scenes/item_lab.tscn"))
+		lv.add_child(lab_btn)
+		root.add_child(lab_panel)
 
 	var footer := UIKit.label("Godot 4 制作 · 拿去和室友玩吧", 12, UIKit.TEXT_DIM)
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
