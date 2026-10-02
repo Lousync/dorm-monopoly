@@ -21,6 +21,7 @@ func _run() -> void:
 	_test_broadcast()
 	_test_in_game_tier()   # 无 await，直接调
 	await _test_window()   # 协程：不等它跑完 quit() 会先执行，断言全部落空（假绿）
+	await _test_save_cfg_keeps_sections()   # 同为协程：不 await 会假绿（见上）
 	print("SETTINGS TEST: %s" % ("PASS" if fails == 0 else "%d FAILURES" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -111,6 +112,37 @@ func _test_mapping() -> void:
 	_check(GameSettings.TIERS.size() == 5 and GameSettings.TIERS[0] == cur, "挡位清单 5 项、首位是现状")
 	for t in GameSettings.TIERS:
 		_check(GameSettings.TIER_LABELS.has(t), "挡位 %s 有中文标签" % t)
+
+## 主菜单保存昵称/端口不得抹掉其他配置段：曾因新建空 ConfigFile 直接覆盖保存，
+## 每开一局就把 [dev]（开发者模式/道具试验场入口）和 [audio]（音量/静音）整段抹掉，
+## 表现为「开一局之后开发者模式就没了」。测试会先快照真实 settings.cfg，结束原样还回。
+func _test_save_cfg_keeps_sections() -> void:
+	print("== 主菜单 _save_cfg 不抹其他配置段 ==")
+	const CFG := "user://settings.cfg"
+	var raw := FileAccess.get_file_as_string(CFG)   # 真机可能没有此文件（空串）
+	var seedc := ConfigFile.new()
+	seedc.set_value("dev", "enabled", true)
+	seedc.set_value("audio", "volume", 0.5)
+	seedc.save(CFG)
+	var mm = load("res://scenes/main_menu.tscn").instantiate()
+	root.add_child(mm)
+	await process_frame
+	await process_frame
+	mm._port_edit.text = "7777"
+	mm._save_cfg()
+	mm.queue_free()
+	var after := ConfigFile.new()
+	after.load(CFG)
+	_check(bool(after.get_value("dev", "enabled", false)),
+		"保存昵称/端口后 [dev] enabled 保留（开发者入口还在）")
+	_check(absf(float(after.get_value("audio", "volume", 0.0)) - 0.5) < 0.001,
+		"[audio] volume 保留")
+	if raw == "":
+		DirAccess.open("user://").remove("settings.cfg")   # 原本没有此文件 → 还原成没有
+	else:
+		var f := FileAccess.open(CFG, FileAccess.WRITE)
+		f.store_string(raw)
+		f.close()
 
 ## 规则说明文案必须跟着挡位走：非默认档下不能再说「35 秒不掷」这类现状秒数。
 ## 纯静态（只读 RulesText 的字符串），不依赖引擎与对局。

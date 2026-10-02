@@ -269,7 +269,11 @@ func _exit_tree() -> void:
 	Net.kicked.disconnect(_on_kicked)
 
 func _save_cfg() -> void:
+	# 必须先载入旧文件再存：这里只管 player/net 两段，直接覆盖保存会把
+	# [dev]（开发者模式/道具试验场入口）和 [audio]（音量/静音）等别的段整个抹掉，
+	# 表现为「开一局之后开发者模式就没了」（dev_tools.toggle 是先 load 再存的，别学反）。
 	var cfg := ConfigFile.new()
+	cfg.load("user://settings.cfg")
 	cfg.set_value("player", "name", Net.my_name)
 	cfg.set_value("net", "port", _port_edit.text)
 	cfg.save("user://settings.cfg")
