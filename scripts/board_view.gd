@@ -1161,6 +1161,34 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	badge_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(badge_slot)
 
+	# 操作倒计时簇（D 方案，2026-10-02 拍板）：嵌在座位卡左列底行（体力行下方），
+	# 只有当前行动者的卡显示；随座位一起旋转。数据由 game.gd:_refresh_op_timer 每帧推送。
+	var trow := HBoxContainer.new()
+	trow.position = Vector2(14, 190)
+	trow.size = Vector2(224, 26)
+	trow.add_theme_constant_override("separation", 6)
+	trow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	trow.visible = false
+	root.add_child(trow)
+	var tkind := UIKit.label("", 14, UIKit.ACCENT)
+	trow.add_child(tkind)
+	var ttrack := ColorRect.new()
+	ttrack.color = Color(1, 1, 1, 0.13)
+	ttrack.custom_minimum_size = Vector2(84, 6)
+	ttrack.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ttrack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	trow.add_child(ttrack)
+	var tfill := ColorRect.new()
+	tfill.color = UIKit.ACCENT
+	tfill.size = Vector2(84, 6)
+	tfill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ttrack.add_child(tfill)
+	var tleft := UIKit.label("", 14, UIKit.TEXT)
+	tleft.custom_minimum_size = Vector2(48, 0)
+	tleft.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	tleft.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	trow.add_child(tleft)
+
 	var slots: Array = []
 	var speer := int(p.peer)
 	for i in 5:
@@ -1205,6 +1233,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
 		"est_l": est_l, "badge_slot": badge_slot, "hl": seat_hl,
 		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
+		"op_timer": trow, "op_kind_l": tkind, "op_track": ttrack, "op_fill": tfill, "op_left_l": tleft,
 		"shown": int(p.money), "tw": null}
 
 # ---------------- 顶部区域：数据轨 + 小卖部 / 赌场两座常驻设施 ----------------
@@ -1675,6 +1704,40 @@ func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
 			c.queue_free()
 		if rank > 0:
 			slot.add_child(UIKit.rank_badge(rank, 28))
+
+## 操作倒计时（D 方案）：只在 owner_peer 的座位卡上显示；kind_text="" 全部收起。
+## 环节名/剩余秒数由对局层每帧推送（_refresh_op_timer），本函数只做呈现。
+func set_op_timer(owner_peer: int, kind_text: String, left: float, total: float) -> void:
+	for e in _seats:
+		var sd: Dictionary = _seats[e]
+		var cl0 = sd.get("op_timer", null)
+		if cl0 == null or not is_instance_valid(cl0):
+			continue
+		var cl: Control = cl0
+		var mine: bool = kind_text != "" and int(sd.get("peer", -1)) == owner_peer
+		cl.visible = mine
+		if not mine:
+			continue
+		var kind_l: Label = sd.get("op_kind_l")
+		if kind_l.text != kind_text:
+			kind_l.text = kind_text
+		var left_l: Label = sd.get("op_left_l")
+		var track: ColorRect = sd.get("op_track")
+		if total > 0.0:
+			track.visible = true
+			var fill: ColorRect = sd.get("op_fill")
+			fill.size.x = track.size.x * clampf(left / total, 0.0, 1.0)
+			var warn := left <= 5.0
+			fill.color = UIKit.DANGER if warn else UIKit.ACCENT
+			var txt := "%d 秒" % ceili(left)
+			if left_l.text != txt:
+				left_l.text = txt
+				left_l.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.TEXT)
+		else:
+			track.visible = false
+			if left_l.text != "不限时":
+				left_l.text = "不限时"
+				left_l.add_theme_color_override("font_color", UIKit.TEXT_DIM)
 
 ## 被选中的道具卡（绿光）：peer=-1 表示无
 var item_selected := {"peer": -1, "slot": -1}

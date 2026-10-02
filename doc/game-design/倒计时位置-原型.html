@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>操作倒计时 · 位置方案原型</title>
+<style>
+	:root {
+		--strip-bg: rgba(13, 14, 20, 0.92);
+		--strip-border: #2b2e3d;
+		--text: #dfe3ee;
+		--dim: #8a90a5;
+		--accent: #f0b430;
+		--danger: #e05a4e;
+		--track: rgba(255, 255, 255, 0.13);
+	}
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	body {
+		background: #17181f;
+		color: var(--text);
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+		padding: 28px 20px 60px;
+	}
+	h1 { font-size: 20px; color: var(--accent); margin-bottom: 6px; }
+	.sub { font-size: 13px; color: var(--dim); margin-bottom: 22px; line-height: 1.7; }
+
+	/* ---- 方案切换 ---- */
+	.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+	.tabs button {
+		background: #20222e; color: var(--dim); border: 1px solid var(--strip-border);
+		border-radius: 9px; padding: 9px 16px; font-size: 14px; cursor: pointer;
+		font-family: inherit;
+	}
+	.tabs button.on { background: #2c2415; color: var(--accent); border-color: #6b5420; }
+
+	/* ---- 舞台（模拟桌面） ---- */
+	.stage {
+		background:
+			radial-gradient(ellipse at 50% 30%, #26221c 0%, #1b1815 70%);
+		border: 1px solid #3a3126; border-radius: 16px;
+		padding: 60px 24px 54px; min-height: 300px;
+		display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+		gap: 14px; position: relative;
+	}
+	.stage .zoom-note { position: absolute; top: 12px; left: 16px; font-size: 12px; color: #6b6f80; }
+	.zoom-note b { color: #9aa0b4; font-weight: normal; }
+
+	/* ---- 底部状态条（桌垫）1:1 复刻 ---- */
+	.strip {
+		width: 440px; height: 46px;
+		background: var(--strip-bg);
+		border: 1px solid var(--strip-border); border-radius: 12px;
+		display: grid; align-items: center;
+		padding: 0 12px;
+		font-size: 13px;
+		box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+	}
+	.strip .status { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	/* 布局变体：右端（现状）/ 紧跟 / 居中 / 最左 */
+	.lay-right   { grid-template-columns: 1fr auto; }
+	.lay-right   .status { grid-column: 1; }
+	.lay-right   .cluster { grid-column: 2; }
+	.lay-after   { grid-template-columns: auto auto 1fr; }
+	.lay-after   .status  { grid-column: 1; }
+	.lay-after   .cluster { grid-column: 2; margin-left: 12px; }
+	.lay-center  { grid-template-columns: 1fr auto 1fr; }
+	.lay-center  .status  { grid-column: 1; justify-self: start; }
+	.lay-center  .cluster { grid-column: 2; }
+	.lay-left    { grid-template-columns: auto auto 1fr; }
+	.lay-left    .cluster { grid-column: 1; }
+	.lay-left    .status  { grid-column: 2; margin-left: 12px; }
+
+	/* ---- 倒计时簇 ---- */
+	.cluster { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+	.cluster .kind { color: var(--accent); }
+	.cluster .track {
+		width: 92px; height: 6px; background: var(--track);
+		border-radius: 3px; overflow: hidden;
+	}
+	.cluster .fill {
+		height: 100%; width: 60%; background: var(--accent); border-radius: 3px;
+		transition: none;
+	}
+	.cluster .left { min-width: 46px; text-align: right; }
+	.warn .fill { background: var(--danger) !important; }
+	.warn .left, .warn .kind { color: var(--danger) !important; }
+	.no-limit .track { display: none; }
+	.no-limit .left { color: var(--dim); }
+
+	/* ---- 方案 D：座位卡示意 ---- */
+	.seatcard {
+		width: 560px; height: 64px;
+		background: var(--strip-bg);
+		border: 1px solid var(--strip-border); border-left: 4px solid #4a9d6e;
+		border-radius: 12px;
+		display: flex; align-items: center; gap: 12px;
+		padding: 0 14px; font-size: 13px;
+		box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+	}
+	.seatcard .pname { color: var(--text); }
+	.seatcard .pmoney { color: var(--accent); }
+	.seatcard .slots { display: flex; gap: 5px; }
+	.seatcard .slot {
+		width: 34px; height: 40px; border-radius: 6px;
+		background: rgba(255,255,255,0.06); border: 1px dashed #3a3d4d;
+	}
+	.seatcard .cluster { margin-left: auto; }
+
+	/* ---- 控制区 ---- */
+	.controls {
+		margin-top: 18px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+		background: #1d1f2a; border: 1px solid var(--strip-border);
+		border-radius: 12px; padding: 12px 16px; font-size: 13px;
+	}
+	.controls button {
+		background: #2c2415; color: var(--accent); border: 1px solid #6b5420;
+		border-radius: 8px; padding: 7px 18px; font-size: 13px; cursor: pointer; font-family: inherit;
+	}
+	.controls select, .controls label { color: var(--text); }
+	.controls select {
+		background: #20222e; color: var(--text); border: 1px solid var(--strip-border);
+		border-radius: 6px; padding: 5px 8px; font-family: inherit;
+	}
+	.hint { margin-top: 14px; font-size: 12.5px; color: var(--dim); line-height: 1.8; }
+	.hint b { color: var(--text); font-weight: normal; }
+</style>
+</head>
+<body>
+	<h1>操作倒计时 · 位置方案原型</h1>
+	<div class="sub">
+		<b style="color:#74d188">已拍板（2026-10-02）：D · 座位卡</b> —— 倒计时嵌进当前行动者的座位卡，
+		随座位朝向旋转。本页保留作取舍记录（另四个方案为桌垫各位置与第一版悬浮条）。
+		下面是桌垫（底部状态条）的 1:1 复刻，倒计时真实走动。切上方标签对比五个位置方案；
+		<D> 方案是另一块面——嵌进当前行动者的座位卡（示意）。
+	</div>
+
+	<div class="tabs" id="tabs">
+		<button data-v="right" class="on">现状 · 右端</button>
+		<button data-v="after">A · 紧跟状态文字</button>
+		<button data-v="center">B · 条的正中央</button>
+		<button data-v="left">C · 条的最左端</button>
+		<button data-v="seat">D · 座位卡</button>
+	</div>
+
+	<div class="stage">
+		<div class="zoom-note">条子尺寸 = 游戏内 1:1（440×46）</div>
+		<!-- 状态条（方案 现状/A/B/C 共用，仅换布局类） -->
+		<div class="strip" id="strip">
+			<div class="status" id="status">轮到你使用道具！</div>
+			<div class="cluster" id="cluster">
+				<span class="kind" id="kind">道具</span>
+				<span class="track"><span class="fill" id="fill"></span></span>
+				<span class="left" id="left">8 秒</span>
+			</div>
+		</div>
+		<!-- 座位卡（方案 D） -->
+		<div class="seatcard" id="seatcard" style="display:none">
+			<span class="pname">乙</span>
+			<span class="pmoney">¥20,000</span>
+			<span class="slots"><span class="slot"></span><span class="slot"></span><span class="slot"></span></span>
+			<div class="cluster">
+				<span class="kind" id="kind2">道具</span>
+				<span class="track"><span class="fill" id="fill2"></span></span>
+				<span class="left" id="left2">8 秒</span>
+			</div>
+		</div>
+	</div>
+
+	<div class="controls">
+		<button id="play">⏸ 暂停</button>
+		<button id="reset">↺ 重置</button>
+		<label>窗口环节
+			<select id="kindSel">
+				<option value="道具">道具（12 秒）</option>
+				<option value="掷轮">掷轮（35 秒）</option>
+				<option value="小卖部">小卖部（20 秒）</option>
+				<option value="黑市">黑市（20 秒）</option>
+				<option value="决定">决定弹窗（25 秒）</option>
+			</select>
+		</label>
+		<label>挡位
+			<select id="tierSel">
+				<option value="0">现状（按环节）</option>
+				<option value="15">15 秒</option>
+				<option value="30">30 秒</option>
+				<option value="60">60 秒</option>
+				<option value="none">不限时</option>
+			</select>
+		</label>
+	</div>
+
+	<div class="hint" id="hint"></div>
+
+<script>
+"use strict";
+var KIND_TOTAL = { "道具": 12, "掷轮": 35, "小卖部": 20, "黑市": 20, "决定": 25 };
+var HINTS = {
+	right: "<b>现状</b>：簇被状态文字的弹性空隙推到条的最右端，中间隔一大段。",
+	after: "<b>A 紧跟状态文字</b>：倒计时贴着状态文字，左端成一组，右侧留白。",
+	center: "<b>B 条的正中央</b>：状态靠左、倒计时严格居中（不受文字长度影响）。",
+	left: "<b>C 条的最左端</b>：倒计时打头阵，状态文字跟在后面。",
+	seat: "<b>D 座位卡</b>：换一块面——倒计时嵌在当前行动者的座位卡（桌边长条牌位）里，<br>" +
+		"游戏内会跟随座位朝向旋转；你在自己回合时，自己的座位卡永远朝向自己。",
+};
+var variant = "right";
+var left = 8.0, total = 12.0, running = true, noLimit = false;
+
+function $(id) { return document.getElementById(id); }
+function fmtTotal(kind) { return noLimit ? 0 : (parseInt($("tierSel").value, 10) || KIND_TOTAL[kind]); }
+
+function render() {
+	var strip = $("strip"), cluster = $("cluster");
+	var isSeat = variant === "seat";
+	strip.style.display = isSeat ? "none" : "grid";
+	$("seatcard").style.display = isSeat ? "flex" : "none";
+	strip.className = "strip lay-" + variant;
+	var kind = $("kindSel").value;
+	total = fmtTotal(kind);
+	var fill = isSeat ? $("fill2") : $("fill");
+	var leftL = isSeat ? $("left2") : $("left");
+	var kindL = isSeat ? $("kind2") : $("kind");
+	kindL.textContent = kind;
+	var cl = isSeat ? $("seatcard").querySelector(".cluster") : cluster;
+	if (noLimit) {
+		cl.classList.add("no-limit"); cl.classList.remove("warn");
+		leftL.textContent = "不限时";
+	} else {
+		cl.classList.remove("no-limit");
+		fill.style.width = Math.max(left / total * 100, 0) + "%";
+		leftL.textContent = Math.ceil(left) + " 秒";
+		cl.classList.toggle("warn", left <= 5.0);
+	}
+	$("hint").innerHTML = HINTS[variant];
+}
+
+function tick() {
+	if (running && !noLimit) {
+		left -= 0.1;
+		if (left < 0) left = 0;
+	}
+	render();
+}
+
+$("tabs").addEventListener("click", function (e) {
+	var b = e.target.closest("button");
+	if (!b) return;
+	variant = b.dataset.v;
+	document.querySelectorAll("#tabs button").forEach(function (x) { x.classList.toggle("on", x === b); });
+	render();
+});
+$("kindSel").addEventListener("change", function () { left = fmtTotal(this.value); render(); });
+$("tierSel").addEventListener("change", function () { left = fmtTotal($("kindSel").value); render(); });
+$("play").addEventListener("click", function () {
+	running = !running;
+	this.textContent = running ? "⏸ 暂停" : "▶ 继续";
+});
+$("reset").addEventListener("click", function () { left = fmtTotal($("kindSel").value); render(); });
+
+setInterval(tick, 100);
+render();
+</script>
+</body>
+</html>

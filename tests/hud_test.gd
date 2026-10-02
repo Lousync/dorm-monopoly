@@ -301,6 +301,57 @@ func _run() -> void:
 	_check(strip_sb is StyleBoxTexture,
 		"色条挂着真正的卡样式（实得 %s）" % ("null" if strip_sb == null else strip_sb.get_class()))
 
+	print("== 操作倒计时（D 方案）：嵌在行动者座位卡里 ==")
+	# 先建好座位（走真实 render 链路），再喂 s_op_timer 真实处理函数
+	g.my_peer = 2
+	g.s_state(_state(2, false))
+	g._refresh_actions()
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	g.s_op_timer("roll", 35.0, 35.0, 2)
+	g._process(0.0)
+	await process_frame
+	var seat2: Dictionary = g.board.seat(2)
+	var seat1: Dictionary = g.board.seat(1)
+	_check(not seat2.is_empty() and seat2.has("op_timer") and (seat2.op_timer as Control).visible,
+		"行动者（乙）的座位卡上倒计时簇显示")
+	_check(not (seat1.op_timer as Control).visible, "非行动者的座位卡不显示倒计时")
+	_check(String(seat2.op_kind_l.text) == "掷轮",
+		"显示环节名「掷轮」（实得「%s」）" % String(seat2.op_kind_l.text))
+	_check(seat2.op_fill.size.x > 80.0, "进度条接近满格（实得 %.0f）" % seat2.op_fill.size.x)
+	# 广播一秒一条，本机 _process 逐帧扣 delta 插值——喂剩 5 秒的道具窗口，
+	# 等 1.5 秒（自然帧累积扣减），进度条应明显缩水、环节名跟着窗口走
+	g.s_op_timer("item", 5.0, 12.0, 2)
+	await create_timer(1.5).timeout
+	g._process(0.0)
+	var w0: float = seat2.op_fill.size.x
+	_check(w0 < 40.0 and w0 > 10.0, "一秒多后进度条平滑缩水到中段（实得 %.0f）" % w0)
+	_check(String(seat2.op_kind_l.text) == "道具",
+		"环节名跟着窗口走（实得「%s」）" % String(seat2.op_kind_l.text))
+	# 窗口换人：簇跟到丙的座位卡
+	g.s_op_timer("black", 15.0, 20.0, 3)
+	g._process(0.0)
+	await process_frame
+	var seat3: Dictionary = g.board.seat(3)
+	_check((seat3.op_timer as Control).visible and not (seat2.op_timer as Control).visible,
+		"窗口换人时簇跟到丙的座位卡")
+	_check(String(seat3.op_kind_l.text) == "黑市",
+		"环节名「黑市」（实得「%s」）" % String(seat3.op_kind_l.text))
+	# 不限时：簇仍显示、进度槽整条藏掉
+	g.s_op_timer("roll", 0.0, 0.0, 3)
+	g._process(0.0)
+	_check((seat3.op_timer as Control).visible and not (seat3.op_track as ColorRect).visible,
+		"不限时窗口仍显示簇但进度槽藏掉")
+	_check(String(seat3.op_left_l.text) == "不限时",
+		"不限时文案（实得「%s」）" % String(seat3.op_left_l.text))
+	# 窗口关闭：kind="" 全部收簇
+	g.s_op_timer("", 0.0, 0.0, -1)
+	g._process(0.0)
+	await process_frame
+	_check(not (seat3.op_timer as Control).visible and not (seat2.op_timer as Control).visible,
+		"窗口关闭后所有座位卡的簇收起")
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:
