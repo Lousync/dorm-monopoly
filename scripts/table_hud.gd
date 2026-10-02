@@ -86,6 +86,10 @@ static func build_play_ui(g: Node) -> void:
 	g.ph1_pill = ph1
 	g.ph2_pill = ph2
 	g.ph_arrow_l = ph_arrow
+	# 阶段提示改由牌垫上的两个按钮承担（当前阶段黄/点完灰），旧的 pills 隐去
+	ph1.visible = false
+	ph2.visible = false
+	ph_arrow.visible = false
 
 	# 操作条（屏幕层，与视角无关）：转动转盘 / 道具按钮。
 	# 它原先挂在牌垫阶段条里，而阶段条在转离自己视角时会整条隐藏（牌垫贴自己
@@ -100,11 +104,15 @@ static func build_play_ui(g: Node) -> void:
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 8)
 	abm.add_child(arow)
-	g.roll_btn = UIKit.with_icon(UIKit.button("转动转盘", 15, "primary"), "dice", 20)
+	# 阶段按钮：转转盘 / 使用道具（当前阶段黄、点完灰），外加小「跳过」
+	g.roll_btn = UIKit.button("转转盘", 13)
 	g.roll_btn.disabled = true
 	arow.add_child(g.roll_btn)
+	g.use_phase_btn = UIKit.button("使用道具", 13)
+	g.use_phase_btn.disabled = true
+	arow.add_child(g.use_phase_btn)
+	# 兼容旧引用：逐件按钮盒不再使用（改为点牌垫道具卡选）
 	g.item_btn_box = HBoxContainer.new()
-	g.item_btn_box.add_theme_constant_override("separation", 6)
 	g.item_btn_box.visible = false
 	arow.add_child(g.item_btn_box)
 

@@ -44,12 +44,26 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	art.add_theme_stylebox_override("panel", UIKit.stylebox(qc.darkened(0.55), 6, Color(qc.r, qc.g, qc.b, 0.3), 1))
 	card.add_child(art)
-	var art_l := UIKit.label("图画占位", maxi(int(size.y * 0.055), 8), Color(qc.r, qc.g, qc.b, 0.5))
-	art_l.set_anchors_preset(Control.PRESET_FULL_RECT)
-	art_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	art_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	art_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	art.add_child(art_l)
+	var icon_name := String(d.get("icon", ""))
+	var icon_path := "res://assets/icons/%s.png" % icon_name
+	if icon_name != "" and ResourceLoader.exists(icon_path):
+		# 图案：Twemoji 烘焙的 256px PNG（美术管线见 docs/gameplay/道具系统.md §12）
+		var tr := TextureRect.new()
+		tr.texture = load(icon_path)
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		var inset := art.size.y * 0.10
+		tr.position = Vector2(inset, inset)
+		tr.size = art.size - Vector2(inset * 2.0, inset * 2.0)
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		art.add_child(tr)
+	else:
+		var art_l := UIKit.label("图画占位", maxi(int(size.y * 0.055), 8), Color(qc.r, qc.g, qc.b, 0.5))
+		art_l.set_anchors_preset(Control.PRESET_FULL_RECT)
+		art_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		art_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		art_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		art.add_child(art_l)
 	if bool(state.get("melt", false)):
 		var melt := ColorRect.new()
 		melt.color = Color(0.72, 0.87, 1.0, 0.3)

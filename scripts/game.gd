@@ -46,11 +46,15 @@ var _awaiting_item := 0    # 道具阶段行动者（0 = 无）
 var _item_epoch := 0
 var _item_action := {}
 var item_btn_box: HBoxContainer
+var use_phase_btn: Button      # 阶段二「使用道具 / 跳过」
+var selected_slot := -1        # 牌垫上选中的道具卡槽（阶段二）
+var _discard_pending := -1     # 卡片「✕」丢弃的二次确认槽位（-1=无）
 var ph1_pill: Control
 var ph2_pill: Control
 var ph_arrow_l: Label
 var cheat_picker: Control
 var cheat_slot := -1
+var _tile_pick_slot := -1   # 点地选格待用道具的槽位（快递直达）
 var target_picker: Control
 var target_btn_box: VBoxContainer
 var shop_bar: PanelContainer
@@ -138,6 +142,8 @@ var at_mode := ""
 var at_rounds := 3
 var _at_roll_epoch := -1
 
+var lab_mode := false   # 道具试验场模式：建好局面但不跑回合循环
+
 func _ready() -> void:
 	my_peer = multiplayer.get_unique_id()
 	var dev_flag := false
@@ -166,7 +172,7 @@ func _ready() -> void:
 	_build_ui()
 
 	# 赌桌小游戏独立成子节点（board 已就绪；两端都在这里建同名节点，
-	# 保证 s_casino_* / c_casino_action 的 RPC 路径一致）
+	# 保证 s_casino_* 的 RPC 路径一致）
 	casino = preload("res://scripts/casino.gd").new()
 	casino.name = "CasinoTable"
 	casino.g = self
@@ -178,6 +184,13 @@ func _ready() -> void:
 		status_label.text = "等待房主同步状态…"
 
 	roll_btn.pressed.connect(_on_roll_pressed)
+	board.set_self_peer(my_peer)
+	board.item_slot_clicked.connect(_on_item_slot_clicked)
+	board.item_discard_clicked.connect(_on_discard_clicked)
+	board.phase_spin_clicked.connect(_on_roll_pressed)
+	board.phase_use_clicked.connect(_on_use_pressed)
+	if use_phase_btn != null:
+		use_phase_btn.pressed.connect(_on_use_pressed)
 	Net.chat_received.connect(_refresh_chat)
 	Net.connection_lost.connect(_on_conn_lost)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -210,6 +223,39 @@ func _exit_tree() -> void:
 	if at_mode != "":
 		Engine.time_scale = 1.0
 
+# ================= 道具试验场（Item Lab）宿主接口 =================
+
+## 进入试验场：建局但停住回合循环、隐藏对局 HUD（item_lab 复用真实玩法逻辑）
+func enter_lab_mode() -> void:
+	lab_mode = true
+	running = false
+	if board != null:
+		board.auto_follow = false
+		board.cam_locked = false
+	_lab_hide_hud()
+
+func _lab_hide_hud() -> void:
+	for c in [mat_bar, roll_btn, opt_btn, log_panel, log_toggle, status_label, card_panel]:
+		if c != null and is_instance_valid(c):
+			c.visible = false
+
+## 重建一局沙盒（同步版，不跑回合循环）
+func lab_reset() -> void:
+	running = false
+	_event_decks = {}
+	hp = _build_hp()
+	htiles = []
+	for i in GameData.TILES.size():
+		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
+	shops = {}
+	refresh_count = 0
+	items_consumed = {}
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			shops[i] = {"slots": ["", "", ""]}
+			_stock_shop(i)
+	_broadcast_state()
+
 # ================= 界面构建 =================
 
 func _build_ui() -> void:
@@ -229,6 +275,10 @@ func _build_hp() -> Array:
 			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
 			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
 			"hot_chain": 0,
+			# 补全道具新增字段（缺失时一律用 .get 默认，兼容测试构造的玩家字典）
+			"item_used_n": 0, "cost_pen": [], "first_used": false,
+			"roll_bonus": 0, "reroll_next": false, "silence": 0, "silence2": 0, "shield": 0,
+			"charm_used": false, "emg_used": false, "loan_left": 0, "rework": 3,
 		})
 	return out
 
@@ -358,10 +408,21 @@ func _play_turn(p: Dictionary) -> void:
 		_awaiting_roll = 0
 
 		var roll := randi_range(0, 12)
+		if bool(p.get("reroll_next", false)):
+			p.reroll_next = false
+			roll = maxi(roll, randi_range(0, 12))
+			_log("%s 的【时光倒流】重掷取高" % p.name, "#8fb7f2")
+		if int(p.get("roll_bonus", 0)) != 0:
+			roll = clampi(roll + int(p.roll_bonus), 0, 12)
+			_log("%s 被【点名】，点数 +%d" % [p.name, int(p.roll_bonus)], "#c9a6ff")
+			p.roll_bonus = 0
 		if int(p.get("cheat_roll", -1)) >= 0:
 			roll = clampi(int(p.cheat_roll), 0, 12)
 			p.cheat_roll = -1
 			_log("%s 掏出【作弊器】——这次转盘他说了算" % p.name, "#8fb7f2")
+		if roll == 7 and _has_item(p, "幸运数7"):
+			p.money = int(p.money) + 700
+			_log("%s 掷出 7，【幸运数7】额外 +¥700" % p.name, "#74d188")
 		if at_mode != "":
 			print("AT roll %s: %d" % [p.name, roll])
 		s_roll.rpc(roll)
@@ -377,14 +438,18 @@ func _play_turn(p: Dictionary) -> void:
 			await _wait(1.0)
 			return
 
-		var path := GameData.compute_path(int(p.pos), roll)
+		var step := roll
+		if roll > 0 and _has_item(p, "公交卡"):
+			step += 1   # 公交卡：前进额外多走 1 格（后退/待命不触发）
+		var path := GameData.compute_path(int(p.pos), step)
 		if path.is_empty():
 			_log("%s 转了个 0，原地待命一回合" % p.name, "#8a90a5")
 			break  # 待命也算完成投掷，仍可用道具
 		for idx in path:
 			if idx == 0:
-				p.money = int(p.money) + GameData.SALARY
-				_log("%s 踏上起点，领取工资 %s" % [p.name, GameData.fmt_money(GameData.SALARY)], "#74d188")
+				p.money = int(p.money) + _salary_amount(p)
+				_log("%s 踏上起点，领取工资 %s" % [p.name, GameData.fmt_money(_salary_amount(p))], "#74d188")
+				_maybe_emergency(p)
 		p.pos = path[path.size() - 1]
 		s_move.rpc(int(p.peer), path, STEP_TIME)
 		await _wait(0.35 + path.size() * STEP_TIME)
@@ -464,10 +529,11 @@ func _resolve_tile(p: Dictionary) -> void:
 				_log("%s 的【空想者的香皂】挡下了强制缴费" % p.name, "#8fb7f2")
 				await _wait(0.4)
 			else:
-				_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#ef7b74")
-				s_card.rpc("【%s】强制缴费 %s" % [d.name, GameData.fmt_money(int(d.amount))], "bad")
+				var fee := _fine_mod(p, int(d.amount))
+				_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(fee)], "#ef7b74")
+				s_card.rpc("【%s】强制缴费 %s" % [d.name, GameData.fmt_money(fee)], "bad")
 				await _wait(0.6)
-				_pay(p, int(d.amount), {})
+				_pay(p, fee, {})
 		"bonus":
 			p.money = int(p.money) + int(d.amount)
 			_log("%s 在【%s】赚到 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#74d188")
@@ -489,14 +555,28 @@ func _resolve_tile(p: Dictionary) -> void:
 	if not bool(p.alive):
 		_check_end()
 
-## 按格子类型（机会/命运）取卡池；黑市关闭时过滤进入黑市的卡（§8）
-func _draw_event(kind: String) -> Dictionary:
+## 机会/命运预生成牌堆（抽完再补洗）——「小抄」要能预览顶张，就必须有稳定牌序
+var _event_decks := {}
+
+func _new_event_deck(kind: String) -> Array:
 	var pool := GameData.events_for(kind)
 	if not blackshop_enabled:
 		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_blackshop"))
 	if pool.is_empty():
 		pool = GameData.events_for(kind)
-	return pool.pick_random()
+	var d := pool.duplicate(true)
+	d.shuffle()
+	return d
+
+func _draw_event(kind: String) -> Dictionary:
+	if not _event_decks.has(kind) or (_event_decks[kind] as Array).is_empty():
+		_event_decks[kind] = _new_event_deck(kind)
+	return (_event_decks[kind] as Array).pop_front()
+
+func _peek_event(kind: String) -> Dictionary:
+	if not _event_decks.has(kind) or (_event_decks[kind] as Array).is_empty():
+		_event_decks[kind] = _new_event_deck(kind)
+	return (_event_decks[kind] as Array)[0]
 
 func _card_kind(card: Dictionary) -> String:
 	if card.has("go_jail"):
@@ -515,17 +595,18 @@ func _card_kind(card: Dictionary) -> String:
 
 func _resolve_buy(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
-	if int(p.money) < int(d.price):
+	var price := _buy_price(p, int(d.price))
+	if int(p.money) < price:
 		_log("%s 的现金买不起【%s】，只能眼馋路过" % [p.name, d.name])
 		return
-	var ok := await _ask(p, "buy", int(d.price), "购买地产",
+	var ok := await _ask(p, "buy", price, "购买地产",
 		"要买下【%s】吗？\n售价 %s · 基础租金 %s\n你的现金 %s" % [
-			d.name, GameData.fmt_money(int(d.price)), GameData.fmt_money(int(d.rent)), GameData.fmt_money(int(p.money))],
+			d.name, GameData.fmt_money(price), GameData.fmt_money(int(d.rent)), GameData.fmt_money(int(p.money))],
 		"买下它！")
-	if ok and running and int(p.money) >= int(d.price) and int(htiles[idx].owner) == GameData.NO_OWNER:
-		p.money = int(p.money) - int(d.price)
+	if ok and running and int(p.money) >= price and int(htiles[idx].owner) == GameData.NO_OWNER:
+		p.money = int(p.money) - price
 		htiles[idx].owner = int(p.peer)
-		_log("%s 以 %s 买下了【%s】" % [p.name, GameData.fmt_money(int(d.price)), d.name], "#f0c064")
+		_log("%s 以 %s 买下了【%s】" % [p.name, GameData.fmt_money(price), d.name], "#f0c064")
 
 func _resolve_upgrade(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -551,8 +632,8 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 	var op := _player_by_peer(int(htiles[idx].owner))
 	if op.is_empty() or not bool(op.alive):
 		return
-	if _has_item(op, "招财猫"):
-		rent += 50  # 【招财猫】：租金 +50
+	rent = _rent_gain(op, rent)   # 招财猫 +50 / 包租婆 ×1.2
+	rent = _rent_pay(p, rent)     # 保安巡逻 -30%
 	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name], "#ef7b74")
 	_pay(p, rent, op)
 
@@ -587,14 +668,15 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 			_log("%s 被查寝抄了近道，直接送宿委会" % p.name, "#c9a6ff")
 			_send_to_jail(p)
 	if card.has("move_steps"):
-		if int(card.move_steps) < 0 and _immune_debuff(p):
-			_log("%s 的【空想者的香皂】免除了后退" % p.name, "#8fb7f2")
+		if int(card.move_steps) < 0 and (_immune_debuff(p) or _has_item(p, "雨伞")):
+			_log("%s 免疫了后退" % p.name, "#8fb7f2")
 			return
 		var path := GameData.compute_path_steps(int(p.pos), int(card.move_steps))
 		for idx in path:
 			if idx == 0:
-				p.money = int(p.money) + GameData.SALARY
-				_log("%s 顺路踏上起点，领工资 %s" % [p.name, GameData.fmt_money(GameData.SALARY)], "#74d188")
+				p.money = int(p.money) + _salary_amount(p)
+				_log("%s 顺路踏上起点，领工资 %s" % [p.name, GameData.fmt_money(_salary_amount(p))], "#74d188")
+				_maybe_emergency(p)
 		if not path.is_empty():
 			p.pos = path[path.size() - 1]
 			s_move.rpc(int(p.peer), path, 0.09)
@@ -638,7 +720,15 @@ func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 	p.money = int(p.money) - paid
 	if not receiver.is_empty():
 		receiver.money = int(receiver.money) + paid
-	if paid < amount:
+	var short := amount - paid
+	if short > 0:
+		_maybe_emergency(p)   # 应急基金：可能补足救场
+		if int(p.money) >= short:
+			p.money = int(p.money) - short
+			if not receiver.is_empty():
+				receiver.money = int(receiver.money) + short
+			short = 0
+	if short > 0:
 		p.alive = false
 		p.money = 0
 		for t in htiles:
@@ -649,6 +739,14 @@ func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 		s_card.rpc("%s 破产出局！" % p.name, "bust")
 
 func _send_to_jail(p: Dictionary) -> void:
+	if _immune_debuff(p):
+		_log("%s 的香皂/护盾免除了这次送监" % p.name, "#8fb7f2")
+		return
+	if _has_item(p, "护身符") and not bool(p.get("charm_used", false)):
+		p.charm_used = true
+		_remove_item(p, "护身符")
+		_log("%s 的【护身符】免除了这次送监（用掉）" % p.name, "#8fb7f2")
+		return
 	p.pos = GameData.JAIL_TILE
 	p.skip = 1
 	s_tp.rpc(int(p.peer), GameData.JAIL_TILE)
@@ -818,7 +916,8 @@ func _broadcast_state() -> void:
 			"money": int(p.money), "pos": int(p.pos), "alive": bool(p.alive), "skip": int(p.skip),
 			"sleep": int(p.get("sleep", 0)),
 			"stamina": int(p.get("stamina", 3)), "items": p.get("items", []),
-			"item_used": bool(p.get("item_used", false)),
+			"item_used": bool(p.get("item_used", false)), "silence": int(p.get("silence", 0)),
+			"shield": int(p.get("shield", 0)),
 		})
 	var await_state := ""
 	var await_peer := -1
@@ -838,7 +937,7 @@ func _broadcast_state() -> void:
 		await_state = "black"
 		await_peer = _black_peer
 	s_state.rpc({
-		"phase": "ended" if not running else "playing",
+		"phase": "playing" if (running or lab_mode) else "ended",
 		"round": round_no, "max_rounds": GameData.MAX_ROUNDS,
 		"turn": int(hp[turn_i].peer),
 		"await": await_state, "await_peer": await_peer,
@@ -1152,7 +1251,7 @@ func _refresh_actions() -> void:
 	var await_state := String(st.get("await", ""))
 	var is_my_roll := await_state == "roll" and int(st.get("turn", -1)) == my_peer
 	roll_btn.disabled = not is_my_roll
-	roll_btn.visible = phase == "playing" and await_state == "roll"
+	roll_btn.visible = false   # 阶段按钮已上牌垫（世界坐标）；坞里的停用
 	UIKit.restyle_button(roll_btn, "primary" if is_my_roll else "normal")
 	var my_turn := phase == "playing" and int(st.get("turn", -1)) == my_peer
 	if ph1_lab != null:
@@ -1202,6 +1301,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		var k := event as InputEventKey
 		if k.keycode == KEY_F1:
 			dev.toggle()
+		elif k.keycode == KEY_ESCAPE and _tile_pick_slot >= 0:
+			_tile_pick_slot = -1
+			_log("已取消选格", "#8a90a5")
 		elif k.keycode == KEY_SPACE:
 			board.go_home_follow(my_peer)
 		elif k.keycode == KEY_TAB:
@@ -1223,6 +1325,12 @@ func _at_auto_roll() -> void:
 			c_roll.rpc_id(1)
 
 func _on_tile_clicked(idx: int) -> void:
+	if _tile_pick_slot >= 0:
+		var s := _tile_pick_slot
+		_tile_pick_slot = -1
+		_log("选定目标格 #%d" % idx, "#f0c064")
+		_send_use_item(s, idx)
+		return
 	var d: Dictionary = GameData.TILES[idx]
 	var t := String(d.type)
 	var tiles: Array = st.get("tiles", [])
@@ -1473,7 +1581,7 @@ func _open_card_gallery() -> void:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
 	v.add_child(head)
-	head.add_child(UIKit.label("道具卡片模板 · §12 规格（品质框 / 左上⚡或被动 / 右上计数 / 图区占位 / 价格不上卡）",
+	head.add_child(UIKit.label("道具卡片模板 · §12 规格（品质框 / 左上⚡或被动 / 右上计数 / 道具图案 / 价格不上卡）",
 		14, UIKit.ACCENT))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1481,7 +1589,7 @@ func _open_card_gallery() -> void:
 	var close_btn := UIKit.button("✕ 关闭", 13)
 	close_btn.pressed.connect(func() -> void: card_gallery.visible = false)
 	head.add_child(close_btn)
-	v.add_child(UIKit.label("小 = 道具栏 · 中 = 货架（价格随货架显示）· 大 = 发现三选一 / 使用展示 —— 图区为占位，正式图画归美术对话",
+	v.add_child(UIKit.label("小 = 道具栏 · 中 = 货架（价格随货架显示）· 大 = 发现三选一 / 使用展示 —— 图案 = assets/icons/item_*.png（Twemoji 烘焙，缺素材回退占位）",
 		11, UIKit.TEXT_DIM))
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1497,6 +1605,7 @@ func _open_card_gallery() -> void:
 		_card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
 		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "稀有 · 被动"),
 		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "超稀有 · ⚡3"),
+		_card_cell("交换生", ItemCard.SIZE_SMALL, {}, "超稀有 · ⚡3"),
 		_card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡5"),
 		_card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "传说 · ⚡4"),
 		_card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "传说 · 一次性"),
@@ -1513,7 +1622,25 @@ func _open_card_gallery() -> void:
 	gv.add_child(_card_section("发现 / 使用展示尺寸（大 · 220×300）", [
 		_card_cell("蛋蛋节", ItemCard.SIZE_LARGE, {"selected": true}, "发现三选一（高亮）"),
 		_card_cell("黑卡", ItemCard.SIZE_LARGE, {}, "使用展示"),
+		_card_cell("亡牌飞行员coco", ItemCard.SIZE_LARGE, {}, "一次性 · 用后焚毁"),
+		_card_cell("空想者的香皂", ItemCard.SIZE_LARGE, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
+		_card_cell("园中叶", ItemCard.SIZE_LARGE, {}, "预留 · 效果未定"),
 	]))
+
+	# 品质补全（草案 51 件）：按品质分组动态陈列，图案逐件核对用
+	var first10 := ["平均主义", "作弊器", "交换生", "招财猫", "信托基金", "黑卡",
+		"空想者的香皂", "蛋蛋节", "亡牌飞行员coco", "园中叶"]
+	for q in ItemData.QUALITIES:
+		var q_ids: Array = []
+		for id2 in ItemData.ITEMS:
+			if not first10.has(id2) and String(ItemData.ITEMS[id2].get("quality", "")) == q:
+				q_ids.append(id2)
+		if q_ids.is_empty():
+			continue
+		var q_cells: Array = []
+		for id3 in q_ids:
+			q_cells.append(_card_cell(id3, ItemCard.SIZE_MEDIUM, {}, ""))
+		gv.add_child(_card_section("%s档 · 品质补全（%d 件）" % [ItemData.QUALITY_NAMES.get(q, q), q_ids.size()], q_cells))
 
 func _card_section(title: String, cells: Array) -> Control:
 	var box := VBoxContainer.new()
@@ -1558,11 +1685,107 @@ func _has_item(p: Dictionary, id: String) -> bool:
 
 ## 香皂免疫：持有【空想者的香皂】时免疫一切带 debuff 标签的效果（§3 标签表）
 func _immune_debuff(p: Dictionary) -> bool:
-	return _has_item(p, "空想者的香皂")
+	if _has_item(p, "空想者的香皂"):
+		return true
+	if int(p.get("shield", 0)) > 0:
+		p.shield = int(p.get("shield", 0)) - 1
+		_remove_item(p, "护腕")   # 护腕抵消一次后损坏
+		_log("%s 的护腕挡住了这次负面效果" % p.name, "#8fb7f2")
+		return true
+	return false
+
+func _remove_item(p: Dictionary, id: String) -> bool:
+	for i in range((p.get("items", []) as Array).size() - 1, -1, -1):
+		if String(p.items[i].id) == id:
+			p.items.remove_at(i)
+			return true
+	return false
+
+## 背包 / 体力上限（置物架 / 充电宝改「写死 5」为按玩家计算）
+func _bag_cap(p: Dictionary) -> int:
+	return 5 + (2 if _has_item(p, "置物架") else 0)
+
+func _stamina_cap(p: Dictionary) -> int:
+	return 5 + (1 if _has_item(p, "充电宝") else 0)
+
+func _salary_amount(p: Dictionary) -> int:
+	return GameData.SALARY + (300 if _has_item(p, "校园卡") else 0)
+
+## 强制缴费修正：学费上涨(全员 +50%) → 保修卡(减半) → 优惠券(-300)
+func _fine_mod(victim: Dictionary, amount: int) -> int:
+	var a := amount
+	for o in hp:
+		if bool(o.get("alive", true)) and _has_item(o, "学费上涨"):
+			a = int(a * 1.5)
+			break
+	if _has_item(victim, "保修卡"):
+		a = int(a / 2)
+	if _has_item(victim, "优惠券"):
+		a = maxi(0, a - 300)
+	return maxi(0, a)
+
+func _buy_price(p: Dictionary, price: int) -> int:
+	return maxi(0, price - (300 if _has_item(p, "砍价高手") else 0))
+
+func _rent_gain(op: Dictionary, rent: int) -> int:
+	if _has_item(op, "招财猫"):
+		rent += 50
+	if _has_item(op, "包租婆"):
+		rent = int(rent * 1.2)
+	return maxi(0, rent)
+
+func _rent_pay(payer: Dictionary, rent: int) -> int:
+	if _has_item(payer, "保安巡逻"):
+		rent = int(rent * 0.7)
+	return maxi(0, rent)
+
+## 应急基金：现金低于 5000 时补足（每局一次，触发即弃）
+func _maybe_emergency(p: Dictionary) -> void:
+	if not bool(p.get("alive", true)):
+		return
+	if _has_item(p, "应急基金") and not bool(p.get("emg_used", false)) and int(p.get("money", 0)) < 5000:
+		p.emg_used = true
+		p.money = 5000
+		_remove_item(p, "应急基金")
+		_log("%s 的【应急基金】到账，现金补足到 %s" % [p.name, GameData.fmt_money(5000)], "#74d188")
+
+## 单件道具的实付体力：错峰用电(本回合首件 -1) + 待消耗消耗修正(喇叭/二两寒暑) + 实例成本差(二手群接龙)
+func _item_cost(p: Dictionary, it: Dictionary) -> int:
+	var d := ItemData.def(String(it.id))
+	var cost := int(d.get("cost", 0))
+	if _has_item(p, "错峰用电") and not bool(p.get("first_used", false)):
+		cost -= 1
+	var pen: Array = p.get("cost_pen", [])
+	if not pen.is_empty():
+		cost += int(pen[0])
+	cost += int(it.get("cost_delta", 0))
+	return maxi(0, cost)
+
+func _consume_cost_pen(p: Dictionary) -> void:
+	var pen: Array = p.get("cost_pen", [])
+	if not pen.is_empty():
+		pen.pop_front()
+
+## 前进并结算落点（含公交卡 +1；路过起点领工资）
+func _move_and_resolve(p: Dictionary, steps: int) -> void:
+	var s := steps
+	if s > 0 and _has_item(p, "公交卡"):
+		s += 1
+	var path := GameData.compute_path_steps(int(p.pos), s)
+	for idx in path:
+		if idx == 0:
+			p.money = int(p.money) + _salary_amount(p)
+			_log("%s 顺路踏上起点，领工资 %s" % [p.name, GameData.fmt_money(_salary_amount(p))], "#74d188")
+			_maybe_emergency(p)
+	if not path.is_empty():
+		p.pos = path[path.size() - 1]
+		s_move.rpc(int(p.peer), path, 0.09)
+		await _wait(0.25 + path.size() * 0.09)
+	await _resolve_tile(p)
 
 ## 统一发放入口：背包满返回 false；香皂入场初始化融化计数（他人拾取重新计 10 回合）
 func _grant_item(p: Dictionary, id: String) -> bool:
-	if p.items.size() >= 5:
+	if p.items.size() >= _bag_cap(p):
 		return false
 	var inst := {"id": id, "cd": 0}
 	if id == "空想者的香皂":
@@ -1625,8 +1848,18 @@ func _stock_shop(idx: int) -> void:
 			arr[i] = _stock_one()
 
 func _item_turn_start(p: Dictionary) -> void:
-	p.stamina = mini(int(p.get("stamina", 3)) + 1, 5)
+	var cap := _stamina_cap(p)
+	if int(p.get("stamina", 3)) >= cap:
+		if _has_item(p, "校历"):
+			p.money = int(p.money) + 300
+			_log("【校历】%s 体力已满，溢出折算为 %s" % [p.name, GameData.fmt_money(300)], "#74d188")
+	else:
+		p.stamina = mini(int(p.get("stamina", 3)) + 1, cap)
 	p.item_used = false
+	p.item_used_n = 0
+	p.first_used = false
+	if int(p.get("silence", 0)) > 0:
+		p.silence = int(p.get("silence", 0)) - 1   # 包场/反作弊：禁道具回合数 -1
 	for it in p.get("items", []):
 		if int(it.get("cd", 0)) > 0:
 			it.cd = int(it.cd) - 1
@@ -1639,12 +1872,23 @@ func _item_turn_start(p: Dictionary) -> void:
 		p.items.erase(m)
 	if not melted.is_empty():
 		_log("%s 的【空想者的香皂】化没了，溜进了地缝（回池）" % p.name, "#8fb7f2")
+	# 助学贷款：连续 3 回合各还 600（debuff，可被香皂/护盾免疫）
+	if int(p.get("loan_left", 0)) > 0:
+		p.loan_left = int(p.loan_left) - 1
+		if _immune_debuff(p):
+			_log("%s 的护盾/香皂免除了助学贷款还款" % p.name, "#8fb7f2")
+		else:
+			_pay(p, 600, {})
 	if _has_item(p, "信托基金"):
 		p.money = int(p.money) + 100
 		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(100)], "#74d188")
+	_maybe_emergency(p)
 
 func _has_usable(p: Dictionary) -> bool:
-	if bool(p.get("item_used", false)):
+	if int(p.get("silence", 0)) > 0:
+		return false
+	var limit := 2 if _has_item(p, "重修卡") else 1
+	if int(p.get("item_used_n", 0)) >= limit or bool(p.get("item_used", false)):
 		return false
 	for it in p.get("items", []):
 		var d := ItemData.def(String(it.id))
@@ -1652,7 +1896,7 @@ func _has_usable(p: Dictionary) -> bool:
 			continue
 		if int(it.get("cd", 0)) > 0:
 			continue
-		if int(p.get("stamina", 0)) < int(d.cost):
+		if int(p.get("stamina", 0)) < _item_cost(p, it):
 			continue
 		return true
 	return false
@@ -1660,43 +1904,49 @@ func _has_usable(p: Dictionary) -> bool:
 func _item_phase(p: Dictionary) -> void:
 	if not running or not bool(p.alive) or not _has_usable(p):
 		return
-	_item_epoch += 1
-	var epoch := _item_epoch
-	_awaiting_item = int(p.peer)
-	_item_action = {"epoch": -1}
-	_broadcast_state()
-	if bool(p.bot):
-		var used := false
-		for i in p.get("items", []).size():
-			var it: Dictionary = p.items[i]
-			var d := ItemData.def(String(it.id))
-			if String(d.type) == "passive" or not bool(d.implemented) \
-					or int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < int(d.cost):
+	var limit := 2 if _has_item(p, "重修卡") else 1
+	while running and int(p.get("item_used_n", 0)) < limit and _has_usable(p):
+		_item_epoch += 1
+		var epoch := _item_epoch
+		_awaiting_item = int(p.peer)
+		_item_action = {"epoch": -1}
+		_broadcast_state()
+		if bool(p.bot):
+			if not _bot_use_one(p):
+				_item_action = {"epoch": epoch, "action": "skip"}
+		else:
+			_arm_item_timeout(epoch, int(p.peer))
+		while running and _awaiting_item == int(p.peer) and int(_item_action.get("epoch", -1)) != epoch:
+			await _wait(0.1)
+		if not running:
+			return
+		_awaiting_item = 0
+		_broadcast_state()
+		if String(_item_action.get("action", "")) == "skip":
+			break
+
+## 机器人用一次道具：选第一件可用；需选目标的挑一名随机存活对手；选地块的（快递直达）跳过
+func _bot_use_one(p: Dictionary) -> bool:
+	for i in p.get("items", []).size():
+		var it: Dictionary = p.items[i]
+		var d := ItemData.def(String(it.id))
+		if String(d.type) == "passive" or not bool(d.implemented):
+			continue
+		if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < _item_cost(p, it):
+			continue
+		var arg := -1
+		if String(d.get("target", "")) == "player":
+			var others := _item_targets(int(p.peer))
+			if others.is_empty():
 				continue
-			if String(it.id) == "黑卡":
-				_use_item(int(p.peer), i, -1)
-				used = true
-			elif String(it.id) == "蛋蛋节" or String(it.id) == "亡牌飞行员coco":
-				_use_item(int(p.peer), i, -1)
-				used = true
-			elif String(it.id) == "交换生":
-				var targets: Array = _swap_targets(int(p.peer))
-				if not targets.is_empty():
-					var t: Dictionary = targets[randi_range(0, targets.size() - 1)]
-					_use_item(int(p.peer), i, int(t.peer))
-					used = true
-			if used:
-				break
-		if not used:
-			_item_action = {"epoch": epoch, "action": "skip"}
-	else:
-		_arm_item_timeout(epoch, int(p.peer))
-	while running and _awaiting_item == int(p.peer) and int(_item_action.get("epoch", -1)) != epoch:
-		await _wait(0.1)
-	if not running:
-		return
-	_awaiting_item = 0
-	_broadcast_state()
+			arg = int(others[randi_range(0, others.size() - 1)].peer)
+			if String(it.id) == "交换生" and (_player_by_peer(arg).get("items", []) as Array).is_empty():
+				continue
+		elif String(d.get("target", "")) == "tile":
+			continue
+		_use_item(int(p.peer), i, arg)
+		return true
+	return false
 
 func _arm_item_timeout(epoch: int, peer: int) -> void:
 	await _wait(ItemData.ITEM_TIMEOUT)
@@ -1706,7 +1956,12 @@ func _arm_item_timeout(epoch: int, peer: int) -> void:
 
 func _use_item(peer: int, slot: int, arg: int) -> void:
 	var p := _player_by_peer(peer)
-	if p.is_empty() or _awaiting_item != peer or bool(p.get("item_used", false)):
+	if p.is_empty() or _awaiting_item != peer:
+		return
+	if int(p.get("silence", 0)) > 0:
+		return
+	var limit := 2 if _has_item(p, "重修卡") else 1
+	if int(p.get("item_used_n", 0)) >= limit or bool(p.get("item_used", false)):
 		return
 	var items: Array = p.get("items", [])
 	if slot < 0 or slot >= items.size():
@@ -1715,18 +1970,60 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 	var d := ItemData.def(String(it.id))
 	if String(d.type) == "passive" or not bool(d.implemented):
 		return
-	if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < int(d.cost):
+	var cost := _item_cost(p, it)
+	if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < cost:
 		return
 	var prev_cd := int(it.get("cd", 0))
-	p.stamina = int(p.stamina) - int(d.cost)
+	if String(it.id) == "蛋蛋节" or String(it.id) == "亡牌飞行员coco":
+		items_consumed[String(it.id)] = true
+		items.remove_at(slot)
+	p.stamina = int(p.stamina) - cost
 	it.cd = int(d.cooldown)
-	p.item_used = true
-	match String(it.id):
+	if not await _apply_item_effect(p, it, arg):
+		# 前置条件不满足 → 退还体力/冷却
+		it.cd = prev_cd
+		p.stamina = int(p.stamina) + cost
+		return
+	p.item_used_n = int(p.get("item_used_n", 0)) + 1
+	p.first_used = true
+	_consume_cost_pen(p)
+	if int(p.item_used_n) >= limit:
+		p.item_used = true
+		if limit == 2:
+			p.rework = int(p.get("rework", 3)) - 1
+			if int(p.rework) <= 0:
+				_remove_item(p, "重修卡")
+				_log("%s 的【重修卡】用尽三次，作废回池" % p.name, "#c9a6ff")
+	_item_action = {"epoch": _item_epoch, "action": "used"}
+	_broadcast_state()
+
+## 某玩家名下的地产序号
+func _own_props(peer: int) -> Array:
+	var out := []
+	for i in htiles.size():
+		if int(htiles[i].get("owner", GameData.NO_OWNER)) == peer \
+				and String(GameData.TILES[i].get("type", "")) == "property" \
+				and not bool(htiles[i].get("soil", false)):
+			out.append(i)
+	return out
+
+## 道具效果本体（不含体力/冷却/每回合/焚毁；对局与试验场共用）。
+## 返回 true = 效果已发生；false = 前置条件不满足（调用方退还体力/冷却）。
+func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int) -> bool:
+	var id := String(it.id)
+	var t := _player_by_peer(arg)
+	var need_target: bool = String(ItemData.def(id).get("target", "")) != ""
+	if need_target and (t.is_empty() or not bool(t.alive)):
+		return false
+	match id:
+		# ---- 首批 ----
 		"作弊器":
 			p.cheat_roll = clampi(arg, 0, 12)
 			_log("%s 掏出【作弊器】，下一次转盘他说了算" % p.name, "#8fb7f2")
 		"平均主义":
-			var alive: Array = hp.filter(func(x) -> bool: return bool(x.alive))
+			var alive: Array = hp.filter(func(x: Dictionary) -> bool: return bool(x.alive))
+			if alive.is_empty():
+				return false
 			var total := 0
 			for a in alive:
 				total += int(a.money)
@@ -1734,45 +2031,255 @@ func _use_item(peer: int, slot: int, arg: int) -> void:
 			var rem := total - share * alive.size()
 			for a in alive:
 				if _immune_debuff(a):
-					continue  # 香皂免疫：不被拉平
+					continue
 				a.money = share
 			for k in rem:
 				if not _immune_debuff(alive[k]):
 					alive[k].money = int(alive[k].money) + 1
 			_log("%s 发动【平均主义】，全场现金拉平！" % p.name, "#c9a6ff")
 		"交换生":
-			var target := _player_by_peer(arg)
-			if target.is_empty() or arg == peer or not bool(target.alive) \
-					or (target.get("items", []) as Array).is_empty():
-				it.cd = prev_cd  # 不消耗：找不到可交换对象
-				p.item_used = false
-				p.stamina = int(p.stamina) + int(d.cost)
-				_log("%s 的【交换生】没找到可交换的对象" % p.name, "#8a90a5")
-				return
-			var titems: Array = target.items
+			if t.is_empty() or int(t.peer) == int(p.peer) or (t.get("items", []) as Array).is_empty():
+				return false
+			var titems: Array = t.items
 			var tidx := randi_range(0, titems.size() - 1)
 			var theirs: Dictionary = titems[tidx]
-			titems[tidx] = it  # 我的交换生（含新冷却）给对方——冷却随实例走
-			items[slot] = theirs
-			_log("%s 用【交换生】从 %s 处换来【%s】！" % [p.name, target.name, String(theirs.id)], "#c9a6ff")
+			titems[tidx] = it
+			var pitems: Array = p.get("items", [])
+			var pslot := pitems.find(it)
+			if pslot >= 0:
+				pitems[pslot] = theirs
+			_log("%s 用【交换生】从 %s 处换来【%s】！" % [p.name, t.name, String(theirs.id)], "#c9a6ff")
 		"黑卡":
 			it.charges = 3
 			_log("%s 使用【黑卡】，接下来 3 次购买免单！" % p.name, "#f0a0c0")
 		"蛋蛋节":
-			items_consumed[String(it.id)] = true  # 用后焚毁不回池（先焚毁腾位再发礼物）
-			items.remove_at(slot)
 			_apply_egg_festival(p)
 		"亡牌飞行员coco":
-			items_consumed[String(it.id)] = true
-			items.remove_at(slot)
 			_apply_coco(p)
+		# ---- 白 ----
+		"兼职中介":
+			p.money = int(p.money) + 800
+			_log("%s 找【兼职中介】拿到 ¥800" % p.name, "#74d188")
+		"饭卡":
+			p.money = int(p.money) + 300
+			_log("%s 用【饭卡】刷出 ¥300" % p.name, "#74d188")
+		"许愿池":
+			var v := randi_range(-6, 6) * 100
+			p.money = maxi(0, int(p.money) + v)
+			_log("%s 往【许愿池】投币：%+d" % [p.name, v], "#74d188" if v >= 0 else "#ef7b74")
+		"共享单车":
+			await _move_and_resolve(p, 2)
+		"外卖箱":
+			p.money = int(p.money) + 200
+			await _move_and_resolve(p, 1)
+		"跑腿券":
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了跑腿费" % t.name, "#8fb7f2")
+			else:
+				var amt := mini(200, int(t.money))
+				t.money = int(t.money) - amt
+				p.money = int(p.money) + amt
+				_log("%s 支使 %s 跑腿，收 ¥%d" % [p.name, t.name, amt], "#c9a6ff")
+		"小抄":
+			s_peek_card.rpc(int(p.peer), String(_peek_event("命运").get("t", "?")))
+			_log("%s 偷偷看了眼命运牌堆顶" % p.name, "#f0c064")
+		# ---- 绿 ----
+		"占座":
+			var own := _own_props(int(p.peer))
+			if own.is_empty():
+				return false
+			var near: int = own[0]
+			for i in own:
+				if absi(int(i) - int(p.pos)) < absi(int(near) - int(p.pos)):
+					near = int(i)
+			p.pos = near
+			s_tp.rpc(int(p.peer), near)
+			_log("%s 用【占座】挪到最近的自家地皮（格 %d）" % [p.name, near], "#8fb7f2")
+		"夜跑":
+			await _move_and_resolve(p, 3)
+		"团购拼单":
+			p.money = int(p.money) + 400
+			t.money = int(t.money) + 400
+			_log("%s 与 %s 拼单，各 +¥400" % [p.name, t.name], "#74d188")
+		"护腕":
+			p.shield = int(p.get("shield", 0)) + 1
+			_log("%s 戴上【护腕】，获得 1 层护盾" % p.name, "#8fb7f2")
+		"助学贷款":
+			p.money = int(p.money) + 1500
+			p.loan_left = 3
+			_log("%s 办了【助学贷款】：+¥1500，之后 3 回合各还 ¥600" % p.name, "#74d188")
+		"二手交易":
+			var other := []
+			for oi in p.get("items", []):
+				if oi != it:
+					other.append(oi)
+			if other.is_empty():
+				return false
+			var rm: Dictionary = other[randi_range(0, other.size() - 1)]
+			_remove_item(p, String(rm.id))
+			p.money = int(p.money) + 800
+			_log("%s 二手卖掉【%s】，得 ¥800" % [p.name, String(rm.id)], "#74d188")
+		"喇叭":
+			var cpen: Array = t.get("cost_pen", [])
+			cpen.append(1)
+			t.cost_pen = cpen
+			_log("%s 朝 %s 喊话：下个道具消耗 +1" % [p.name, t.name], "#c9a6ff")
+		"组队学习":
+			await _move_and_resolve(p, 2)
+			if bool(t.alive) and running:
+				await _move_and_resolve(t, 2)
+		"二手群接龙":
+			var pool := _item_pool("绿")
+			if pool.is_empty():
+				return false
+			var gid: String = pool[randi_range(0, pool.size() - 1)]
+			if not _grant_item(p, gid):
+				return false
+			(p.items[p.items.size() - 1] as Dictionary).cost_delta = -1
+			_log("%s 从【二手群接龙】拿到【%s】（消耗 -1）" % [p.name, gid], "#74d188")
+		"校园卡充值":
+			if int(p.money) < 500:
+				return false
+			p.money = int(p.money) - 500
+			p.stamina = mini(int(p.stamina) + 3, _stamina_cap(p))
+			_log("%s 充了 ¥500 校园卡，恢复体力" % p.name, "#74d188")
+		# ---- 蓝 ----
+		"换座位":
+			if t.is_empty() or int(t.peer) == int(p.peer):
+				return false
+			var pp := int(p.pos)
+			p.pos = int(t.pos)
+			t.pos = pp
+			s_tp.rpc(int(p.peer), int(p.pos))
+			s_tp.rpc(int(t.peer), int(t.pos))
+			_log("%s 与 %s 交换了座位（不结算落点）" % [p.name, t.name], "#8fb7f2")
+		"强制募捐":
+			var got := 0
+			for o in hp:
+				if int(o.peer) != int(p.peer) and bool(o.alive):
+					if _immune_debuff(o):
+						continue
+					var a2 := mini(500, int(o.money))
+					o.money = int(o.money) - a2
+					got += a2
+			p.money = int(p.money) + got
+			_log("%s 强制募捐，收了 ¥%d" % [p.name, got], "#c9a6ff")
+		"交换课表":
+			var mine := _own_props(int(p.peer))
+			var yours := _own_props(int(t.peer))
+			if mine.is_empty() or yours.is_empty():
+				return false
+			var mi: int = mine[randi_range(0, mine.size() - 1)]
+			var yi: int = yours[randi_range(0, yours.size() - 1)]
+			var o1 := int(htiles[mi].owner)
+			htiles[mi].owner = int(htiles[yi].owner)
+			htiles[yi].owner = o1
+			_log("%s 与 %s 交换了地皮 #%d↔#%d" % [p.name, t.name, mi, yi], "#c9a6ff")
+		"时光倒流":
+			p.reroll_next = true
+			_log("%s 使用【时光倒流】：下次转盘可重掷取高" % p.name, "#8fb7f2")
+		"抄家队":
+			var props := _own_props(int(t.peer))
+			if props.is_empty():
+				return false
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了抄家" % t.name, "#8fb7f2")
+			else:
+				var pi: int = props[randi_range(0, props.size() - 1)]
+				htiles[pi].level = maxi(0, int(htiles[pi].level) - 1)
+				_log("%s 抄了 %s 的【%s】（降 1 级）" % [p.name, t.name, String(GameData.TILES[pi].name)], "#c9a6ff")
+		"拼车":
+			p.pos = int(t.pos)
+			s_tp.rpc(int(p.peer), int(p.pos))
+			_log("%s 拼车到 %s 所在的格子" % [p.name, t.name], "#8fb7f2")
+			await _resolve_tile(p)
+		"保安队长":
+			if (t.get("items", []) as Array).is_empty():
+				return false
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了" % t.name, "#8fb7f2")
+			else:
+				var ti := randi_range(0, (t.items as Array).size() - 1)
+				t.items[ti].cd = mini(5, int(t.items[ti].get("cd", 0)) + 2)
+				_log("%s 让 %s 的【%s】冷却 +2" % [p.name, t.name, String(t.items[ti].id)], "#c9a6ff")
+		"反作弊":
+			for o in hp:
+				if int(o.peer) != int(p.peer) and bool(o.alive):
+					if _immune_debuff(o):
+						continue
+					o.silence = maxi(int(o.get("silence", 0)), 2)
+			_log("%s 使用【反作弊】：本回合其他玩家不能使用道具" % p.name, "#c9a6ff")
+		"体测":
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了体测" % t.name, "#8fb7f2")
+			else:
+				t.stamina = maxi(0, int(t.stamina) - 2)
+				_log("%s 拉 %s 体测：体力 -2" % [p.name, t.name], "#c9a6ff")
+		"换课":
+			var s1 := int(p.stamina)
+			p.stamina = mini(int(t.stamina), _stamina_cap(p))
+			t.stamina = mini(s1, _stamina_cap(t))
+			_log("%s 与 %s 交换了体力" % [p.name, t.name], "#8fb7f2")
+		"点名":
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了点名" % t.name, "#8fb7f2")
+			else:
+				t.roll_bonus = int(t.get("roll_bonus", 0)) + 3
+				_log("%s 点名 %s：下回合点数 +3" % [p.name, t.name], "#c9a6ff")
+		# ---- 紫 ----
+		"拆解钳":
+			if (t.get("items", []) as Array).is_empty():
+				return false
+			var di := randi_range(0, (t.items as Array).size() - 1)
+			var did := String(t.items[di].id)
+			t.items.remove_at(di)
+			_log("%s 用【拆解钳】摧毁了 %s 的【%s】（回池）" % [p.name, t.name, did], "#c9a6ff")
+		"快递直达":
+			if arg < 0 or arg >= GameData.TILES.size():
+				return false
+			p.pos = arg
+			s_tp.rpc(int(p.peer), arg)
+			_log("%s 用【快递直达】瞬移到格 %d" % [p.name, arg], "#8fb7f2")
+			await _resolve_tile(p)
+		"强拆令":
+			var tp2 := _own_props(int(t.peer))
+			if tp2.is_empty():
+				return false
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了强拆" % t.name, "#8fb7f2")
+			else:
+				var si: int = tp2[randi_range(0, tp2.size() - 1)]
+				htiles[si].owner = GameData.NO_OWNER
+				htiles[si].level = 0
+				_log("%s 强拆了 %s 的【%s】（归为无主）" % [p.name, t.name, String(GameData.TILES[si].name)], "#c9a6ff")
+		"时间暂停":
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了时间暂停" % t.name, "#8fb7f2")
+			else:
+				t.sleep = 1
+				_log("%s 让 %s 下一回合休眠" % [p.name, t.name], "#c9a6ff")
+		"包场":
+			if _immune_debuff(t):
+				_log("%s 被香皂/护盾挡下了包场" % t.name, "#8fb7f2")
+			else:
+				t.silence = maxi(int(t.get("silence", 0)), 3)
+				_log("%s 包场：%s 接下来两个回合不能使用道具" % [p.name, t.name], "#c9a6ff")
+		# ---- 橙 ----
+		"二两寒暑":
+			var cpen2: Array = t.get("cost_pen", [])
+			cpen2.append(2)
+			cpen2.append(2)
+			t.cost_pen = cpen2
+			_log("%s 对 %s 施放【二两寒暑】：接下来两个道具消耗各 +2" % [p.name, t.name], "#c9a6ff")
 		_:
-			p.item_used = false
-			p.stamina = int(p.stamina) + int(d.cost)
-			it.cd = prev_cd
-			return
-	_item_action = {"epoch": _item_epoch, "action": "used"}
-	_broadcast_state()
+			return false
+	return true
+
+## 小抄：把命运牌堆顶卡私密发给该玩家
+@rpc("authority", "call_local", "reliable")
+func s_peek_card(peer: int, text: String) -> void:
+	if peer == my_peer:
+		_log("（小抄）命运牌堆下一张：%s" % text, "#f0c064")
 
 func _run_shop(p: Dictionary, idx: int) -> void:
 	_shop_tile = idx
@@ -2227,55 +2734,132 @@ func _apply_coco(p: Dictionary) -> void:
 		_log("%s 的【%s】被炸成了焦土！落地捐款可以修复它" % [o.name, String(GameData.TILES[idx].name)], "#ef7b74")
 
 func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
-	if item_btn_box == null:
+	if board == null:
 		return
-	var mine: bool = my_turn and await_state == "item"
-	ph1_pill.visible = not mine
-	ph2_pill.visible = not mine
-	ph_arrow_l.visible = not mine
-	roll_btn.visible = roll_btn.visible and not mine
-	item_btn_box.visible = mine
-	if not mine:
+	if use_phase_btn != null:
+		use_phase_btn.visible = false   # 坞里的停用；阶段按钮已上牌垫
+	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
+	# 非道具阶段 → 清掉选中（绿光收掉）
+	if not using and selected_slot >= 0:
+		selected_slot = -1
+		board.set_item_selected(-1, -1)
+	# 「使用道具」按钮三态：未选=跳过 / 选中可用=绿 / 选中不可用（含被动）=灰
+	var use_txt := "使用道具"
+	var use_style := "normal"
+	var use_dis := true
+	if using:
+		var p0 := _state_player(my_peer)
+		var its0: Array = p0.get("items", [])
+		if selected_slot < 0 or selected_slot >= its0.size():
+			use_txt = "跳过"; use_style = "normal"; use_dis = false
+		else:
+			var it: Dictionary = its0[selected_slot]
+			var d := ItemData.def(String(it.id))
+			var usable: bool = String(d.get("type", "")) == "active" \
+				and int(it.get("cd", 0)) == 0 \
+				and int(p0.get("stamina", 0)) >= _item_cost(p0, it) \
+				and not bool(p0.get("item_used", false)) and int(p0.get("silence", 0)) == 0
+			use_txt = "使用「%s」" % String(it.id)
+			use_style = "good" if usable else "normal"
+			use_dis = not usable
+	var spin_active: bool = my_turn and await_state == "roll"
+	board.set_phase_buttons("转转盘", "primary" if spin_active else "normal", not spin_active,
+		use_txt, use_style, use_dis)
+
+## 点牌垫上的道具卡 → 选中（绿光）
+func _on_item_slot_clicked(peer: int, slot: int) -> void:
+	if peer != my_peer:
 		return
-	for c in item_btn_box.get_children():
-		c.queue_free()
-	# 必须读「已同步的」状态：hp 只在房主 _host_setup 里填充，
-	# 客户端 hp 恒为空 → 道具栏一个按钮都建不出来，真人整局无法使用道具，
-	# 只能等房主 12 秒超时跳过（见 fix/v0.0.2）。
+	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
+		return
 	var p := _state_player(my_peer)
+	var items: Array = p.get("items", [])
+	if slot < 0 or slot >= items.size():
+		return
+	if not bool(ItemData.def(String(items[slot].id)).get("implemented", false)):
+		return
+	# 任意道具都可选中（被动也能选中以丢弃）；能不能用由「使用」按钮三态表示
+	selected_slot = slot
+	_discard_pending = -1
+	if board != null:
+		board.set_item_selected(my_peer, slot)
+		board.mark_discard_pending(-1, -1)
+	_refresh_actions()
+
+## 阶段二：使用选中的道具（按类型弹点数框 / 选玩家 / 点地）
+func _on_use_pressed() -> void:
+	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
+		return
+	if selected_slot < 0:
+		_on_skip_pressed()   # 未选卡时该按钮就是「跳过」
+		return
+	var p := _state_player(my_peer)
+	var items: Array = p.get("items", [])
+	if selected_slot >= items.size():
+		return
+	var iid := String(items[selected_slot].id)
+	var tgt := String(ItemData.def(iid).get("target", ""))
+	var slot := selected_slot
+	selected_slot = -1
+	if board != null:
+		board.set_item_selected(-1, -1)
+	if iid == "作弊器":
+		_open_cheat_picker(slot)
+	elif iid == "交换生":
+		_open_target_picker(slot)
+	elif tgt == "player":
+		_open_item_target_picker(slot)
+	elif tgt == "tile":
+		_start_tile_pick(slot)
+	else:
+		_send_use_item(slot, -1)
+
+func _on_skip_pressed() -> void:
+	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
+		return
+	if multiplayer.is_server():
+		_item_action = {"epoch": _item_epoch, "action": "skip"}
+	else:
+		c_item_skip.rpc()
+
+## 卡片右上角「✕」：第一次点亮（待确认），第二次真丢。任何时候可用
+func _on_discard_clicked(peer: int, slot: int) -> void:
+	if peer != my_peer:
+		return
+	if _discard_pending == slot:
+		_discard_pending = -1
+		if board != null:
+			board.mark_discard_pending(-1, -1)
+		if multiplayer.is_server():
+			_discard_item(my_peer, slot)
+		else:
+			c_discard.rpc(slot)
+	else:
+		_discard_pending = slot
+		if board != null:
+			board.mark_discard_pending(my_peer, slot)
+
+## 丢弃道具：从背包移除、回道具池
+func _discard_item(peer: int, slot: int) -> void:
+	var p := _player_by_peer(peer)
 	if p.is_empty():
 		return
 	var items: Array = p.get("items", [])
-	for i in items.size():
-		var it: Dictionary = items[i]
-		var d := ItemData.def(String(it.id))
-		if String(d.type) == "passive" or not bool(d.implemented):
-			continue
-		var usable: bool = int(it.get("cd", 0)) == 0 \
-			and int(p.get("stamina", 0)) >= int(d.cost) and not bool(p.get("item_used", false))
-		var iid := String(it.id)
-		if iid == "交换生" and usable:
-			usable = not _swap_targets(my_peer).is_empty()
-		var b := UIKit.button("%s ⚡%d" % [iid, int(d.cost)], 12)
-		b.disabled = not usable
-		var slot := i
-		b.pressed.connect(func() -> void:
-			if iid == "作弊器":
-				_open_cheat_picker(slot)
-			elif iid == "交换生":
-				_open_target_picker(slot)
-			else:
-				_send_use_item(slot, -1)
-		)
-		item_btn_box.add_child(b)
-	var skip := UIKit.button("跳过", 12)
-	skip.pressed.connect(func() -> void:
-		if multiplayer.is_server():
-			_item_action = {"epoch": _item_epoch, "action": "skip"}
-		else:
-			c_item_skip.rpc()
-	)
-	item_btn_box.add_child(skip)
+	if slot < 0 or slot >= items.size():
+		return
+	var id := String(items[slot].id)
+	items.remove_at(slot)
+	_log("%s 丢弃了【%s】（回道具池）" % [p.name, id], "#8a90a5")
+	_broadcast_state()
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_discard(slot: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if _player_by_peer(sender).is_empty():
+		return
+	_discard_item(sender, slot)
 
 func _send_use_item(slot: int, arg: int) -> void:
 	_close_cheat_picker()
@@ -2317,6 +2901,32 @@ func _open_target_picker(slot: int) -> void:
 
 func _close_target_picker() -> void:
 	target_picker.visible = false
+
+## 通用「选玩家」道具的目标列表（所有其他存活玩家）
+func _item_targets(exclude_peer: int) -> Array:
+	var out: Array = []
+	for x in st.get("players", []):
+		if bool(x.get("alive", true)) and int(x.peer) != exclude_peer:
+			out.append(x)
+	return out
+
+func _open_item_target_picker(slot: int) -> void:
+	_close_cheat_picker()
+	for c in target_btn_box.get_children():
+		c.queue_free()
+	for t in _item_targets(my_peer):
+		var b := UIKit.button(String(t.name), 13)
+		var tp := int(t.peer)
+		b.pressed.connect(func() -> void:
+			_close_target_picker()
+			_send_use_item(slot, tp))
+		target_btn_box.add_child(b)
+	target_picker.visible = true
+
+## 点地选格（快递直达）
+func _start_tile_pick(slot: int) -> void:
+	_tile_pick_slot = slot
+	_log("点地图选择目标格（Esc 取消）", "#f0c064")
 
 # ================= 选项菜单 / 房主暂停 / 设置 =================
 
