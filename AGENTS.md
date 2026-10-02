@@ -94,6 +94,25 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 `--autotest=host|client`、`--rounds=N`、`--max-rounds=N`、`--shot=`（截图）、
 `--card-gallery`（卡片图鉴）、`--menu-probe`（菜单探针）、`--dev`（开发者模式）、`--lab`（道具试验场）。
 
+**摆拍截图（改界面时自检用）**：`--shot=<路径>` 存 PNG。三个非显然的坑：
+
+- **不能加 `--headless`** —— 无头模式下 `get_viewport().get_texture()` 拿到的是**空帧**，
+  截图必须开真实窗口跑。
+- **文件名同时决定摆拍内容**（`dev_tools.take_shot` 里按 `path.contains(...)` 分支）：
+  `plain` → 不弹赌场、不翻卡；`table` → 停在围桌全景（默认会拉近到 27 号格并弹出格详情卡）；
+  `rules` → 展开规则说明；`pause` → 打开暂停菜单；`card` → 跳过赌局；
+  `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）。
+  常拼的几个：**干净全景 `xx_table_plain.png`**、**近景＋格详情卡 `xx_plain.png`**、
+  **看房子 `xx_level_plain.png`**。
+- **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
+
+配套：`--shot-game=1 --shot=<路径>` 单人直达对局；`--shot-lobby=<路径>` 直达大厅；
+`--shot-rot=0..3` 转到某个座位视角；`--shot-round=N` 指定**第几轮**摆拍（默认 2）——
+想看中后期才有的状态（满盘归属、各家装修）就把它调大，例如
+`--autotest=host --rounds=20 --shot-round=15 --shot=xx_table_plain.png`
+让机器人真的打到第 15 轮再拍。**注意自动对局里的机器人要很久才会主动装修**，
+所以「房子图标」一律用文件名带 `level` 注入来看，别指望机器人。
+
 > **联机回归必须放在同一条命令里跑**（`host ... &` → 等它就绪 → `client ...`），
 > 不要分两次工具调用：代理沙箱会把不同调用隔离到各自的网络命名空间，两个进程
 > 谁也看不见谁。表现是 client 报 `NET: connection_failed`、host 那边

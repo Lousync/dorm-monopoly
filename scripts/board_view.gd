@@ -310,8 +310,8 @@ func _build_tiles() -> void:
 		# 放右下角 y88-106 这条带：色带(3-15)/图标水印(20-56)/名称(18-62)/副标题(70-87)
 		# 都已占位，只有这条底带是空的，且副标题居中、右侧不会被压到。
 		var house := HouseIcon.new()
-		house.position = Vector2(TILE - GAP * 2.0 - 30, 86)
-		house.size = Vector2(26, 20)
+		house.position = Vector2(TILE - GAP * 2.0 - 30, 84)
+		house.size = Vector2(26, 18)
 		_world_descend(house)
 		p.add_child(house)
 		_house_icons.append(house)

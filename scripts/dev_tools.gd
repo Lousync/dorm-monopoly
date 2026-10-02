@@ -376,6 +376,20 @@ func take_shot(path: String) -> void:
 	if not path.contains("plain") or path.contains("card"):
 		g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 		g.board.spin_wheel(12)
+	if path.contains("level") and g.multiplayer.is_server():
+		# 摆拍：给前几块地各设一个装修等级（1..MAX_LEVEL），
+		# 方便核对格子上的房子图标与等级配色——机器人要很久才会主动装修，抓不到
+		var done := 0
+		for i in g.htiles.size():
+			if String(GameData.TILES[i].get("type", "")) != "property":
+				continue
+			g.htiles[i].owner = g.my_peer
+			g.htiles[i].level = done + 1
+			done += 1
+			if done >= GameData.MAX_LEVEL:
+				break
+		g._broadcast_state()
+		await get_tree().create_timer(0.35).timeout
 	if not path.contains("plain") and not path.contains("card"):
 		# 赌局界面预览（单行假数据，验证布局用）。路径带 card 时跳过赌局，
 		# 否则弹层会盖住正在翻的抽卡

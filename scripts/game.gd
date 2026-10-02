@@ -137,6 +137,7 @@ var _roll_epoch := 0
 var _shot_path := ""
 var _shot_taken := false
 var _shot_rot := 0
+var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/房子这类局中状态就调大）
 
 # ---------------- 表现层状态 ----------------
 var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
@@ -179,6 +180,8 @@ func _ready() -> void:
 			_shot_path = a.substr(7)
 		elif a.begins_with("--shot-rot="):
 			_shot_rot = clampi(int(a.substr(11)), 0, 3)
+		elif a.begins_with("--shot-round="):
+			_shot_round = maxi(1, int(a.substr(13)))
 	if at_mode != "":
 		Engine.time_scale = 3.0
 
@@ -929,7 +932,7 @@ func s_state(state: Dictionary) -> void:
 		_show_game_over()
 		if at_mode != "" and not multiplayer.is_server():
 			_autotest_client_finish(state)
-	elif _shot_path != "" and not _shot_taken and (int(state.round) >= 2 or at_mode == ""):
+	elif _shot_path != "" and not _shot_taken and (int(state.round) >= _shot_round or at_mode == ""):
 		_shot_taken = true
 		dev.take_shot(_shot_path)
 	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
