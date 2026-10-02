@@ -94,6 +94,7 @@ var _deck_t := 0.0             # 抽卡动画相位计时（_process 驱动，�
 var _deck_from := Vector2.ZERO
 var _deck_shown := Vector2.ZERO
 var _deck_restore := -1
+var _deck_prev_zoom := 0.0     # 抽卡前的缩放，展示完还原（抽卡时会临时拉近看清牌面）
 
 # 中央转盘（替代骰子的点数来源）
 var _wheel: WheelView
@@ -209,26 +210,6 @@ const TILE_ICONS := {
 	"start": "start", "jail": "jail", "go_jail": "gojail",
 }
 
-## 顶带的「识别色」：只由格型决定（四角金 / 赌场粉 / 小卖部菜绿 / 其余中性）。
-## 地产的拥有者颜色不在这里，见 _strip_color_for。
-func _strip_base_color(d: Dictionary) -> Color:
-	match String(d.type):
-		"start", "jail", "rest", "go_jail":
-			return UIKit.ACCENT
-		"casino":
-			return Color(0.93, 0.30, 0.55)
-		"shop":
-			return SHOP_ACCENT
-		_:
-			return NEUTRAL_STRIP
-
-## 第 i 格顶带当前该用的颜色：地产看归属，其余格恒为自身识别色
-func _strip_color_for(i: int, owner_id: int) -> Color:
-	var d: Dictionary = GameData.TILES[i]
-	if String(d.type) == "property" and owner_id >= 0 and _owner_color_map.has(owner_id):
-		return _owner_color_map[owner_id]
-	return _strip_base_color(d)
-
 func _tile_icon_name(d: Dictionary) -> String:
 	var t := String(d.type)
 	if t == "property":
@@ -253,18 +234,16 @@ func _build_tiles() -> void:
 		_world.add_child(p)
 		_tile_sb.append(sb)
 
-		# 顶带：地标格（四角 / 赌场 / 小卖部）保留自己的识别色；
-		# 地产则显示「拥有者颜色」——无主时是中性带，等于没有颜色标记。
+		# 顶带 = 唯一的归属标记：只有「已售出的地产」才显示，颜色即拥有者颜色。
+		# 无主地产、以及所有非卖的活动格（小卖部 / 赌场 / 四角等）一律不显示。
 		var strip := Panel.new()
 		strip.position = Vector2(3, 3)
 		strip.size = Vector2(TILE - GAP * 2.0 - 6, 12)
-		var strip_c := _strip_base_color(d)
-		strip.add_theme_stylebox_override("panel",
-			UIKit.card_stylebox(strip_c.lightened(0.06), 3, strip_c.darkened(0.35), 1, 0))
+		strip.visible = false
 		strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		p.add_child(strip)
 		_strips.append(strip)
-		_strip_cols.append(strip_c)
+		_strip_cols.append(Color(0, 0, 0, 0))
 		var idx_l := UIKit.label(str(i), 10, Color(1, 1, 1, 0.6))
 		idx_l.position = Vector2(TILE - GAP * 2.0 - 22.0, 0)
 		idx_l.visible = dev_tile_index
@@ -463,28 +442,37 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 4))
 	_world.add_child(zone)
 
+	# 牌堆：3 张竖版卡背错位叠放（用同一套 CC0 卡背图案；抽卡就是从这上面抽走一张）
 	for i in 3:
-		var card := Panel.new()
-		card.position = center - Vector2(66, 52) + Vector2(5, 5) * float(2 - i)
-		card.size = Vector2(132, 84)
+		var card := TextureRect.new()
+		card.texture = _deck_back_tex(dname)
+		card.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		card.stretch_mode = TextureRect.STRETCH_SCALE
+		card.modulate = Color(1, 1, 1, 0.55 + 0.22 * float(i))   # 越靠上越实，做出堆叠感
+		card.position = center - Vector2(45, 66) + Vector2(6, 6) * float(2 - i)
+		card.size = Vector2(90, 135)
 		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var deep := accent.darkened(0.42) if i < 2 else accent
-		card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
-			Color(0.135, 0.125, 0.075) if accent == UIKit.ACCENT else Color(0.125, 0.11, 0.155),
-			10, deep, 2 if i == 2 else 1, 3))
 		_world.add_child(card)
 
-	var t := UIKit.label(dname, 28, accent)
-	t.position = center - Vector2(66, 42)
-	t.size = Vector2(132, 42)
+	# 牌堆名压在堆叠中央：垫一块深色小牌，压在花纹上也读得清
+	var tplate := UIKit.panel_container(Color(0.05, 0.055, 0.08, 0.84), 8,
+		Color(accent.r, accent.g, accent.b, 0.6), 1, 2)
+	tplate.position = center - Vector2(48, 15)
+	tplate.size = Vector2(96, 30)
+	tplate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world.add_child(tplate)
+	var tm := UIKit.margins(6, 6, 3, 3)
+	tm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tplate.add_child(tm)
+	var t := UIKit.label(dname, 18, accent)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_world.add_child(t)
+	tm.add_child(t)
 
 	var cap := UIKit.label("落在【%s】格时从这里抽卡" % dname, 14,
 		Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.7))
-	cap.position = center - Vector2(132, -56)
+	cap.position = center - Vector2(132, -78)
 	cap.size = Vector2(264, 20)
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -566,6 +554,8 @@ func _tick_deck_card(delta: float) -> void:
 		_deck_card = null
 		_deck_back = null
 		_deck_front = null
+		_zoom = clampf(_deck_prev_zoom, MIN_ZOOM, MAX_ZOOM)   # 还原抽卡前的缩放
+		_apply_cam()
 		if restore != -1:
 			focus_peer(restore)
 		else:
@@ -586,21 +576,52 @@ func _ease_out_back(t: float) -> float:
 func is_showing_deck_card() -> bool:
 	return _deck_card != null and is_instance_valid(_deck_card)
 
-const CARD_SIZE := Vector2(560, 168)
+## 抽卡用的卡牌尺寸：竖版 2:3，与素材（assets/cards/ 的 Atlas 牌卡背，360×540）同比例
+const CARD_SIZE := Vector2(260, 390)
 
-## 卡面（正面）：牌堆名 + 卡文，配色随卡型（good/bad/jail/move…）
+## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见 assets/CREDITS.md）
+func _deck_back_tex(deck: String) -> Texture2D:
+	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
+		else "res://assets/cards/atlas_back_blue_brown.svg")
+
+## 铺满整张牌的卡背图案
+func _make_card_art(deck: String) -> TextureRect:
+	var tr := TextureRect.new()
+	tr.texture = _deck_back_tex(deck)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_SCALE
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tr
+
+## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（牌堆名 + 卡文）
 func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(style[1], 16, style[0], 2, 12))
-	var m := UIKit.margins(20, 20, 12, 14)
+	# PanelContainer 会把所有子节点铺满，所以先垫一层普通 Control，内缩才生效
+	var layer := Control.new()
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(layer)
+	layer.add_child(_make_card_art(deck))
+	# 文字牌面：深色半透明圆角板，压在图案中央；四边留出卡牌原有的花纹
+	var plate := UIKit.panel_container(Color(0.045, 0.05, 0.078, 0.88), 12,
+		Color(style[0].r, style[0].g, style[0].b, 0.5), 1, 0)
+	plate.set_anchors_preset(Control.PRESET_FULL_RECT)
+	plate.offset_left = 34.0
+	plate.offset_right = -34.0
+	plate.offset_top = 34.0
+	plate.offset_bottom = -34.0
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(plate)
+	var m := UIKit.margins(16, 16, 14, 14)
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(m)
+	plate.add_child(m)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	m.add_child(v)
-	var title := UIKit.label(deck, 22, style[0])
+	var title := UIKit.label(deck, 24, style[0])
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
 	var rule := ColorRect.new()
@@ -610,13 +631,13 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	v.add_child(rule)
 	var body := UIKit.label(text, 15, UIKit.TEXT)
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.custom_minimum_size = Vector2(CARD_SIZE.x - 40, 0)  # 锁换行宽度
+	body.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)  # 锁换行宽度（扣掉板与边距）
 	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(body)
 	return card
 
-## 卡背：深底描金 + 牌堆名 + 菱形点阵，抽出阶段露出的就是这一面
+## 卡背：整张铺 CC0 的 Atlas 牌卡背图案，抽出阶段露出的就是这一面
 func _card_face_back(deck: String, accent: Color) -> Control:
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -624,24 +645,10 @@ func _card_face_back(deck: String, accent: Color) -> Control:
 	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
 		Color(0.075, 0.068, 0.045), 16, accent, 3, 12,
 		Color(accent.r, accent.g, accent.b, 0.12)))
-	var m := UIKit.margins(20, 20, 12, 14)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	m.add_child(v)
-	var t := UIKit.label("宿舍%s牌堆" % deck, 20, Color(accent.r, accent.g, accent.b, 0.85))
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(t)
-	v.add_child(UIKit.label("· · · · · · · · ·", 15,
-		Color(accent.r, accent.g, accent.b, 0.45)))
-	var big := UIKit.title_label("？", 44, Color(accent.r, accent.g, accent.b, 0.75), 0)
-	big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	big.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	big.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	v.add_child(big)
-	v.add_child(UIKit.label("· · · · · · · · ·", 15,
-		Color(accent.r, accent.g, accent.b, 0.45)))
+	var layer := Control.new()
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(layer)
+	layer.add_child(_make_card_art(deck))
 	return card
 
 ## 仿桌游抽卡：镜头对准牌堆，卡背从堆中抽出 → 翻面亮出卡面 → 停留 → 收回；
@@ -671,12 +678,13 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := -1
 	card.add_child(_deck_front)
 
 	var start := center - card.size * 0.5 + Vector2(0, 54)
-	var shown := center - card.size * 0.5 - Vector2(0, 150)
+	var shown := center - card.size * 0.5 - Vector2(0, 120)
 	shown.x = clampf(shown.x, 16.0, WORLD.x - card.size.x - 16.0)
 	card.position = start
 	card.modulate = Color(1, 1, 1, 0.0)
 	card.scale = Vector2(0.55, 0.55)
-	focus_point(center + Vector2(0, -110), false)
+	_deck_prev_zoom = _zoom
+	focus_point_zoom(center + Vector2(0, -110), maxf(_zoom, 0.78))
 
 	_deck_card = card
 	_deck_t = 0.0
@@ -774,6 +782,19 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 	if hard:
 		_center = _clamp_center(tile_pos(idx) + Vector2(TILE, TILE) * 0.5)
 		_center_target = _center
+	_apply_cam()
+
+## 镜头对准某个世界坐标点并拉近：抽卡时用，牌面文字要看得清
+## （全景倍率下整张牌只有七八十像素宽，字是糊的）。
+func focus_point_zoom(world_pt: Vector2, zoom: float) -> void:
+	if cam_locked or not at_home_view():
+		return  # 摆拍锁定或身在别人视角时，对局镜头不抢方向盘
+	auto_follow = true
+	_follow_peer = -1
+	_has_follow_pt = true
+	_follow_pt = world_pt
+	_rotating = false
+	_zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
 	_apply_cam()
 
 ## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
@@ -1139,7 +1160,6 @@ var dev_tile_index := false:
 var _shop_refresh: Button
 
 const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部：菜绿
-const NEUTRAL_STRIP := Color(0.333, 0.4, 0.4)   # #566：无主地产与普通格的中性顶带
 const CASINO_ACCENT := Color(0.93, 0.3, 0.55)   # 赌场：与赌场格同色
 const SHOP_QUALITIES := [Color(0.93, 0.93, 0.93), Color(0.42, 0.78, 0.55),
 	Color(0.36, 0.6, 0.92), Color(0.66, 0.47, 0.92), Color(0.96, 0.62, 0.25)]  # 白绿蓝紫橙
@@ -1604,18 +1624,17 @@ func _animate_tile(i: int, hovered: bool) -> void:
 		base = Color(0.13, 0.11, 0.09)
 		border = Color(0.5, 0.34, 0.18)
 		border_w = 2
-	elif owner_id >= 0 and _owner_color_map.has(owner_id):
-		var oc: Color = _owner_color_map[owner_id]
-		base = base.lerp(oc, 0.20)
-		border = oc
-		border_w = 3
-	# 顶带跟着归属走：有主显示拥有者颜色，无主回中性带
+	# 归属只由顶带表示：格子的底色与边框始终是无主时的样子（不再有拥有者色边框/底色）
 	if i < _strips.size():
-		var sc := _strip_color_for(i, owner_id)
-		if _strip_cols[i] != sc:
-			_strip_cols[i] = sc
-			(_strips[i] as Panel).add_theme_stylebox_override("panel",
-				UIKit.card_stylebox(sc.lightened(0.06), 3, sc.darkened(0.35), 1, 0))
+		var owned := String(d.type) == "property" and owner_id >= 0 and _owner_color_map.has(owner_id)
+		var strip := _strips[i] as Panel
+		strip.visible = owned
+		if owned:
+			var sc: Color = _owner_color_map[owner_id]
+			if _strip_cols[i] != sc:
+				_strip_cols[i] = sc
+				strip.add_theme_stylebox_override("panel",
+					UIKit.card_stylebox(sc.lightened(0.06), 3, sc.darkened(0.35), 1, 0))
 	if hovered:
 		base = base.lerp(Color(1, 1, 1), 0.12)
 	var sb: StyleBoxFlat = _tile_sb[i]

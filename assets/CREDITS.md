@@ -23,4 +23,12 @@
 - 来源：https://ambientcg.com （Deemed Visual Reference Guide 允许游戏内使用）
 - 用途：棋盘底座木纹桌面
 
+## Wikimedia Commons — Atlas deck 卡背（Dmitry Fomin）
+- 路径：`assets/cards/atlas_back_green_darkred.svg`、`assets/cards/atlas_back_blue_brown.svg`
+- 授权：**CC0 1.0（公有领域献出）**，可自由商用、修改、分发，无需署名
+- 来源：<https://commons.wikimedia.org/wiki/File:Atlas_deck_card_back_blue_and_brown.svg>
+  （作者 Dmitry Fomin；图案源自 19 世纪法式 Atlas 牌，已入公有领域）
+- 用途：机会 / 命运牌堆的**卡背图案**（矢量 360×540，缩放到任意尺寸都不糊）；
+  机会用「绿 + 暗红」、命运用「蓝 + 棕」，两套配色一眼区分
+
 > 若你分发本项目或其衍生作品，请保留本文件内容（CC-BY 要求署名；CC0 部分为良好习惯）。

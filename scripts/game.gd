@@ -11,8 +11,6 @@ const STEP_TIME := 0.15   # 每格跳子时长
 
 # ---------------- UI 引用 ----------------
 var board: BoardView
-var card_panel: PanelContainer
-var card_label: Label
 var status_label: Label
 var roll_btn: Button
 var mat_bar: PanelContainer
@@ -132,7 +130,6 @@ var _decision := {"token": -1, "yes": false}
 var _prompt_kind := ""
 var _prompt_amount := 0
 var _over_shown := false
-var _card_tween_id := 0
 var _roll_epoch := 0
 var _shot_path := ""
 var _shot_taken := false
@@ -994,39 +991,16 @@ func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 			Fx.shake(self, 9.0, 0.35)
 			Fx.play("jail", -2.0)
 		return
-	var style: Array = UIKit.card_palette(kind)
-	card_panel.add_theme_stylebox_override("panel", UIKit.card_stylebox(style[1], 12, style[0], 2, 10))
-	card_label.text = text
-	card_label.add_theme_color_override("font_color", style[0])
-	card_panel.visible = true
-	card_panel.pivot_offset = card_panel.size * 0.5
-	card_panel.scale = Vector2(0.7, 0.7)
-	card_panel.modulate.a = 0.0
-	_card_tween_id += 1
-	var my_id := _card_tween_id
-	var tw := create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(card_panel, "scale", Vector2.ONE, 0.30).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_property(card_panel, "modulate:a", 1.0, 0.16)
-	tw.set_parallel(false)
-	_hide_card_later(my_id)
+	# 非事件卡的公告（缴费 / 查寝 / 破产 / 黑市）不再占屏幕左上角：
+	# 这些事件的调用点都已经先写过一条战报（`_log`），而战报现在就是屏幕上方居中的
+	# 彩色气泡 —— 所以视觉交给那条居中提示即可，这里只保留「震屏 + 音效」这类强调。
+	# （原先的左上角 card_panel 与战报是同一句话的第二份，属重复展示。）
 	if kind == "jail":
 		Fx.shake(self, 9.0, 0.35)
 		Fx.play("jail", -2.0)
 	elif kind == "bust":
 		Fx.shake(self, 7.0, 0.3)
 		Fx.play("bust", 0.0)
-
-func _hide_card_later(my_id: int) -> void:
-	await get_tree().create_timer(2.5, false).timeout
-	if not is_inside_tree() or _card_tween_id != my_id:
-		return
-	var tw := create_tween()
-	tw.tween_property(card_panel, "modulate:a", 0.0, 0.25)
-	await tw.finished
-	if _card_tween_id == my_id:
-		card_panel.visible = false
-		card_panel.modulate.a = 1.0
 
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
@@ -1153,7 +1127,11 @@ func _refresh_players() -> void:
 				ml.add_theme_color_override("font_color", UIKit.TEXT)
 			).set_delay(0.6)
 			if bool(p.alive):
-				var pos := board.token_screen_pos(peer) + Vector2(0, -30)
+				# 收租时这一帧会有两条飘字（付款方红、收款方绿），两者都以「各自棋子」为中心，
+				# 而全景缩放下两枚棋子可能只差十几像素、标签却有七八十像素宽 → 必然叠在一起。
+				# 按涨/跌分开纵向落点：进账往上飘、支出往下飘，拉开约 46px，任何格距都不重叠。
+				var fy := -26.0 if diff > 0 else 20.0
+				var pos := board.token_screen_pos(peer) + Vector2(0, fy)
 				Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
 				Fx.play("cash" if diff > 0 else "pay", -5.0)
 				_spawn_money_fly(peer, diff, ml)

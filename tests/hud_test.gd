@@ -191,6 +191,41 @@ func _run() -> void:
 	g.board._set_house(0, 0)
 	_check(g.board._house_icons[0].level == 0, "等级归零后房子收起（无主/未装修不上房子）")
 
+	print("== 收租飘字：红/绿两条不能叠在一起 ==")
+	# 先把四位玩家的金额刷成基线（与 _state 一致），保证下一步的 diff 只来自这两家
+	g.my_peer = 2
+	g.s_state(_state(2, false))
+	await process_frame
+	# 模拟「甲 走到 乙 的地、付 500 租金」：同一帧里一个 -500、一个 +500，
+	# 这正是当初两条飘字叠在一起的场景（都以各自棋子为中心，全景缩放下两棋子很近）
+	var s2: Dictionary = _state(2, false)
+	for p in s2.players:
+		if int(p.peer) == 1:
+			p.money = 11500
+		elif int(p.peer) == 2:
+			p.money = 20500
+	g.s_state(s2)
+	await process_frame
+	var floats: Array = []
+	for c in g.get_children():
+		if c is Label and (c as Label).z_index == 90:
+			floats.append(c)
+	_check(floats.size() >= 2, "同一帧产生两条金额飘字（实得 %d）" % floats.size())
+	if floats.size() >= 2:
+		var fa := floats[floats.size() - 2] as Label
+		var fb := floats[floats.size() - 1] as Label
+		var dy: float = absf(fa.position.y - fb.position.y)
+		_check(dy >= 30.0, "两条飘字纵向错开 ≥30px、不再叠住（实得 %.0f）" % dy)
+	else:
+		_check(false, "同一帧产生两条金额飘字（不足以比较位置）")
+
+	print("== 抽卡：镜头拉近，牌面文字才看得清 ==")
+	# 全景倍率下整张牌只有七八十像素宽，字是糊的 —— 抽卡时要临时拉近
+	g.board.cam_locked = false
+	var z0: float = g.board._zoom
+	g.board.focus_point_zoom(Vector2(1008.0, 600.0), 0.78)
+	_check(g.board._zoom > z0 + 0.05, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

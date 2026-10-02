@@ -35,15 +35,33 @@ func _ready() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")
 
-	var bg := UIKit.decor_bg()
-	add_child(bg)
+	# 背景：整张环形棋盘铺满窗口（就像对局里那张桌子），再压一层暗纱 + 金色暖光 + 暗角，
+	# 中间留白给操作面板——启动页一眼就是「宿舍大富翁」。
+	var bg_board := MenuBoardDecor.new()
+	bg_board.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg_board.count_x = 12
+	bg_board.count_y = 7
+	bg_board.pad = 0.0
+	bg_board.with_center = false
+	add_child(bg_board)
+	var scrim := ColorRect.new()
+	scrim.color = Color(0.030, 0.036, 0.060, 0.18)
+	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(scrim)
+	add_child(UIKit.grad_rect(
+		[Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.12),
+		 Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.0)],
+		[0.0, 1.0], true, Vector2(0.5, 0.06), Vector2(0.5, 0.90)))
+	add_child(UIKit.grad_rect([Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.40)],
+		[0.0, 1.0], true, Vector2(0.5, 0.5), Vector2(0.5, -0.14)))
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
 	var root := VBoxContainer.new()
-	root.custom_minimum_size = Vector2(940, 0)
+	root.custom_minimum_size = Vector2(660, 0)
 	root.add_theme_constant_override("separation", 10)
 	center.add_child(root)
 
@@ -68,20 +86,9 @@ func _ready() -> void:
 
 	root.add_child(UIKit.vspace(8))
 
-	# 两栏：左＝表单（昵称 / 创建 / 加入 / 房间列表），右＝「桌面主场」棋盘意象。
-	# 原先是一根 640 宽的竖列，左右各空掉一大片；拆两栏顺手把空白填成桌游感。
-	var stage := HBoxContainer.new()
-	stage.add_theme_constant_override("separation", 20)
-	stage.alignment = BoxContainer.ALIGNMENT_CENTER
-	root.add_child(stage)
-	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(580, 0)
-	left.add_theme_constant_override("separation", 10)
-	stage.add_child(left)
-
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 8)
-	left.add_child(name_row)
+	root.add_child(name_row)
 	name_row.add_child(UIKit.label("昵称", 15))
 	_name_edit = UIKit.line_edit("给你的室友起个外号")
 	_name_edit.text = cfg.get_value("player", "name", "玩家")
@@ -90,10 +97,10 @@ func _ready() -> void:
 	name_row.add_child(_name_edit)
 
 	# ----- 创建房间 -----
-	var create_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
+	var create_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
 	var cp := UIKit.margins()
 	create_panel.add_child(cp)
-	left.add_child(create_panel)
+	root.add_child(create_panel)
 
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 8)
@@ -117,10 +124,10 @@ func _ready() -> void:
 	create_row.add_child(create_hint)
 
 	# ----- 加入房间 -----
-	var join_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
+	var join_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
 	var jp := UIKit.margins()
 	join_panel.add_child(jp)
-	left.add_child(join_panel)
+	root.add_child(join_panel)
 
 	var jv := VBoxContainer.new()
 	jv.add_theme_constant_override("separation", 8)
@@ -148,32 +155,11 @@ func _ready() -> void:
 	port_row.add_child(join_hint)
 
 	# ----- 局域网房间列表 -----
-	var rooms_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
+	var rooms_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
 	rooms_panel.custom_minimum_size = Vector2(0, 120)
 	var rp := UIKit.margins()
 	rooms_panel.add_child(rp)
-	left.add_child(rooms_panel)
-
-	# 右侧「桌面主场」：程序绘制的俯视棋盘意象（环岛格 + 四色棋子 + 骰子）
-	var right := VBoxContainer.new()
-	right.custom_minimum_size = Vector2(330, 0)
-	right.add_theme_constant_override("separation", 8)
-	stage.add_child(right)
-	var decor_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
-	right.add_child(decor_panel)
-	var dp := UIKit.margins(12, 12, 12, 12)
-	decor_panel.add_child(dp)
-	var dv := VBoxContainer.new()
-	dv.add_theme_constant_override("separation", 8)
-	dp.add_child(dv)
-	var decor := MenuBoardDecor.new()
-	decor.custom_minimum_size = Vector2(300, 262)
-	decor.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	dv.add_child(decor)
-	var decor_cap := UIKit.label("56 格环形棋盘 · 1~4 人联机 · 房主即权威", 12, UIKit.TEXT_DIM)
-	decor_cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	decor_cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	dv.add_child(decor_cap)
+	root.add_child(rooms_panel)
 
 	var rv := VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 6)
@@ -401,8 +387,11 @@ class MenuBoardDecor extends Control:
 	const PIPS := {
 		1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8],
 	}
-	const PER_SIDE := 7        # 每边的格数（含角）
-	const PAD := 10.0
+	var per_side := 7          # 每边的格数（含角）；count_x / count_y 给了就按轴的格数走
+	var count_x := 0           # 横向格数（0 = 用 per_side）—— 铺满当背景时用它把格子做成近方形
+	var count_y := 0           # 纵向格数（0 = 用 per_side）
+	var pad := 10.0            # 棋盘离控件边缘的留白（当背景时给 0，让环贴着窗口边）
+	var with_center := true    # 中央是否画两粒骰子（当背景时留空给操作面板）
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -412,7 +401,7 @@ class MenuBoardDecor extends Control:
 		var h := size.y
 		if w < 60.0 or h < 60.0:
 			return
-		var board := Rect2(PAD, PAD, w - PAD * 2.0, h - PAD * 2.0)
+		var board := Rect2(pad, pad, w - pad * 2.0, h - pad * 2.0)
 		# 桌面：深色毡面 + 金色描边
 		draw_rect(board, Color(0.105, 0.125, 0.175), true)
 		draw_rect(board, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.45), false, 2.0)
@@ -423,10 +412,34 @@ class MenuBoardDecor extends Control:
 			var c: Color = PALETTE[i % PALETTE.size()]
 			draw_rect(r, c.darkened(0.50), true)
 			draw_rect(Rect2(r.position.x + 1.0, r.position.y + 1.0, r.size.x - 2.0, r.size.y * 0.22), c, true)
+		# 中央场地：比环稍亮的毡面 + 金色内框 + 四角括号，
+		# 让它读起来是「桌面」而不是一块黑板（对标对局里那张桌子的衬底）
+		var nx := count_x if count_x > 0 else per_side
+		var ny := count_y if count_y > 0 else per_side
+		var tw := board.size.x / float(nx + 1)
+		var th := board.size.y / float(ny + 1)
+		var inner := Rect2(board.position.x + tw, board.position.y + th,
+			board.size.x - tw * 2.0, board.size.y - th * 2.0)
+		draw_rect(inner, Color(0.128, 0.152, 0.203), true)
+		draw_rect(inner, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.20), false, 2.0)
+		var arm := minf(inner.size.x, inner.size.y) * 0.12
+		var gc := Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.30)
+		var corners := [
+			[inner.position.x + 12.0, inner.position.y + 12.0, 1.0, 1.0],
+			[inner.end.x - 12.0, inner.position.y + 12.0, -1.0, 1.0],
+			[inner.position.x + 12.0, inner.end.y - 12.0, 1.0, -1.0],
+			[inner.end.x - 12.0, inner.end.y - 12.0, -1.0, -1.0],
+		]
+		for cn in corners:
+			var px: float = cn[0]
+			var py: float = cn[1]
+			var sx: float = cn[2]
+			var sy: float = cn[3]
+			draw_rect(Rect2(px if sx > 0.0 else px - arm, py - 3.0, arm, 3.0), gc, true)
+			draw_rect(Rect2(px - 3.0, py if sy > 0.0 else py - arm, 3.0, arm), gc, true)
 		# 四名玩家的棋子坐在环上（直接用对局里的 Kenney 棋子贴图，和游戏里同一批）
-		var seats := [0, 7, 14, 21]
-		for k in seats.size():
-			var r: Rect2 = rects[int(seats[k]) % rects.size()]
+		for k in 4:
+			var r: Rect2 = rects[int(rects.size() * k / 4) % rects.size()]
 			var tex: Texture2D = UIKit.piece_tex(k)
 			if tex == null:
 				continue
@@ -435,23 +448,25 @@ class MenuBoardDecor extends Control:
 			var dst := Rect2(mid - Vector2(ps, ps) * 0.5 + Vector2(0, r.size.y * 0.12), Vector2(ps, ps))
 			draw_circle(mid + Vector2(0, r.size.y * 0.30), ps * 0.34, Color(0, 0, 0, 0.38))
 			draw_texture_rect(tex, dst, false)
-		# 中央：两粒骰子
-		draw_die(Vector2(w * 0.5 - 32.0, h * 0.5 - 10.0), 30.0, 3)
-		draw_die(Vector2(w * 0.5 + 4.0, h * 0.5 + 6.0), 26.0, 5)
+		# 中央：两粒骰子（当背景铺满时由调用方关掉，把中间让给操作面板）
+		if with_center:
+			draw_die(Vector2(w * 0.5 - 32.0, h * 0.5 - 10.0), 30.0, 3)
+			draw_die(Vector2(w * 0.5 + 4.0, h * 0.5 + 6.0), 26.0, 5)
 
 	## 环岛格：上边连同左右上角一次画满，其余三边依次接续，不重复画角
 	func ring_rects(b: Rect2) -> Array:
 		var out: Array = []
-		var n := PER_SIDE
-		var tw := b.size.x / float(n + 1)
-		var th := b.size.y / float(n + 1)
-		for i in n + 1:                                              # 上边（含左上、右上角）
+		var nx := count_x if count_x > 0 else per_side
+		var ny := count_y if count_y > 0 else per_side
+		var tw := b.size.x / float(nx + 1)
+		var th := b.size.y / float(ny + 1)
+		for i in nx + 1:                                             # 上边（含左上、右上角）
 			out.append(Rect2(b.position.x + tw * i, b.position.y, tw, th))
-		for j in range(1, n + 1):                                    # 右边（含右下角）
+		for j in range(1, ny + 1):                                   # 右边（含右下角）
 			out.append(Rect2(b.position.x + b.size.x - tw, b.position.y + th * j, tw, th))
-		for k in range(1, n + 1):                                    # 下边（向左接续到左下角）
+		for k in range(1, nx + 1):                                   # 下边（向左接续到左下角）
 			out.append(Rect2(b.position.x + b.size.x - tw * float(k + 1), b.position.y + b.size.y - th, tw, th))
-		for m in range(1, n):                                        # 左边（两角已画）
+		for m in range(1, ny):                                       # 左边（两角已画）
 			out.append(Rect2(b.position.x, b.position.y + b.size.y - th * float(m + 1), tw, th))
 		return out
 

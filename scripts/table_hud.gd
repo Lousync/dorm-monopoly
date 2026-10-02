@@ -55,26 +55,12 @@ static func build_play_ui(g: Node) -> void:
 			g.board.go_home_follow(g.my_peer)  # 点自己座位卡：回自己视角并恢复镜头跟随
 	)
 
-	# 悬浮事件卡（非牌堆提示，屏幕空间不随视角旋转）
+	# 屏幕层：不随摄像机旋转的悬浮控件都挂这里
 	var hud := Control.new()
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.add_child(hud)
 
-	g.card_panel = UIKit.panel_container(Color(0.16, 0.14, 0.08, 0.94), 12, UIKit.ACCENT, 2, 10)
-	g.card_panel.position = Vector2(12, 54)
-	g.card_panel.size = Vector2(430, 96)
-	g.card_panel.visible = false
-	g.card_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(g.card_panel)
-	var cm := UIKit.margins(16, 14, 8, 8)
-	cm.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	g.card_panel.add_child(cm)
-	g.card_label = UIKit.label("", 15, UIKit.ACCENT)
-	g.card_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	g.card_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	g.card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	cm.add_child(g.card_label)
 
 	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条；
 	# 顶部左右两角已被暂停按钮与战报开关占掉，中间这块是空的。

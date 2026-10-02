@@ -281,8 +281,8 @@ func _test_ui_widgets_applied(g) -> void:
 	var names := ["board", "mat_bar", "action_bar", "roll_btn", "item_btn_box",
 		"shop_bar", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
 		"log_text", "log_head", "log_toggle", "info_panel", "info_title",
-		"info_body", "info_sb", "status_label", "chat_edit", "card_panel",
-		"card_label", "opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",
+		"info_body", "info_sb", "status_label", "chat_edit",
+		"opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",
 		"ph_arrow_l", "black_btns", "black_hint",
 		"menu_dim", "menu_wraps", "rules_btn", "rules_panel", "rules_body", "rules_tabs",
 		"dock_plate", "roster_box", "roster_rows"]

@@ -1,0 +1,17 @@
+=={{int:filedesc}}==
+{{Information
+|description={{ru|«Атласная» колода игральных карт в векторном формате SVG. Рубашка карты в синюю и коричневую косую клетку}}
+{{en|The Atlasnye playing cards deck in SVG vector format. Card back, blue and brown}}
+|date=2017-02-25
+|source={{own}}
+|author={{U|Dmitry Fomin|Дмитрий Фомин (Dmitry Fomin)}}
+|other fields={{Igen|I|+|s:=card deck}}
+}}
+
+{{Extracted from|Atlasnye playing cards deck 2.svg}}
+
+=={{int:license-header}}==
+{{self|cc-zero}}
+
+[[Category:SVG playing card backs]]
+[[Category:SVG Atlasnye playing cards]]
