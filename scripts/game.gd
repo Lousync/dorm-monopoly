@@ -31,6 +31,8 @@ var confirm_panel: PanelContainer
 var confirm_note: Label
 var vol_slider: HSlider
 var mute_check: CheckButton
+var tier_row: HBoxContainer    # 对局内设置面板：挡位 chips（房主）
+var tier_readonly: Label       # 对局内设置面板：挡位只读文本（客户端）
 var pause_mask: ColorRect
 var audio_volume := 1.0
 var audio_mute := false
@@ -179,6 +181,9 @@ func _ready() -> void:
 
 	# 房主用自己的配置副本（中途改动不回写大厅），客户端先取默认值、随后由快照覆盖
 	_settings = Net.game_settings.copy() if Net.game_settings != null else GameSettings.new()
+	# 设置面板上一段已建好（_build_ui 在前），此处按身份定「操作限时」行显隐——
+	# 否则两行同时可见，要等首次改挡才归位
+	_refresh_tier_ui()
 
 	if multiplayer.is_server():
 		_host_setup()
@@ -812,6 +817,31 @@ func _on_peer_disconnected(id: int) -> void:
 
 # ================= 房主：广播 =================
 
+## 房主改「操作限时」挡位：立即生效并重计时（见 docs/gameplay/开局设置.md §三之一）
+func _set_timeout_tier(id: String) -> void:
+	if not multiplayer.is_server() or not GameSettings.TIERS.has(id):
+		return
+	if id == _settings.timeout_tier:
+		return
+	_settings.timeout_tier = id
+	_timeout_rev += 1
+	_log("房主把操作限时改为「%s」" % String(GameSettings.TIER_LABELS.get(id, id)), "#f0c064")
+	_refresh_tier_ui()
+	if rules_open:
+		RulesPanel.select_tab(self, rules_tab)   # 规则文案里的秒数跟着变
+	_broadcast_state()
+
+## 刷新设置面板的「操作限时」一行：房主 = 可点 chips，客户端 = 只读文本
+func _refresh_tier_ui() -> void:
+	if tier_row == null or tier_readonly == null:
+		return
+	var is_host := multiplayer.is_server()
+	tier_row.visible = is_host
+	tier_readonly.visible = not is_host
+	tier_readonly.text = "操作限时：%s（房主设置）" % String(
+		GameSettings.TIER_LABELS.get(_settings.timeout_tier, "现状"))
+	UIKit.chip_select(tier_row, _settings.timeout_tier)
+
 func _broadcast_state() -> void:
 	if not multiplayer.is_server():
 		return
@@ -873,6 +903,7 @@ func s_state(state: Dictionary) -> void:
 		_settings.timeout_tier = tier
 		if _prompt_token != -1:   # 弹窗开着 → 按新挡位重启倒计时条
 			_prompt_bar_arm(_prompt_token, GameSettings.turn_seconds(tier, "prompt"))
+		_refresh_tier_ui()
 	board.render(state)
 	board.set_shop_display(state.get("shops", {}), int(state.get("refresh_price", 0)),
 		int(state.get("shop_open", -1)))

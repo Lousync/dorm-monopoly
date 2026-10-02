@@ -466,6 +466,13 @@ static func build_menu_ui(g: Node) -> void:
 		g._apply_audio()
 	)
 	mute_row.add_child(g.mute_check)
+	# 操作限时（房主可点，客户端只读；见 docs/gameplay/开局设置.md §三之一）
+	sv.add_child(UIKit.label("操作限时", 14, UIKit.TEXT))
+	g.tier_row = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
+		func(id: String) -> void: g._set_timeout_tier(id))
+	sv.add_child(g.tier_row)
+	g.tier_readonly = UIKit.label("操作限时：—（房主设置）", 13, UIKit.TEXT_DIM)
+	sv.add_child(g.tier_readonly)
 	sv.add_child(UIKit.label("—— 更多设置项（后续加入） ——", 12, UIKit.TEXT_DIM))
 	var back_btn := UIKit.button("‹ 返回", 14)
 	back_btn.pressed.connect(func() -> void: g._menu_show("menu"))

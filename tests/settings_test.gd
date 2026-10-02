@@ -18,6 +18,7 @@ func _run() -> void:
 	print("== 操作限时挡位 ==")
 	_test_mapping()
 	_test_broadcast()
+	_test_in_game_tier()   # 无 await，直接调
 	await _test_window()   # 协程：不等它跑完 quit() 会先执行，断言全部落空（假绿）
 	print("SETTINGS TEST: %s" % ("PASS" if fails == 0 else "%d FAILURES" % fails))
 	quit(0 if fails == 0 else 1)
@@ -67,6 +68,24 @@ func _test_broadcast() -> void:
 	g.s_state({"phase": "playing", "round": 1, "max_rounds": 30, "turn": 1,
 		"players": [], "tiles": [], "timeout_tier": "60"})
 	_check(g._settings.timeout_tier == "60", "快照挡位由 30 变 60 → 本地 _settings 同步")
+	g.queue_free()
+
+func _test_in_game_tier() -> void:
+	var g := _host_game(7799)
+	if g == null:
+		return
+	g._refresh_tier_ui()
+	_check(g.tier_row.visible, "房主看得到可点的挡位 chips")
+	_check(not g.tier_readonly.visible, "房主不显示只读行")
+	# g 是 Node 类型，动态属性访问返回 Variant，不能写 `:=`（类型推不出来）
+	var rev: int = g._timeout_rev
+	g._set_timeout_tier("30")
+	_check(g._settings.timeout_tier == "30", "点挡位写进 settings")
+	_check(g._timeout_rev == rev + 1, "改挡位 → _timeout_rev +1（触发重计时）")
+	_check(String(g.st.get("timeout_tier", "")) == "30", "改挡位 → 快照同步")
+	_check(g.tier_readonly.text.begins_with("操作限时：30 秒"), "只读行文案跟随挡位")
+	g._set_timeout_tier("bogus")
+	_check(g._settings.timeout_tier == "30", "非法挡位被拒（回落靠 GameSettings）")
 	g.queue_free()
 
 func _test_mapping() -> void:
