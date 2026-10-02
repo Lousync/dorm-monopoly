@@ -1,6 +1,6 @@
 extends SceneTree
 ## 开局设置单测（操作限时挡位）：godot --headless --path . --script tests/settings_test.gd
-## 口径见 docs/gameplay/开局设置.md §三之一。
+## 口径见 doc/game-design/开局设置.md §三之一。
 
 var fails := 0
 

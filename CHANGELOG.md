@@ -3,7 +3,29 @@
 《宿舍大富翁》的版本变更记录。版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)，
 写法参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-面向开发者的工程文档见 `docs/README.md`；当前进度与待办见 `docs/dev/开发台账.md`。
+面向开发者的工程文档与仓库约定见 `AGENTS.md`；当前进度与待办见 `doc/development/开发台账.md`。
+
+## [Unreleased]
+
+一次文档结构重整：`docs/` 迁到 `doc/` 并按「游戏设计 / 工程开发」分家，仓库约定收口到 `AGENTS.md`。
+
+### 变更
+
+- **文档目录重整**：`docs/` → `doc/`，下设 `game-design/`（玩法设计、道具图鉴、设计决策留痕、
+  交互原型 `.html`/`.drawio`）与 `development/`（架构总览、联机协议、上手指南、开发台账）。
+- **约定收口到 `AGENTS.md`**：原 `docs/README.md` 的总索引（角色导航、仓库根文档表、维护规则）
+  并入其中，代码风格、硬性约定、提交规范也一并去重——`AGENTS.md` 成为这些约定的单一来源，
+  `doc/development/上手指南.md` 只保留环境、跑通与新增内容 checklist。
+- **实施计划换家**：`.claude/plans/` → `doc/development/plans/`；约定该版本开发完并合入 `main` 后
+  连同计划文件一起删除（不留档，历史看 `git log`）。
+- 全仓 `docs/...` 引用（脚本注释、测试、`README.md`、`CHANGELOG.md`）同步改为新路径；
+  另修掉 `README.md` 中一处失效的 `docs/道具系统设计.md` 旧路径。
+
+### 移除
+
+- `docs/想法备忘.md` 下线：未排期待办并入 `doc/development/开发台账.md` §三，决策留痕
+  （拍板理由、备选方案、日期）另存为 `doc/game-design/设计决策留痕.md`。
+- `docs/README.md`、`.claude/plans/` 删除（内容已迁移，非净损失）。
 
 ## [0.1.0] — 2026-10-02
 
@@ -23,7 +45,7 @@
 
 - **左下角「📖 规则说明」分页面板**（`rules_panel.gd` + `rules_text.gd`）：收起是按钮，
   点开原位向上展开五页规则（基础操作 / 回合与行动 / 棋盘与地产 / 经济与胜负 /
-  道具与事件），文案与 `docs/gameplay/*` 同步、数值直接引用代码常量。
+  道具与事件），文案与 `doc/game-design/*` 同步、数值直接引用代码常量。
   原左下常驻「操作提示」并入「基础操作」页；格详情卡改为默认隐藏、点格子才弹。
 - **抽卡四段动画**：卡背从牌堆抽出（带回弹与倾斜）→ 绕竖轴翻面（换面瞬间反光）
   → 停留（轻微浮动 + 呼吸微光）→ 收回。总时长由四个相位派生，不再写死。

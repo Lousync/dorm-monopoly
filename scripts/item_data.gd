@@ -1,5 +1,5 @@
 class_name ItemData
-## 道具系统数据总表（唯一台账：docs/gameplay/道具系统.md · 逐件见 docs/gameplay/道具图鉴.md）
+## 道具系统数据总表（唯一台账：doc/game-design/道具系统.md · 逐件见 doc/game-design/道具图鉴.md）
 ## implemented=false 的道具不进货架池，效果随批次解锁
 
 const QUALITIES := ["白", "绿", "蓝", "紫", "橙"]

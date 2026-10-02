@@ -466,7 +466,7 @@ static func build_menu_ui(g: Node) -> void:
 		g._apply_audio()
 	)
 	mute_row.add_child(g.mute_check)
-	# 操作限时（房主可点，客户端只读；见 docs/gameplay/开局设置.md §三之一）
+	# 操作限时（房主可点，客户端只读；见 doc/game-design/开局设置.md §三之一）
 	# 小标题与只读行互斥显隐，文案由 game.gd 的 _refresh_tier_ui() 统一填（本行只建空标签）
 	g.tier_title = UIKit.label("操作限时", 14, UIKit.TEXT)
 	sv.add_child(g.tier_title)

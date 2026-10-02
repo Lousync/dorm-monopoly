@@ -38,7 +38,7 @@ var pause_mask: ColorRect
 var audio_volume := 1.0
 var audio_mute := false
 
-# ---------------- 开局设置（房主权威，见 docs/gameplay/开局设置.md §三之一） ----------------
+# ---------------- 开局设置（房主权威，见 doc/game-design/开局设置.md §三之一） ----------------
 const _WINDOW_TICK := 0.1            # 操作窗口的探测分片（秒）；也是 _ask 的应答粒度：
                                      # 玩家点了「买/不买」最多晚这么久被房主发现
 const _BAR_LEAD := 1.0               # 弹窗倒计时条比窗口早这么多秒到底（沿袭基线的既有手感，
@@ -46,7 +46,7 @@ const _BAR_LEAD := 1.0               # 弹窗倒计时条比窗口早这么多�
 var _settings: GameSettings          # 房主：来自大厅配置；客户端：从状态快照同步
 var _timeout_rev := 0                # 挡位变化计数：等待中的环节据此重计时
 
-# ---------------- 道具系统（host 状态，详见 docs/gameplay/道具系统.md） ----------------
+# ---------------- 道具系统（host 状态，详见 doc/game-design/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
@@ -836,7 +836,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 # ================= 房主：广播 =================
 
-## 房主改「操作限时」挡位：立即生效并重计时（见 docs/gameplay/开局设置.md §三之一）
+## 房主改「操作限时」挡位：立即生效并重计时（见 doc/game-design/开局设置.md §三之一）
 func _set_timeout_tier(id: String) -> void:
 	if not multiplayer.is_server() or not GameSettings.TIERS.has(id):
 		return
@@ -2280,7 +2280,7 @@ func c_shop_leave() -> void:
 		return
 	_shop_leave(multiplayer.get_remote_sender_id())
 
-## 蛋蛋节：全员送礼（规则见 docs/gameplay/道具图鉴.md：他人白/绿/蓝三档均分，
+## 蛋蛋节：全员送礼（规则见 doc/game-design/道具图鉴.md：他人白/绿/蓝三档均分，
 ## 使用者紫 70%/橙 30%；礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
 func _apply_egg_festival(p: Dictionary) -> void:
 	_log("%s 点燃了【蛋蛋节】，礼物撒满全场！" % p.name, "#f0a0c0")

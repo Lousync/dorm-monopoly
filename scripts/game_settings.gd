@@ -1,5 +1,5 @@
 class_name GameSettings
-## 开局设置对象：房主配置、随开局下发（见 docs/gameplay/开局设置.md）。
+## 开局设置对象：房主配置、随开局下发（见 doc/game-design/开局设置.md）。
 ## 目前只有「操作限时挡位」一项；后续设置项往这里追加字段。
 
 const TIER_CURRENT := "current"   # 现状：各环节沿用原常量

@@ -1,7 +1,7 @@
 class_name RulesText
 ## 对局内「📖 规则说明」面板的全部文案 —— 唯一来源。
 ##
-## 内容与 `docs/gameplay/*` 同步；数值一律引用 `GameData` / `ItemData` 常量，
+## 内容与 `doc/game-design/*` 同步；数值一律引用 `GameData` / `ItemData` 常量，
 ## **不在这里写死**，否则改了数值就忘了改说明（这份文案是玩家在局内唯一能查的东西）。
 ## 正文走 RichTextLabel 的 bbcode，_h() 出小标题、_d() 出次要色。
 
@@ -192,7 +192,7 @@ static func _item() -> String:
 		"· 紫 %s · 橙 %s" % [
 			GameData.fmt_money(ItemData.QUALITY_PRICES["紫"]),
 			GameData.fmt_money(ItemData.QUALITY_PRICES["橙"])],
-		"· %s" % _d("逐件道具的效果见 docs/gameplay/道具图鉴.md"),
+		"· %s" % _d("逐件道具的效果见 doc/game-design/道具图鉴.md"),
 		"",
 		_h("小卖部（地图 4 家）"),
 		"· 落在地图小卖部格即进店；每家 3 栏货架、各自独立补货",

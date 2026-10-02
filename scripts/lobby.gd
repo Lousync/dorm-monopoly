@@ -11,7 +11,7 @@ var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
 var _room_label: Label
 
-# 房主开局设置弹窗（见 docs/gameplay/开局设置.md §三之一）
+# 房主开局设置弹窗（见 doc/game-design/开局设置.md §三之一）
 var _set_wrap: Control
 var _set_chips: HBoxContainer
 var _set_tier := GameSettings.TIER_CURRENT
