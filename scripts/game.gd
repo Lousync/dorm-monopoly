@@ -44,6 +44,11 @@ const _BAR_LEAD := 1.0               # 弹窗倒计时条比窗口早这么多�
 var _settings: GameSettings          # 房主：来自大厅配置；客户端：从状态快照同步
 var _timeout_rev := 0                # 挡位变化计数：等待中的环节据此重计时
 
+# 操作窗口 kind → 倒计时条上的名称（与 GameSettings.turn_seconds 的 kind 一致）
+const OP_KIND_LABELS := {
+	"roll": "掷轮", "prompt": "决定", "item": "道具", "shop": "小卖部", "black": "黑市",
+}
+
 # ---------------- 道具系统（host 状态，详见 doc/game-design/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
@@ -110,6 +115,12 @@ var roster_rows: Array = []
 var _rail_sig := ""
 var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
 var _pulse_t := 0.0               # 「该你掷了」按钮的呼吸相位（持续动画走 _process）
+var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，簇收起）
+var _op_left := 0.0               # 本机显示用剩余秒数：广播到达时重置，_process 逐帧扣 delta
+                                  # （暂停时 _process 不跑 → 计时与房主的窗口一起冻结）
+var _op_total := 0.0              # 窗口总时长；<=0 = 不限时（不显示进度条）
+var _op_owner := -1               # 窗口归属玩家（倒计时显示在他的座位卡上）
+var _op_shown := false            # 上一帧是否在显示（用于收起时只补推一次隐藏）
 var log_text: RichTextLabel
 var log_panel: PanelContainer
 var log_toggle: Button
@@ -959,6 +970,38 @@ func _refresh_tier_ui() -> void:
 	tier_readonly.text = "操作限时：%s（房主设置）" % String(
 		GameSettings.TIER_LABELS.get(_settings.timeout_tier, "现状"))
 	UIKit.chip_select(tier_row, _settings.timeout_tier)
+
+## 操作窗口剩余时间（全员可见）走这条专用 RPC，而不进 _broadcast_state：
+## 它按秒高频变化，进全量状态会让所有端每秒白渲染一整帧棋盘。
+## kind="" 表示当前没有操作窗口（收簇）；total<=0 = 不限时；owner_peer = 窗口归属玩家
+## （倒计时嵌在他的座位卡上，D 方案）。
+@rpc("authority", "call_local", "reliable")
+func s_op_timer(kind: String, left: float, total: float, owner_peer: int) -> void:
+	_op_kind = kind
+	_op_left = left
+	_op_total = total
+	_op_owner = owner_peer
+
+## 房主：广播当前操作窗口的剩余时间（_await_turn_window 在窗口（重）开始、
+## 剩余整秒变化、窗口关闭时各发一次；本机经 call_local 同路径生效）
+func _op_timer_send(kind: String, left: float, total: float) -> void:
+	s_op_timer.rpc(kind, left, total, _op_window_owner())
+
+## 当前操作窗口的归属玩家（与 _broadcast_state 的 await 归属同一套判定；
+## 各归属变量都在启动计时前赋值，见 _play_turn / _ask / 商店 / 黑市入口）。
+## 找不到时回退当前行动者。
+func _op_window_owner() -> int:
+	if _awaiting_roll != 0:
+		return _awaiting_roll
+	if _awaiting_prompt != 0:
+		return _awaiting_prompt
+	if _awaiting_item != 0:
+		return _awaiting_item
+	if _shop_peer != 0:
+		return _shop_peer
+	if _black_peer != 0:
+		return _black_peer
+	return int(hp[turn_i].peer) if turn_i < hp.size() else -1
 
 func _broadcast_state() -> void:
 	if not multiplayer.is_server():
@@ -3269,6 +3312,7 @@ func _process(_delta: float) -> void:
 	var want_actions: bool = phase == "playing" and (roll_btn.visible or item_btn_box.visible)
 	action_bar.visible = want_actions and not shop_mine and not black_mine
 	_place_dock()  # 交易/黑市条顶掉底栏时，内部会把底板一并收掉
+	_refresh_op_timer(_delta)
 	# 「该你掷了」时按钮轻微呼吸：持续动画手写相位（项目的表现层约定）
 	if roll_btn.visible and not roll_btn.disabled and roll_btn.size.x > 1.0:
 		_pulse_t += _delta
@@ -3311,6 +3355,18 @@ func _place_dock() -> void:
 		dock_plate.visible = true
 		dock_plate.position = Vector2(left - pad, top - pad)
 		dock_plate.size = Vector2(total + pad * 2.0, tallest + pad * 2.0)
+
+## 操作倒计时（D 方案）：嵌在当前行动者的座位卡里、随座位朝向旋转。
+## 广播一秒一条，本机逐帧扣 delta 插值：暂停时 _process 不跑、计时随房主窗口一起冻结，
+## Engine.time_scale（仅 autotest 会改）也天然对齐——这正是持续动画走 _process 相位的约定。
+func _refresh_op_timer(delta: float) -> void:
+	var show := _op_kind != ""
+	if show:
+		_op_left = maxf(_op_left - delta, 0.0)
+	if show or _op_shown:
+		var kind_text := String(OP_KIND_LABELS.get(_op_kind, _op_kind)) if show else ""
+		board.set_op_timer(_op_owner, kind_text, _op_left, _op_total)
+	_op_shown = show
 
 ## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
 ## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。
@@ -3451,11 +3507,13 @@ func _wait(sec: float) -> void:
 ## 挡位变化（_timeout_rev 变）会按新秒数重计时；挡位为「不限时」则不托管。
 ## on_arm(sec) 在每次窗口（重）开始时调一次——弹窗倒计时条据此重启。
 func _await_turn_window(kind: String, alive: Callable, on_arm := Callable()) -> bool:
+	var timed_out := false
 	while running and alive.call():
 		var rev := _timeout_rev
 		var sec := GameSettings.turn_seconds(_settings.timeout_tier, kind)
 		if on_arm.is_valid():
 			on_arm.call(sec)
+		_op_timer_send(kind, sec, sec)   # 窗口（重）开始：全员倒计时条从满条起跳
 		# 分片等待（_WINDOW_TICK 一探，开销可忽略）：环节结束、挡位变化、到点超时都能及时响应。
 		# 不能整段 `await _wait(sec)`——那样挡位中途变化要等满一整段才按新值重计时。
 		# 到期判定锚定窗口起点的绝对时刻，不累加每跳的名义时长：SceneTreeTimer 要下一帧才触发，
@@ -3464,9 +3522,19 @@ func _await_turn_window(kind: String, alive: Callable, on_arm := Callable()) -> 
 		# （只有 autotest 会改它），不乘的话自动回归里的等待会被放大到不可接受。
 		# sec <= 0（不限时）→ 没有到期时刻，只等前两种。
 		var t0 := Time.get_ticks_msec()
+		var last_sent := int(ceilf(sec))
 		while running and alive.call() and _timeout_rev == rev:
-			if sec > 0.0 and float(Time.get_ticks_msec() - t0) / 1000.0 * Engine.time_scale >= sec:
-				return true
+			var elapsed := float(Time.get_ticks_msec() - t0) / 1000.0 * Engine.time_scale
+			if sec > 0.0 and elapsed >= sec:
+				timed_out = true
+				break
+			# 剩余整秒变化才广播：一秒一条，不按 0.1s 的探测分片刷屏
+			if sec > 0.0 and int(ceilf(sec - elapsed)) != last_sent:
+				last_sent = int(ceilf(sec - elapsed))
+				_op_timer_send(kind, sec - elapsed, sec)
 			await _wait(_WINDOW_TICK)
-	return false
+		if timed_out:
+			break
+	_op_timer_send("", 0.0, 0.0)   # 窗口关闭（结束或超时）都收条；紧接的新窗口会立刻重发
+	return timed_out
 
