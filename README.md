@@ -147,6 +147,7 @@ tests/
   regression_test.gd   回归单测（把审查发现的问题逐条钉住）
   pause_menu_test.gd   暂停菜单回归（走真实 GUI 输入链路：点开后菜单必须点得动）
   rules_panel_test.gd  规则说明面板回归（文案非空 / 数值跟着常量 / 展开收起换页）
+  hud_test.gd          HUD 回归：右栏名册 / 底栏底板 / 客户端视角（走 s_state 那条路）
   load_all.gd          脚本静态加载检查（自动扫描 scripts/，能抓出解析错误）
   net_probe.gd 等      ENet 双栈连通性探针
 ```
@@ -205,6 +206,8 @@ Godot_console.exe --headless --path . --script tests/regression_test.gd
 Godot_console.exe --headless --path . --script tests/pause_menu_test.gd
 # 规则说明面板回归（文案非空/无漏网占位符/数值跟着常量/展开收起换页）
 Godot_console.exe --headless --path . --script tests/rules_panel_test.gd
+# HUD 回归（右栏名册/底栏底板/客户端视角——s_state 是 call_local，房客两端同一函数）
+Godot_console.exe --headless --path . --script tests/hud_test.gd
 # 双实例联机回归（房主+客户端自动打 3 轮，含机器人、购买决策、断线接管）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 &
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3
