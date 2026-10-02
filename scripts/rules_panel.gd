@@ -100,4 +100,8 @@ static func select_tab(g: Node, key: String) -> void:
 	for p in RulesText.pages():
 		if String(p.key) == key:
 			g.rules_body.text = String(p.body)
+			# 换页淡入：正文整块换掉太生硬（一次性过渡，用 Tween）
+			g.rules_body.modulate.a = 0.0
+			var tw: Tween = g.rules_body.create_tween()
+			tw.tween_property(g.rules_body, "modulate:a", 1.0, 0.16)
 			return

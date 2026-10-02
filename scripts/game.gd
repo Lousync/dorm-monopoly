@@ -87,6 +87,12 @@ var rules_body: RichTextLabel
 var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
 var rules_tab := ""
+var dock_plate: Panel            # 底栏底板（把阶段条与操作条包成一整块，见 _place_dock）
+var roster_box: VBoxContainer      # 右栏名册（固定 4 行，见 _refresh_rail）
+var roster_rows: Array = []
+var _rail_sig := ""
+var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
+var _pulse_t := 0.0               # 「该你掷了」按钮的呼吸相位（持续动画走 _process）
 var log_text: RichTextLabel
 var log_panel: PanelContainer
 var log_toggle: Button
@@ -942,6 +948,16 @@ func _hide_card_later(my_id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
 	log_text.append_text(line + "\n")
+	# 新战报：头部闪一记金色。连续刷屏时只重启这一条补间，不叠一堆。
+	if log_head == null or not is_instance_valid(log_head):
+		return
+	if _log_flash_tw != null and _log_flash_tw.is_valid():
+		_log_flash_tw.kill()
+	var from := UIKit.ACCENT
+	var to := UIKit.TEXT_DIM
+	_log_flash_tw = create_tween()
+	_log_flash_tw.tween_method(func(t: float) -> void:
+		log_head.add_theme_color_override("font_color", from.lerp(to, t)), 0.0, 1.0, 0.55)
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -966,6 +982,7 @@ func _refresh_players() -> void:
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
 	var est_map := {}
+	var prop_map := {}   # peer -> 地产块数（右栏名册复用，避免再算一遍）
 	for p in st.get("players", []):
 		var peer := int(p.peer)
 		seen[peer] = true
@@ -1046,6 +1063,7 @@ func _refresh_players() -> void:
 				worth += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
 		est_map[peer] = "地产 ×%d · 身家 %s" % [prop_n, GameData.fmt_money(worth)]
 		worth_map[peer] = worth
+		prop_map[peer] = prop_n
 
 		if not bool(p.alive):
 			row.money_l.text = "已出局"
@@ -1057,9 +1075,77 @@ func _refresh_players() -> void:
 	for i in order.size():
 		board.update_seat_stats(int(order[i]), i + 1, String(est_map[int(order[i])]))
 
+	# 右栏名册复用上面刚算出的身家/排名（公式只留这一处，避免两套算法悄悄跑偏）
+	var standing: Array = []
+	for i in order.size():
+		var rp := int(order[i])
+		var rpl := _state_player(rp)
+		standing.append({
+			"peer": rp, "rank": i + 1, "worth": int(worth_map[rp]),
+			"name": String(rpl.get("name", "?")), "color": int(rpl.get("color", 0)),
+			"money": int(rpl.get("money", 0)), "alive": bool(rpl.get("alive", true)),
+			"props": int(prop_map.get(rp, 0)), "items": (rpl.get("items", []) as Array).size(),
+		})
+	_refresh_rail(standing)
+
 	for peer in _player_rows.keys():
 		if not seen.has(peer):
 			_player_rows.erase(peer)  # 座位是桌面世界的一部分，保留在桌上（掉线/出局只改显示）
+
+## 右栏名册：按身家倒序填 4 行（名次 / 棋子色 / 名字 / 现金 / 地产·道具），
+## 轮到谁行动就把谁的左侧竖条点亮，自己那行标出来。
+## 带签名缓存：状态没变就不重建（每次广播都会走这里）。
+func _refresh_rail(standing: Array) -> void:
+	if roster_rows.is_empty():
+		return
+	var sig := "%d|" % int(st.get("turn", -1))
+	for e in standing:
+		sig += "%d,%d,%d,%d,%d,%d;" % [int(e.peer), int(e.rank), int(e.money),
+			int(e.props), int(e.items), 1 if bool(e.alive) else 0]
+	sig += "|%s" % String(st.get("phase", ""))
+	if sig == _rail_sig:
+		return
+	_rail_sig = sig
+
+	var turn_peer := int(st.get("turn", -1))
+	for i in roster_rows.size():
+		var row: Dictionary = roster_rows[i]
+		var root: Control = row.root
+		if i >= standing.size():
+			root.visible = false
+			continue
+		var e: Dictionary = standing[i]
+		var peer := int(e.peer)
+		root.visible = true
+		var chip_slot: Control = row.chip_slot
+		if row.chip == null or not is_instance_valid(row.chip):
+			for c in chip_slot.get_children():
+				c.queue_free()
+			row.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(int(e.color), 0, 3)], 16)
+			chip_slot.add_child(row.chip)
+		# 名次 + 名字（自己标「我」，轮到谁行动加 ▶）
+		var active: bool = String(st.get("phase", "")) == "playing" and peer == turn_peer
+		var tags := ""
+		if peer == my_peer:
+			tags += "（我）"
+		if not bool(e.alive):
+			tags += "（破产）"
+		var name_l: Label = row.name_l
+		name_l.text = "%d. %s%s" % [int(e.rank), String(e.name), tags]
+		# 名字变金 = 轮到 TA 行动（左侧竖条同时点亮）；自己只靠「（我）」标
+		name_l.add_theme_color_override("font_color",
+			UIKit.TEXT_DIM if not bool(e.alive) else (UIKit.ACCENT if active else UIKit.TEXT))
+		var sub_l: Label = row.sub_l
+		sub_l.text = "地产 ×%d · 道具 %d" % [int(e.props), int(e.items)]
+		# 右列：大字身家（名次依据）+ 小字现金
+		var money_l: Label = row.money_l
+		money_l.text = "已出局" if not bool(e.alive) else GameData.fmt_money(int(e.worth))
+		money_l.add_theme_color_override("font_color",
+			UIKit.TEXT_DIM if not bool(e.alive) else UIKit.ACCENT)
+		var cash_l: Label = row.cash_l
+		cash_l.text = "" if not bool(e.alive) else "现金 %s" % GameData.fmt_money(int(e.money))
+		var bar: ColorRect = row.bar
+		bar.color = UIKit.ACCENT if active else Color(0, 0, 0, 0)
 
 func _refresh_actions() -> void:
 	var phase := String(st.get("phase", "playing"))
@@ -2371,8 +2457,16 @@ func _process(_delta: float) -> void:
 	mat_bar.visible = show and not shop_mine and not black_mine
 	var want_actions: bool = phase == "playing" and (roll_btn.visible or item_btn_box.visible)
 	action_bar.visible = want_actions and not shop_mine and not black_mine
-	if not shop_mine and not black_mine:
-		_place_dock()
+	_place_dock()  # 交易/黑市条顶掉底栏时，内部会把底板一并收掉
+	# 「该你掷了」时按钮轻微呼吸：持续动画手写相位（项目的表现层约定）
+	if roll_btn.visible and not roll_btn.disabled and roll_btn.size.x > 1.0:
+		_pulse_t += _delta
+		roll_btn.pivot_offset = roll_btn.size * 0.5
+		var sc := 1.0 + 0.022 * (0.5 + 0.5 * sin(_pulse_t * 4.4))
+		roll_btn.scale = Vector2(sc, sc)
+	elif roll_btn.scale != Vector2.ONE:
+		roll_btn.scale = Vector2.ONE
+		_pulse_t = 0.0
 	if dev.enabled:
 		dev.refresh_panel()
 
@@ -2384,6 +2478,8 @@ func _place_dock() -> void:
 		if c != null and c.visible:
 			parts.append(c)
 	if parts.is_empty():
+		if dock_plate != null:
+			dock_plate.visible = false
 		return
 	var gap := 8.0
 	var total := 0.0
@@ -2394,9 +2490,16 @@ func _place_dock() -> void:
 	total += gap * float(parts.size() - 1)
 	var left := _clamp_dock_x(size.x * 0.5 - total * 0.5, total, _dock_band())
 	var top := size.y - 16.0 - tallest
+	var x := left
 	for c in parts:
-		c.position = Vector2(left, top)
-		left += c.size.x + gap
+		c.position = Vector2(x, top)
+		x += c.size.x + gap
+	# 底板兜住整行：留 7px 内边距，读数上就是「一整块操作坞」而不是两条浮着的条
+	if dock_plate != null:
+		var pad := 7.0
+		dock_plate.visible = true
+		dock_plate.position = Vector2(left - pad, top - pad)
+		dock_plate.size = Vector2(total + pad * 2.0, tallest + pad * 2.0)
 
 ## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
 ## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。

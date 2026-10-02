@@ -202,6 +202,27 @@ static func card_stylebox(bg: Color, corner := 10, border := Color(0, 0, 0, 0), 
 	var tp := _rounded_tex(corner, top, bottom, border, border_w, glow, 5.0, sh, Vector2(0, 2))
 	return _sbt(tp)
 
+## 透明面板：外观交给外层（底栏底板等），自身只负责容纳子控件与定尺寸。
+## content margin 与 card_stylebox 的默认值一致，替换上去不会改变原有尺寸。
+static func ghost_panel(corner := 12) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := stylebox(Color(0, 0, 0, 0), corner)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	p.add_theme_stylebox_override("panel", sb)
+	return p
+
+## 底栏底板：把并排的几条 HUD 条包成一整块（深色玻璃 + 金边 + 投影）。
+## 只做外观，不吃鼠标——交互仍由里面的条自己负责。
+static func dock_plate() -> Panel:
+	var p := Panel.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel", card_stylebox(Color(0.047, 0.052, 0.082, 0.94), 16,
+		Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.32), 1, 12))
+	return p
+
 ## 事件/公告卡配色：按 kind 返回 [边框色, 底色]（牌堆抽卡与顶部公告共用）
 static func card_palette(kind: String) -> Array:
 	match kind:

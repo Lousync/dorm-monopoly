@@ -55,9 +55,14 @@ static func build_play_ui(g: Node) -> void:
 	cm.add_child(g.card_label)
 
 
-	# 牌垫阶段条（屏幕层，锚定自己座位卡下沿）：状态 / 回合两阶段 / 转动转盘
-	g.mat_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
+	# 底栏底板：把阶段条与操作条包成一整块（只做外观，不吃鼠标）。
+	# 先于两条 add_child，保证它在下面一层。
+	g.dock_plate = UIKit.dock_plate()
+	g.dock_plate.visible = false
+	g.add_child(g.dock_plate)
+
+	# 牌垫阶段条（屏幕层，贴屏幕底部）：状态 / 回合两阶段
+	g.mat_bar = UIKit.ghost_panel(12)
 	g.mat_bar.custom_minimum_size = Vector2(440, 46)
 	g.mat_bar.visible = false
 	g.add_child(g.mat_bar)
@@ -87,8 +92,7 @@ static func build_play_ui(g: Node) -> void:
 	# 座位卡，转到别人视角就跑到屏幕外）。于是「按 Tab 看别人」会把自己的掷骰
 	# 按钮和道具栏一起收走，只能等 35 秒超时代掷（见 fix/v0.0.2）。
 	# 拆成独立一层：自己视角时仍贴在自己座位卡下沿，转离视角时改贴屏幕底部。
-	g.action_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
+	g.action_bar = UIKit.ghost_panel(12)
 	g.action_bar.visible = false
 	g.add_child(g.action_bar)
 	var abm := UIKit.margins(10, 8, 7, 7)
@@ -254,14 +258,82 @@ static func build_play_ui(g: Node) -> void:
 	var lm := UIKit.margins(10, 10, 8, 8)
 	g.log_panel.add_child(lm)
 	var lv := VBoxContainer.new()
-	lv.add_theme_constant_override("separation", 4)
+	lv.add_theme_constant_override("separation", 8)
 	lm.add_child(lv)
+
+	# ---- 名册（布局返工：右栏原先只有战报，下半幅是一大片空的）----
+	# 固定建 4 行，由 game.gd 的 _refresh_rail 填/藏；不做动态重建，省得每帧抖。
+	lv.add_child(UIKit.label("牌位 · 按身家排序", 13, UIKit.TEXT_DIM))
+	g.roster_box = VBoxContainer.new()
+	g.roster_box.add_theme_constant_override("separation", 3)
+	lv.add_child(g.roster_box)
+	g.roster_rows = []
+	for i in GameData.MAX_PLAYERS:
+		var row := PanelContainer.new()
+		row.add_theme_stylebox_override("panel",
+			UIKit.card_stylebox(Color(0.10, 0.11, 0.155, 0.55), 8, Color(0, 0, 0, 0), 0))
+		row.visible = false
+		g.roster_box.add_child(row)
+		var rm := UIKit.margins(7, 7, 4, 4)
+		row.add_child(rm)
+		var rh := HBoxContainer.new()
+		rh.add_theme_constant_override("separation", 7)
+		rm.add_child(rh)
+		# 左侧竖条：轮到谁行动就把谁的条点亮（比整行改色更省事也更好认）
+		var bar := ColorRect.new()
+		bar.color = Color(0, 0, 0, 0)
+		bar.custom_minimum_size = Vector2(3, 0)
+		bar.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rh.add_child(bar)
+		var chip_slot := Control.new()
+		chip_slot.custom_minimum_size = Vector2(16, 16)
+		chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		chip_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rh.add_child(chip_slot)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rh.add_child(col)
+		var name_l := UIKit.label("", 13, UIKit.TEXT)
+		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		col.add_child(name_l)
+		var sub_l := UIKit.label("", 11, UIKit.TEXT_DIM)
+		sub_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		col.add_child(sub_l)
+		# 右侧一列上下叠：身家（大字，名次的依据）/ 现金（小字）。
+		# 横着并排会跟左列的「地产·道具」抢宽度，长数字一挤就被省略号截掉。
+		var right := VBoxContainer.new()
+		right.add_theme_constant_override("separation", 0)
+		right.custom_minimum_size = Vector2(84, 0)
+		right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		rh.add_child(right)
+		var money_l := UIKit.label("", 13, UIKit.ACCENT)
+		money_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		right.add_child(money_l)
+		var cash_l := UIKit.label("", 11, UIKit.TEXT_DIM)
+		cash_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		right.add_child(cash_l)
+		g.roster_rows.append({
+			"root": row, "bar": bar, "chip_slot": chip_slot,
+			"name_l": name_l, "sub_l": sub_l, "money_l": money_l, "cash_l": cash_l,
+			"chip": null,
+		})
+
+	var hair := ColorRect.new()
+	hair.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
+	hair.custom_minimum_size = Vector2(0, 1)
+	hair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lv.add_child(hair)
+
+	# ---- 战报 ----
 	g.log_head = UIKit.label("第 1/30 轮 · 战报", 13, UIKit.TEXT_DIM)
 	lv.add_child(g.log_head)
 	g.log_text = RichTextLabel.new()
 	g.log_text.scroll_following = true
 	g.log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	g.log_text.add_theme_font_size_override("normal_font_size", 13)
+	g.log_text.add_theme_constant_override("line_separation", 2)
 	lv.add_child(g.log_text)
 	var chat_row := HBoxContainer.new()
 	chat_row.add_theme_constant_override("separation", 6)
