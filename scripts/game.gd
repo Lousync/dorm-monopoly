@@ -965,7 +965,7 @@ func _autotest_tier_ok(state: Dictionary) -> bool:
 
 @rpc("authority", "call_local", "reliable")
 func s_roll(v: int) -> void:
-	board.spin_wheel(v, int(st.get("turn", -1)))
+	board.spin_wheel(v, int(st.get("turn", GameData.NO_PEER)))
 	if v == 24 or v == 0:
 		_flair_roll(v)
 
@@ -987,7 +987,7 @@ func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 	Fx.play("card", -4.0)
 	if deck != "":
 		# 事件卡：从棋盘中央牌堆抽出，展示完镜头回到行动棋子
-		board.play_deck_card(deck, kind, text, int(st.get("turn", -1)))
+		board.play_deck_card(deck, kind, text, int(st.get("turn", GameData.NO_PEER)))
 		if kind == "jail":
 			Fx.shake(self, 9.0, 0.35)
 			Fx.play("jail", -2.0)

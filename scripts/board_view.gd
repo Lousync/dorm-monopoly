@@ -80,11 +80,11 @@ var _tokens := {}              # peer -> 棋子 Panel
 var _token_tip: PanelContainer # 悬停棋子时浮出的信息条（屏幕空间，不随镜头旋转）
 var _token_tip_name: Label
 var _token_tip_sub: Label
-var _tip_peer := -1            # 当前悬停到谁
+var _tip_peer := GameData.NO_PEER   # 当前悬停到谁（哨兵不能用 -1：机器人 peer 是负数）
 var _peers_info := {}          # peer -> {name, color, worth, rank, alive}
 var _animating := {}           # peer -> bool
 var _ring: Panel
-var _ring_peer := -1
+var _ring_peer := GameData.NO_PEER
 var _ring_tw: Tween
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
@@ -98,12 +98,12 @@ var _deck_front: Control       # 卡面（正文）
 var _deck_t := 0.0             # 抽卡动画相位计时（_process 驱动，不用 Tween）
 var _deck_from := Vector2.ZERO
 var _deck_shown := Vector2.ZERO
-var _deck_restore := -1
+var _deck_restore := GameData.NO_PEER
 var _deck_prev_zoom := 0.0     # 抽卡前的缩放，展示完还原（抽卡时会临时拉近看清牌面）
 
 # 中央转盘（替代骰子的点数来源）
 var _wheel: WheelView
-var _wheel_restore := -1
+var _wheel_restore := GameData.NO_PEER
 var _wheel_wait := 0.0
 
 func _init() -> void:
@@ -498,7 +498,7 @@ func wheel_screen_pos() -> Vector2:
 	return global_position + _view_from_world(wheel_center())
 
 ## 转盘点数：镜头对准转盘，转完后镜头回到行动棋子
-func spin_wheel(value: int, restore_peer := -1) -> void:
+func spin_wheel(value: int, restore_peer := GameData.NO_PEER) -> void:
 	if _wheel == null:
 		return
 	_wheel.spin_to(value)
@@ -561,7 +561,7 @@ func _tick_deck_card(delta: float) -> void:
 		_deck_front = null
 		_zoom = clampf(_deck_prev_zoom, MIN_ZOOM, MAX_ZOOM)   # 还原抽卡前的缩放
 		_apply_cam()
-		if restore != -1:
+		if restore != GameData.NO_PEER:
 			focus_peer(restore)
 		else:
 			_has_follow_pt = false
@@ -660,8 +660,8 @@ func _card_face_back(deck: String, accent: Color) -> Control:
 	return card
 
 ## 仿桌游抽卡：镜头对准牌堆，卡背从堆中抽出 → 翻面亮出卡面 → 停留 → 收回；
-## 展示结束后镜头回到 restore_peer 的棋子（-1 则停在原地）。
-func play_deck_card(deck: String, kind: String, text: String, restore_peer := -1) -> void:
+## 展示结束后镜头回到 restore_peer 的棋子（GameData.NO_PEER 则停在原地）。
+func play_deck_card(deck: String, kind: String, text: String, restore_peer := GameData.NO_PEER) -> void:
 	if not _deck_pos.has(deck):
 		return
 	if _deck_card != null and is_instance_valid(_deck_card):
@@ -742,15 +742,15 @@ func _process(delta: float) -> void:
 			if not follow_drives:
 				_center = _center_target
 			_rotating = false
-	if _ring_peer != -1 and _tokens.has(_ring_peer):
+	if _ring_peer != GameData.NO_PEER and _tokens.has(_ring_peer):
 		var tk2: Control = _tokens[_ring_peer]
 		_ring.position = tk2.position + tk2.size * 0.5 - _ring.size * 0.5
 	_tick_deck_card(delta)
 	if _wheel_wait > 0.0:
 		_wheel_wait -= delta
-		if _wheel_wait <= 0.0 and _wheel_restore != -1:
+		if _wheel_wait <= 0.0 and _wheel_restore != GameData.NO_PEER:
 			focus_peer(_wheel_restore)
-			_wheel_restore = -1
+			_wheel_restore = GameData.NO_PEER
 	_apply_cam()
 
 ## 镜头平滑推向某个世界坐标点（棋子中心 / 牌堆）
@@ -1627,7 +1627,7 @@ func render(state: Dictionary) -> void:
 	if phase == "ended":
 		_set_ring(-1)
 	else:
-		_set_ring(int(state.get("turn", -1)))
+		_set_ring(int(state.get("turn", GameData.NO_PEER)))
 
 func _short_money(v: int) -> String:
 	if v >= 1000:
@@ -1697,7 +1697,7 @@ func _set_ring(peer: int) -> void:
 	if _ring_tw != null and _ring_tw.is_valid():
 		_ring_tw.kill()
 		_ring_tw = null
-	if peer == -1 or not _tokens.has(peer):
+	if peer == GameData.NO_PEER or not _tokens.has(peer):
 		_ring.visible = false
 		return
 	_ring.visible = true
@@ -1765,7 +1765,7 @@ func tile_screen_pos(idx: int) -> Vector2:
 ## 鼠标（board 局部坐标）落在哪个棋子上；-1 = 没有。重叠时取最近的那个。
 func _token_at_view(view_pos: Vector2) -> int:
 	var w := _world_from_view(view_pos)
-	var best := -1
+	var best := GameData.NO_PEER
 	var best_d := INF
 	for peer in _tokens:
 		var tk: Control = _tokens[peer]
@@ -1785,11 +1785,11 @@ func _token_at_view(view_pos: Vector2) -> int:
 func _set_token_hover(peer: int) -> void:
 	if peer == _tip_peer:
 		# 还是同一个人：镜头可能动了，重新摆一下位置就行
-		if peer >= 0 and _token_tip != null and is_instance_valid(_token_tip) and _token_tip.visible:
+		if peer != GameData.NO_PEER and _token_tip != null and is_instance_valid(_token_tip) and _token_tip.visible:
 			_place_token_tip(peer)
 		return
 	_tip_peer = peer
-	if peer < 0 or not _peers_info.has(peer):
+	if peer == GameData.NO_PEER or not _peers_info.has(peer):
 		if _token_tip != null and is_instance_valid(_token_tip):
 			_token_tip.visible = false
 		return

@@ -227,14 +227,26 @@ func _run() -> void:
 	_check(g.board._zoom > z0 + 0.05, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
 
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
+	var hs: Dictionary = _state(2, false)
+	hs.players.append({"peer": -1, "name": "机器人A", "color": 0, "bot": true,
+		"money": 20000, "pos": 1, "alive": true, "skip": 0, "sleep": 0,
+		"stamina": 3, "items": [], "item_used": false})
+	g.s_state(hs)
+	await process_frame
 	g.board._set_token_hover(1)
-	_check(g.board._token_tip != null and g.board._token_tip.visible, "悬停后信息条显示")
+	_check(g.board._token_tip != null and g.board._token_tip.visible, "悬停真人后信息条显示")
 	_check(String(g.board._token_tip_name.text) == "甲",
 		"显示昵称（实得「%s」）" % String(g.board._token_tip_name.text))
 	_check(String(g.board._token_tip_sub.text).contains("身家")
 		and String(g.board._token_tip_sub.text).contains("名"),
 		"显示身家与排名（实得「%s」）" % String(g.board._token_tip_sub.text))
+	# 关键：**机器人 peer 是负数**。之前判据写成 `peer < 0` 就把机器人全挡了，
+	# 表现正是「悬停自己的小人有效、悬停别人的（机器人）没反应」。
 	g.board._set_token_hover(-1)
+	_check(g.board._token_tip.visible, "**悬停机器人也显示信息条（负 peer）**")
+	_check(String(g.board._token_tip_name.text) == "机器人A",
+		"显示机器人的昵称（实得「%s」）" % String(g.board._token_tip_name.text))
+	g.board._set_token_hover(GameData.NO_PEER)
 	_check(not g.board._token_tip.visible, "移开后信息条收起")
 
 	print("== 格详情卡：悬浮在被点格子的上方 ==")

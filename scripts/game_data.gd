@@ -19,6 +19,10 @@ const LEVEL_COLORS := [
 const LEVEL_NAMES := ["未装修", "绿", "蓝", "紫", "金"]
 static var MAX_ROUNDS := 30   # 回合上限（static 便于自动化测试覆盖）
 const JAIL_TILE := 17         # 宿委会（左下角）
+## 「没有这个人 / 没命中」的哨兵值。**同样不能用 -1**：
+## 机器人 peer id 从 -1 起编号，拿 -1 当「空」会和「1 号机器人」撞车。
+const NO_PEER := -9999
+
 ## 「无主」哨兵值。不能用 -1：机器人 peer id 会从 -1 开始编号，会撞车。
 const NO_OWNER := -100
 const PROMPT_TIMEOUT := 25.0  # 购买/升级等待秒数
