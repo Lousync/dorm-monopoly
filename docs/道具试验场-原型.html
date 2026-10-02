@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型：道具试验场（Item Lab）</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #dfe3ee; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	#stage { width: 1280px; height: 800px; flex: none; position: relative;
+		background: linear-gradient(160deg, #1a1d2b 0%, #10121c 60%, #0b0d15 100%);
+		display: grid; grid-template-columns: 252px 1fr 392px;
+		grid-template-rows: 46px 1fr 176px; gap: 8px; padding: 8px; }
+
+	.panel { background: rgba(10,12,20,.62); border: 1px solid #333a52;
+		border-radius: 10px; }
+	.blabel { color: #8b93ad; font-size: 11px; letter-spacing: 1px; margin-bottom: 4px; }
+	.hbtn { font-size: 12px; color: #cfe0ff; background: #1d2131; border: 1px solid #333a52;
+		border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+	.hbtn:hover { border-color: #f5b342; color: #ffd88a; }
+	.hbtn.on { background: #2c5c3a; border-color: #6bc78c; color: #cfe8d4; }
+
+	/* ---------- 顶栏 ---------- */
+	#top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
+		padding: 0 12px; }
+	#top h1 { font-size: 17px; color: #f5b342; letter-spacing: 1px; }
+	#top .tag { font-size: 11px; color: #8b93ad; border: 1px solid #333a52;
+		border-radius: 10px; padding: 2px 9px; }
+	#top .sp { flex: 1; }
+
+	/* ---------- 左：玩家 ---------- */
+	#left { grid-column: 1; grid-row: 2; padding: 8px; overflow: auto; }
+	.pcard { position: relative; display: flex; gap: 7px; align-items: center;
+		padding: 7px 8px; margin-bottom: 6px; border-radius: 8px; cursor: pointer;
+		background: rgba(255,255,255,.03); border: 1px solid #2a3046; }
+	.pcard:hover { border-color: #565d75; }
+	.pcard.actor { border-color: #f5b342; box-shadow: 0 0 0 1px #f5b342 inset; background: rgba(245,179,66,.07); }
+	.pcard.target { border-color: #ef7b74; box-shadow: 0 0 0 1px #ef7b74 inset; }
+	.pcard .bd { position: absolute; right: 6px; top: 5px; font-size: 8px; border-radius: 8px;
+		padding: 1px 6px; color: #0d0f17; background: #f5b342; }
+	.pcard .bd.t { background: #ef7b74; }
+	.chip { width: 16px; height: 16px; border-radius: 50%; flex: none; }
+	.pinfo { flex: 1; min-width: 0; }
+	.pinfo .nm { font-size: 12px; }
+	.pinfo .mn { font-size: 12px; color: #f5b342; }
+	.pinfo .sub { font-size: 9px; color: #8b93ad; margin-top: 1px; }
+	.stam { display: flex; gap: 2px; margin-top: 3px; }
+	.stam s { width: 6px; height: 8px; border-radius: 1px; background: #3a3f55; text-decoration: none; }
+	.stam s.on { background: #f5d342; }
+	.stam s.cap { background: #9a6fe0; }
+	.bagrow { display: flex; gap: 3px; margin-top: 3px; flex-wrap: wrap; }
+	.bag { width: 22px; height: 15px; border-radius: 3px; font-size: 7px; line-height: 15px;
+		text-align: center; overflow: hidden; color: #0d0f17; }
+	.stats { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+	.st { font-size: 8px; padding: 0 4px; border-radius: 6px; color: #0d0f17; background: #8b93ad; }
+	.st.debuff { background: #ef7b74; } .st.buff { background: #6bc78c; }
+	#left .foot { display: flex; gap: 6px; margin-top: 8px; }
+	#left .foot .hbtn { flex: 1; text-align: center; }
+
+	/* ---------- 中：棋盘 ---------- */
+	#mid { grid-column: 2; grid-row: 2; position: relative; overflow: hidden; padding: 6px; }
+	#ring { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+		width: 596px; height: 548px; }
+	.tile { position: absolute; width: 24px; height: 24px; border-radius: 3px;
+		background: #171a29; border: 1px solid #2c3046; cursor: pointer; overflow: hidden; }
+	.tile:hover { border-color: #f5b342; }
+	.tile.tgt { border-color: #ef7b74; box-shadow: 0 0 0 1px #ef7b74; }
+	.tile s { display: block; height: 4px; }
+	.tile em { display: block; font-style: normal; font-size: 6px; color: #8b93ad; text-align: center; }
+	.tile .dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; border: 1px solid #0d0f17; }
+	#boardcenter { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+		width: 260px; text-align: center; }
+	#boardcenter .big { display: inline-block; }
+
+	/* 卡片 */
+	.card2 { width: 150px; height: 210px; border-radius: 9px; position: relative;
+		background: linear-gradient(180deg, #232838, #161a26); border: 2px solid #565d75;
+		padding: 8px 9px; text-align: left; }
+	.card2 .qbar { position: absolute; left: 8px; right: 8px; bottom: 7px; height: 14px;
+		border-radius: 4px; font-size: 9px; line-height: 14px; text-align: center; color: #0d0f17; font-weight: bold; }
+	.card2 .badgeL { position: absolute; left: -10px; top: -10px; width: 30px; height: 30px;
+		border-radius: 50%; background: #10141f; border: 2px solid #f5d342; color: #f5d342;
+		font-size: 12px; line-height: 27px; text-align: center; }
+	.card2 .badgeR { position: absolute; right: -10px; top: -10px; width: 30px; height: 30px;
+		border-radius: 50%; background: #10141f; border: 2px solid #8fb7f2; color: #8fb7f2;
+		font-size: 11px; line-height: 27px; text-align: center; }
+	.card2 .art { height: 92px; border-radius: 6px; margin: 6px 0;
+		background: repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 8px, transparent 8px 16px), rgba(0,0,0,.25);
+		display: flex; align-items: center; justify-content: center; color: #565d75; font-size: 10px; }
+	.card2 .nm { font-size: 13px; color: #ffe9c0; text-align: center; }
+	.card2 .ds { font-size: 9px; color: #aeb6cc; margin-top: 5px; line-height: 13px; }
+
+	/* ---------- 右：工坊 ---------- */
+	#right { grid-column: 3; grid-row: 2; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+	#qfilter { display: flex; gap: 4px; }
+	#qfilter .hbtn { flex: 1; text-align: center; padding: 4px 0; }
+	#itemlist { flex: 1; overflow: auto; display: grid; grid-template-columns: 1fr 1fr;
+		gap: 4px; align-content: start; }
+	.it { font-size: 10px; padding: 4px 6px; border-radius: 5px; cursor: pointer;
+		border: 1px solid #2a3046; background: #161a26; border-left-width: 4px;
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.it:hover { border-color: #565d75; }
+	.it.sel { background: #2a2f45; border-color: #f5b342; }
+	.it.na { opacity: .45; }
+	#preview { display: flex; gap: 10px; align-items: flex-start; min-height: 128px; }
+	#preview .meta { font-size: 10px; color: #8b93ad; line-height: 15px; flex: 1; }
+	#preview .meta b { color: #dfe3ee; font-size: 11px; }
+	#parambox { font-size: 10px; color: #aeb6cc; }
+	#parambox input { background: #0d111a; border: 1px solid #333a52; color: #dfe3ee;
+		border-radius: 4px; width: 52px; padding: 2px 4px; }
+	#actions { display: flex; gap: 5px; }
+	#actions .hbtn { flex: 1; text-align: center; padding: 6px 0; font-size: 12px; }
+	#actions .primary { background: linear-gradient(180deg,#ffd88a,#f0a72e); color: #3a2405;
+		border-color: #f5b342; font-weight: bold; }
+	#switches { display: flex; flex-wrap: wrap; gap: 10px; font-size: 10px; color: #aeb6cc; }
+	#switches label { cursor: pointer; user-select: none; }
+	#switches input { accent-color: #f5b342; vertical-align: middle; }
+	#hint { font-size: 10px; color: #f5b342; min-height: 14px; }
+
+	/* ---------- 底：日志 + diff ---------- */
+	#bottom { grid-column: 1 / -1; grid-row: 3; display: grid;
+		grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; }
+	#log { overflow: auto; font-size: 11px; line-height: 17px; }
+	#log p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	#diff { overflow: auto; font-size: 11px; line-height: 17px; }
+	#diff p { color: #cfe0ff; }
+	#diff .up { color: #7fe08f; } #diff .down { color: #ff8f88; } #diff .mut { color: #f0c875; }
+
+	/* ---------- 原型说明 ---------- */
+	#note { position: absolute; right: 14px; bottom: 190px; z-index: 30; width: 250px;
+		background: rgba(8,20,12,.9); border: 1px dashed #4e8f5c; border-radius: 8px;
+		padding: 8px 10px; font-size: 10px; color: #9fd3ab; line-height: 15px; }
+	#toast2 { position: absolute; left: 50%; top: 44%; transform: translateX(-50%);
+		z-index: 80; background: rgba(10,12,20,.96); border: 1px solid #f5b342; color: #ffd88a;
+		font-size: 13px; border-radius: 8px; padding: 9px 20px; display: none; }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+
+	<div id="top" class="panel">
+		<h1>道具试验场 · Item Lab</h1>
+		<span class="tag">独立沙盒 · 单机本地权威</span>
+		<span class="tag" id="club">种子 #1024</span>
+		<div class="sp"></div>
+		<button class="hbtn" onclick="resetAll()">⟲ 重置</button>
+		<button class="hbtn" onclick="snapshotKeep()">⧉ 快照</button>
+		<button class="hbtn" onclick="rollback()">↩ 回滚</button>
+		<button class="hbtn" id="ts" onclick="cycleTs()">时间 1.0x</button>
+		<button class="hbtn" onclick="copyState()">复制状态 JSON</button>
+	</div>
+
+	<div id="left" class="panel">
+		<div class="blabel">玩家（点选 = 操作对象）</div>
+		<div id="plist"></div>
+		<div class="foot">
+			<button class="hbtn" onclick="addBot()">＋ 机器人</button>
+			<button class="hbtn" onclick="delBot()">－ 机器人</button>
+		</div>
+	</div>
+
+	<div id="mid" class="panel">
+		<div id="ring"></div>
+		<div id="boardcenter">
+			<div id="tgtlabel" class="blabel">目标：自己</div>
+			<div class="big" id="bigcard"></div>
+		</div>
+	</div>
+
+	<div id="right" class="panel">
+		<div id="qfilter"></div>
+		<div id="itemlist"></div>
+		<div id="preview" class="panel">
+			<div id="pvcard"></div>
+			<div class="meta" id="pvmeta"></div>
+		</div>
+		<div id="parambox" style="display:none">参数 <input id="p1" type="text"> </div>
+		<div id="actions">
+			<button class="hbtn" onclick="doGrant()">授予进背包</button>
+			<button class="hbtn primary" onclick="doUse()">立即使用</button>
+			<button class="hbtn" onclick="doTrigger()">仅触发效果</button>
+		</div>
+		<div id="switches">
+			<label><input type="checkbox" id="sw_unique" checked> 计入唯一性</label>
+			<label><input type="checkbox" id="sw_burn" checked> 一次性用后焚毁</label>
+			<label><input type="checkbox" id="sw_gate"> 绕过闸门(体力/冷却)</label>
+		</div>
+		<div id="hint"></div>
+	</div>
+
+	<div id="bottom" class="panel">
+		<div>
+			<div class="blabel">日志</div>
+			<div id="log"></div>
+		</div>
+		<div>
+			<div class="blabel">效果前后 diff</div>
+			<div id="diff"></div>
+		</div>
+	</div>
+
+	<div id="note">
+		<b>原型说明</b><br>
+		· 左栏点玩家 = 操作对象；选到“需目标”的道具后再点玩家/格子 = 目标。<br>
+		· 右栏点道具 → 「立即使用 / 仅触发」→ 看底部 diff。<br>
+		· 效果为前端模拟，用于体验交互与信息密度，非真实玩法数值。
+	</div>
+	<div id="toast2"></div>
+</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const QC = { "白":"#ececec", "绿":"#58c468", "蓝":"#4e8fe0", "紫":"#9a6fe0", "橙":"#e8943a" };
+const PC = ["#e5484d","#3b82f6","#22c55e","#f59e0b"];
+
+// 道具目录（策划案精选子集；sim 为前端模拟）
+const ITEMS = {
+	"招财猫":{q:"白",cost:-1,type:"passive",unique:true,desc:"你的每块地皮租金收入 +50。",sim:"passive"},
+	"优惠券":{q:"白",cost:-1,type:"passive",unique:true,desc:"你每次缴纳罚款时少交 ¥300。",sim:"passive"},
+	"砍价高手":{q:"白",cost:-1,type:"passive",unique:true,desc:"你购买地皮时少花 ¥300。",sim:"passive"},
+	"兼职中介":{q:"白",cost:2,type:"active",cd:2,desc:"立刻获得 ¥800。",sim:"gain",v:800},
+	"共享单车":{q:"白",cost:1,type:"active",cd:1,need:"",desc:"立刻前进 2 格。",sim:"fwd",v:2},
+	"饭卡":{q:"白",cost:1,type:"active",cd:1,desc:"立刻获得 ¥300。",sim:"gain",v:300},
+	"跑腿券":{q:"白",cost:1,type:"active",cd:2,need:"player",desc:"指定一名玩家给你 ¥200。",sim:"drainTarget",v:200},
+	"小抄":{q:"白",cost:1,type:"active",cd:2,desc:"偷看命运牌堆的下一张卡。",sim:"peek"},
+	"许愿池":{q:"白",cost:1,type:"active",cd:2,desc:"随机获得 -¥600~+¥600。",sim:"gainRand",v0:-600,v1:600},
+	"外卖箱":{q:"白",cost:1,type:"active",cd:2,desc:"前进 1 格并获得 ¥200。",sim:"fwdGain",v:1,g:200},
+	"幸运数7":{q:"白",cost:-1,type:"passive",unique:true,desc:"掷出 7 时额外获得 ¥700。",sim:"passive"},
+
+	"信托基金":{q:"绿",cost:-1,type:"passive",unique:true,desc:"你的回合开始时，获得 ¥100。",sim:"passive"},
+	"置物架":{q:"绿",cost:-1,type:"passive",unique:true,desc:"你的道具背包增加 2 格。",sim:"passive"},
+	"护身符":{q:"绿",cost:-1,type:"passive",unique:true,desc:"每局首次被送进宿委会时免疫。",sim:"passive"},
+	"占座":{q:"绿",cost:1,type:"active",cd:1,desc:"移动到离你最近的自有地皮（不结算）。",sim:"gotoOwn"},
+	"充电宝":{q:"绿",cost:-1,type:"passive",unique:true,desc:"你的体力上限 +1。",sim:"passive"},
+	"夜跑":{q:"绿",cost:2,type:"active",cd:2,desc:"立刻前进 3 格。",sim:"fwd",v:3},
+	"团购拼单":{q:"绿",cost:2,type:"active",cd:2,need:"player",desc:"你和一名玩家各获得 ¥400。",sim:"gainEach",v:400},
+	"保修卡":{q:"绿",cost:-1,type:"passive",unique:true,desc:"你缴纳罚款时金额减半。",sim:"passive"},
+	"护腕":{q:"绿",cost:2,type:"active",cd:3,desc:"获得一层护盾，免疫下一次负面效果。",sim:"shield"},
+	"助学贷款":{q:"绿",cost:1,type:"active",cd:2,desc:"立刻获得 ¥1500，之后 3 回合各还 ¥600。",sim:"loan"},
+	"应急基金":{q:"绿",cost:-1,type:"passive",unique:true,desc:"现金不足 ¥5000 时补足到 ¥5000，每局一次。",sim:"passive"},
+	"二手交易":{q:"绿",cost:2,type:"active",cd:2,desc:"弃掉一件道具，获得 ¥800。",sim:"discardGain",v:800},
+	"喇叭":{q:"绿",cost:2,type:"active",cd:2,need:"player",desc:"指定一名玩家下个道具消耗能量 +1。",sim:"costUp",v:1,n:1},
+	"组队学习":{q:"绿",cost:2,type:"active",cd:3,need:"player",desc:"你和一名玩家各前进 2 格。",sim:"fwdBoth",v:2},
+	"二手群接龙":{q:"绿",cost:2,type:"active",cd:3,desc:"随机获得一件稀有道具，其消耗 -1。",sim:"gainItem",q:"绿"},
+	"校园卡充值":{q:"绿",cost:1,type:"active",cd:1,desc:"花 ¥500 恢复 3 点体力。",sim:"heal",v:3,pay:500},
+
+	"作弊器":{q:"蓝",cost:3,type:"active",cd:3,desc:"下一次转盘的点数由你决定。",sim:"setRoll",v:9},
+	"交换生":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"与一名指定玩家随机交换一件道具。",sim:"swapItem"},
+	"换座位":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"与一名指定玩家交换棋子位置。",sim:"swapPos"},
+	"强制募捐":{q:"蓝",cost:4,type:"active",cd:4,desc:"其他所有玩家各给你 ¥500。",sim:"drainAll",v:500},
+	"雨伞":{q:"蓝",cost:-1,type:"passive",unique:true,desc:"你不会被事件后退。",sim:"passive"},
+	"交换课表":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"与一名指定玩家各随机交换一块地皮。",sim:"swapProp"},
+	"时光倒流":{q:"蓝",cost:3,type:"active",cd:3,desc:"重新掷一次转盘并采用新点数。",sim:"reroll"},
+	"抄家队":{q:"蓝",cost:3,type:"active",cd:3,need:"tile",desc:"指定玩家随机一块地皮降 1 级。",sim:"propDown"},
+	"拼车":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"移动到指定玩家所在格并结算。",sim:"moveToTarget"},
+	"保安队长":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"指定玩家随机一件道具冷却 +2。",sim:"cdUp"},
+	"反作弊":{q:"蓝",cost:3,type:"active",cd:4,desc:"本回合其他所有玩家不能使用道具。",sim:"silenceOthers"},
+	"错峰用电":{q:"蓝",cost:-1,type:"passive",unique:true,desc:"你每回合第一件道具消耗 -1。",sim:"passive"},
+	"保安巡逻":{q:"蓝",cost:-1,type:"passive",unique:true,desc:"你付给他人的租金减少 30%。",sim:"passive"},
+	"体测":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"指定一名玩家体力 -2。",sim:"staDown",v:2},
+	"换课":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"与一名指定玩家交换体力。",sim:"swapStamina"},
+	"点名":{q:"蓝",cost:3,type:"active",cd:3,need:"player",desc:"指定一名玩家下回合点数 +3。",sim:"forceRoll",v:3},
+
+	"平均主义":{q:"紫",cost:5,type:"active",cd:5,desc:"所有玩家的现金同步至平均值。",sim:"equalize"},
+	"拆解钳":{q:"紫",cost:3,type:"active",cd:3,need:"player",desc:"摧毁指定玩家一件随机道具。",sim:"destroyItem"},
+	"包租婆":{q:"紫",cost:-1,type:"passive",unique:true,desc:"你收取的租金提高 20%。",sim:"passive"},
+	"快递直达":{q:"紫",cost:4,type:"active",cd:4,need:"tile",desc:"立刻移动到地图上的任意一格。",sim:"teleport"},
+	"强拆令":{q:"紫",cost:4,type:"active",cd:4,need:"tile",desc:"指定玩家的一块地皮变为无主。",sim:"unown"},
+	"时间暂停":{q:"紫",cost:4,type:"active",cd:5,need:"player",desc:"指定一名玩家下一回合休眠。",sim:"sleepTarget"},
+	"学费上涨":{q:"紫",cost:-1,type:"passive",unique:true,desc:"所有玩家的罚单金额 +50%。",sim:"passive"},
+	"重修卡":{q:"紫",cost:-1,type:"passive",unique:true,desc:"每回合你可以使用两次道具，共三次。",sim:"passive"},
+	"包场":{q:"紫",cost:4,type:"active",cd:4,need:"player",desc:"指定一名玩家接下来两个回合不能使用道具。",sim:"silenceTarget"},
+
+	"黑卡":{q:"橙",cost:4,type:"active",cd:4,unique:true,desc:"接下来 3 次购买免费。",sim:"blackcard"},
+	"空想者的香皂":{q:"橙",cost:-1,type:"passive",unique:true,desc:"免疫所有负面效果。10 回合后融化。",sim:"passive"},
+	"蛋蛋节":{q:"橙",cost:1,type:"consumable",cd:1,unique:true,desc:"每位玩家都会获得一份礼物，每局一次。",sim:"eggfest"},
+	"亡牌飞行员coco":{q:"橙",cost:3,type:"consumable",cd:3,unique:true,desc:"每位玩家都有一块随机地皮被摧毁，每局一次。",sim:"coco"},
+	"二两寒暑":{q:"橙",cost:3,type:"active",cd:3,unique:true,need:"player",desc:"指定一名玩家接下来两个道具消耗各 +2。",sim:"costUp",v:2,n:2},
+	"园中叶":{q:"橙",cost:0,type:"active",unique:true,desc:"？？？（未实装）",sim:"",na:true},
+};
+
+let state, selItem = null, qfilter = "全部";
+let keep = null;
+
+function initState() {
+	state = { seed: 1024, players: [], tiles: [], log: [], ts: 1.0 };
+	for (let i = 0; i < 4; i++) {
+		state.players.push({
+			name: i === 0 ? "房主" : "机器人" + String.fromCharCode(64 + i),
+			bot: i > 0, color: i, money: 20000, stamina: i === 0 ? 3 : 4,
+			maxStamina: 5, pos: [0, 13, 27, 41][i], alive: true,
+			skip: 0, sleep: 0, items: [], shield: 0, item_used: false
+		});
+	}
+	// 56 格：大部分地产，少量特殊格
+	for (let i = 0; i < 56; i++) {
+		let t = "property", grp = i % 10;
+		if (i === 0) t = "start"; else if (i === 17) t = "jail";
+		else if (i === 28) t = "rest"; else if (i === 45) t = "go_jail";
+		else if ([5, 23, 40].includes(i)) t = "shop";
+		else if ([9, 33].includes(i)) t = "casino";
+		else if ([3, 21, 37, 51].includes(i)) t = "fine";
+		else if ([7, 12, 30, 44, 53].includes(i)) t = "bonus";
+		else if ([15, 26, 49].includes(i)) t = "event";
+		state.tiles.push({ type: t, owner: -1, level: 0, grp });
+	}
+	// 撒一些归属，方便看效果
+	state.tiles[2].owner = 0; state.tiles[2].level = 2;
+	state.tiles[6].owner = 0;
+	state.tiles[11].owner = 1; state.tiles[11].level = 1;
+	state.tiles[19].owner = 2;
+	state.tiles[24].owner = 3; state.tiles[24].level = 3;
+	state.players[0].items = ["招财猫", "作弊器"];
+	state.players[1].items = ["信托基金", "黑卡"];
+	state.players[2].items = ["雨伞"];
+	state.log = ["[lab] 沙盒就绪：4 名玩家、56 格棋盘", "[lab] 环境可注入，效果走真实路径"];
+}
+
+// ---------- 渲染 ----------
+function render() {
+	renderPlayers(); renderBoard(); renderFilter(); renderList(); renderPreview();
+	$("club").textContent = "种子 #" + state.seed;
+}
+function renderPlayers() {
+	const box = $("plist"); box.innerHTML = "";
+	state.players.forEach((p, i) => {
+		const d = document.createElement("div");
+		d.className = "pcard" + (i === actor() ? " actor" : "") + (i === target() ? " target" : "");
+		d.onclick = () => onPlayerClick(i);
+		let stam = "";
+		for (let k = 0; k < Math.max(p.maxStamina, p.stamina); k++)
+			stam += `<s class="${k < p.stamina ? "on" : (k >= 5 ? "cap" : "")}"></s>`;
+		let bag = p.items.map(id => `<div class="bag" style="background:${QC[ITEMS[id].q]}" title="${id}">${id.slice(0,1)}</div>`).join("");
+		let stats = "";
+		if (p.skip > 0) stats += `<span class="st debuff">反省${p.skip}</span>`;
+		if (p.sleep > 0) stats += `<span class="st debuff">休眠${p.sleep}</span>`;
+		if (p.shield > 0) stats += `<span class="st buff">护盾${p.shield}</span>`;
+		if (!p.alive) stats += `<span class="st debuff">破产</span>`;
+		d.innerHTML = `<div class="chip" style="background:${PC[p.color]}"></div>
+			<div class="pinfo"><div class="nm">${p.name}${p.bot ? " <span style='color:#565d75;font-size:9px'>bot</span>" : ""}</div>
+			<div class="mn">¥${p.money.toLocaleString()}</div>
+			<div class="sub">格 ${p.pos}</div><div class="stam">${stam}</div>
+			<div class="bagrow">${bag || '<span style="font-size:8px;color:#565d75">空背包</span>'}</div>
+			<div class="stats">${stats}</div></div>`;
+		if (i === actor()) d.innerHTML += `<div class="bd">操作</div>`;
+		else if (i === target()) d.innerHTML += `<div class="bd t">目标</div>`;
+		box.appendChild(d);
+	});
+}
+let ringPos = [];
+function ringCoords(i) {
+	const W = 572, H = 524;
+	// 与 game_data.grid_of 同构：18×12 外圈，无角重叠
+	const c1 = 17, c2 = c1 + 10;
+	let col, row;
+	if (i <= c1) { col = c1 - i; row = 11; }
+	else if (i <= c2) { col = 0; row = 11 - (i - c1); }
+	else if (i <= c2 + 17) { col = i - (c2 + 1); row = 0; }
+	else { col = 17; row = i - (c2 + 18); }
+	return [col * W / 17, row * H / 11];
+}
+function renderBoard() {
+	const ring = $("ring"); ring.innerHTML = "";
+	ringPos = [];
+	for (let i = 0; i < 56; i++) {
+		const t = state.tiles[i];
+		const [x, y] = ringCoords(i);
+		ringPos.push([x, y]);
+		const d = document.createElement("div");
+		d.className = "tile" + (targetTile() === i ? " tgt" : "");
+		d.style.left = x + "px"; d.style.top = y + "px";
+		const ownerColor = t.owner >= 0 && t.type === "property" ? PC[state.players[t.owner].color] : "#2c3046";
+		d.innerHTML = `<s style="background:${ownerColor}"></s>`;
+		if (t.type === "property") d.innerHTML += `<em>${t.level > 0 ? "L" + t.level : ""}</em>`;
+		else d.innerHTML += `<em>${({start:"起",jail:"监",rest:"休",go_jail:"查",shop:"店",casino:"赌",fine:"罚",bonus:"奖",event:"卡"})[t.type] || ""}</em>`;
+		state.players.forEach((p, pi) => {
+			if (p.pos === i && p.alive) {
+				const dot = document.createElement("div");
+				dot.className = "dot"; dot.style.background = PC[p.color];
+				dot.style.left = (2 + pi * 5) + "px"; dot.style.top = "16px";
+				d.appendChild(dot);
+			}
+		});
+		d.onclick = () => onTileClick(i);
+		ring.appendChild(d);
+	}
+	renderBigCard();
+	$("tgtlabel").textContent = target() >= 0 ? ("目标玩家：" + state.players[target()].name)
+		: (targetTile() >= 0 ? ("目标格：" + targetTile()) : "目标：自己");
+}
+function renderBigCard() {
+	const id = selItem;
+	const box = $("bigcard");
+	if (!id) { box.innerHTML = `<div style="color:#565d75;font-size:12px;padding:40px 0">← 从右侧选一件道具</div>`; return; }
+	const it = ITEMS[id]; const col = QC[it.q];
+	box.innerHTML = `<div class="card2" style="border-color:${col}">
+		<div class="badgeL">${it.type === "passive" ? "被" : "⚡" + it.cost}</div>
+		<div class="badgeR">${it.cd ? "CD" + it.cd : "—"}</div>
+		<div class="art">道具图（占位）</div>
+		<div class="nm">${id}</div>
+		<div class="ds">${it.desc}</div>
+		<div class="qbar" style="background:${col}">${({白:"普通",绿:"稀有",蓝:"超稀有",紫:"史诗",橙:"传说"})[it.q]}</div>
+	</div>`;
+}
+function renderFilter() {
+	const box = $("qfilter"); box.innerHTML = "";
+	["全部","白","绿","蓝","紫","橙"].forEach(q => {
+		const b = document.createElement("button");
+		b.className = "hbtn" + (qfilter === q ? " on" : "");
+		b.textContent = q;
+		b.onclick = () => { qfilter = q; render(); };
+		box.appendChild(b);
+	});
+}
+function renderList() {
+	const box = $("itemlist"); box.innerHTML = "";
+	Object.keys(ITEMS).forEach(id => {
+		const it = ITEMS[id];
+		if (qfilter !== "全部" && it.q !== qfilter) return;
+		const d = document.createElement("div");
+		d.className = "it" + (selItem === id ? " sel" : "") + (it.na ? " na" : "");
+		d.style.borderLeftColor = QC[it.q];
+		d.textContent = id + (it.na ? "（未实装）" : "");
+		d.onclick = () => selectItem(id);
+		box.appendChild(d);
+	});
+}
+function renderPreview() {
+	if (!selItem) { $("pvmeta").innerHTML = "<b>未选择道具</b><br>从上方列表点一件道具体验。"; $("pvcard").innerHTML = ""; return; }
+	const it = ITEMS[selItem];
+	$("pvmeta").innerHTML = `<b>${selItem}</b> · ${({白:"普通",绿:"稀有",蓝:"超稀有",紫:"史诗",橙:"传说"})[it.q]}<br>
+		${it.type === "passive" ? "被动 · 持有即生效" : (it.type === "consumable" ? "一次性" : "主动") + " · ⚡" + it.cost + " · 冷却 " + (it.cd || 0)}<br>
+		${it.unique ? "★ 整局唯一" : "可多件"}<br>${it.desc}`;
+	$("pvcard").innerHTML = "";
+	const need = it.need;
+	const box = $("parambox");
+	if (it.na) { box.style.display = "none"; }
+	else if (need === "player" || need === "tile") {
+		box.style.display = "block"; box.firstChild.textContent = "参数 ";
+		box.innerHTML = need === "player" ? `目标：点左侧玩家卡选择 <input id="p1" type="text" value="${target() >= 0 ? state.players[target()].name : ""}" style="width:70px">`
+			: `目标格：点棋盘选择 <input id="p1" type="text" value="${targetTile() >= 0 ? targetTile() : ""}" style="width:40px">`;
+	} else if (selItem === "作弊器") {
+		box.style.display = "block"; box.innerHTML = `点数 <input id="p1" type="text" value="9">`;
+	} else if (selItem === "快递直达") {
+		box.style.display = "block"; box.innerHTML = `目标格 <input id="p1" type="text" value="24">`;
+	} else box.style.display = "none";
+}
+
+// ---------- 交互 ----------
+function actor() { return state._actor ?? 0; }
+function target() { return state._target ?? -1; }
+function targetTile() { return state._ttile ?? -1; }
+function onPlayerClick(i) {
+	if (selItem && ITEMS[selItem].need === "player") state._target = i;
+	else state._actor = i;
+	render();
+}
+function onTileClick(i) {
+	state._ttile = (state._ttile === i ? -1 : i);
+	const t = state.tiles[i];
+	log(`[查格] #${i} ${t.type}${t.owner >= 0 ? " · " + state.players[t.owner].name : ""}${t.level ? " Lv" + t.level : ""}`);
+	render();
+}
+function selectItem(id) { selItem = id; state._target = -1; state._ttile = -1; render(); }
+
+function log(s) { state.log.unshift(s); if (state.log.length > 60) state.log.pop(); renderLog(); }
+function renderLog() { $("log").innerHTML = state.log.map(s => `<p>${s}</p>`).join(""); }
+
+// ---------- 快照 / diff ----------
+function snap() {
+	return {
+		players: state.players.map(p => ({ money: p.money, stamina: p.stamina, items: p.items.slice(), pos: p.pos, alive: p.alive, shield: p.shield, sleep: p.sleep })),
+		tiles: state.tiles.map(t => ({ owner: t.owner, level: t.level }))
+	};
+}
+function renderDiff(b) {
+	if (!b) { $("diff").innerHTML = "<p style='color:#565d75'>执行一次效果后，这里显示前后变化。</p>"; return; }
+	const a = snap(), out = [];
+	a.players.forEach((p, i) => {
+		const bp = b.players[i], nm = state.players[i].name;
+		if (p.money !== bp.money) out.push(`<p class="${p.money >= bp.money ? "up" : "down"}">${nm} 现金 ¥${bp.money.toLocaleString()} → ¥${p.money.toLocaleString()} (${p.money >= bp.money ? "+" : ""}${p.money - bp.money})</p>`);
+		if (p.stamina !== bp.stamina) out.push(`<p class="mut">${nm} 体力 ${bp.stamina} → ${p.stamina}</p>`);
+		if (p.pos !== bp.pos) out.push(`<p class="mut">${nm} 位置 ${bp.pos} → ${p.pos}</p>`);
+		if (p.items.join() !== bp.items.join()) {
+			const gained = p.items.filter(x => !bp.items.includes(x)), lost = bp.items.filter(x => !p.items.includes(x));
+			if (gained.length) out.push(`<p class="up">${nm} 背包 +${gained.join("、")}</p>`);
+			if (lost.length) out.push(`<p class="down">${nm} 背包 −${lost.join("、")}</p>`);
+		}
+		if (p.shield !== bp.shield) out.push(`<p class="up">${nm} 护盾 ${bp.shield}</p>`);
+	});
+	a.tiles.forEach((t, i) => {
+		const bt = b.tiles[i];
+		if (t.owner !== bt.owner) out.push(`<p class="mut">地块 #${i} 归属 ${bt.owner < 0 ? "无主" : state.players[bt.owner].name} → ${t.owner < 0 ? "无主" : state.players[t.owner].name}</p>`);
+		if (t.level !== bt.level) out.push(`<p class="mut">地块 #${i} 等级 ${bt.level} → ${t.level}</p>`);
+	});
+	$("diff").innerHTML = out.length ? out.join("") : "<p style='color:#565d75'>无状态变化（日志可能记录了不可见效果）。</p>";
+}
+
+// ---------- 动作 ----------
+function doGrant() {
+	if (!check()) return;
+	const p = state.players[actor()], id = selItem, it = ITEMS[id];
+	if (it.na) return toast("该道具未实装");
+	if (it.unique && $("sw_unique").checked) {
+		const held = state.players.some(pl => pl.items.includes(id)) || p.items.includes(id);
+		if (held) return toast("唯一道具已被持有");
+	}
+	if (p.items.length >= 5) return toast("背包已满（5 格）");
+	p.items.push(id);
+	log(`[授予] ${p.name} 获得【${id}】（背包 ${p.items.length}/5）`);
+	render(); renderDiff(null);
+}
+function doUse() { runEffect(true); }
+function doTrigger() { runEffect(false); }
+
+function runEffect(consume) {
+	if (!check()) return;
+	const p = state.players[actor()], id = selItem, it = ITEMS[id];
+	if (it.na) return toast("该道具未实装");
+	const before = snap();
+	const gate = $("sw_gate").checked;
+	if (it.type === "passive") {
+		if (!p.items.includes(id)) p.items.push(id);
+		log(`[使用]【${id}】为被动，持有即生效${consume ? "" : "（仅触发）"}`);
+		render(); renderDiff(before); toast("被动：已加入背包，持续生效"); return;
+	}
+	// 闸门
+	if (consume && !gate) {
+		if (p.stamina < it.cost) { toast(`体力不足（需 ⚡${it.cost}）`); return; }
+		if (p.item_used) { toast("本回合已使用过道具"); return; }
+	}
+	// 目标校验
+	if (it.need === "player" && target() < 0) { toast("请先点左侧玩家卡选择目标"); return; }
+	if (it.need === "tile" && targetTile() < 0) { toast("请先点棋盘选择目标格"); return; }
+	const arg = parseInt(($("p1") && $("p1").value) || "0", 10);
+	// 扣费
+	if (consume && !gate) { p.stamina -= it.cost; p.item_used = true; if (it.cd) p.cdNext = it.cd; }
+	// 消耗/焚毁
+	if (it.type === "consumable" && consume) {
+		if ($("sw_burn").checked) { p.items = p.items.filter(x => x !== id); log(`[焚毁]【${id}】用后永久离池`); }
+	}
+	applySim(id, p, target(), targetTile(), arg);
+	render(); renderDiff(before);
+}
+
+function applySim(id, p, ti, tti, arg) {
+	const it = ITEMS[id]; const t = ti >= 0 ? state.players[ti] : null;
+	switch (it.sim) {
+		case "gain": p.money += it.v; log(`[效果] ${p.name} 获得 ¥${it.v}`); break;
+		case "gainRand": { const v = Math.round((it.v0 + Math.random() * (it.v1 - it.v0)) / 10) * 10; p.money += v; log(`[效果] 许愿池滚出 ${v >= 0 ? "+" : ""}¥${v}`); break; }
+		case "fwd": p.pos = (p.pos + it.v) % 56; log(`[效果] ${p.name} 前进 ${it.v} 格 → 格 ${p.pos}`); break;
+		case "fwdGain": p.pos = (p.pos + it.v) % 56; p.money += it.g; log(`[效果] ${p.name} 前进 ${it.v} 格并 +¥${it.g}`); break;
+		case "drainTarget": t.money -= it.v; p.money += it.v; log(`[效果] ${t.name} 付给 ${p.name} ¥${it.v}`); break;
+		case "drainAll": { let got = 0; state.players.forEach(o => { if (o !== p && o.alive) { o.money -= it.v; got += it.v; } }); p.money += got; log(`[效果] ${p.name} 向全场征收 ¥${got}`); break; }
+		case "equalize": { const al = state.players.filter(x => x.alive); const avg = Math.floor(al.reduce((s, x) => s + x.money, 0) / al.length); al.forEach(x => x.money = avg); log(`[效果] 全场现金拉平至 ¥${avg}`); break; }
+		case "peek": log(`[效果] ${p.name} 偷看命运牌堆：下一张「宿舍电费补缴 -¥800」`); break;
+		case "gotoOwn": { const own = state.tiles.map((x, i) => x.owner === p.color ? i : -1).filter(i => i >= 0); if (own.length) { const near = own.sort((a, b) => Math.abs(a - p.pos) - Math.abs(b - p.pos))[0]; p.pos = near; log(`[效果] ${p.name} 移动到自有地皮 #${near}（不结算）`); } else log(`[效果] ${p.name} 没有自有地皮`); break; }
+		case "gainEach": t.money += it.v; p.money += it.v; log(`[效果] ${p.name} 与 ${t.name} 各 +¥${it.v}`); break;
+		case "shield": p.shield += 1; log(`[效果] ${p.name} 获得 1 层护盾`); break;
+		case "loan": p.money += 1500; log(`[效果] ${p.name} 贷款 +¥1500，之后 3 回合各还 ¥600`); break;
+		case "discardGain": { if (p.items.length) { const rm = p.items.shift(); p.money += it.v; log(`[效果] ${p.name} 弃【${rm}】换 ¥${it.v}`); } else log(`[效果] 背包为空，弃不了`); break; }
+		case "costUp": t.costPenalty = (t.costPenalty || 0) + 1; log(`[效果] ${t.name} 接下来 ${it.n} 个道具消耗 +${it.v}`); break;
+		case "fwdBoth": p.pos = (p.pos + it.v) % 56; t.pos = (t.pos + it.v) % 56; log(`[效果] ${p.name} 与 ${t.name} 各前进 ${it.v} 格`); break;
+		case "gainItem": { const pool = Object.keys(ITEMS).filter(x => ITEMS[x].q === it.q && !ITEMS[x].na); const g = pool[Math.floor(Math.random() * pool.length)]; if (p.items.length < 5) { p.items.push(g); log(`[效果] 随机获得【${g}】（消耗 -1）`); } else log(`[效果] 背包满，作废`); break; }
+		case "heal": { if (p.money < it.pay) { log(`[效果] 现金不足，买不了体力`); break; } p.money -= it.pay; p.stamina = Math.min(p.maxStamina, p.stamina + it.v); log(`[效果] ${p.name} 花 ¥${it.pay} 恢复 ${it.v} 点体力`); break; }
+		case "setRoll": p.rollNext = arg; log(`[效果] ${p.name} 下一次转盘点数锁定为 ${arg}`); break;
+		case "swapItem": { if (!t || !t.items.length || !p.items.length) { log(`[效果] 任一方无道具，不消耗`); p.stamina += it.cost; p.item_used = false; break; } const ai = Math.floor(Math.random() * p.items.length), bi = Math.floor(Math.random() * t.items.length); const tmp = p.items[ai]; p.items[ai] = t.items[bi]; t.items[bi] = tmp; log(`[效果] 交换道具：${p.name}↔${t.name}（${p.items[ai]} / ${tmp}）`); break; }
+		case "swapPos": { const tmp = p.pos; p.pos = t.pos; t.pos = tmp; log(`[效果] ${p.name} 与 ${t.name} 交换位置`); break; }
+		case "swapProp": { const pa = props(p), pb = props(t); if (!pa.length || !pb.length) { log(`[效果] 任一方无地皮，不生效`); break; } const a = pa[0], b = pb[0]; const o = state.tiles[a].owner; state.tiles[a].owner = state.tiles[b].owner; state.tiles[b].owner = o; log(`[效果] 交换地皮 #${a}↔#${b}`); break; }
+		case "reroll": log(`[效果] ${p.name} 重新掷出 ${1 + Math.floor(Math.random() * 12)} 点`); break;
+		case "propDown": { const list = state.tiles.map((x, i) => (x.owner >= 0 && x.level > 0) ? i : -1).filter(i => i >= 0); if (tti >= 0 && state.tiles[tti].level > 0) { state.tiles[tti].level--; log(`[效果] 地块 #${tti} 降 1 级 → Lv${state.tiles[tti].level}`); } else if (list.length) { const i = list[0]; state.tiles[i].level--; log(`[效果] 地块 #${i} 降 1 级 → Lv${state.tiles[i].level}`); } else log(`[效果] 没有可降级的地皮`); break; }
+		case "moveToTarget": p.pos = t.pos; log(`[效果] ${p.name} 移动到 ${t.name} 所在格 ${t.pos} 并结算`); break;
+		case "cdUp": { if (t.items.length) log(`[效果] ${t.name} 的道具冷却 +2`); else log(`[效果] 对方无道具`); break; }
+		case "silenceOthers": state.players.forEach(o => { if (o !== p) o.silenced = 1; }); log(`[效果] 本回合其他玩家不能使用道具`); break;
+		case "staDown": t.stamina = Math.max(0, t.stamina - it.v); log(`[效果] ${t.name} 体力 -${it.v}`); break;
+		case "swapStamina": { const tmp = p.stamina; p.stamina = Math.min(p.maxStamina, t.stamina); t.stamina = Math.min(t.maxStamina, tmp); log(`[效果] ${p.name} 与 ${t.name} 交换体力`); break; }
+		case "forceRoll": t.forceRoll = it.v; log(`[效果] ${t.name} 下回合点数 +${it.v}`); break;
+		case "destroyItem": { if (t.items.length) { const i = Math.floor(Math.random() * t.items.length); const rm = t.items.splice(i, 1)[0]; log(`[效果] 摧毁 ${t.name} 的【${rm}】（回池）`); } else log(`[效果] 对方无道具`); break; }
+		case "teleport": { const i = (tt >= 0 ? tti : arg) || 0; p.pos = i % 56; log(`[效果] ${p.name} 传送到格 ${p.pos}`); break; }
+		case "unown": { let i = tti; if (i < 0 || state.tiles[i].owner < 0) { const list = state.tiles.map((x, k) => x.owner >= 0 ? k : -1).filter(k => k >= 0); i = list.length ? list[0] : -1; } if (i >= 0) { state.tiles[i].owner = -1; state.tiles[i].level = 0; log(`[效果] 地块 #${i} 变为无主`); } else log(`[效果] 没有可拆的地皮`); break; }
+		case "sleepTarget": t.sleep = 1; log(`[效果] ${t.name} 下一回合休眠`); break;
+		case "silenceTarget": t.silenced = 2; log(`[效果] ${t.name} 接下来两个回合不能使用道具`); break;
+		case "blackcard": p.charges = 3; log(`[效果] ${p.name} 接下来 3 次购买免费`); break;
+		case "eggfest": { state.players.forEach(o => { if (o === p) { if (p.items.length < 5) p.items.push("黑卡"); } else { const pool = ["招财猫","兼职中介","共享单车","饭卡","信托基金","夜跑","作弊器","交换生"]; const g = pool[Math.floor(Math.random() * pool.length)]; if (o.items.length < 5) o.items.push(g); } }); log(`[效果] 蛋蛋节：全员收礼（使用者紫/橙）`); break; }
+		case "coco": { state.players.forEach(o => { const own = state.tiles.map((x, k) => x.owner >= 0 ? k : -1).filter(k => k >= 0); if (own.length) { const i = own[Math.floor(Math.random() * own.length)]; state.tiles[i].owner = -1; state.tiles[i].level = 0; } }); log(`[效果] coco：每名玩家各一块地皮被摧毁`); break; }
+		default: log(`[效果] ${id}（原型未模拟该效果）`); break;
+	}
+}
+function props(pl) { return state.tiles.map((x, i) => x.owner === pl.color ? i : -1).filter(i => i >= 0); }
+
+function check() {
+	if (!selItem) { toast("请先从右侧选一件道具"); return false; }
+	return true;
+}
+
+// ---------- 顶部 / 工具 ----------
+function resetAll() { initState(); selItem = null; render(); renderLog(); renderDiff(null); toast("沙盒已重置"); }
+function snapshotKeep() { keep = snap(); toast("已保存快照"); }
+function rollback() { if (!keep) return toast("没有快照"); state.players.forEach((p, i) => { const b = keep.players[i]; p.money = b.money; p.stamina = b.stamina; p.items = b.items.slice(); p.pos = b.pos; p.alive = b.alive; p.shield = b.shield; }); keep.tiles.forEach((t, i) => { state.tiles[i].owner = t.owner; state.tiles[i].level = t.level; }); log("[lab] 已回滚到快照"); render(); renderDiff(null); }
+function cycleTs() { const arr = [1, 2, 4, 8]; const i = arr.indexOf(state.ts); state.ts = arr[(i + 1) % arr.length]; $("ts").textContent = "时间 " + state.ts + ".0x"; $("ts").classList.toggle("on", state.ts > 1); }
+function copyState() {
+	const out = JSON.stringify({ players: state.players.map(p => ({ name: p.name, money: p.money, stamina: p.stamina, pos: p.pos, items: p.items })), tiles: state.tiles }, null, 1);
+	navigator.clipboard && navigator.clipboard.writeText(out);
+	log("[lab] 已复制状态 JSON（若浏览器拦截则见控制台）");
+	console.log(out);
+	toast("状态 JSON 已复制到剪贴板 / 控制台");
+}
+function addBot() { if (state.players.length >= 4) return toast("最多 4 名玩家"); const i = state.players.length; state.players.push({ name: "机器人" + String.fromCharCode(64 + i), bot: true, color: i, money: 20000, stamina: 3, maxStamina: 5, pos: i * 13, alive: true, skip: 0, sleep: 0, items: [], shield: 0, item_used: false }); render(); }
+function delBot() { if (state.players.length <= 1) return toast("至少保留 1 名"); const last = state.players.pop(); state.tiles.forEach(t => { if (t.owner === last.color) { t.owner = -1; t.level = 0; } }); if (state._actor >= state.players.length) state._actor = 0; render(); }
+
+let toastTimer;
+function toast(s) { const t = $("toast2"); t.textContent = s; t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", 1500); }
+
+// ---------- 启动 ----------
+initState(); render(); renderLog(); renderDiff(null);
+function fit() { const s = Math.min(innerWidth / 1280, innerHeight / 800); $("stage").style.transform = "scale(" + s + ")"; }
+addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>
