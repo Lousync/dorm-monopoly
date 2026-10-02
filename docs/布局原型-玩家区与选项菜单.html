@@ -1,4 +1,10 @@
 <!DOCTYPE html>
+<!--
+  定稿存档（2026-10-01）· 交互原型，不随实现更新。
+  这里记录的是当时谈定的交互与布局；**可能与现状不一致**——例如原型里的「☰ 选项」
+  按钮后来已改名「⏸ 暂停」、底栏也从「贴座位卡」改成了「固定贴屏幕底部」。
+  要写代码请以 docs/gameplay/* 与现有实现为准，不要拿这份原型逐条对照。
+-->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -440,6 +446,10 @@
 	<!-- 原型控制条（非游戏内容） -->
 	<div class="proto">
 		<b>原型控制（非游戏 UI）</b>
+		<div style="color:#c9a86a;font-size:11px;line-height:1.5;margin:2px 0 6px">
+			定稿存档 · 2026-10-01 定稿，<b>不随实现更新</b>，可能与现状不一致<br>
+			（例：这里的「☰ 选项」后来已改名「⏸ 暂停」；底栏也从贴座位卡改成固定贴屏幕底部）
+		</div>
 		<div class="row"><label>身份</label>
 			<button id="b-host" class="on" onclick="setHost(true)">房主</button>
 			<button id="b-guest" onclick="setHost(false)">非房主</button></div>
