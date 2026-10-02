@@ -34,11 +34,27 @@ static func _count_of(type_name: String) -> int:
 
 
 
+## 掷轮超时说明——「不限时」档要说清「不会被代掷」
+static func _roll_rule(tier: String) -> String:
+	var sec := GameSettings.turn_seconds(tier, "roll")
+	if sec <= 0.0:
+		return "· %s" % _d("本局操作不限时：真人可以慢慢来，不会被系统代掷")
+	return "· %s" % _d("真人 %.0f 秒不掷由系统代掷" % sec)
+
+## 买地/升级决策超时说明
+static func _prompt_rule(tier: String) -> String:
+	var sec := GameSettings.turn_seconds(tier, "prompt")
+	if sec <= 0.0:
+		return "· 买地 / 升级是弹窗询问，本局不限时，不会自动拒绝"
+	return "· 买地 / 升级是弹窗询问，%s 视为拒绝" % _d("%.0f 秒不答" % sec)
+
+
 ## 分页：[key, 标签, 正文]
-static func pages() -> Array:
+## tier = 本局「操作限时」挡位（见 开局设置.md §三之一）；秒数一律从 GameSettings 取，不写死
+static func pages(tier := GameSettings.TIER_CURRENT) -> Array:
 	return [
 		{"key": "basic", "title": "基础操作", "body": _basic()},
-		{"key": "turn", "title": "回合与行动", "body": _turn()},
+		{"key": "turn", "title": "回合与行动", "body": _turn(tier)},
 		{"key": "board", "title": "棋盘与地产", "body": _board()},
 		{"key": "money", "title": "经济与胜负", "body": _money()},
 		{"key": "item", "title": "道具与事件", "body": _item()},
@@ -65,7 +81,7 @@ static func _basic() -> String:
 		"· 第 %d 回合结束按身家排名结算" % GameData.MAX_ROUNDS,
 	])
 
-static func _turn() -> String:
+static func _turn(tier: String) -> String:
 	return "\n".join([
 		_h("一回合两阶段"),
 		"回合开始结算 → ①转轮盘 → 移动与落地结算 → ②使用道具 → 回合结束",
@@ -78,11 +94,11 @@ static func _turn() -> String:
 		"· 12：满值，走完后再%s" % _d("额外行动一次"),
 		"· 0：原地待命一回合（仍算完成投掷，之后可用道具）",
 		"· 连续 3 次 ≥10：兴奋过度，被查寝送宿委会（跳过一回合）",
-		"· %s" % _d("真人 %.0f 秒不掷由系统代掷" % GameData.ROLL_TIMEOUT),
+		_roll_rule(tier),
 		"",
 		_h("移动与落地"),
 		"· 逐格跳动；途中踏过起点领工资",
-		"· 买地 / 升级是弹窗询问，%s 视为拒绝" % _d("%.0f 秒不答" % GameData.PROMPT_TIMEOUT),
+		_prompt_rule(tier),
 		"",
 		_h("② 使用道具"),
 		"· 每回合限用 1 次主动道具（被动不计）· 超时自动跳过",

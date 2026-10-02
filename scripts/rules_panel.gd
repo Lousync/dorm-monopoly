@@ -67,7 +67,7 @@ static func _build_panel(g: Node) -> void:
 	flow.add_theme_constant_override("v_separation", 5)
 	v.add_child(flow)
 	g.rules_tabs = {}
-	for p in RulesText.pages():
+	for p in RulesText.pages(g._settings.timeout_tier):
 		var key := String(p.key)
 		var b := UIKit.button(String(p.title), 12)
 		b.custom_minimum_size = Vector2(0, 26)
@@ -97,7 +97,7 @@ static func select_tab(g: Node, key: String) -> void:
 	for k in g.rules_tabs:
 		var b: Button = g.rules_tabs[k]
 		UIKit.restyle_button(b, "primary" if k == key else "normal")
-	for p in RulesText.pages():
+	for p in RulesText.pages(g._settings.timeout_tier):
 		if String(p.key) == key:
 			g.rules_body.text = String(p.body)
 			# 换页淡入：正文整块换掉太生硬（一次性过渡，用 Tween）

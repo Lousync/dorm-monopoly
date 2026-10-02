@@ -170,6 +170,10 @@ func _ready() -> void:
 	dev.g = self
 	add_child(dev)
 
+	# 房主用自己的配置副本（中途改动不回写大厅），客户端先取默认值、随后由快照覆盖。
+	# 必须早于 _build_ui：规则说明面板构建时就要按本局挡位取秒数（见 RulesPanel.build）
+	_settings = Net.game_settings.copy() if Net.game_settings != null else GameSettings.new()
+
 	_build_ui()
 
 	# 赌桌小游戏独立成子节点（board 已就绪；两端都在这里建同名节点，
@@ -179,8 +183,6 @@ func _ready() -> void:
 	casino.g = self
 	add_child(casino)
 
-	# 房主用自己的配置副本（中途改动不回写大厅），客户端先取默认值、随后由快照覆盖
-	_settings = Net.game_settings.copy() if Net.game_settings != null else GameSettings.new()
 	# 设置面板上一段已建好（_build_ui 在前），此处按身份定「操作限时」行显隐——
 	# 否则两行同时可见，要等首次改挡才归位
 	_refresh_tier_ui()
