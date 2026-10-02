@@ -251,6 +251,44 @@ func _run() -> void:
 	_check(pc.y + g.info_panel.size.y < tc.y, "卡片在格子上方（卡底 %.0f / 格 %.0f）"
 		% [pc.y + g.info_panel.size.y, tc.y])
 
+	print("== 归属色条：谁的地都要有，颜色与该玩家的棋子一致 ==")
+	var ts: Dictionary = _state(2, false)
+	# 关键：必须覆盖**机器人**（peer 为负数，从 -1 起编号）。
+	# 之前用 `owner_id >= 0` 判「有主」，把机器人买的地全部漏掉了 —— 真人自己买的地
+	# 有色条、机器人买的全没有，正是玩家看到的现象。这个用例就是为了钉住它。
+	ts.players.append({"peer": -1, "name": "机器人A", "color": 0, "bot": true,
+		"money": 20000, "pos": 1, "alive": true, "skip": 0, "sleep": 0,
+		"stamina": 3, "items": [], "item_used": false})
+	var mine_t := -1
+	var bot_t := -1
+	var free_t := -1
+	for i in ts.tiles.size():
+		if String(GameData.TILES[i].get("type", "")) != "property":
+			continue
+		ts.tiles[i].owner = GameData.NO_OWNER
+		if mine_t < 0:
+			mine_t = i
+			ts.tiles[i].owner = 2          # 乙 = 我（真人，正 peer）
+		elif bot_t < 0:
+			bot_t = i
+			ts.tiles[i].owner = -1         # 机器人（负 peer）
+		elif free_t < 0:
+			free_t = i
+	g.s_state(ts)
+	await process_frame
+	_check(g.board._strips[mine_t].visible, "我买的地：色条显示")
+	_check(g.board._strips[bot_t].visible, "**机器人买的地：我这边也要显示色条（负 peer）**")
+	_check(not g.board._strips[free_t].visible, "无主的地：不显示色条")
+	_check(g.board._strip_cols[mine_t] == GameData.PLAYER_COLORS[1], "我的色条 = 我的棋子色")
+	_check(g.board._strip_cols[bot_t] == GameData.PLAYER_COLORS[0], "机器人的色条 = 它的棋子色")
+	_check(g.board._strips[mine_t].position == Vector2(3, 3), "色条贴在格子左上角（不在文字上）")
+	_check(g.board._strips[mine_t].size.y <= 14.0,
+		"色条只有顶带那么高（实得 %.0f）" % g.board._strips[mine_t].size.y)
+	# 关键：光 visible=true 不代表看得见 —— 没有样式就是一块透明板
+	var strip_sb = g.board._strips[mine_t].get_theme_stylebox("panel")
+	_check(strip_sb is StyleBoxTexture,
+		"色条挂着真正的卡样式（实得 %s）" % ("null" if strip_sb == null else strip_sb.get_class()))
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

@@ -171,6 +171,12 @@ static func events_for(kind: String) -> Array:
 	return out
 
 ## 四角格位置：0 起点(右下) / 34 宿委会(左下) / 56 卧谈会(左上) / 90 查寝(右上)
+## 该格子是不是四个角上的**地标格**（起点 / 宿委会 / 卧谈会 / 查寝）。
+## 注意不能按格型判：`rest` 是「免费休息」，四角上的卧谈会和沿途 4 个空教室共用这个格型，
+## 按格型判会把空教室也当成角格（会套上角格的金棕底与金色字）。
+static func is_corner(idx: int) -> bool:
+	return corner_indices().has(idx)
+
 static func corner_indices() -> Array:
 	var c1 := BOARD_COLS - 1
 	var side := c1 + (BOARD_ROWS - 2)

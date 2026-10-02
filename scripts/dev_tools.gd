@@ -360,7 +360,9 @@ func take_shot(path: String) -> void:
 		await get_tree().create_timer(0.25).timeout
 	g.board.fit_overview()
 	await get_tree().create_timer(0.2).timeout
-	g.board.cam_locked = true  # 摆拍期间锁住自动镜头，避免对局推进拽走视角
+	# 摆拍期间默认锁住自动镜头（避免对局推进拽走视角）；文件名带 freecam 时不锁，
+	# 这样后面的 focus_grid 拉近才生效 —— 用来复现「玩家自己看到的近景」
+	g.board.cam_locked = not path.contains("freecam")
 	if g._shot_rot > 0:
 		g.board.rotate_to_edge(g._shot_rot, true)  # 摆拍：转到对应座位的视角
 		await get_tree().create_timer(0.15).timeout

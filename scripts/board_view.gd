@@ -227,7 +227,7 @@ func _tile_icon_name(d: Dictionary) -> String:
 func _build_tiles() -> void:
 	for i in GameData.TILES.size():
 		var d: Dictionary = GameData.TILES[i]
-		var corner: bool = d.type in ["start", "jail", "rest", "go_jail"]
+		var corner: bool = GameData.is_corner(i)
 		var base := Color("#38301c") if corner else Color("#242a39")
 		var p := Panel.new()
 		p.position = tile_pos(i) + Vector2(GAP, GAP)
@@ -1640,7 +1640,7 @@ func _short_money(v: int) -> String:
 
 func _animate_tile(i: int, hovered: bool) -> void:
 	var d: Dictionary = GameData.TILES[i]
-	var corner: bool = d.type in ["start", "jail", "rest", "go_jail"]
+	var corner: bool = GameData.is_corner(i)
 	var base := Color("#38301c") if corner else Color("#242a39")
 	var border := Color("#3c4254")
 	var border_w := 1
@@ -1651,7 +1651,10 @@ func _animate_tile(i: int, hovered: bool) -> void:
 		border_w = 2
 	# 归属只由顶带表示：格子的底色与边框始终是无主时的样子（不再有拥有者色边框/底色）
 	if i < _strips.size():
-		var owned := String(d.type) == "property" and owner_id >= 0 and _owner_color_map.has(owner_id)
+		# 判「有主」必须和 NO_OWNER(-100) 比：**机器人 peer 是负数**（-1 起编号），
+		# 写成 owner_id >= 0 会把机器人买的地全部漏掉（本项目踩过的经典坑）
+		var owned := String(d.type) == "property" \
+			and owner_id != GameData.NO_OWNER and _owner_color_map.has(owner_id)
 		var strip := _strips[i] as Panel
 		strip.visible = owned
 		if owned:
