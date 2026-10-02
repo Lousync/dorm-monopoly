@@ -6,6 +6,7 @@ var _ready_btn: Button
 var _add_bot_btn: Button
 var _remove_bot_btn: Button
 var _start_btn: Button
+var _settings_btn: Button
 var _addr_label: Label
 var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
@@ -71,6 +72,11 @@ func _ready() -> void:
 	_remove_bot_btn = UIKit.button("－ 机器人", 15)
 	_remove_bot_btn.pressed.connect(func() -> void: Net.host_remove_bot())
 	btn_row.add_child(_remove_bot_btn)
+	_settings_btn = UIKit.button("游戏设置", 15)
+	_settings_btn.custom_minimum_size = Vector2(0, 40)
+	_settings_btn.tooltip_text = "开局设置（仅房主可改）"
+	_settings_btn.pressed.connect(_on_open_settings)
+	btn_row.add_child(_settings_btn)
 	_start_btn = UIKit.button("开始游戏！", 17, "primary")
 	_start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_start_btn.custom_minimum_size = Vector2(0, 40)
@@ -203,6 +209,7 @@ func _refresh() -> void:
 		UIKit.restyle_button(_ready_btn, "good" if _i_am_ready() else "normal")
 	_add_bot_btn.visible = Net.is_host
 	_remove_bot_btn.visible = Net.is_host
+	_settings_btn.visible = Net.is_host
 	_start_btn.visible = Net.is_host
 	_start_btn.disabled = not (Net.players.size() >= 2 and human_ready)
 	_start_btn.tooltip_text = "" if not _start_btn.disabled else "需要所有真人都点「准备」"
@@ -233,7 +240,7 @@ func _i_am_ready() -> bool:
 			return bool(p.ready)
 	return false
 
-## 房主「开始游戏！」前的极简设置弹窗：只放「操作限时」一排 chips
+## 房主「游戏设置」弹窗：只放「操作限时」一排 chips
 func _build_settings_dialog() -> void:
 	_set_wrap = Control.new()
 	_set_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -271,22 +278,29 @@ func _build_settings_dialog() -> void:
 	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cancel.pressed.connect(func() -> void: _set_wrap.visible = false)
 	row.add_child(cancel)
-	var ok := UIKit.button("开始游戏！", 16, "primary")
+	var ok := UIKit.button("确定", 16, "primary")
 	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ok.pressed.connect(_on_settings_confirm)
+	ok.pressed.connect(_on_settings_save)
 	row.add_child(ok)
 
+## 「开始游戏！」：直接开局。设置改由旁边的「游戏设置」按钮负责
 func _on_start() -> void:
+	if not multiplayer.is_server():
+		return
+	Net.start_game()
+
+## 「游戏设置」：打开设置弹窗（每次打开都从当前配置同步一遍）
+func _on_open_settings() -> void:
 	if not multiplayer.is_server():
 		return
 	_set_tier = Net.game_settings.timeout_tier
 	UIKit.chip_select(_set_chips, _set_tier)
 	_set_wrap.visible = true
 
-func _on_settings_confirm() -> void:
+## 弹窗「确定」：只保存并关闭，不再顺带开局
+func _on_settings_save() -> void:
 	Net.game_settings.timeout_tier = _set_tier
 	_set_wrap.visible = false
-	Net.start_game()
 
 func _on_leave() -> void:
 	Net.leave()

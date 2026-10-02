@@ -15,6 +15,8 @@ const COL_ZERO := Color(0.125, 0.125, 0.16)
 const COL_MAX := Color(0.71, 0.46, 0.10)
 const COL_NUM := Color(0.92, 0.94, 0.98)
 const COL_NUM_MAX := Color(1.0, 0.95, 0.75)
+## 数字所在半径：取扇区中段（扇区外沿 rr ≈ 186），不贴外圈
+const NUM_R := 126.0
 
 var value := 0                 # 当前停住的点数
 var spinning := false
@@ -109,7 +111,9 @@ func _draw() -> void:
 		var num_col := COL_NUM_MAX if i == SEGMENTS - 1 else (COL_NUM if i % 2 == 0 else Color(0.78, 0.81, 0.88))
 		if i == 0:
 			num_col = Color(0.62, 0.65, 0.72)
-		draw_string(f, c + Vector2(-20, -(rr - 18.0)), str(i), HORIZONTAL_ALIGNMENT_CENTER, 40, 15, num_col)
+		# 变换原点已是盘心 c（见上），此处只需给相对盘心的偏移，不能再加 c。
+		# y 传的是基线而非字形中心，故 +5 让字形视觉中心落在 NUM_R 上。
+		draw_string(f, Vector2(-20, -(NUM_R + 5.0)), str(i), HORIZONTAL_ALIGNMENT_CENTER, 40, 15, num_col)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# 中心毂
 	draw_circle(c, 36.0, Color(0.30, 0.215, 0.06))

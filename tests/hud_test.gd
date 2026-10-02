@@ -143,6 +143,54 @@ func _run() -> void:
 	_check(not g.mat_bar.visible and not g.action_bar.visible, "底栏两条让位")
 	_check(not g.dock_plate.visible, "底板一并收掉（不会留一块空底板）")
 
+	print("== 战报：默认收起 + 消息在屏幕上方弹出 ==")
+	_check(not g.log_panel.visible, "战报框默认收起")
+	_check(String(g.log_toggle.text).contains("▾"),
+		"收起时按钮显示「战报 ▾」（实得「%s」）" % String(g.log_toggle.text))
+	_check(g.log_toast != null, "顶部弹出条容器已建")
+	# 前面的几次 s_state 本身就产生过战报（走的是真实链路 _log → s_log），
+	# 所以这里按「末条内容」断言，不依赖总数
+	g._push_log_toast("[color=#74d188]甲 买下了便利店，花了 ¥1,600[/color]")
+	await process_frame
+	await process_frame
+	var tn: int = g.log_toast.get_child_count()
+	var last: Control = null
+	var last_text := ""
+	if tn > 0:
+		last = g.log_toast.get_child(tn - 1)
+		var rtls: Array = last.find_children("*", "RichTextLabel", true, false)
+		if not rtls.is_empty():
+			last_text = String((rtls[0] as RichTextLabel).text)
+	_check(last_text.contains("便利店"),
+		"战报消息会在屏幕上方弹出（末条 = 「%s」）" % last_text)
+	# 宽度这条是防回归：RichTextLabel 的最小宽度默认是 0，若忘了关自动换行，
+	# 气泡会被 SHRINK_CENTER 挤成一条几乎不可见的窄条（视觉上等于没有）。
+	_check(last != null and last.size.x > 50.0,
+		"弹出条裹得住文字而非被挤成窄条（实得 %.0f）" % (0.0 if last == null else last.size.x))
+	for i in 6:
+		g._push_log_toast("刷屏消息 %d" % i)
+	await process_frame
+	_check(g.log_toast.get_child_count() == 4,
+		"连发刷屏时最多只留 4 条（实得 %d）" % g.log_toast.get_child_count())
+
+	print("== 装修房子：4 级 + 等级配色 ==")
+	_check(GameData.MAX_LEVEL == 4, "装修上限 4 级（实得 %d）" % GameData.MAX_LEVEL)
+	_check(GameData.level_color(1) == Color(0.42, 0.80, 0.45), "1 级 = 绿")
+	_check(GameData.level_color(2) == Color(0.36, 0.63, 0.94), "2 级 = 蓝")
+	_check(GameData.level_color(3) == Color(0.68, 0.48, 0.92), "3 级 = 紫")
+	_check(GameData.level_color(4) == Color(0.98, 0.80, 0.32), "4 级 = 金")
+	_check(GameData.level_name(0) == "未装修" and GameData.level_name(4) == "金",
+		"格详情卡的装修文案跟着等级走")
+	_check(GameData.level_color(9) == GameData.level_color(4), "越界等级钳到 4 级（不越界崩）")
+	_check(g.board._house_icons.size() == GameData.TILES.size(),
+		"每格一个房子图标位（实得 %d）" % g.board._house_icons.size())
+	g.board._set_house(0, 3)
+	_check(g.board._house_icons[0].level == 3, "房子图标接得住等级（实得 %d）" % g.board._house_icons[0].level)
+	_check(g.board._house_icons[0].size.x > 10.0,
+		"房子图标有实际尺寸（实得 %.0f）" % g.board._house_icons[0].size.x)
+	g.board._set_house(0, 0)
+	_check(g.board._house_icons[0].level == 0, "等级归零后房子收起（无主/未装修不上房子）")
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

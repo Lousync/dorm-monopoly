@@ -6,7 +6,17 @@ class_name GameData
 const MAX_PLAYERS := 4
 const START_MONEY := 20000
 const SALARY := 4500
-const MAX_LEVEL := 3          # 装修等级上限
+const MAX_LEVEL := 4          # 装修等级上限
+## 装修等级配色：1 绿 / 2 蓝 / 3 紫 / 4 金。
+## 棋盘上的房子图标与格详情卡的文案共用这一份，避免两处各写一套。
+const LEVEL_COLORS := [
+	Color(0, 0, 0, 0),        # 0：无房子
+	Color(0.42, 0.80, 0.45),  # 1 绿
+	Color(0.36, 0.63, 0.94),  # 2 蓝
+	Color(0.68, 0.48, 0.92),  # 3 紫
+	Color(0.98, 0.80, 0.32),  # 4 金
+]
+const LEVEL_NAMES := ["未装修", "绿", "蓝", "紫", "金"]
 static var MAX_ROUNDS := 30   # 回合上限（static 便于自动化测试覆盖）
 const JAIL_TILE := 17         # 宿委会（左下角）
 ## 「无主」哨兵值。不能用 -1：机器人 peer id 会从 -1 开始编号，会撞车。
@@ -263,6 +273,14 @@ static func _x_sequence() -> Array:
 ## 装修升级费用（每级）
 static func upgrade_cost(idx: int) -> int:
 	return int(TILES[idx].price * 0.5)
+
+## 装修等级 → 配色（越界一律钳到 0..MAX_LEVEL）
+static func level_color(l: int) -> Color:
+	return LEVEL_COLORS[clampi(l, 0, MAX_LEVEL)]
+
+## 装修等级 → 颜色名（用于格详情卡文案）
+static func level_name(l: int) -> String:
+	return LEVEL_NAMES[clampi(l, 0, MAX_LEVEL)]
 
 ## 掷骰逐步路径（每步一个格子编号，含终点）
 static func compute_path(start: int, steps: int) -> Array:

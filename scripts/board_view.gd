@@ -1,7 +1,7 @@
 extends Control
 class_name BoardView
 ## 56 格（18×12 外圈）棋盘：世界坐标渲染，滚轮缩放 / 拖拽平移 / 自动跟随行动棋子。
-## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修星级弹跳、悬停高亮、
+## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修房子弹跳、悬停高亮、
 ## 当前行动者脉冲光环、传送淡入淡出。
 
 signal tile_clicked(idx: int)
@@ -69,9 +69,9 @@ var _center_target := WORLD * 0.5
 
 var _tile_sb: Array = []       # 每格 StyleBoxFlat
 var _sub_labels: Array = []
-var _star_labels: Array = []
+var _house_icons: Array = []   # 每格一个程序绘制的「房子」图标（装修等级）
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
-var _levels: Array = []        # 上一次渲染的等级（用于星级弹跳）
+var _levels: Array = []        # 上一次渲染的等级（用于房子弹跳）
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
 var _tile_tw := {}             # 每格进行中的补间
 var _tokens := {}              # peer -> 棋子 Panel
@@ -281,20 +281,49 @@ func _build_tiles() -> void:
 		p.add_child(sub)
 		_sub_labels.append(sub)
 
-		var star := UIKit.label("", 15, UIKit.ACCENT)
-		star.position = Vector2(5, 68)
-		star.size = Vector2(TILE - GAP * 2.0 - 10, 19)
-		star.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		_world_descend(star)
-		p.add_child(star)
-		_star_labels.append(star)
+		# 装修等级：程序绘制的房子图标 + 等级配色（原先是右对齐的 ★ 星级文本）。
+		# 放右下角 y88-106 这条带：色带(3-15)/图标水印(20-56)/名称(18-62)/副标题(70-87)
+		# 都已占位，只有这条底带是空的，且副标题居中、右侧不会被压到。
+		var house := HouseIcon.new()
+		house.position = Vector2(TILE - GAP * 2.0 - 30, 86)
+		house.size = Vector2(26, 20)
+		_world_descend(house)
+		p.add_child(house)
+		_house_icons.append(house)
 
 		_owners.append(-2)
 		_levels.append(-1)
 		_soils.append(false)
 
-func _world_descend(l: Label) -> void:
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+func _world_descend(c: Control) -> void:
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+class HouseIcon extends Control:
+	## 格子上的「房子」：程序绘制（墙体 + 屋顶 + 门），颜色 = 装修等级色。
+	## 1~4 级分别是绿 / 蓝 / 紫 / 金，见 GameData.LEVEL_COLORS。
+	var level := 0
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func set_level(l: int) -> void:
+		level = l
+		queue_redraw()
+
+	func _draw() -> void:
+		if level <= 0:
+			return
+		var c: Color = GameData.level_color(level)
+		var w := size.x
+		var h := size.y
+		# 墙体
+		draw_rect(Rect2(w * 0.18, h * 0.44, w * 0.64, h * 0.54), c.darkened(0.22), true)
+		# 屋顶（三角）
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(w * 0.04, h * 0.46), Vector2(w * 0.5, h * 0.02), Vector2(w * 0.96, h * 0.46),
+		]), c)
+		# 门
+		draw_rect(Rect2(w * 0.42, h * 0.68, w * 0.16, h * 0.30), c.lightened(0.40), true)
 
 class TableDecor extends Control:
 	## 内区装饰（程序绘制，无需素材）：四角金色括号 + 同心圆 + 一圈刻度点。
@@ -1462,7 +1491,7 @@ func render(state: Dictionary) -> void:
 			_animate_tile(i, _hover == i)
 		if level != _levels[i]:
 			_levels[i] = level
-			_set_star(i, level)
+			_set_house(i, level)
 
 		var d: Dictionary = GameData.TILES[i]
 		var sub: Label = _sub_labels[i]
@@ -1571,15 +1600,16 @@ func _animate_tile(i: int, hovered: bool) -> void:
 	tw.tween_property(sb, "border_width_bottom", border_w, 0.15)
 	tw.set_parallel(false)
 
-func _set_star(i: int, level: int) -> void:
-	var star: Label = _star_labels[i]
-	star.text = "★".repeat(level)
+func _set_house(i: int, level: int) -> void:
+	var house: HouseIcon = _house_icons[i]
+	house.set_level(level)
 	if level <= 0:
 		return
-	star.pivot_offset = star.size * 0.5
-	star.scale = Vector2(1.9, 1.9)
-	var tw := star.create_tween()
-	tw.tween_property(star, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# 装修成功时弹一下（原 ★ 星级弹跳的同一套手感）
+	house.pivot_offset = house.size * 0.5
+	house.scale = Vector2(1.9, 1.9)
+	var tw := house.create_tween()
+	tw.tween_property(house, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _set_ring(peer: int) -> void:
 	if peer == _ring_peer:

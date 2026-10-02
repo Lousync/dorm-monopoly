@@ -107,6 +107,7 @@ var _pulse_t := 0.0               # 「该你掷了」按钮的呼吸相位（�
 var log_text: RichTextLabel
 var log_panel: PanelContainer
 var log_toggle: Button
+var log_toast: VBoxContainer      # 顶部居中的战报弹出条容器（战报框默认收起时的替代）
 var chat_edit: LineEdit
 var over_layer: Control
 
@@ -1036,6 +1037,7 @@ func _hide_card_later(my_id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
 	log_text.append_text(line + "\n")
+	_push_log_toast(line)
 	# 新战报：头部闪一记金色。连续刷屏时只重启这一条补间，不叠一堆。
 	if log_head == null or not is_instance_valid(log_head):
 		return
@@ -1046,6 +1048,26 @@ func s_log(line: String) -> void:
 	_log_flash_tw = create_tween()
 	_log_flash_tw.tween_method(func(t: float) -> void:
 		log_head.add_theme_color_override("font_color", from.lerp(to, t)), 0.0, 1.0, 0.55)
+
+## 战报消息在屏幕上方弹出：加一条、最多同时留 4 条、自动淡出。
+## 战报框（log_panel）默认收起，但记录照旧全写进 log_text，一条不丢。
+func _push_log_toast(line: String) -> void:
+	if log_toast == null or not is_instance_valid(log_toast):
+		return
+	var pill := TableHud.make_log_toast(line)
+	log_toast.add_child(pill)
+	pill.modulate.a = 0.0
+	# 补间挂在 pill 自身上：pill 被回收时补间随之销毁，不会去动已释放的节点
+	var tw := pill.create_tween()
+	tw.tween_property(pill, "modulate:a", 1.0, 0.18)
+	tw.tween_interval(2.4)
+	tw.tween_property(pill, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(pill.queue_free)
+	# 只留最近 4 条，避免连击刷屏堆满整屏（先 remove 再 free，否则计数不降会死循环）
+	while log_toast.get_child_count() > 4:
+		var old := log_toast.get_child(0)
+		log_toast.remove_child(old)
+		old.queue_free()
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -1335,7 +1357,7 @@ func _on_tile_clicked(idx: int) -> void:
 				owner_name = _name_by_peer(owner_id)
 			body = "%s产业 · 售价 %s\n当前租金 %s · 装修 Lv%d（%s）\n持有：%s" % [
 				GameData.GROUP_NAMES.get(String(d.group), "?"), GameData.fmt_money(int(d.price)),
-				GameData.fmt_money(GameData.rent_for(idx, tiles)), level, "★".repeat(level) if level > 0 else "未装修",
+				GameData.fmt_money(GameData.rent_for(idx, tiles)), level, GameData.level_name(level),
 				owner_name]
 		"fine":
 			accent = UIKit.DANGER

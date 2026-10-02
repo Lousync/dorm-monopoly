@@ -7,6 +7,28 @@ extends RefCounted
 ## 原代码里存在「先用后建」的引用（回调里用 vol_slider，而它几十行之后才创建），
 ## 那正是靠成员变量的晚绑定才成立的；换成局部变量会被 lambda 按值捕获成 null。
 
+## 造一条战报弹出条（屏幕上方居中）。淡入淡出与回收由 game.gd:_push_log_toast 负责。
+## 行文本已是 BBCode 安全串（game.gd:_log 把 `[` 转义成 `［`），可直接外包一层 [center]。
+static func make_log_toast(line: String) -> Control:
+	var pill := UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.88), 10, Color(0, 0, 0, 0), 0, 5)
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var m := UIKit.margins(14, 6, 5, 5)
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.add_child(m)
+	var rtl := RichTextLabel.new()
+	rtl.bbcode_enabled = true
+	rtl.fit_content = true
+	rtl.scroll_active = false
+	rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rtl.add_theme_font_size_override("normal_font_size", 15)
+	# 必须关掉自动换行：RichTextLabel 的最小宽度默认是 0，配合 SHRINK_CENTER
+	# 会被挤成一条几乎不可见的窄条。关掉后最小宽度 = 整行文本宽度，气泡才裹得住字。
+	rtl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	rtl.text = "[center]%s[/center]" % line
+	m.add_child(rtl)
+	return pill
+
 ## 建整个对局界面（原 _build_ui）
 static func build_play_ui(g: Node) -> void:
 	# 纯渐变氛围底（棋盘外露出的部分），不撒尘埃保持棋盘清晰
@@ -53,6 +75,18 @@ static func build_play_ui(g: Node) -> void:
 	g.card_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	g.card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	cm.add_child(g.card_label)
+
+	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条；
+	# 顶部左右两角已被暂停按钮与战报开关占掉，中间这块是空的。
+	g.log_toast = VBoxContainer.new()
+	g.log_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	g.log_toast.offset_left = -390.0
+	g.log_toast.offset_right = 390.0
+	g.log_toast.offset_top = 52.0
+	g.log_toast.offset_bottom = 300.0
+	g.log_toast.add_theme_constant_override("separation", 4)
+	g.log_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(g.log_toast)
 
 
 	# 底栏底板：把阶段条与操作条包成一整块（只做外观，不吃鼠标）。
@@ -218,25 +252,37 @@ static func build_play_ui(g: Node) -> void:
 	g.info_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	g.info_panel.offset_left = 14
 	g.info_panel.offset_right = 356
-	g.info_panel.offset_top = -196
+	g.info_panel.offset_top = -232
 	g.info_panel.offset_bottom = -66
 	g.info_panel.visible = false
 	g.add_child(g.info_panel)
 	g.info_sb = UIKit.stylebox(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1)
 	g.info_panel.add_theme_stylebox_override("panel", g.info_sb)
-	var im := UIKit.margins(12, 10, 10, 10)
+	var im := UIKit.margins(12, 8, 10, 10)
 	g.info_panel.add_child(im)
 	var iv := VBoxContainer.new()
 	iv.add_theme_constant_override("separation", 5)
 	im.add_child(iv)
+	# 标题行：标题占满，右侧一个关闭按钮。
+	# 此前这张卡没有任何关闭途径——只能靠展开左下角「规则说明」把它挤掉（见 game.gd:_set_rules_open）。
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+	iv.add_child(head)
 	g.info_title = UIKit.label("格子详情", 16, UIKit.ACCENT)
-	iv.add_child(g.info_title)
+	g.info_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	g.info_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(g.info_title)
+	var info_close := UIKit.button("✕", 14)
+	info_close.custom_minimum_size = Vector2(32, 26)
+	info_close.tooltip_text = "关闭"
+	info_close.pressed.connect(func() -> void: g.info_panel.visible = false)
+	head.add_child(info_close)
 	g.info_body = UIKit.label("点棋盘上任意格子看详情", 13, UIKit.TEXT)
 	g.info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	iv.add_child(g.info_body)
 
 	# 右上：战报 / 聊天（可折叠，保持桌面干净）
-	g.log_toggle = UIKit.with_icon(UIKit.button("战报 ▴", 13), "report", 17)
+	g.log_toggle = UIKit.with_icon(UIKit.button("战报 ▾", 13), "report", 17)
 	g.log_toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	g.log_toggle.offset_left = -106
 	g.log_toggle.offset_right = -12
@@ -253,7 +299,9 @@ static func build_play_ui(g: Node) -> void:
 	g.log_panel.offset_right = -12
 	g.log_panel.offset_top = 46
 	g.log_panel.offset_bottom = 780
-	g.log_panel.visible = true
+	# 默认收起：消息改在屏幕上方弹出（见 game.gd:_push_log_toast），
+	# 战报里的完整记录照旧保留，点「战报 ▾」展开看历史。
+	g.log_panel.visible = false
 	g.add_child(g.log_panel)
 	var lm := UIKit.margins(10, 10, 8, 8)
 	g.log_panel.add_child(lm)

@@ -43,7 +43,7 @@ func _ready() -> void:
 	add_child(center)
 
 	var root := VBoxContainer.new()
-	root.custom_minimum_size = Vector2(640, 0)
+	root.custom_minimum_size = Vector2(940, 0)
 	root.add_theme_constant_override("separation", 10)
 	center.add_child(root)
 
@@ -68,9 +68,20 @@ func _ready() -> void:
 
 	root.add_child(UIKit.vspace(8))
 
+	# 两栏：左＝表单（昵称 / 创建 / 加入 / 房间列表），右＝「桌面主场」棋盘意象。
+	# 原先是一根 640 宽的竖列，左右各空掉一大片；拆两栏顺手把空白填成桌游感。
+	var stage := HBoxContainer.new()
+	stage.add_theme_constant_override("separation", 20)
+	stage.alignment = BoxContainer.ALIGNMENT_CENTER
+	root.add_child(stage)
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(580, 0)
+	left.add_theme_constant_override("separation", 10)
+	stage.add_child(left)
+
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 8)
-	root.add_child(name_row)
+	left.add_child(name_row)
 	name_row.add_child(UIKit.label("昵称", 15))
 	_name_edit = UIKit.line_edit("给你的室友起个外号")
 	_name_edit.text = cfg.get_value("player", "name", "玩家")
@@ -82,7 +93,7 @@ func _ready() -> void:
 	var create_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
 	var cp := UIKit.margins()
 	create_panel.add_child(cp)
-	root.add_child(create_panel)
+	left.add_child(create_panel)
 
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 8)
@@ -109,7 +120,7 @@ func _ready() -> void:
 	var join_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
 	var jp := UIKit.margins()
 	join_panel.add_child(jp)
-	root.add_child(join_panel)
+	left.add_child(join_panel)
 
 	var jv := VBoxContainer.new()
 	jv.add_theme_constant_override("separation", 8)
@@ -141,7 +152,28 @@ func _ready() -> void:
 	rooms_panel.custom_minimum_size = Vector2(0, 120)
 	var rp := UIKit.margins()
 	rooms_panel.add_child(rp)
-	root.add_child(rooms_panel)
+	left.add_child(rooms_panel)
+
+	# 右侧「桌面主场」：程序绘制的俯视棋盘意象（环岛格 + 四色棋子 + 骰子）
+	var right := VBoxContainer.new()
+	right.custom_minimum_size = Vector2(330, 0)
+	right.add_theme_constant_override("separation", 8)
+	stage.add_child(right)
+	var decor_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 10)
+	right.add_child(decor_panel)
+	var dp := UIKit.margins(12, 12, 12, 12)
+	decor_panel.add_child(dp)
+	var dv := VBoxContainer.new()
+	dv.add_theme_constant_override("separation", 8)
+	dp.add_child(dv)
+	var decor := MenuBoardDecor.new()
+	decor.custom_minimum_size = Vector2(300, 262)
+	decor.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	dv.add_child(decor)
+	var decor_cap := UIKit.label("56 格环形棋盘 · 1~4 人联机 · 房主即权威", 12, UIKit.TEXT_DIM)
+	decor_cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	decor_cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dv.add_child(decor_cap)
 
 	var rv := VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 6)
@@ -358,3 +390,77 @@ func _take_shot(path: String) -> void:
 	get_viewport().get_texture().get_image().save_png(path)
 	print("SHOT SAVED ", path)
 	get_tree().quit(0)
+
+class MenuBoardDecor extends Control:
+	## 主菜单的「桌面主场」：程序绘制的俯视棋盘意象 —— 环岛格带 + 四色棋子 + 两粒骰子。
+	## 纯绘制、零素材依赖；配色复用对局内的骰子黄与玩家色。
+	const PALETTE := [
+		Color(0.42, 0.80, 0.45), Color(0.36, 0.63, 0.94), Color(0.68, 0.48, 0.92),
+		Color(0.98, 0.80, 0.32), Color(0.93, 0.42, 0.52), Color(0.42, 0.78, 0.82),
+	]
+	const PIPS := {
+		1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8],
+	}
+	const PER_SIDE := 7        # 每边的格数（含角）
+	const PAD := 10.0
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		if w < 60.0 or h < 60.0:
+			return
+		var board := Rect2(PAD, PAD, w - PAD * 2.0, h - PAD * 2.0)
+		# 桌面：深色毡面 + 金色描边
+		draw_rect(board, Color(0.105, 0.125, 0.175), true)
+		draw_rect(board, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.45), false, 2.0)
+		# 环岛格带
+		var rects := ring_rects(board)
+		for i in rects.size():
+			var r: Rect2 = rects[i]
+			var c: Color = PALETTE[i % PALETTE.size()]
+			draw_rect(r, c.darkened(0.50), true)
+			draw_rect(Rect2(r.position.x + 1.0, r.position.y + 1.0, r.size.x - 2.0, r.size.y * 0.22), c, true)
+		# 四名玩家的棋子坐在环上（直接用对局里的 Kenney 棋子贴图，和游戏里同一批）
+		var seats := [0, 7, 14, 21]
+		for k in seats.size():
+			var r: Rect2 = rects[int(seats[k]) % rects.size()]
+			var tex: Texture2D = UIKit.piece_tex(k)
+			if tex == null:
+				continue
+			var mid := r.position + r.size * 0.5
+			var ps := r.size.x * 0.98
+			var dst := Rect2(mid - Vector2(ps, ps) * 0.5 + Vector2(0, r.size.y * 0.12), Vector2(ps, ps))
+			draw_circle(mid + Vector2(0, r.size.y * 0.30), ps * 0.34, Color(0, 0, 0, 0.38))
+			draw_texture_rect(tex, dst, false)
+		# 中央：两粒骰子
+		draw_die(Vector2(w * 0.5 - 32.0, h * 0.5 - 10.0), 30.0, 3)
+		draw_die(Vector2(w * 0.5 + 4.0, h * 0.5 + 6.0), 26.0, 5)
+
+	## 环岛格：上边连同左右上角一次画满，其余三边依次接续，不重复画角
+	func ring_rects(b: Rect2) -> Array:
+		var out: Array = []
+		var n := PER_SIDE
+		var tw := b.size.x / float(n + 1)
+		var th := b.size.y / float(n + 1)
+		for i in n + 1:                                              # 上边（含左上、右上角）
+			out.append(Rect2(b.position.x + tw * i, b.position.y, tw, th))
+		for j in range(1, n + 1):                                    # 右边（含右下角）
+			out.append(Rect2(b.position.x + b.size.x - tw, b.position.y + th * j, tw, th))
+		for k in range(1, n + 1):                                    # 下边（向左接续到左下角）
+			out.append(Rect2(b.position.x + b.size.x - tw * float(k + 1), b.position.y + b.size.y - th, tw, th))
+		for m in range(1, n):                                        # 左边（两角已画）
+			out.append(Rect2(b.position.x, b.position.y + b.size.y - th * float(m + 1), tw, th))
+		return out
+
+	func draw_die(pos: Vector2, s: float, value: int) -> void:
+		var body := Rect2(pos, Vector2(s, s))
+		draw_rect(body, Color(0.95, 0.95, 0.93), true)
+		draw_rect(body, Color(0.70, 0.70, 0.68), false, 1.5)
+		var u := s / 3.0
+		for idx in PIPS.get(value, []):
+			var cx := pos.x + u * (float(int(idx) % 3) + 0.5)
+			var cy := pos.y + u * (float(int(idx) / 3) + 0.5)
+			draw_circle(Vector2(cx, cy), u * 0.14, Color(0.16, 0.17, 0.22))
