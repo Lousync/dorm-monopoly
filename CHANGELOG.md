@@ -7,25 +7,40 @@
 
 ## [Unreleased]
 
-一次文档结构重整：`docs/` 迁到 `doc/` 并按「游戏设计 / 工程开发」分家，仓库约定收口到 `AGENTS.md`。
+一次文档重整：`docs/` 迁到 `doc/` 并按「游戏设计 / 工程开发」分家，文档入口与仓库约定收口到
+`AGENTS.md`，玩法文档改写为纯游戏设计文档。
 
 ### 变更
 
 - **文档目录重整**：`docs/` → `doc/`，下设 `game-design/`（玩法设计、道具图鉴、设计决策留痕、
   交互原型 `.html`/`.drawio`）与 `development/`（架构总览、联机协议、上手指南、开发台账）。
-- **约定收口到 `AGENTS.md`**：原 `docs/README.md` 的总索引（角色导航、仓库根文档表、维护规则）
-  并入其中，代码风格、硬性约定、提交规范也一并去重——`AGENTS.md` 成为这些约定的单一来源，
-  `doc/development/上手指南.md` 只保留环境、跑通与新增内容 checklist。
+- **玩法文档改写为游戏设计文档**：`doc/game-design/` 全篇去掉开发进度痕迹（批次、已落地、
+  补丁、实现要点）与代码符号，统一骨架为「规则 / 数值 / 表现 / 边界与例外 / 设计待定」。
+  进度与待办归拢到 `doc/development/开发台账.md`，决策理由与拍板日期归 `设计决策留痕.md`，
+  代码引用只保留「数值表在 `scripts/*.gd`」这类指针。
+- **`道具系统.md` 收缩为纯道具机制**：科技 / 畸变 / 黑市 / 小卖部四节改指各自文档，
+  拍板台账迁入 `设计决策留痕.md`，实现进度迁入开发台账。
+- **约定与索引收口到 `AGENTS.md`**：`docs/README.md`、`game-design/README.md`、
+  `development/plans/README.md` 三份索引与约定并入其中，代码风格、硬性约定、提交规范一并去重——
+  `AGENTS.md` 成为单一来源，`上手指南.md` 只保留环境、跑通与新增内容 checklist。
+- **玩法术语表独立成篇** `doc/game-design/术语表.md`（合并原 README 与 `道具系统.md` 里重复的两份）。
 - **实施计划换家**：`.claude/plans/` → `doc/development/plans/`；约定该版本开发完并合入 `main` 后
   连同计划文件一起删除（不留档，历史看 `git log`）。
 - 全仓 `docs/...` 引用（脚本注释、测试、`README.md`、`CHANGELOG.md`）同步改为新路径；
   另修掉 `README.md` 中一处失效的 `docs/道具系统设计.md` 旧路径。
 
+### 修复
+
+- **更正 `开发台账.md` 的错误记载**：原写「破产已清道具（v0.0.2 修）」与代码不符——
+  `_pay()` 破产时只清现金与地产、从不碰道具，唯一道具会永久锁死在出局玩家身上。
+  已改回「实现缺口」并单列。
+
 ### 移除
 
 - `docs/想法备忘.md` 下线：未排期待办并入 `doc/development/开发台账.md` §三，决策留痕
   （拍板理由、备选方案、日期）另存为 `doc/game-design/设计决策留痕.md`。
-- `docs/README.md`、`.claude/plans/` 删除（内容已迁移，非净损失）。
+- `docs/README.md`、`doc/game-design/README.md`、`doc/development/plans/README.md`、
+  `.claude/plans/` 删除（内容已迁移，非净损失）。
 
 ## [0.1.0] — 2026-10-02
 
