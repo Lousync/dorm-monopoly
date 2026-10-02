@@ -205,14 +205,15 @@ func _refresh() -> void:
 		var a := Net.split_addresses()
 		var port := Net.host_port if Net.host_port > 0 else Net.PORT
 		var lines: Array[String] = []
+		# IPv6 必须带方括号，否则朋友粘贴后解析不出端口（见 fix/v0.0.2）
 		for ip in a.lan4:
-			lines.append("局域网 IPv4：%s:%d" % [ip, port])
+			lines.append("局域网 IPv4：%s" % NetAddr.format_endpoint(ip, port))
 		for ip in a.lan6:
-			lines.append("内网 IPv6：%s:%d" % [ip, port])
+			lines.append("内网 IPv6：%s" % NetAddr.format_endpoint(ip, port))
 		for ip in a.pub6:
-			lines.append("全球 IPv6（跨网直连）：%s:%d" % [ip, port])
+			lines.append("全球 IPv6（跨网直连）：%s" % NetAddr.format_endpoint(ip, port))
 		for ip in a.pub4:
-			lines.append("公网 IPv4：%s:%d" % [ip, port])
+			lines.append("公网 IPv4：%s" % NetAddr.format_endpoint(ip, port))
 		if lines.is_empty():
 			lines.append("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）")
 		_addr_label.text = "\n".join(lines)
@@ -235,6 +236,9 @@ func _on_leave() -> void:
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
+	# 与对局场景同理：房主暂停中掉线时，新菜单会继承 paused 而完全无响应
+	get_tree().paused = false
+	Engine.time_scale = 1.0
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _send_chat() -> void:

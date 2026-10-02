@@ -234,9 +234,8 @@ func _save_cfg() -> void:
 	cfg.save("user://settings.cfg")
 
 func _apply_name() -> void:
-	Net.my_name = _name_edit.text.strip_edges()
-	if Net.my_name.is_empty():
-		Net.my_name = "玩家"
+	# 统一走清洗：昵称里的 | 会让整个房间搜不到，换行会伪造战报行（见 fix/v0.0.2）
+	Net.my_name = Net.sanitize_name(_name_edit.text)
 
 func _parse_port(e: LineEdit) -> int:
 	var p := int(e.text.strip_edges())
@@ -288,6 +287,9 @@ func _on_kicked(reason: String) -> void:
 func _refresh_rooms() -> void:
 	if _rooms_box == null:
 		return
+	# 加入失败/被踢会让 Net._reset_peer 停掉发现器，而它只在 _ready 启动过一次；
+	# 这里每次刷新兜底重启，否则房间列表会永久空白（见 fix/v0.0.2）。
+	Net.ensure_disco_client()
 	# 内容没变化就不重建，避免按钮闪烁/点不中
 	var sig := ""
 	var now := Time.get_ticks_msec()
@@ -297,7 +299,7 @@ func _refresh_rooms() -> void:
 		if now - int(r.time) > 6000:
 			continue
 		alive.append(ip)
-		sig += "%s|%s|%s|%s\n" % [ip, r.name, r.count, r.get("state", "lobby")]
+		sig += "%s|%s|%s|%s|%d\n" % [ip, r.name, r.count, r.get("state", "lobby"), int(r.get("port", 0))]
 	if sig == _rooms_sig:
 		return
 	_rooms_sig = sig
@@ -317,7 +319,9 @@ func _refresh_rooms() -> void:
 				unjoinable = true
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
-		var info := UIKit.label("%s（%s%s）— %s" % [r2.name, r2.count, tag, ip], 14,
+		var rport := int(r2.get("port", 0))
+		var addr_txt: String = String(ip) if rport <= 0 else "%s:%d" % [ip, rport]
+		var info := UIKit.label("%s（%s%s）— %s" % [r2.name, r2.count, tag, addr_txt], 14,
 			UIKit.TEXT_DIM if unjoinable else UIKit.TEXT)
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -333,7 +337,13 @@ func _refresh_rooms() -> void:
 func _on_room_join(ip: String) -> void:
 	_apply_name()
 	_save_cfg()
-	_join_to(ip, _parse_port(_join_port_edit))
+	# 优先用房主广播里的端口：房主可能用非默认端口，加入方的端口框未必对得上
+	#（此前一律用本地端口框 → 非默认端口永远连不上，见 fix/v0.0.2）
+	var r: Dictionary = Net.found_rooms.get(ip, {})
+	var port := int(r.get("port", 0))
+	if port <= 0:
+		port = _parse_port(_join_port_edit)
+	_join_to(ip, port)
 
 ## 截图（用于界面检查）：--shot=保存路径
 func _take_shot(path: String) -> void:

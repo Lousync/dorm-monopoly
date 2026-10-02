@@ -27,6 +27,34 @@ if not defined GODOT (
     exit /b 1
 )
 
+rem ---- class-cache freshness check ----
+rem .godot/ is gitignored and Godot's game mode never rebuilds the global script
+rem class cache (global_script_class_cache.cfg). A pull that adds a class_name
+rem script therefore leaves the cache stale: autoloads fail to parse and every
+rem menu button touching them goes dead. Import only when the cache is missing
+rem or does not know some class declared under scripts/ (where the game's
+rem class_name scripts live; tests/ is not loaded by the game).
+set "CACHE=%PROJECT_DIR%\.godot\global_script_class_cache.cfg"
+set "STALE=1"
+if exist "%CACHE%" (
+    set "STALE=0"
+    pushd "%PROJECT_DIR%"
+    for %%F in (scripts\*.gd) do (
+        for /f "tokens=2" %%C in ('findstr /b /c:"class_name " "%%F" 2^>nul') do (
+            findstr /c:"%%C" ".godot\global_script_class_cache.cfg" >nul 2>nul || set "STALE=1"
+        )
+    )
+    popd
+)
+
+if "%STALE%"=="1" (
+    echo [setup] importing resources ^(first run, or code changed since last import^)...
+    "%GODOT%" --headless --import --path "%PROJECT_DIR%"
+    if errorlevel 1 (
+        echo [WARN] import returned an error; launching anyway.
+    )
+)
+
 echo Launching game with: %GODOT%
 start "" "%GODOT%" --path "%PROJECT_DIR%"
 exit /b 0
@@ -39,6 +67,7 @@ where godot >nul 2>nul && (
 )
 rem 2) known install locations
 for %%P in (
+    "D:\Godot\Godot_v4.6.2-stable_win64.exe"
     "D:\develp\Godot\Godot_v4.6.2-stable_win64.exe"
     "%ProgramFiles%\Godot\Godot.exe"
     "%ProgramFiles(x86)%\Godot\Godot.exe"
@@ -49,6 +78,7 @@ for %%P in (
 if defined GODOT exit /b 0
 rem 3) last resort: search likely folders for any Godot_v*.exe
 for %%D in (
+    "D:\Godot"
     "D:\develp\Godot"
     "%LOCALAPPDATA%\Programs"
     "%ProgramFiles%"

@@ -17,15 +17,30 @@
 ## 三、常用命令（PowerShell）
 
 ```powershell
-$G = "D:\develp\Godot\Godot_v4.6.2-stable_win64_console.exe"
+# Godot 路径因机器而异：start.bat 会按已知目录自动查找；下面这行改成你机器上的实际路径。
+# 注意要用 _console.exe（带控制台，才有 stdout；不带的那个看不到 print 输出）。
+$G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
+& $G --version                                            # 先确认路径可用
 & $G --path .                                             # 运行（或双击 start.bat）
 & $G --headless --path . --script tests/load_all.gd       # 脚本静态加载检查（改完先跑）
 & $G --headless --path . --script tests/rules_test.gd     # 规则单测
 & $G --headless --path . --script tests/item_test.gd      # 道具单测
 & $G --headless --path . --script tests/blackshop_test.gd # 黑市单测
 & $G --headless --path . --script tests/shop_test.gd      # 小卖部单测
+& $G --headless --path . --script tests/casino_test.gd    # 赌场单测
+& $G --headless --path . --script tests/regression_test.gd # 回归单测（审查发现的问题逐条钉住）
+& $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
+& $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
+& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（名册/底栏/客户端视角）
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
+
+> **联机回归必须放在同一条命令里跑**（`host ... &` → 等它就绪 → `client ...`），
+> 不要分两次工具调用：代理沙箱会把不同调用隔离到各自的网络命名空间，两个进程
+> 谁也看不见谁。表现是 client 报 `NET: connection_failed`、host 那边
+> `AUTOTEST LOBBY humans=1` 直接补机器人开打——**看着像联机坏了，其实是调用方式的问题**。
+> CI（`.github/workflows/ci.yml`）在同一个 `run:` 块里跑，不受影响。
+> 本机实测：同一次调用内 host 报 `humans=2`、两侧 `OK round=3`，全程无 SCRIPT ERROR。
 
 ## 四、硬性约定
 
@@ -52,4 +67,4 @@ $G = "D:\develp\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 ## 七、当前状态
 
-见 `docs/dev/开发台账.md`。主要待办：破产未清道具回唯一池、数值专场回填、开局科技/畸变/开局设置面板、发现三选一大卡、赌场弹层迁桌面、对局布局返工。
+见 `docs/dev/开发台账.md`。主要待办：数值专场回填、开局科技/畸变/开局设置面板、发现三选一大卡、赌场弹层迁桌面、对局布局返工。

@@ -47,6 +47,38 @@ static func icon(name: String) -> Texture2D:
 static func piece_tex(color_idx: int) -> Texture2D:
 	return tex("res://assets/pieces/piece%s_05.png" % PIECE_COLORS[clampi(color_idx, 0, 3)])
 
+## HUD 图标（assets/icons/ui_*.png，Twemoji CC-BY 4.0）：规则/战报/骰子/设置…
+static func ui_icon(name: String) -> Texture2D:
+	return tex("res://assets/icons/ui_%s.png" % name)
+
+## 给按钮挂 HUD 图标。图标缺货时静默跳过——按钮本身照常可用，
+## 不会因为少一张 png 就少一个按钮（素材未导入时 UIKit.tex 会直接读文件兜底）。
+static func with_icon(b: Button, icon_name: String, side := 18) -> Button:
+	var t := ui_icon(icon_name)
+	if t != null:
+		b.icon = t
+		b.expand_icon = false
+		b.add_theme_constant_override("icon_max_width", side)
+		b.add_theme_constant_override("h_separation", 6)
+	return b
+
+## 图标 + 标题（面板小标题用）；图标缺货时只剩文字，不会报错
+static func icon_title(icon_name: String, text: String, size := 16, color: Color = ACCENT) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 7)
+	var t := ui_icon(icon_name)
+	if t != null:
+		var tr := TextureRect.new()
+		tr.texture = t
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.custom_minimum_size = Vector2(size + 4, size + 4)
+		tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(tr)
+	row.add_child(label(text, size, color))
+	return row
+
 # ---------------- 基础控件 ----------------
 
 static func label(text: String, size: int = 15, color: Color = TEXT) -> Label:
@@ -169,6 +201,27 @@ static func card_stylebox(bg: Color, corner := 10, border := Color(0, 0, 0, 0), 
 	var sh := Color(0, 0, 0, 0.4) if shadow > 0 else Color(0, 0, 0, 0)
 	var tp := _rounded_tex(corner, top, bottom, border, border_w, glow, 5.0, sh, Vector2(0, 2))
 	return _sbt(tp)
+
+## 透明面板：外观交给外层（底栏底板等），自身只负责容纳子控件与定尺寸。
+## content margin 与 card_stylebox 的默认值一致，替换上去不会改变原有尺寸。
+static func ghost_panel(corner := 12) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := stylebox(Color(0, 0, 0, 0), corner)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	p.add_theme_stylebox_override("panel", sb)
+	return p
+
+## 底栏底板：把并排的几条 HUD 条包成一整块（深色玻璃 + 金边 + 投影）。
+## 只做外观，不吃鼠标——交互仍由里面的条自己负责。
+static func dock_plate() -> Panel:
+	var p := Panel.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel", card_stylebox(Color(0.047, 0.052, 0.082, 0.94), 16,
+		Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.32), 1, 12))
+	return p
 
 ## 事件/公告卡配色：按 kind 返回 [边框色, 底色]（牌堆抽卡与顶部公告共用）
 static func card_palette(kind: String) -> Array:

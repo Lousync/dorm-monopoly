@@ -11,7 +11,7 @@
 
 ## 怎么运行
 
-1. 安装 [Godot 4.3 及以上版本](https://godotengine.org/download)（本项目用 4.6.2 开发）。
+1. 安装 [Godot 4.6.2](https://godotengine.org/download)（`project.godot` 声明 `features=4.6`，低版本编辑器打不开；本项目用 4.6.2 开发）。
 2. 双击仓库根目录的 `start.bat` 启动（会自动找 Godot；也可 `start.bat "Godot.exe路径"` 指定）；
    或者用 Godot 编辑器打开本目录的 `project.godot` 按 **F5** 运行；
    或者用命令行：`Godot.exe --path "本目录"`。
@@ -81,11 +81,17 @@
   轮到谁行动镜头自动跟到谁（仅在自己视角时），行动棋子带脉冲光环。
 - 桌面顶部空区是**两座常驻设施**：左「小卖部」（货架三格 + 品质图例，道具系统开张后在此购买）、
   右「宿舍赌场」（常驻显示奖池与开局状态，开局玩法仍在弹层进行）；全部随桌面旋转。
-- 战报 / 聊天常驻右上角悬浮框（头部带当前轮次，点「战报」可收起）。
-- **回合分两阶段**：① 转轮盘 → ② 使用道具；阶段条与「转动转盘」大按钮贴在自己牌垫下沿，
-  进入道具阶段时道具牌位会点亮提示。
-- 左上角「☰ 选项」：暂停菜单（设置音量/静音、退出二次确认）；
+- 右上角悬浮栏分两段：**牌位名册**（按身家倒序，名次 / 棋子色 / 名字 / 身家 / 现金 /
+  地产数与道具数；轮到谁行动谁的左侧竖条点亮、名字变金，自己那行标「（我）」）
+  + **战报与聊天**（头部带当前轮次，新战报会让头部闪一记金色，点「战报」可收起）。
+- **回合分两阶段**：① 转轮盘 → ② 使用道具；阶段条与「转动转盘」大按钮拼成**屏幕底部一条
+  固定操作坞**，外面包一层共用底板（看起来是一整块，不再跟着座位卡跑，转视角时按钮位置恒定），
+  进入道具阶段时道具牌位会点亮提示；**「该你掷了」时按钮轻微呼吸**提示可操作。
+- 左上角「⏸ 暂停」：暂停菜单（设置音量/静音、退出二次确认）；
   **联机时只有房主打开菜单才会全场暂停**，其他人只看到「房主已暂停」遮罩。
+- 左下角「📖 规则说明」：点开**原位向上展开**分页规则面板（基础操作 / 回合与行动 /
+  棋盘与地产 / 经济与胜负 / 道具与事件），文案与 `docs/gameplay/*` 同步、
+  数值直接引用代码常量；展开期间格详情卡让位，再点「收起」回到按钮态。
 - 转盘：减速旋转 + 指针滴答声 + 落点格高亮，转到 12 满值有音效奖励。
 - 金额变动：座位卡数字滚动、涨绿跌红闪烁，棋盘上同步飘字，
   账单在棋子与金额栏之间**飞进飞出**（Monopoly GO 式收支反馈）。
@@ -95,7 +101,10 @@
   强制点数、结束当前等待、0.25~8 倍时间倍率与格子编号显示；注入类仅房主可用。
 - **点棋盘格子弹出详情卡**：产业组 / 售价 / 当前租金 / 装修等级 / 持有者，边框随产业组变色；
   缴费、进账格显示金额，其余格子显示玩法说明。
-- 事件/缴费/查寝：游戏内风格弹卡（不同颜色），查寝、破产伴随震屏与音效。
+- 事件/缴费/查寝：游戏内风格弹卡（不同颜色）。抽卡是**卡背从牌堆抽出 → 绕竖轴翻面亮出
+  卡面（换面瞬间反光）→ 停留浮动 → 收回**的四段动画，查寝、破产伴随震屏与音效。
+- 画面质感：棋子围出的内区铺**深绿绒面嵌板**（描金边 + 四角金括号 + 同心圆刻度 + 中心暖光），
+  格子带投影与加宽色带，桌面木纹 + 暗角；HUD 入场错落淡入，按钮挂 Twemoji 图标。
 - 购买/装修询问：游戏内弹窗 + 倒计时条，超时自动放弃。
 - 全部音效为运行时程序合成（`fx.gd`），无外部素材。
 
@@ -104,16 +113,22 @@
 ```
 project.godot          引擎配置（GL Compatibility 渲染，窗口 1280×800）
 theme.tres             全局主题（SystemFont 中文字体：雅黑/苹方/思源黑）
-start.bat              Windows 双击启动（自动查找 Godot）
-export_presets.cfg     Windows 导出预设（模板指向 D:\develp\Godot\export_templates）
-build/                 打包产物（DormMonopoly.exe 单文件 + zip 分发包）
+start.bat              Windows 双击启动（自动查找 Godot；首次或脚本类名变动时自动 --import）
+export_presets.cfg     Windows 导出预设（custom_template 指向本机 4.6.2 模板目录，换机器需改）
+build/                 打包产物（DormMonopoly.exe 单文件 + zip 分发包）；已 gitignore
+shots/                 截图产物（--shot= 的输出目录，不是源码）；已 gitignore
 scenes/                main_menu / lobby / game 三个场景（根节点，UI 代码构建）
 scripts/
-  net.gd               自动加载：ENet 联机、大厅数据、UDP 广播搜索房间
-  net_addr.gd          纯函数地址工具（可单测）
+  net.gd               自动加载：ENet 联机、大厅名册与聊天、UDP 广播搜索房间
+  net_addr.gd          纯函数地址工具：地址解析/展示、发现报文解析（可单测）
   game_data.gd         56 格棋盘生成、事件卡、租金/路径/几何等纯规则（可单测）
-  game.gd              对局场景：房主权威回合状态机 + 全员状态同步 + HUD
-  board_view.gd        大棋盘渲染、缩放/平移/跟随镜头、棋子动画
+  item_data.gd         道具数据总表（品质/体力/冷却/唯一性；台账见 docs/道具系统设计.md）
+  item_card.gd         道具卡面控件（图鉴 / 牌位 / 货架共用）
+  game.gd              对局场景：房主权威回合状态机 + 全员状态同步 + HUD + 小游戏
+  table_hud.gd         对局 HUD 与暂停菜单族的控件构建（构建器，写回 game 同名成员）
+  rules_text.gd        规则说明面板的全部文案（数值引用常量，不写死）
+  rules_panel.gd       左下角「规则说明」控件构建（收起是按钮，点开原位展开分页）
+  board_view.gd        大棋盘渲染、缩放/平移/跟随镜头、围桌四座视角、棋子动画
   wheel_view.gd        棋盘中央 13 格转轮（0~12 点数来源）
   fx.gd                自动加载：程序合成音效、场景淡入淡出、震屏、飘字、彩带
   main_menu.gd         主菜单（昵称、创建/加入、房间搜索）
@@ -121,10 +136,19 @@ scripts/
   ui_kit.gd            控件样式小工具（程序化九宫格渐变纹理 / 氛围背景 / 素材加载）
 assets/                开源素材（授权与来源见 assets/CREDITS.md）
   pieces/              Kenney 桌游棋子（CC0）：玩家棋子与头像
-  icons/               Twemoji 主题图标（CC-BY 4.0）：格子水印图标
+  icons/               Twemoji 图标（CC-BY 4.0）：格子水印图标（主题名）+ HUD 图标（ui_*）
   textures/            ambientCG 木纹（CC0）：棋盘桌面
+docs/                  设计文档与原型（.md 为活文档，.html/.drawio 为定稿原型）
 tests/
-  rules_test.gd        规则单元测试：godot --headless --script tests/rules_test.gd
+  rules_test.gd        规则单测（棋盘 / 租金 / 路径 / 地址解析 / 坐标闭合）
+  item_test.gd         道具单测（蛋蛋节 / 亡牌飞行员coco / 焦土与香皂）
+  blackshop_test.gd    黑市单测（地皮计价 / 挨打小黑屋 / bot / 机会卡池过滤）
+  shop_test.gd         小卖部全链路单测（操作条买按钮 / 桌面货架可点即买）
+  regression_test.gd   回归单测（把审查发现的问题逐条钉住）
+  pause_menu_test.gd   暂停菜单回归（走真实 GUI 输入链路：点开后菜单必须点得动）
+  rules_panel_test.gd  规则说明面板回归（文案非空 / 数值跟着常量 / 展开收起换页）
+  hud_test.gd          HUD 回归：右栏名册 / 底栏底板 / 客户端视角（走 s_state 那条路）
+  load_all.gd          脚本静态加载检查（自动扫描 scripts/，能抓出解析错误）
   net_probe.gd 等      ENet 双栈连通性探针
 ```
 
@@ -135,6 +159,8 @@ tests/
 - **玩法台账**：`docs/gameplay/README.md`
   （棋盘与地产 / 事件卡 / 经济与胜负 / 小卖部 / 黑市 / 赌场-炸弹猫 / 道具系统 / 道具图鉴 / 开局科技 / 畸变）
 - **想法池**：`docs/想法备忘.md`
+- **版本变更**：`CHANGELOG.md`（每版改了什么、修了哪些缺陷）
+- **代理约定**：`AGENTS.md`（面向 AI 编码代理的仓库约定；人类开发者按需参考）
 
 > 新同学请从 `docs/dev/上手指南.md` 开始，再读 `架构总览.md` 与 `联机协议.md`。
 
@@ -147,9 +173,10 @@ tests/
 
 ## 打包（导出独立 exe）
 
-前提：`D:\develp\Godot\export_templates\4.6.2.stable\` 里有对应版本的导出模板
-（从 godotengine.org 下载 `Godot_v4.6.2-stable_export_templates.tpz`，把里面
-`templates/` 的内容解压到该目录）。然后：
+前提：本机有对应版本的导出模板。`export_presets.cfg` 的 `custom_template/*`
+写死了开发机上的绝对路径（换机器必须改，或清空该字段让 Godot 回退到
+「编辑器设置 → 导出 → 模板目录」）。模板从 godotengine.org 下载
+`Godot_v4.6.2-stable_export_templates.tpz`，把里面 `templates/` 解压到目标目录。然后：
 
 ```bash
 Godot_console.exe --headless --path . --export-release "Windows Desktop"
@@ -171,6 +198,18 @@ Godot_console.exe --headless --path . --script tests/load_all.gd
 Godot_console.exe --headless --path . --script tests/item_test.gd
 # 黑市单测（地皮计价/逐块交地/挨打小黑屋/bot/机会卡过滤）
 Godot_console.exe --headless --path . --script tests/blackshop_test.gd
+# 小卖部全链路单测（进店买不了：操作条按钮 + 桌面货架可点即买）
+Godot_console.exe --headless --path . --script tests/shop_test.gd
+# 赌场小游戏规则单测（炸弹猫牌堆构成 / 卡面名 / 胜负判定）
+Godot_console.exe --headless --path . --script tests/casino_test.gd
+# 回归单测（被踢后重置残留/回合计数/客户端道具栏/小卖部购买按钮/镜头等）
+Godot_console.exe --headless --path . --script tests/regression_test.gd
+# 暂停菜单回归（走真实 GUI 输入链路：点开暂停后菜单按钮必须点得动）
+Godot_console.exe --headless --path . --script tests/pause_menu_test.gd
+# 规则说明面板回归（文案非空/无漏网占位符/数值跟着常量/展开收起换页）
+Godot_console.exe --headless --path . --script tests/rules_panel_test.gd
+# HUD 回归（右栏名册/底栏底板/客户端视角——s_state 是 call_local，房客两端同一函数）
+Godot_console.exe --headless --path . --script tests/hud_test.gd
 # 双实例联机回归（房主+客户端自动打 3 轮，含机器人、购买决策、断线接管）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 &
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3

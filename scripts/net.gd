@@ -17,7 +17,7 @@ const PORT := 7777
 const DISCO_PORT := 7778
 const MAX_PLAYERS := 4
 const DISCO_REQ := "DMONO:DISCO?"
-const DISCO_PROTO := "DMONO2"   # v2：INFO 增加房间状态字段
+const DISCO_PROTO := "DMONO3"   # v3：INFO 增加房主端口字段（v2 客户端会忽略本房）
 const HELLO_RETRIES := 20
 
 var my_name := "玩家"
@@ -89,6 +89,12 @@ func _reset_peer() -> void:
 	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	# 残留清理：players 不清空会让 s_lobby 的「首次进房」判定
+	#（had := players.size() > 0）永久失效——被踢或连接失败后再加入任何房间，
+	# lobby_joined 都不再触发，界面永久卡在「正在连接…」，_hello_retry 也会
+	# 因 players 非空提前返回而不报错。只能重启程序（见 fix/v0.0.2）。
+	players = []
+	chat_history = []
 
 # ---------------- 大厅（房主权威） ----------------
 
@@ -268,23 +274,41 @@ func _hello_retry() -> void:
 		_reset_peer()
 		join_failed.emit("已连上房间但始终无响应，请让房主重新创建房间")
 
+## 昵称清洗：剔除 `|`（会破坏发现报文的字段分隔、让整个房间搜不到）、
+## 换行/制表等控制字符（会伪造聊天与战报行），限长 12，空则回落「玩家」。
+static func sanitize_name(raw: String) -> String:
+	var out := ""
+	for ch in String(raw).strip_edges():
+		if ch == "|" or ch.unicode_at(0) < 32:
+			continue
+		out += ch
+	out = out.substr(0, 12)
+	return out if not out.is_empty() else "玩家"
+
+## 收到 hello 时的判定：返回 "" 收下，否则返回踢人理由。
+## 顺序很关键：必须先判「已在房间里」。反过来的话，满员房间里一个已入座玩家
+## 重发的 hello 会被当成新人踢掉；_hello_retry 每 0.5 秒重发一次，
+## 只要首轮 s_lobby 稍慢（房主卡顿/弱网）就必然触发（见 fix/v0.0.2）。
+func hello_verdict(sender: int) -> String:
+	for p in players:
+		if int(p.peer) == sender:
+			return ""          # 重发的 hello，已在房间里
+	if in_game:
+		return "对局已开始，无法中途加入"
+	if players.size() >= MAX_PLAYERS:
+		return "房间已满（最多 4 人）"
+	return ""
+
 @rpc("any_peer", "call_remote", "reliable")
 func c_hello(pname: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	if in_game:
-		_kick_peer(sender, "对局已开始，无法中途加入")
+	var verdict := hello_verdict(sender)
+	if verdict != "":
+		_kick_peer(sender, verdict)
 		return
-	if players.size() >= MAX_PLAYERS:
-		_kick_peer(sender, "房间已满（最多 4 人）")
-		return
-	for p in players:
-		if int(p.peer) == sender:
-			return  # 重发的 hello，已在房间里
-	var clean := String(pname).strip_edges().substr(0, 12)
-	if clean.is_empty():
-		clean = "玩家"
+	var clean := sanitize_name(String(pname))
 	print("NET: host accepted hello from peer ", sender, " name=", clean)
 	_add_player(sender, clean, false)
 	_add_chat_line("%s 加入了房间" % clean)
@@ -327,6 +351,15 @@ func start_disco_client() -> void:
 			targets.append("%s.%s.%s.255" % [parts[0], parts[1], parts[2]])
 	_disco_targets = targets
 
+## 房间列表轮询的兜底重启：_reset_peer（加入失败/被踢）会 stop_disco 把它停掉，
+## 而 start_disco_client 只在主菜单 _ready 调一次，于是失败一次后房间列表永久空白。
+func ensure_disco_client() -> void:
+	if _disco_client != null:
+		return
+	if not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
+		return  # 正处联机会话中（房主或已加入），不另起搜索
+	start_disco_client()
+
 func stop_disco_client() -> void:
 	if _disco_client != null:
 		_disco_client.close()
@@ -362,7 +395,9 @@ func _poll_disco(delta: float) -> void:
 			var ip := _disco_host.get_packet_ip()
 			var port := _disco_host.get_packet_port()
 			if pkt.get_string_from_utf8() == DISCO_REQ:
-				var info := "%s|INFO|%s|%d/%d|%s" % [DISCO_PROTO, room_name, players.size(), MAX_PLAYERS, _disco_state()]
+				var my_port := host_port if host_port > 0 else PORT
+				var info := "%s|INFO|%s|%d/%d|%s|%d" % [DISCO_PROTO, room_name,
+					players.size(), MAX_PLAYERS, _disco_state(), my_port]
 				_disco_host.set_dest_address(ip, port)
 				_disco_host.put_packet(info.to_utf8_buffer())
 	if _disco_client != null:
@@ -375,11 +410,11 @@ func _poll_disco(delta: float) -> void:
 		while _disco_client.get_available_packet_count() > 0:
 			var pkt2 := _disco_client.get_packet()
 			var ip2 := _disco_client.get_packet_ip()
-			var parts := pkt2.get_string_from_utf8().split("|")
-			if parts.size() == 5 and parts[0] == DISCO_PROTO and parts[1] == "INFO":
+			var ri := NetAddr.parse_room_info(pkt2.get_string_from_utf8())
+			if not ri.is_empty() and String(ri.proto) == DISCO_PROTO:
 				found_rooms[ip2] = {
-					"name": parts[2], "count": parts[3], "state": parts[4],
-					"time": Time.get_ticks_msec(),
+					"name": ri.name, "count": ri.count, "state": ri.state,
+					"port": int(ri.port), "time": Time.get_ticks_msec(),
 				}
 		# 清理过期房间
 		var now := Time.get_ticks_msec()

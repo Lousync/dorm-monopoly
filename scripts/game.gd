@@ -16,11 +16,14 @@ var card_label: Label
 var status_label: Label
 var roll_btn: Button
 var mat_bar: PanelContainer
+var action_bar: PanelContainer   # 操作条：转动转盘 / 道具按钮（与视角无关，见 fix/v0.0.2）
 var ph1_lab: Label
 var ph2_lab: Label
 var log_head: Label
 var opt_btn: Button
 var menu_layer: Control
+var menu_dim: ColorRect
+var menu_wraps := {}          # 面板名 -> 外层全屏容器（切换时连外层一起切，见 _menu_show）
 var menu_panel: PanelContainer
 var menu_state: Label
 var settings_panel: PanelContainer
@@ -53,7 +56,7 @@ var target_btn_box: VBoxContainer
 var shop_bar: PanelContainer
 var shop_btns: Array = []
 var shop_refresh_btn: Button
-var _shop_sig := ""
+var _shop_btn_sig := ""     # 小卖部「买」按钮刷新签名（避免每帧重建）
 var card_gallery: Control
 var card_gallery_flag := false
 
@@ -73,26 +76,23 @@ var black_picker: Control
 var black_picker_box: VBoxContainer
 var _black_sig := ""
 
-# ---------------- 开发者模式 ----------------
-var dev_enabled := false
-var dev_panel: PanelContainer
-var dev_state_l: Label
-var dev_cam_l: Label
-var dev_players: HBoxContainer
-var dev_pbtns: Array = []
-var dev_sel_peer := 0
-var dev_item_opt: OptionButton
-var dev_item_desc: Label
-var dev_stam_s: HSlider
-var dev_tp_spin: SpinBox
-var dev_roll_spin: SpinBox
-var dev_ts_l: Label
-var dev_inject_box: VBoxContainer
-var menu_probe := false
+# ---------------- 格详情卡 / 规则说明（左下角，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
 var info_title: Label
 var info_body: Label
 var info_sb: StyleBoxFlat
+var rules_btn: Button            # 收起态：左下角「📖 规则说明」按钮
+var rules_panel: PanelContainer  # 展开态：分页规则面板（原位向上展开）
+var rules_body: RichTextLabel
+var rules_tabs := {}             # 分页 key -> 按钮
+var rules_open := false
+var rules_tab := ""
+var dock_plate: Panel            # 底栏底板（把阶段条与操作条包成一整块，见 _place_dock）
+var roster_box: VBoxContainer      # 右栏名册（固定 4 行，见 _refresh_rail）
+var roster_rows: Array = []
+var _rail_sig := ""
+var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
+var _pulse_t := 0.0               # 「该你掷了」按钮的呼吸相位（持续动画走 _process）
 var log_text: RichTextLabel
 var log_panel: PanelContainer
 var log_toggle: Button
@@ -106,8 +106,11 @@ var my_peer := 1
 # ---------------- 房主权威 ----------------
 var hp: Array = []          # 玩家 [{peer,name,color,bot,money,pos,alive,skip}]
 var htiles: Array = []      # 地块 [{owner,level}]
+var casino: Node             # 赌桌小游戏（scripts/casino.gd，见 _ready）
+var dev: Node                # 开发者面板 / 截图工具（scripts/dev_tools.gd，见 _ready）
 var turn_i := 0
 var round_no := 1
+var _turns_taken := 0       # 本圈已行动人数：走满一圈（存活者各行动一次）记一轮
 var running := false
 var winner := -1
 var _awaiting_roll := 0
@@ -129,23 +132,6 @@ var _chat_shown := 0
 var _prompt_dlg: Control
 var _prompt_tw: Tween
 var _prompt_token := -1
-
-# ---------------- 赌桌小游戏（炸弹猫） ----------------
-const CASINO_STAKE := 800
-var _casino_epoch := 0
-var _casino_action := {"epoch": -1, "action": ""}
-var _casino_layer: Control
-var _casino_log: RichTextLabel
-var _casino_pot_label: Label
-var _casino_deck_label: Label
-var _casino_status: Label
-var _casino_rows := {}          # peer -> {root, sb, defuse_l, fish_l}
-var _casino_btn_peek: Button
-var _casino_btn_top: Button
-var _casino_btn_bottom: Button
-var _casino_my_epoch := -1
-var _casino_table_pot := 0        # 桌面赌场设施显示中的奖池
-var _casino_order: Array = []
 
 # ---------------- 自动化测试 ----------------
 var at_mode := ""
@@ -171,7 +157,20 @@ func _ready() -> void:
 	if at_mode != "":
 		Engine.time_scale = 3.0
 
+	# 开发者面板/截图工具独立成子节点。必须先于 _build_ui：面板是 _build_ui 建的
+	dev = preload("res://scripts/dev_tools.gd").new()
+	dev.name = "DevTools"
+	dev.g = self
+	add_child(dev)
+
 	_build_ui()
+
+	# 赌桌小游戏独立成子节点（board 已就绪；两端都在这里建同名节点，
+	# 保证 s_casino_* / c_casino_action 的 RPC 路径一致）
+	casino = preload("res://scripts/casino.gd").new()
+	casino.name = "CasinoTable"
+	casino.g = self
+	add_child(casino)
 
 	if multiplayer.is_server():
 		_host_setup()
@@ -188,22 +187,23 @@ func _ready() -> void:
 	if cfg.load("user://settings.cfg") == OK:
 		audio_volume = clampf(float(cfg.get_value("audio", "volume", 1.0)), 0.0, 1.0)
 		audio_mute = bool(cfg.get_value("audio", "mute", false))
-		dev_enabled = bool(cfg.get_value("dev", "enabled", false)) or dev_flag
+		dev.enabled = bool(cfg.get_value("dev", "enabled", false)) or dev_flag
 	if at_mode != "" and not dev_flag:
-		dev_enabled = false
+		dev.enabled = false
 	_apply_audio()
-	_apply_dev_mode()
+	_hud_intro()
+	dev.apply_mode()
 	for a2 in OS.get_cmdline_user_args():
 		if a2 == "--menu-probe":
-			menu_probe = true
-	if menu_probe:
-		_menu_probe_run()
+			dev.menu_probe = true
+	if dev.menu_probe:
+		dev.menu_probe_run()
 	for a3 in OS.get_cmdline_user_args():
 		if a3 == "--card-gallery":
 			card_gallery_flag = true
 	if card_gallery_flag:
-		dev_enabled = true
-		_apply_dev_mode()
+		dev.enabled = true
+		dev.apply_mode()
 		_open_card_gallery()
 
 func _exit_tree() -> void:
@@ -213,390 +213,28 @@ func _exit_tree() -> void:
 # ================= 界面构建 =================
 
 func _build_ui() -> void:
-	# 纯渐变氛围底（棋盘外露出的部分），不撒尘埃保持棋盘清晰
-	add_child(UIKit.decor_bg(false))
-
-	# 棋盘视口：整屏（四座在桌面世界四周，镜头避开顶栏与底部行动条）
-	board = BoardView.new()
-	board.set_anchors_preset(Control.PRESET_FULL_RECT)
-	board.overlay_top = 46
-	board.overlay_bottom = 70
-	add_child(board)
-	board.tile_clicked.connect(_on_tile_clicked)
-	board.seat_clicked.connect(func(peer: int) -> void:
-		if peer == my_peer:
-			board.go_home_follow(my_peer)  # 点自己座位卡：回自己视角并恢复镜头跟随
-	)
-	# 点桌面小卖部货架卡 = 购买（仅当前行动者有效，房主校验）
-	board.shop_slot_clicked.connect(func(slot: int) -> void:
-		if int(st.get("shop_peer", 0)) != my_peer:
-			return
-		if multiplayer.is_server():
-			_shop_buy(my_peer, slot)
-		else:
-			c_shop_buy.rpc(slot)
-	)
-
-	# 悬浮事件卡（非牌堆提示，屏幕空间不随视角旋转）
-	var hud := Control.new()
-	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(hud)
-
-	card_panel = UIKit.panel_container(Color(0.16, 0.14, 0.08, 0.94), 12, UIKit.ACCENT, 2, 10)
-	card_panel.position = Vector2(12, 54)
-	card_panel.size = Vector2(430, 96)
-	card_panel.visible = false
-	card_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(card_panel)
-	var cm := UIKit.margins(16, 14, 8, 8)
-	cm.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_panel.add_child(cm)
-	card_label = UIKit.label("", 15, UIKit.ACCENT)
-	card_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	card_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	cm.add_child(card_label)
-
-
-	# 牌垫阶段条（屏幕层，锚定自己座位卡下沿）：状态 / 回合两阶段 / 转动转盘
-	mat_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
-	mat_bar.custom_minimum_size = Vector2(440, 46)
-	mat_bar.visible = false
-	add_child(mat_bar)
-	var mbm := UIKit.margins(12, 10, 7, 7)
-	mat_bar.add_child(mbm)
-	var mrow := HBoxContainer.new()
-	mrow.add_theme_constant_override("separation", 8)
-	mbm.add_child(mrow)
-	status_label = UIKit.label("", 13, UIKit.TEXT)
-	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	mrow.add_child(status_label)
-	var ph1 := UIKit.pill("① 转轮盘", UIKit.TEXT_DIM, 11)
-	mrow.add_child(ph1)
-	var ph_arrow := UIKit.label("→", 12, UIKit.TEXT_DIM)
-	mrow.add_child(ph_arrow)
-	var ph2 := UIKit.pill("② 使用道具", UIKit.TEXT_DIM, 11)
-	mrow.add_child(ph2)
-	ph1_lab = _pill_label(ph1)
-	ph2_lab = _pill_label(ph2)
-	ph1_pill = ph1
-	ph2_pill = ph2
-	ph_arrow_l = ph_arrow
-	roll_btn = UIKit.button("转动转盘", 15, "normal")
-	roll_btn.disabled = true
-	mrow.add_child(roll_btn)
-	item_btn_box = HBoxContainer.new()
-	item_btn_box.add_theme_constant_override("separation", 6)
-	item_btn_box.visible = false
-	mrow.add_child(item_btn_box)
-
-	# 小卖部操作条（行动者的屏幕层按钮；货架公开显示在桌面设施上）
-	shop_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
-	shop_bar.custom_minimum_size = Vector2(380, 0)
-	shop_bar.visible = false
-	add_child(shop_bar)
-	var sbm := UIKit.margins(12, 10, 10, 10)
-	shop_bar.add_child(sbm)
-	var sv := VBoxContainer.new()
-	sv.add_theme_constant_override("separation", 6)
-	sbm.add_child(sv)
-	sv.add_child(UIKit.label("小卖部 · 选一件买下", 13, UIKit.ACCENT))
-	shop_btns = []
-	for i in 3:
-		var b := UIKit.button("买", 12)
-		b.visible = false
-		var si := i
-		b.pressed.connect(func() -> void:
-			if multiplayer.is_server():
-				_shop_buy(my_peer, si)
-			else:
-				c_shop_buy.rpc(si)
-		)
-		sv.add_child(b)
-		shop_btns.append(b)
-	var srow := HBoxContainer.new()
-	srow.add_theme_constant_override("separation", 6)
-	sv.add_child(srow)
-	shop_refresh_btn = UIKit.button("刷新", 12)
-	shop_refresh_btn.pressed.connect(func() -> void:
-		if multiplayer.is_server():
-			_shop_refresh(my_peer)
-		else:
-			c_shop_refresh.rpc()
-	)
-	srow.add_child(shop_refresh_btn)
-	var leave_btn := UIKit.button("离开", 12)
-	leave_btn.pressed.connect(func() -> void:
-		if multiplayer.is_server():
-			_shop_leave(my_peer)
-		else:
-			c_shop_leave.rpc()
-	)
-	srow.add_child(leave_btn)
-
-	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
-	black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,
-		Color(0.96, 0.55, 0.3, 0.6), 1, 8)
-	black_bar.custom_minimum_size = Vector2(360, 0)
-	black_bar.visible = false
-	add_child(black_bar)
-	var bbm := UIKit.margins(12, 10, 10, 10)
-	black_bar.add_child(bbm)
-	var bbv := VBoxContainer.new()
-	bbv.add_theme_constant_override("separation", 6)
-	bbm.add_child(bbv)
-	bbv.add_child(UIKit.label("黑市 · 只收地皮（紫1 / 橙2 / 刷新1 / 出口1）", 12, Color(0.98, 0.7, 0.4)))
-	black_btns = []
-	for i in 3:
-		var bb := UIKit.button("买", 12)
-		var bi := i
-		bb.pressed.connect(func() -> void:
-			if multiplayer.is_server():
-				_black_buy(my_peer, bi)
-			else:
-				c_black_buy.rpc(bi)
-		)
-		bbv.add_child(bb)
-		black_btns.append(bb)
-	var brow := HBoxContainer.new()
-	brow.add_theme_constant_override("separation", 6)
-	bbv.add_child(brow)
-	var bref := UIKit.button("刷新（1地）", 12)
-	bref.pressed.connect(func() -> void:
-		if multiplayer.is_server():
-			_black_refresh(my_peer)
-		else:
-			c_black_refresh.rpc()
-	)
-	brow.add_child(bref)
-	var bleave := UIKit.button("出口（1地）", 12)
-	bleave.pressed.connect(func() -> void:
-		if multiplayer.is_server():
-			_black_leave(my_peer)
-		else:
-			c_black_leave.rpc()
-	)
-	brow.add_child(bleave)
-	black_hint = UIKit.label("", 11, Color(0.95, 0.5, 0.45))
-	black_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	black_hint.custom_minimum_size = Vector2(336, 0)
-	bbv.add_child(black_hint)
-
-	# 左上角：选项按钮（打开暂停菜单族，见 _build_menu_ui）
-	opt_btn = UIKit.button("☰ 选项", 13)
-	opt_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	opt_btn.offset_left = 12
-	opt_btn.offset_top = 10
-	opt_btn.offset_right = 92
-	opt_btn.offset_bottom = 38
-	opt_btn.pressed.connect(_open_menu)
-	add_child(opt_btn)
-	_build_menu_ui()
-
-	# 开发者模式面板（左侧；注入区仅房主可见）
-	dev_panel = UIKit.panel_container(Color(0.05, 0.06, 0.1, 0.94), 12, Color(0.45, 0.85, 0.55, 0.5), 1)
-	dev_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	dev_panel.offset_left = 8
-	dev_panel.offset_top = 56
-	dev_panel.offset_right = 276
-	dev_panel.offset_bottom = 720
-	dev_panel.visible = false
-	add_child(dev_panel)
-	var dm := UIKit.margins(10, 12, 10, 10)
-	dev_panel.add_child(dm)
-	var dv := VBoxContainer.new()
-	dv.add_theme_constant_override("separation", 6)
-	dm.add_child(dv)
-	dv.add_child(UIKit.label("开发者模式（F1 显隐）", 13, Color(0.5, 0.9, 0.5)))
-	dev_state_l = UIKit.label("", 11, UIKit.TEXT)
-	dv.add_child(dev_state_l)
-	dev_cam_l = UIKit.label("", 11, UIKit.TEXT_DIM)
-	dv.add_child(dev_cam_l)
-	dv.add_child(UIKit.label("玩家（点选后注入）", 11, UIKit.TEXT_DIM))
-	dev_players = HBoxContainer.new()
-	dev_players.add_theme_constant_override("separation", 4)
-	dv.add_child(dev_players)
-	dev_inject_box = VBoxContainer.new()
-	dev_inject_box.add_theme_constant_override("separation", 5)
-	dv.add_child(dev_inject_box)
-	var mrow1 := HBoxContainer.new()
-	mrow1.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(mrow1)
-	for amt in [["+1千", 1000], ["+1万", 10000], ["-1千", -1000]]:
-		var ab := UIKit.button(String(amt[0]), 11)
-		var av: int = amt[1]
-		ab.pressed.connect(func() -> void: _dev_add_money(av))
-		mrow1.add_child(ab)
-	var irow := HBoxContainer.new()
-	irow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(irow)
-	dev_item_opt = OptionButton.new()
-	for id in ItemData.ITEMS:
-		dev_item_opt.add_item(id)
-	dev_item_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	dev_item_opt.item_selected.connect(func(_i: int) -> void: _dev_item_desc_update())
-	irow.add_child(dev_item_opt)
-	dev_item_desc = UIKit.label("", 10, UIKit.TEXT_DIM)
-	dev_item_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	dev_item_desc.custom_minimum_size = Vector2(0, 26)
-	dev_inject_box.add_child(dev_item_desc)
-	var irow2 := HBoxContainer.new()
-	irow2.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(irow2)
-	var give_btn := UIKit.button("发放", 11)
-	give_btn.pressed.connect(_dev_grant_item)
-	irow2.add_child(give_btn)
-	var use_btn := UIKit.button("强制使用", 11)
-	use_btn.pressed.connect(_dev_force_use)
-	irow2.add_child(use_btn)
-	var clear_bag := UIKit.button("清背包", 11)
-	clear_bag.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.items = []))
-	irow2.add_child(clear_bag)
-	var dsrow := HBoxContainer.new()
-	dsrow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(dsrow)
-	dsrow.add_child(UIKit.label("体力", 11, UIKit.TEXT_DIM))
-	dev_stam_s = HSlider.new()
-	dev_stam_s.min_value = 0
-	dev_stam_s.max_value = 5
-	dev_stam_s.step = 1
-	dev_stam_s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	dev_stam_s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	dsrow.add_child(dev_stam_s)
-	var cds_btn := UIKit.button("清冷却", 11)
-	cds_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void:
-		for it in p.get("items", []):
-			it.cd = 0
-	))
-	dsrow.add_child(cds_btn)
-	var trow := HBoxContainer.new()
-	trow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(trow)
-	trow.add_child(UIKit.label("传送格", 11, UIKit.TEXT_DIM))
-	dev_tp_spin = SpinBox.new()
-	dev_tp_spin.min_value = 0
-	dev_tp_spin.max_value = int(GameData.TILES.size()) - 1
-	dev_tp_spin.custom_minimum_size = Vector2(64, 0)
-	trow.add_child(dev_tp_spin)
-	var tp_btn := UIKit.button("传送", 11)
-	tp_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.pos = int(dev_tp_spin.value)))
-	trow.add_child(tp_btn)
-	trow.add_child(UIKit.label("点数", 11, UIKit.TEXT_DIM))
-	dev_roll_spin = SpinBox.new()
-	dev_roll_spin.min_value = 0
-	dev_roll_spin.max_value = 12
-	dev_roll_spin.custom_minimum_size = Vector2(56, 0)
-	trow.add_child(dev_roll_spin)
-	var fr_btn := UIKit.button("强制", 11)
-	fr_btn.pressed.connect(func() -> void: _dev_player_edit(func(p: Dictionary) -> void: p.cheat_roll = int(dev_roll_spin.value)))
-	trow.add_child(fr_btn)
-	var erow := HBoxContainer.new()
-	erow.add_theme_constant_override("separation", 4)
-	dev_inject_box.add_child(erow)
-	var end_btn := UIKit.button("结束当前等待", 11)
-	end_btn.pressed.connect(_dev_end_wait)
-	erow.add_child(end_btn)
-	erow.add_child(UIKit.label("时间倍率", 11, UIKit.TEXT_DIM))
-	for ts in [[".25", 0.25], ["1", 1.0], ["4", 4.0], ["8", 8.0]]:
-		var tb := UIKit.button(String(ts[0]), 11)
-		var tv: float = ts[1]
-		tb.pressed.connect(func() -> void:
-			Engine.time_scale = tv
-			_dev_ts_update()
-		)
-		erow.add_child(tb)
-	dev_ts_l = UIKit.label("当前 1x", 11, UIKit.TEXT_DIM)
-	erow.add_child(dev_ts_l)
-	var gal_btn := UIKit.button("道具卡图鉴", 11)
-	gal_btn.pressed.connect(_open_card_gallery)
-	dev_inject_box.add_child(gal_btn)
-	if not multiplayer.is_server():
-		dev_inject_box.visible = false  # 客户端：仅观察
-
-	# 左下角：格子详情卡（点击棋盘格子弹出相关信息）
-	info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
-	info_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	info_panel.offset_left = 14
-	info_panel.offset_right = 356
-	info_panel.offset_top = -196
-	info_panel.offset_bottom = -66
-	add_child(info_panel)
-	info_sb = UIKit.stylebox(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1)
-	info_panel.add_theme_stylebox_override("panel", info_sb)
-	var im := UIKit.margins(12, 10, 10, 10)
-	info_panel.add_child(im)
-	var iv := VBoxContainer.new()
-	iv.add_theme_constant_override("separation", 5)
-	im.add_child(iv)
-	info_title = UIKit.label("操作提示", 16, UIKit.ACCENT)
-	iv.add_child(info_title)
-	info_body = UIKit.label("滚轮缩放 · 拖拽平移 · 点格子看详情\n点对手座位卡或按 Tab 转到 TA 视角 · 空格回自己", 13, UIKit.TEXT)
-	info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	iv.add_child(info_body)
-
-	# 右上：战报 / 聊天（可折叠，保持桌面干净）
-	log_toggle = UIKit.button("战报 ▴", 13)
-	log_toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	log_toggle.offset_left = -106
-	log_toggle.offset_right = -12
-	log_toggle.offset_top = 12
-	log_toggle.offset_bottom = 40
-	log_toggle.pressed.connect(_toggle_log)
-	add_child(log_toggle)
-
-	log_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
-	log_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	log_panel.offset_left = -352
-	log_panel.offset_right = -12
-	log_panel.offset_top = 46
-	log_panel.offset_bottom = 780
-	log_panel.visible = true
-	add_child(log_panel)
-	var lm := UIKit.margins(10, 10, 8, 8)
-	log_panel.add_child(lm)
-	var lv := VBoxContainer.new()
-	lv.add_theme_constant_override("separation", 4)
-	lm.add_child(lv)
-	log_head = UIKit.label("第 1/30 轮 · 战报", 13, UIKit.TEXT_DIM)
-	lv.add_child(log_head)
-	log_text = RichTextLabel.new()
-	log_text.scroll_following = true
-	log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	log_text.add_theme_font_size_override("normal_font_size", 13)
-	lv.add_child(log_text)
-	var chat_row := HBoxContainer.new()
-	chat_row.add_theme_constant_override("separation", 6)
-	lv.add_child(chat_row)
-	chat_edit = UIKit.line_edit("聊天…（回车发送）")
-	chat_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	chat_edit.text_submitted.connect(func(_t: String) -> void:
-		Net.send_chat(chat_edit.text)
-		chat_edit.clear()
-	)
-	chat_row.add_child(chat_edit)
-	var send_btn := UIKit.button("发送", 14)
-	send_btn.pressed.connect(func() -> void:
-		Net.send_chat(chat_edit.text)
-		chat_edit.clear()
-	)
-	chat_row.add_child(send_btn)
-
-# ================= 房主：初始化与主循环 =================
+	# 控件构建已搬到 TableHud（原先 500 行都在这里）；控件直接写回本类同名成员
+	TableHud.build_play_ui(self)
+	# 左下角「📖 规则说明」：收起是按钮、点开原位向上展开分页规则（文案见 RulesText）
+	RulesPanel.build(self)
+func _build_hp() -> Array:
+	var out := []
+	var live := multiplayer.get_peers()
+	for p in Net.players:
+		var peer := int(p.peer)
+		var gone: bool = peer != 1 and not live.has(peer)
+		out.append({
+			"peer": peer, "name": String(p.name), "color": int(p.color),
+			"bot": bool(p.bot) or gone, "money": GameData.START_MONEY,
+			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
+			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
+			"hot_chain": 0,
+		})
+	return out
 
 func _host_setup() -> void:
 	running = true
-	hp = []
-	for p in Net.players:
-		hp.append({
-			"peer": int(p.peer), "name": String(p.name), "color": int(p.color),
-			"bot": bool(p.bot), "money": GameData.START_MONEY,
-			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
-			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
-		})
+	hp = _build_hp()
 	htiles = []
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
@@ -633,6 +271,8 @@ func _run_game() -> void:
 		var p: Dictionary = hp[turn_i]
 		if not bool(p.alive):
 			_advance_turn()
+			if _rounds_exhausted():
+				return
 			continue
 		if int(p.skip) > 0:
 			p.skip = int(p.skip) - 1
@@ -642,22 +282,58 @@ func _run_game() -> void:
 			if not running:
 				return
 			_advance_turn()
+			if _rounds_exhausted():
+				return
 			continue
 		await _play_turn(p)
 		if not running:
 			return
 		_advance_turn()
-		if turn_i == 0:
-			round_no += 1
-			if round_no > GameData.MAX_ROUNDS:
-				_end_by_wealth()
-				return
+		if _rounds_exhausted():
+			return
+
+## 轮数用尽 → 按身家结算。回合计数已由 _advance_turn 按圈维护（见 fix/v0.0.2）。
+func _rounds_exhausted() -> bool:
+	if round_no <= GameData.MAX_ROUNDS:
+		return false
+	_end_by_wealth()
+	return true
 
 func _advance_turn() -> void:
 	for k in hp.size():
 		turn_i = (turn_i + 1) % hp.size()
 		if bool(hp[turn_i].alive):
 			break
+	# 每走完一圈（所有存活者各行动一次）记一轮。
+	# 不能用 turn_i == 0 判定：0 号位是房主，他破产或被查寝跳过时那一圈永远
+	# 轮不到 0，round_no 会彻底冻结 → MAX_ROUNDS 结算不可达、对局可能永不结束，
+	# _autotest_watch 也会挂死（见 fix/v0.0.2）。
+	_turns_taken += 1
+	var alive := _alive_count()
+	if alive > 0 and _turns_taken >= alive:
+		_turns_taken = 0
+		round_no += 1
+
+func _alive_count() -> int:
+	var n := 0
+	for p in hp:
+		if bool(p.alive):
+			n += 1
+	return n
+
+## 记录一次转盘结果对「连续三次 10+ 被查寝」的累计，返回是否应触发查寝。
+## 计数必须存在玩家表里跨回合保留：原来 chain 是 _play_turn 的局部变量，每回合
+## 清零，而重转的 while 只在 12 点时才循环，于是这条开局就广播的规则
+##（「连续三次 10+ 会被查寝」）实际只在同回合连开三个 12 时才触发（见 fix/v0.0.2）。
+func _note_roll_hot(p: Dictionary, roll: int) -> bool:
+	if roll < 10:
+		p.hot_chain = 0
+		return false
+	p.hot_chain = int(p.get("hot_chain", 0)) + 1
+	if int(p.hot_chain) < 3:
+		return false
+	p.hot_chain = 0
+	return true
 
 func _play_turn(p: Dictionary) -> void:
 	if at_mode != "":
@@ -667,7 +343,6 @@ func _play_turn(p: Dictionary) -> void:
 		_log("%s 在小黑屋反省，本回合强制保守托管" % p.name, "#c9a6ff")
 	_item_turn_start(p)  # 休眠=保守托管：被动与自动结算照常（§1）
 	_broadcast_state()
-	var chain := 0
 	while running:
 		_awaiting_roll = int(p.peer)
 		_roll_epoch += 1
@@ -694,17 +369,13 @@ func _play_turn(p: Dictionary) -> void:
 		if not running:
 			return
 
-		if roll >= 10:
-			chain += 1
-			if chain >= 3:
-				_log("%s 连续三次转到 10 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
-				s_card.rpc("%s 连续三次 10+，被查寝带走！" % p.name, "jail")
-				_send_to_jail(p)
-				_broadcast_state()
-				await _wait(1.0)
-				return
-		else:
-			chain = 0
+		if _note_roll_hot(p, roll):
+			_log("%s 连续三次转到 10 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
+			s_card.rpc("%s 连续三次 10+，被查寝带走！" % p.name, "jail")
+			_send_to_jail(p)
+			_broadcast_state()
+			await _wait(1.0)
+			return
 
 		var path := GameData.compute_path(int(p.pos), roll)
 		if path.is_empty():
@@ -804,7 +475,7 @@ func _resolve_tile(p: Dictionary) -> void:
 			await _run_shop(p, idx)
 		"casino":
 			_log("%s 踏进【宿舍赌场】，全员开赌！" % p.name, "#f0a0c0")
-			await _run_casino(p)
+			await casino.run(p)
 		"go_jail":
 			_log("%s 撞上查寝！被押送到宿委会" % p.name, "#c9a6ff")
 			s_card.rpc("【查寝！】%s 被押送到宿委会" % p.name, "jail")
@@ -1000,6 +671,14 @@ func _player_by_peer(peer: int) -> Dictionary:
 			return p
 	return {}
 
+## 取「已同步」的玩家字典（st.players）。房主与客户端都可用；
+## 客户端没有 hp，凡是要在客户端渲染的玩家信息都必须走这里（见 fix/v0.0.2）。
+func _state_player(peer: int) -> Dictionary:
+	for p in st.get("players", []):
+		if int(p.peer) == peer:
+			return p
+	return {}
+
 func _check_end() -> void:
 	var alive := hp.filter(func(x) -> bool: return bool(x.alive))
 	if alive.size() <= 1:
@@ -1091,6 +770,11 @@ func _answer(token: int, yes: bool) -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func c_decision(token: int, yes: bool) -> void:
 	if not multiplayer.is_server():
+		return
+	# 只有被询问的本人能回答：token 是自增小整数、状态又是全员广播的，
+	# 少了这道校验任何客户端都能替别人决定买地/装修（见 fix/v0.0.2）。
+	# 房主自己是走 _answer 直接赋值，不经过这里。
+	if multiplayer.get_remote_sender_id() != _awaiting_prompt:
 		return
 	_decision = {"token": token, "yes": yes}
 
@@ -1193,7 +877,7 @@ func s_state(state: Dictionary) -> void:
 			get_tree().quit(0)
 	elif _shot_path != "" and not _shot_taken and (int(state.round) >= 2 or at_mode == ""):
 		_shot_taken = true
-		_take_shot(_shot_path)
+		dev.take_shot(_shot_path)
 	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
 		print("AUTOTEST CLIENT OK round=", state.round)
 		get_tree().quit(0)
@@ -1235,7 +919,6 @@ func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 	card_panel.pivot_offset = card_panel.size * 0.5
 	card_panel.scale = Vector2(0.7, 0.7)
 	card_panel.modulate.a = 0.0
-	Fx.play("card", -4.0)
 	_card_tween_id += 1
 	var my_id := _card_tween_id
 	var tw := create_tween()
@@ -1265,6 +948,16 @@ func _hide_card_later(my_id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_log(line: String) -> void:
 	log_text.append_text(line + "\n")
+	# 新战报：头部闪一记金色。连续刷屏时只重启这一条补间，不叠一堆。
+	if log_head == null or not is_instance_valid(log_head):
+		return
+	if _log_flash_tw != null and _log_flash_tw.is_valid():
+		_log_flash_tw.kill()
+	var from := UIKit.ACCENT
+	var to := UIKit.TEXT_DIM
+	_log_flash_tw = create_tween()
+	_log_flash_tw.tween_method(func(t: float) -> void:
+		log_head.add_theme_color_override("font_color", from.lerp(to, t)), 0.0, 1.0, 0.55)
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -1289,6 +982,7 @@ func _refresh_players() -> void:
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
 	var est_map := {}
+	var prop_map := {}   # peer -> 地产块数（右栏名册复用，避免再算一遍）
 	for p in st.get("players", []):
 		var peer := int(p.peer)
 		seen[peer] = true
@@ -1369,6 +1063,7 @@ func _refresh_players() -> void:
 				worth += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
 		est_map[peer] = "地产 ×%d · 身家 %s" % [prop_n, GameData.fmt_money(worth)]
 		worth_map[peer] = worth
+		prop_map[peer] = prop_n
 
 		if not bool(p.alive):
 			row.money_l.text = "已出局"
@@ -1380,9 +1075,77 @@ func _refresh_players() -> void:
 	for i in order.size():
 		board.update_seat_stats(int(order[i]), i + 1, String(est_map[int(order[i])]))
 
+	# 右栏名册复用上面刚算出的身家/排名（公式只留这一处，避免两套算法悄悄跑偏）
+	var standing: Array = []
+	for i in order.size():
+		var rp := int(order[i])
+		var rpl := _state_player(rp)
+		standing.append({
+			"peer": rp, "rank": i + 1, "worth": int(worth_map[rp]),
+			"name": String(rpl.get("name", "?")), "color": int(rpl.get("color", 0)),
+			"money": int(rpl.get("money", 0)), "alive": bool(rpl.get("alive", true)),
+			"props": int(prop_map.get(rp, 0)), "items": (rpl.get("items", []) as Array).size(),
+		})
+	_refresh_rail(standing)
+
 	for peer in _player_rows.keys():
 		if not seen.has(peer):
 			_player_rows.erase(peer)  # 座位是桌面世界的一部分，保留在桌上（掉线/出局只改显示）
+
+## 右栏名册：按身家倒序填 4 行（名次 / 棋子色 / 名字 / 现金 / 地产·道具），
+## 轮到谁行动就把谁的左侧竖条点亮，自己那行标出来。
+## 带签名缓存：状态没变就不重建（每次广播都会走这里）。
+func _refresh_rail(standing: Array) -> void:
+	if roster_rows.is_empty():
+		return
+	var sig := "%d|" % int(st.get("turn", -1))
+	for e in standing:
+		sig += "%d,%d,%d,%d,%d,%d;" % [int(e.peer), int(e.rank), int(e.money),
+			int(e.props), int(e.items), 1 if bool(e.alive) else 0]
+	sig += "|%s" % String(st.get("phase", ""))
+	if sig == _rail_sig:
+		return
+	_rail_sig = sig
+
+	var turn_peer := int(st.get("turn", -1))
+	for i in roster_rows.size():
+		var row: Dictionary = roster_rows[i]
+		var root: Control = row.root
+		if i >= standing.size():
+			root.visible = false
+			continue
+		var e: Dictionary = standing[i]
+		var peer := int(e.peer)
+		root.visible = true
+		var chip_slot: Control = row.chip_slot
+		if row.chip == null or not is_instance_valid(row.chip):
+			for c in chip_slot.get_children():
+				c.queue_free()
+			row.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(int(e.color), 0, 3)], 16)
+			chip_slot.add_child(row.chip)
+		# 名次 + 名字（自己标「我」，轮到谁行动加 ▶）
+		var active: bool = String(st.get("phase", "")) == "playing" and peer == turn_peer
+		var tags := ""
+		if peer == my_peer:
+			tags += "（我）"
+		if not bool(e.alive):
+			tags += "（破产）"
+		var name_l: Label = row.name_l
+		name_l.text = "%d. %s%s" % [int(e.rank), String(e.name), tags]
+		# 名字变金 = 轮到 TA 行动（左侧竖条同时点亮）；自己只靠「（我）」标
+		name_l.add_theme_color_override("font_color",
+			UIKit.TEXT_DIM if not bool(e.alive) else (UIKit.ACCENT if active else UIKit.TEXT))
+		var sub_l: Label = row.sub_l
+		sub_l.text = "地产 ×%d · 道具 %d" % [int(e.props), int(e.items)]
+		# 右列：大字身家（名次依据）+ 小字现金
+		var money_l: Label = row.money_l
+		money_l.text = "已出局" if not bool(e.alive) else GameData.fmt_money(int(e.worth))
+		money_l.add_theme_color_override("font_color",
+			UIKit.TEXT_DIM if not bool(e.alive) else UIKit.ACCENT)
+		var cash_l: Label = row.cash_l
+		cash_l.text = "" if not bool(e.alive) else "现金 %s" % GameData.fmt_money(int(e.money))
+		var bar: ColorRect = row.bar
+		bar.color = UIKit.ACCENT if active else Color(0, 0, 0, 0)
 
 func _refresh_actions() -> void:
 	var phase := String(st.get("phase", "playing"))
@@ -1438,7 +1201,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_F1:
-			_toggle_dev()
+			dev.toggle()
 		elif k.keycode == KEY_SPACE:
 			board.go_home_follow(my_peer)
 		elif k.keycode == KEY_TAB:
@@ -1497,6 +1260,8 @@ func _on_tile_clicked(idx: int) -> void:
 	info_body.text = body
 	info_sb.border_color = Color(accent.r, accent.g, accent.b, 0.7)
 	info_panel.add_theme_stylebox_override("panel", info_sb)
+	# 规则说明展开时占着左下角，格详情卡让位（见 _set_rules_open）
+	info_panel.visible = not rules_open
 	info_panel.pivot_offset = info_panel.size * 0.5
 	info_panel.scale = Vector2(0.94, 0.94)
 	var tw := create_tween()
@@ -1509,7 +1274,7 @@ func _show_game_over() -> void:
 		return
 	_over_shown = true
 	_close_prompt()
-	_close_casino()
+	casino.close()
 	over_layer = Control.new()
 	over_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	over_layer.z_index = 50
@@ -1738,7 +1503,7 @@ func _open_card_gallery() -> void:
 	]))
 	gv.add_child(_card_section("货架尺寸（中 · 150×210）· 状态一览", [
 		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {}, "普通"),
-		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2}, "冷却中 · 右上剩 2 回合·压暗"),
+		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2, "cooling": true}, "冷却中 · 右上剩 2 回合·压暗"),
 		_card_cell("黑卡", ItemCard.SIZE_MEDIUM, {"count": 2}, "计数中 · 剩 2 次购买"),
 		_card_cell("空想者的香皂", ItemCard.SIZE_MEDIUM, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
 		_card_cell("蛋蛋节", ItemCard.SIZE_MEDIUM, {}, "一次性 · 用后焚毁"),
@@ -1808,6 +1573,8 @@ func _grant_item(p: Dictionary, id: String) -> bool:
 func _item_pool(quality: String) -> Array:
 	var held := {}
 	for pl in hp:
+		if not bool(pl.get("alive", true)):
+			continue  # 破产玩家的背包不再占用唯一性，否则那件唯一道具永久退出池
 		for it in pl.get("items", []):
 			held[String(it.id)] = true
 	for k in shops:  # 货架在售的唯一道具同样占用唯一性（不同货架不会出现两件）
@@ -2087,9 +1854,15 @@ func _shop_refresh(peer: int) -> void:
 	var cost := _refresh_price()
 	if p.is_empty() or int(p.money) < cost:
 		return
+	# _stock_shop 只补空位：三格都满时刷新什么也不会发生，却照收钱还推高全场刷新价
+	#（此前玩家会「花钱买了个寂寞」，见 fix/v0.0.2）
+	var before := str(shops[_shop_tile].slots)
+	_stock_shop(_shop_tile)
+	if str(shops[_shop_tile].slots) == before:
+		_log("货架满满当当，刷新也不会有新货（没花钱）", "#8a90a5")
+		return
 	p.money = int(p.money) - cost
 	refresh_count += 1
-	_stock_shop(_shop_tile)
 	_log("%s 花 %s 刷新了货架（全场刷新价上涨）" % [p.name, GameData.fmt_money(cost)], "#8a90a5")
 	_broadcast_state()
 
@@ -2466,7 +2239,10 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 		return
 	for c in item_btn_box.get_children():
 		c.queue_free()
-	var p := _player_by_peer(my_peer)
+	# 必须读「已同步的」状态：hp 只在房主 _host_setup 里填充，
+	# 客户端 hp 恒为空 → 道具栏一个按钮都建不出来，真人整局无法使用道具，
+	# 只能等房主 12 秒超时跳过（见 fix/v0.0.2）。
+	var p := _state_player(my_peer)
 	if p.is_empty():
 		return
 	var items: Array = p.get("items", [])
@@ -2516,9 +2292,14 @@ func _close_cheat_picker() -> void:
 	cheat_picker.visible = false
 
 func _swap_targets(exclude_peer: int) -> Array:
-	return hp.filter(func(x) -> bool:
-		return bool(x.alive) and int(x.peer) != exclude_peer \
-			and not (x.get("items", []) as Array).is_empty())
+	# 与道具栏同理：hp 只在房主填充，客户端为空会让「交换生」永远置灰、换人列表为空，
+	# 必须读已同步的 st（见 fix/v0.0.2）。
+	var out: Array = []
+	for x in st.get("players", []):
+		if bool(x.get("alive", true)) and int(x.peer) != exclude_peer \
+				and not (x.get("items", []) as Array).is_empty():
+			out.append(x)
+	return out
 
 func _open_target_picker(slot: int) -> void:
 	_close_cheat_picker()
@@ -2545,236 +2326,25 @@ func _pill_label(p: Control) -> Label:
 	return null
 
 func _build_menu_ui() -> void:
-	menu_layer = Control.new()
-	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# ALWAYS 而非 WHEN_PAUSED：非房主本地打开菜单时对局仍在跑，菜单必须可交互
-	menu_layer.process_mode = Node.PROCESS_MODE_ALWAYS
-	menu_layer.visible = false
-	add_child(menu_layer)
-
-	# 非房主看到的「房主已暂停」遮罩
-	pause_mask = ColorRect.new()
-	pause_mask.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pause_mask.color = Color(0.03, 0.03, 0.07, 0.62)
-	pause_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pause_mask.visible = false
-	pause_mask.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(pause_mask)
-	var pm_lab := UIKit.label("⏸ 房主已暂停 · 等待继续…", 20, UIKit.ACCENT)
-	pm_lab.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pm_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	pm_lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	pm_lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pause_mask.add_child(pm_lab)
-
-	# 主菜单：继续 / 设置 / 退出
-	var mc := CenterContainer.new()
-	mc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.add_child(mc)
-	menu_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
-	menu_panel.custom_minimum_size = Vector2(320, 0)
-	mc.add_child(menu_panel)
-	var mm := UIKit.margins(20, 20, 16, 14)
-	menu_panel.add_child(mm)
-	var mv := VBoxContainer.new()
-	mv.add_theme_constant_override("separation", 8)
-	mm.add_child(mv)
-	menu_state = UIKit.label("", 13, UIKit.TEXT_DIM)
-	mv.add_child(menu_state)
-	var cont_btn := UIKit.button("▶ 继续游戏", 15)
-	cont_btn.pressed.connect(_menu_resume)
-	mv.add_child(cont_btn)
-	var set_btn := UIKit.button("⚙ 设置", 15)
-	set_btn.pressed.connect(func() -> void:
-		menu_panel.visible = false
-		vol_slider.value = audio_volume * 100.0
-		mute_check.button_pressed = audio_mute
-		settings_panel.visible = true
-	)
-	mv.add_child(set_btn)
-	var quit_btn := UIKit.button("⏻ 退出游戏", 15, "danger")
-	quit_btn.pressed.connect(func() -> void:
-		confirm_note.text = "你是房主：退出后对局结束，所有人回到主菜单。" \
-			if multiplayer.is_server() else "退出后你的回合将由机器人接管，对局继续。"
-		menu_panel.visible = false
-		confirm_panel.visible = true
-	)
-	mv.add_child(quit_btn)
-
-	# 设置：音量 / 静音（后续会加更多设置项）
-	var sc := CenterContainer.new()
-	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.add_child(sc)
-	settings_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
-	settings_panel.custom_minimum_size = Vector2(320, 0)
-	sc.add_child(settings_panel)
-	var sm := UIKit.margins(20, 20, 16, 14)
-	settings_panel.add_child(sm)
-	var sv := VBoxContainer.new()
-	sv.add_theme_constant_override("separation", 8)
-	sm.add_child(sv)
-	var vol_row := HBoxContainer.new()
-	vol_row.add_theme_constant_override("separation", 10)
-	sv.add_child(vol_row)
-	vol_row.add_child(UIKit.label("音效音量", 14, UIKit.TEXT))
-	vol_slider = HSlider.new()
-	vol_slider.min_value = 0
-	vol_slider.max_value = 100
-	vol_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vol_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	vol_slider.value_changed.connect(func(v: float) -> void:
-		audio_volume = v / 100.0
-		_apply_audio()
-	)
-	vol_row.add_child(vol_slider)
-	var mute_row := HBoxContainer.new()
-	mute_row.add_theme_constant_override("separation", 10)
-	sv.add_child(mute_row)
-	mute_row.add_child(UIKit.label("静音", 14, UIKit.TEXT))
-	mute_check = CheckButton.new()
-	mute_check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mute_check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	mute_check.toggled.connect(func(on: bool) -> void:
-		audio_mute = on
-		_apply_audio()
-	)
-	mute_row.add_child(mute_check)
-	sv.add_child(UIKit.label("—— 更多设置项（后续加入） ——", 12, UIKit.TEXT_DIM))
-	var back_btn := UIKit.button("‹ 返回", 14)
-	back_btn.pressed.connect(func() -> void:
-		settings_panel.visible = false
-		menu_panel.visible = true
-	)
-	sv.add_child(back_btn)
-
-	# 退出二次确认
-	var cc := CenterContainer.new()
-	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.add_child(cc)
-	confirm_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(UIKit.DANGER.r, UIKit.DANGER.g, UIKit.DANGER.b, 0.75), 1, 10)
-	confirm_panel.custom_minimum_size = Vector2(320, 0)
-	cc.add_child(confirm_panel)
-	var cm2 := UIKit.margins(20, 20, 16, 14)
-	confirm_panel.add_child(cm2)
-	var cv := VBoxContainer.new()
-	cv.add_theme_constant_override("separation", 8)
-	cm2.add_child(cv)
-	cv.add_child(UIKit.label("确定要退出本局吗？", 15, UIKit.TEXT))
-	confirm_note = UIKit.label("", 12, UIKit.TEXT_DIM)
-	confirm_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	cv.add_child(confirm_note)
-	var cbtn_row := HBoxContainer.new()
-	cbtn_row.add_theme_constant_override("separation", 10)
-	cv.add_child(cbtn_row)
-	var cancel_btn := UIKit.button("取消", 14)
-	cancel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cancel_btn.pressed.connect(func() -> void:
-		confirm_panel.visible = false
-		menu_panel.visible = true
-	)
-	cbtn_row.add_child(cancel_btn)
-	var sure_btn := UIKit.button("确认退出", 14, "danger")
-	sure_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sure_btn.pressed.connect(func() -> void:
-		get_tree().paused = false
-		_on_exit()
-	)
-	cbtn_row.add_child(sure_btn)
-
-	# 作弊器点数选框（0~12，本地弹出）
-	cheat_picker = Control.new()
-	cheat_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
-	cheat_picker.visible = false
-	add_child(cheat_picker)
-	var cd_dim := ColorRect.new()
-	cd_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	cd_dim.color = Color(0.04, 0.04, 0.08, 0.55)
-	cheat_picker.add_child(cd_dim)
-	var cc2 := CenterContainer.new()
-	cc2.set_anchors_preset(Control.PRESET_FULL_RECT)
-	cheat_picker.add_child(cc2)
-	var cp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.8), 1, 10)
-	cc2.add_child(cp)
-	var cpm := UIKit.margins(20, 20, 14, 12)
-	cp.add_child(cpm)
-	var cv2 := VBoxContainer.new()
-	cv2.add_theme_constant_override("separation", 8)
-	cpm.add_child(cv2)
-	cv2.add_child(UIKit.label("选定下一次转盘点数（0~12）", 14, UIKit.ACCENT))
-	var grid := GridContainer.new()
-	grid.columns = 7
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
-	cv2.add_child(grid)
-	for v in 13:
-		var vb := UIKit.button(str(v), 14)
-		var vv := v
-		vb.pressed.connect(func() -> void:
-			_send_use_item(cheat_slot, vv)
-		)
-		grid.add_child(vb)
-	var cv_cancel := UIKit.button("取消", 13)
-	cv_cancel.pressed.connect(_close_cheat_picker)
-	cv2.add_child(cv_cancel)
-
-	# 目标玩家选择器（交换生等选玩家类道具）
-	target_picker = Control.new()
-	target_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
-	target_picker.visible = false
-	add_child(target_picker)
-	var td_dim := ColorRect.new()
-	td_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	td_dim.color = Color(0.04, 0.04, 0.08, 0.55)
-	target_picker.add_child(td_dim)
-	var tc := CenterContainer.new()
-	tc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	target_picker.add_child(tc)
-	var tp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(0.66, 0.47, 0.92, 0.8), 1, 10)
-	tp.custom_minimum_size = Vector2(320, 0)
-	tc.add_child(tp)
-	var tpm := UIKit.margins(20, 20, 14, 12)
-	tp.add_child(tpm)
-	var tv := VBoxContainer.new()
-	tv.add_theme_constant_override("separation", 8)
-	tpm.add_child(tv)
-	tv.add_child(UIKit.label("选择目标玩家", 14, UIKit.ACCENT))
-	target_btn_box = VBoxContainer.new()
-	target_btn_box.add_theme_constant_override("separation", 6)
-	tv.add_child(target_btn_box)
-	var tv_cancel := UIKit.button("取消", 13)
-	tv_cancel.pressed.connect(_close_target_picker)
-	tv.add_child(tv_cancel)
-
-	# 黑市交地选择器（逐块选自有地皮抵账）
-	black_picker = Control.new()
-	black_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
-	black_picker.visible = false
-	add_child(black_picker)
-	var bd_dim := ColorRect.new()
-	bd_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bd_dim.color = Color(0.04, 0.03, 0.05, 0.6)
-	black_picker.add_child(bd_dim)
-	var bcc := CenterContainer.new()
-	bcc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	black_picker.add_child(bcc)
-	var bcp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(0.96, 0.55, 0.3, 0.85), 1, 10)
-	bcp.custom_minimum_size = Vector2(340, 0)
-	bcc.add_child(bcp)
-	var bcpm := UIKit.margins(20, 20, 14, 12)
-	bcp.add_child(bcpm)
-	var bcv := VBoxContainer.new()
-	bcv.add_theme_constant_override("separation", 8)
-	bcpm.add_child(bcv)
-	bcv.add_child(UIKit.label("选择要交出的地皮", 14, Color(0.98, 0.7, 0.4)))
-	black_picker_box = VBoxContainer.new()
-	black_picker_box.add_theme_constant_override("separation", 6)
-	bcv.add_child(black_picker_box)
+	TableHud.build_menu_ui(self)
+## 切换暂停菜单族的当前面板（""=全部收起）。
+##
+## 三块面板（主菜单 / 设置 / 退出确认）各套一个全屏 CenterContainer，**必须连外层
+## 容器一起切**：外层是 set_anchors_preset(FULL_RECT) + 默认 mouse_filter=STOP 的容器，
+## 只切内层 *_panel.visible 的话，最后那块（退出确认的）全屏容器依旧可见，
+## 会把整屏点击全部吃掉 —— 对局里点开暂停后「界面卡死、按钮全点不动」的真凶
+##（见 fix/v0.1.0 与 tests/pause_menu_test.gd）。
+func _menu_show(which: String) -> void:
+	menu_layer.visible = which != ""
+	if menu_layer.visible and menu_layer.get_index() != get_child_count() - 1:
+		move_child(menu_layer, -1)  # 开局后新挂的节点（结算层等）不该压在菜单上
+	for k in menu_wraps:
+		var e: Dictionary = menu_wraps[k]
+		# wrap 负责吃输入（全屏 STOP），panel 负责「当前显示哪块」的可查询状态
+		for key in ["wrap", "panel"]:
+			var c: Control = e[key]
+			if c != null and is_instance_valid(c):
+				c.visible = k == which
 
 func _open_menu() -> void:
 	if multiplayer.is_server():
@@ -2782,20 +2352,54 @@ func _open_menu() -> void:
 		menu_state.text = "⏸ 已暂停（全场）"
 	else:
 		menu_state.text = "对局进行中 · 仅房主可暂停"
-	menu_panel.visible = true
-	settings_panel.visible = false
-	confirm_panel.visible = false
-	menu_layer.visible = true
+	_menu_show("menu")
 
 func _menu_resume() -> void:
 	if multiplayer.is_server():
 		s_pause.rpc(false)
-	menu_layer.visible = false
+	_menu_show("")
 
 @rpc("authority", "call_local", "reliable")
 func s_pause(on: bool) -> void:
 	get_tree().paused = on
 	pause_mask.visible = on and not multiplayer.is_server()
+
+# ================= HUD 入场 =================
+
+## 入场：棋盘与两侧栏错落淡入，别让 HUD 在一帧之间「啪」地全糊上来。
+## 底栏不参与——它要等开局（phase=playing）才出现，淡入会跟它的显隐打架。
+func _hud_intro() -> void:
+	for it in [[board, 0.0], [opt_btn, 0.04], [log_toggle, 0.08], [log_panel, 0.12],
+			[rules_btn, 0.18]]:
+		var c: Control = it[0]
+		if c != null and is_instance_valid(c):
+			Fx.animate_in(c, float(it[1]))
+
+# ================= 规则说明面板（左下角） =================
+
+## 展开/收起规则说明。展开时它占据左下角，格子详情卡让位（隐藏）——
+## 两者锚在同一块地方，同时显示会互相压住；收起后格详情卡照常弹出。
+func _set_rules_open(on: bool) -> void:
+	if rules_open == on:
+		return
+	rules_open = on
+	rules_btn.visible = not on
+	rules_panel.visible = on
+	if on:
+		info_panel.visible = false
+		# 自左下角向上「长出来」：缩放支点在左下角（构建时已设，这里兜底重算）
+		rules_panel.pivot_offset = Vector2(0.0, rules_panel.size.y)
+		rules_panel.modulate.a = 0.0
+		rules_panel.scale = Vector2(0.96, 0.96)
+		var tw := create_tween().set_parallel(true)
+		tw.tween_property(rules_panel, "modulate:a", 1.0, 0.16)
+		tw.tween_property(rules_panel, "scale", Vector2.ONE, 0.2) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		rules_body.scroll_to_line(0)
+		Fx.play("pop", -8.0, 0.9)
+	else:
+		rules_panel.modulate.a = 1.0
+		rules_panel.scale = Vector2.ONE
 
 func _apply_audio() -> void:
 	AudioServer.set_bus_mute(0, audio_mute)
@@ -2826,189 +2430,22 @@ func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 		tw.parallel().tween_property(bill, "modulate:a", 0.0, 0.2).set_delay(0.36)
 		tw.tween_callback(bill.queue_free)
 
-# ================= 开发者模式 =================
-
-func _apply_dev_mode() -> void:
-	if dev_panel != null and is_instance_valid(dev_panel):
-		dev_panel.visible = dev_enabled
-	if board != null:
-		board.dev_tile_index = dev_enabled
-	_dev_ts_update()
-
-func _toggle_dev() -> void:
-	dev_enabled = not dev_enabled
-	var cfg := ConfigFile.new()
-	cfg.load("user://settings.cfg")
-	cfg.set_value("dev", "enabled", dev_enabled)
-	cfg.save("user://settings.cfg")
-	_apply_dev_mode()
-
-func _dev_ts_update() -> void:
-	if dev_ts_l != null and is_instance_valid(dev_ts_l):
-		dev_ts_l.text = "当前 " + String.num(Engine.time_scale, 2) + "x"
-
-func _dev_selected() -> Dictionary:
-	var p := _player_by_peer(dev_sel_peer)
-	return p
-
-func _dev_edit_selected(edit: Callable) -> void:
-	if not multiplayer.is_server():
-		return
-	var p := _dev_selected()
-	if p.is_empty():
-		return
-	edit.call(p)
-	_broadcast_state()
-
-func _dev_add_money(amount: int) -> void:
-	_dev_edit_selected(func(p: Dictionary) -> void: p.money = int(p.money) + amount)
-
-func _dev_grant_item() -> void:
-	var id := _dev_selected_item()
-	if id == "":
-		return
-	_dev_edit_selected(func(p: Dictionary) -> void: _grant_item(p, id))
-
-func _dev_selected_item() -> String:
-	if dev_item_opt == null or dev_item_opt.selected < 0:
-		return ""
-	return String(ItemData.ITEMS.keys()[dev_item_opt.selected])
-
-func _dev_item_desc_update() -> void:
-	var d := ItemData.def(_dev_selected_item())
-	dev_item_desc.text = "%s · %d⚡ · %s" % [String(d.get("quality", "?")), int(d.get("cost", 0)), String(d.get("desc", ""))] \
-		if String(d.get("type", "")) == "active" else "%s · 被动 · %s" % [String(d.get("quality", "?")), String(d.get("desc", ""))]
-
-func _dev_force_use() -> void:
-	if not multiplayer.is_server():
-		return
-	var id := _dev_selected_item()
-	var p := _dev_selected()
-	if p.is_empty() or id == "":
-		return
-	if not _has_item(p, id):
-		_grant_item(p, id)
-	match id:
-		"作弊器":
-			p.cheat_roll = clampi(int(dev_roll_spin.value), 0, 12)
-			_log("[dev] %s 的下一次转盘点数被锁成 %d" % [p.name, int(dev_roll_spin.value)], "#7fd88f")
-		"平均主义":
-			var alive: Array = hp.filter(func(x) -> bool: return bool(x.alive))
-			var total := 0
-			for a in alive:
-				total += int(a.money)
-			var share := int(total / alive.size())
-			var rem := total - share * alive.size()
-			for a in alive:
-				if _immune_debuff(a):
-					continue  # 香皂免疫：不被拉平
-				a.money = share
-			for k in rem:
-				if not _immune_debuff(alive[k]):
-					alive[k].money = int(alive[k].money) + 1
-			_log("[dev] 全场现金已拉平", "#7fd88f")
-		"蛋蛋节":
-			items_consumed["蛋蛋节"] = true
-			for i in range(p.items.size() - 1, -1, -1):
-				if String(p.items[i].id) == "蛋蛋节":
-					p.items.remove_at(i)
-			_apply_egg_festival(p)
-		"亡牌飞行员coco":
-			items_consumed["亡牌飞行员coco"] = true
-			for i in range(p.items.size() - 1, -1, -1):
-				if String(p.items[i].id) == "亡牌飞行员coco":
-					p.items.remove_at(i)
-			_apply_coco(p)
-		_:
-			_log("[dev] 【%s】效果尚未实装（被动持有即可生效 / 后续批次）" % id, "#7fd88f")
-	_broadcast_state()
-
-func _dev_end_wait() -> void:
-	if not multiplayer.is_server():
-		return
-	match String(st.get("await", "")):
-		"roll":
-			roll_received.emit()
-		"item":
-			_item_action = {"epoch": _item_epoch, "action": "skip"}
-		"shop":
-			_shop_leave(_shop_peer)
-
-func _dev_refresh_panel() -> void:
-	if dev_panel == null or not is_instance_valid(dev_panel) or not dev_panel.visible:
-		return
-	var lines := ["第%d/%d轮 · await=%s" % [int(st.get("round", 0)), int(st.get("max_rounds", 0)), String(st.get("await", ""))]]
-	for p in st.get("players", []):
-		var its := []
-		for it in p.get("items", []):
-			its.append(String(it.id) + (("·%d" % int(it.cd)) if int(it.cd) > 0 else ""))
-		lines.append("%s ¥%d ⚡%d 格%d %s" % [String(p.name), int(p.money), int(p.get("stamina", 0)),
-			int(p.pos), " ".join(its)])
-	var shop_txt := ""
-	for k in st.get("shops", {}):
-		var arr: Array = st.shops[k].slots
-		var names := []
-		for id in arr:
-			names.append("空" if String(id) == "" else String(id))
-		shop_txt += "[%s]" % ",".join(names)
-	lines.append("刷¥%d %s" % [int(st.get("refresh_price", 0)), shop_txt])
-	dev_state_l.text = "\n".join(lines)
-	dev_cam_l.text = board.cam_info()
-	# 玩家选择按钮懒建 + 文本刷新
-	if dev_pbtns.is_empty() and board.seat_count() > 0:
-		for p in st.get("players", []):
-			var peer := int(p.peer)
-			var b := UIKit.button(String(p.name), 11)
-			b.toggle_mode = true
-			b.pressed.connect(func() -> void:
-				dev_sel_peer = peer
-				_dev_sel_refresh()
-			)
-			dev_players.add_child(b)
-			dev_pbtns.append({"peer": peer, "btn": b})
-	_dev_sel_refresh()
-
-func _dev_sel_refresh() -> void:
-	if dev_sel_peer == 0 and not dev_pbtns.is_empty():
-		dev_sel_peer = int(dev_pbtns[0].peer)
-	for e in dev_pbtns:
-		var btn: Button = e.btn
-		btn.button_pressed = int(e.peer) == dev_sel_peer
-
-func _menu_probe_run() -> void:
-	await _wait(2.0)
-	print("PROBE open menu...")
-	_open_menu()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE paused=", get_tree().paused, " menu_visible=", menu_layer.visible,
-		" panel=", menu_panel.visible, " state=", menu_state.text)
-	_menu_resume()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE resumed paused=", get_tree().paused, " menu_visible=", menu_layer.visible)
-	_open_menu()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE reopen paused=", get_tree().paused, " menu_visible=", menu_layer.visible)
-	_menu_resume()
-	await get_tree().create_timer(0.5, true).timeout
-	print("PROBE final paused=", get_tree().paused)
-	print("PROBE DONE")
-	get_tree().quit(0)
 
 func _process(_delta: float) -> void:
-	# 牌垫阶段条锚定自己座位卡下沿；不在自己视角 / 非对局阶段时隐藏
+	# 底栏（牌垫阶段条 + 操作条）统一成屏幕底部一条固定操作坞，不再锚在自己座位卡下沿：
+	# 原来「自己视角贴座位卡、转开视角改贴屏幕底」，按钮会跟着镜头满屏跳，转视角时
+	# 阶段条还会整条消失（fix/v0.0.2 打的补丁）。固定之后位置恒定、阶段永远可见。
 	if mat_bar == null:
 		return
 	var phase := String(st.get("phase", ""))
-	var show := board.seat_count() > 0 and board.at_home_view() and phase == "playing"
+	var show := board.seat_count() > 0 and phase == "playing"
 	# 交易面板独立于视角：底栏居中，保证行动者一定能操作（相机可能停在棋子上而非自家座位）
 	var shop_mine: bool = phase == "playing" and int(st.get("shop_peer", 0)) == my_peer \
 		and int(st.get("shop_open", -1)) >= 0
 	shop_bar.visible = shop_mine
 	if shop_mine:
 		_place_overlay_bar(shop_bar)
-		_refresh_shop_ui()
-	else:
-		_shop_sig = ""
+		_refresh_shop_buttons()
 	var black_mine: bool = phase == "playing" and int(st.get("black_peer", 0)) == my_peer
 	black_bar.visible = black_mine
 	if black_mine:
@@ -3018,51 +2455,109 @@ func _process(_delta: float) -> void:
 		black_picker.visible = false
 		_black_sig = ""
 	mat_bar.visible = show and not shop_mine and not black_mine
-	if show and not shop_mine and not black_mine:
-		var r := board.home_card_screen_rect()
-		mat_bar.position = Vector2(r.get_center().x - mat_bar.size.x * 0.5, r.end.y + 10.0)
-	if dev_enabled:
-		_dev_refresh_panel()
+	var want_actions: bool = phase == "playing" and (roll_btn.visible or item_btn_box.visible)
+	action_bar.visible = want_actions and not shop_mine and not black_mine
+	_place_dock()  # 交易/黑市条顶掉底栏时，内部会把底板一并收掉
+	# 「该你掷了」时按钮轻微呼吸：持续动画手写相位（项目的表现层约定）
+	if roll_btn.visible and not roll_btn.disabled and roll_btn.size.x > 1.0:
+		_pulse_t += _delta
+		roll_btn.pivot_offset = roll_btn.size * 0.5
+		var sc := 1.0 + 0.022 * (0.5 + 0.5 * sin(_pulse_t * 4.4))
+		roll_btn.scale = Vector2(sc, sc)
+	elif roll_btn.scale != Vector2.ONE:
+		roll_btn.scale = Vector2.ONE
+		_pulse_t = 0.0
+	if dev.enabled:
+		dev.refresh_panel()
 
-## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内
+## 底栏统一贴底居中：可见的两条并排成一条操作坞，横向夹进可用带；
+## 顶边对齐（两条容器高度差一两像素，对齐顶边看起来才是一条）。
+func _place_dock() -> void:
+	var parts: Array = []
+	for c in [mat_bar, action_bar]:
+		if c != null and c.visible:
+			parts.append(c)
+	if parts.is_empty():
+		if dock_plate != null:
+			dock_plate.visible = false
+		return
+	var gap := 8.0
+	var total := 0.0
+	var tallest := 0.0
+	for c in parts:
+		total += c.size.x
+		tallest = maxf(tallest, c.size.y)
+	total += gap * float(parts.size() - 1)
+	var left := _clamp_dock_x(size.x * 0.5 - total * 0.5, total, _dock_band())
+	var top := size.y - 16.0 - tallest
+	var x := left
+	for c in parts:
+		c.position = Vector2(x, top)
+		x += c.size.x + gap
+	# 底板兜住整行：留 7px 内边距，读数上就是「一整块操作坞」而不是两条浮着的条
+	if dock_plate != null:
+		var pad := 7.0
+		dock_plate.visible = true
+		dock_plate.position = Vector2(left - pad, top - pad)
+		dock_plate.size = Vector2(total + pad * 2.0, tallest + pad * 2.0)
+
+## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
+## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。
+func _dock_band() -> Vector2:
+	var x0 := 14.0
+	if rules_panel != null and rules_panel.visible:
+		x0 = maxf(x0, rules_panel.offset_right + 10.0)
+	elif info_panel != null and info_panel.visible:
+		x0 = maxf(x0, info_panel.offset_right + 10.0)
+	var x1 := size.x - 14.0
+	if log_panel != null and log_panel.visible:
+		# 战报栏挂 TOP_RIGHT 锚点，所以它的左边缘 = 屏宽 + offset_left（不写死宽度）
+		x1 = minf(x1, size.x + log_panel.offset_left - 8.0)
+	return Vector2(x0, maxf(x1, x0 + 120.0))
+
+## 把底栏左边缘夹进可用带内（带太窄时以左边缘为准，宁可溢出也不推到屏幕外）
+func _clamp_dock_x(want: float, width: float, band: Vector2) -> float:
+	return clampf(want, band.x, maxf(band.x, band.y - width))
+
+## 交易面板贴底居中：按自身高度上移，保证整块（含刷新/离开）都在屏内；
+## 横向同样夹进可用带，免得展开规则说明后被压住
 func _place_overlay_bar(c: Control) -> void:
 	var vp := size
-	c.position = Vector2(vp.x * 0.5 - c.size.x * 0.5, maxf(vp.y - c.size.y - 16.0, 8.0))
+	c.position = Vector2(_clamp_dock_x(vp.x * 0.5 - c.size.x * 0.5, c.size.x, _dock_band()),
+		maxf(vp.y - c.size.y - 16.0, 8.0))
 
-## 小卖部操作条刷新：按货架给「买」按钮挂上货名/价格，并按现金/背包置灰
-func _refresh_shop_ui() -> void:
-	var tile := int(st.get("shop_open", -1))
-	var shops_state: Dictionary = st.get("shops", {})
+## 小卖部「买」按钮：按货架逐格显隐 + 标价 + 可买判定（缓存签名，避免每帧重建）。
+## 这三个按钮创建时 visible=false，此前没有任何代码把它们打开过，
+## 于是真人踩到小卖部格只能「刷新 / 离开」、买不了任何东西（见 fix/v0.0.2）。
+func _refresh_shop_buttons() -> void:
+	var open := int(st.get("shop_open", -1))
+	var shops_d: Dictionary = st.get("shops", {})
 	var slots: Array = []
-	if tile >= 0 and shops_state.has(tile):
-		slots = shops_state.get(tile, {}).get("slots", [])
-	var me := {}
-	for pl in st.get("players", []):
-		if int(pl.peer) == my_peer:
-			me = pl
-			break
-	var money := int(me.get("money", 0))
-	var bag: int = (me.get("items", []) as Array).size()
-	var has_black := false
-	for it in me.get("items", []):
+	if shops_d.has(open):
+		slots = shops_d[open].get("slots", [])
+	var mine: Dictionary = _state_player(my_peer)
+	var money := int(mine.get("money", 0))
+	var bag: Array = mine.get("items", [])
+	# 黑卡还有次数时本次购买免费：不该因为现金不够而置灰
+	var free_buy := false
+	for it in bag:
 		if String(it.id) == "黑卡" and int(it.get("charges", 0)) > 0:
-			has_black = true
+			free_buy = true
 	var refresh := int(st.get("refresh_price", 0))
-	var sig := "%s|%d|%d|%s|%d" % [str(slots), money, bag, str(has_black), refresh]
-	if sig == _shop_sig:
+	var sig := "%d|%s|%d|%d|%s|%d" % [open, str(slots), money, bag.size(), str(free_buy), refresh]
+	if sig == _shop_btn_sig:
 		return
-	_shop_sig = sig
+	_shop_btn_sig = sig
 	for i in shop_btns.size():
 		var b: Button = shop_btns[i]
 		var id := String(slots[i]) if i < slots.size() else ""
 		if id == "":
 			b.visible = false
 			continue
+		var price := ItemData.price(String(ItemData.def(id).quality))
 		b.visible = true
-		var q := String(ItemData.def(id).quality)
-		var price := ItemData.price(q)
-		b.text = "买【%s】 · %s（%s）" % [id, GameData.fmt_money(price), String(ItemData.QUALITY_NAMES.get(q, q))]
-		b.disabled = bag >= 5 or (not has_black and money < price)
+		b.text = "买 %s %s" % [id, GameData.fmt_money(price)]
+		b.disabled = bag.size() >= 5 or (not free_buy and money < price)
 	if shop_refresh_btn != null:
 		shop_refresh_btn.text = "刷新 · %s" % GameData.fmt_money(refresh)
 		shop_refresh_btn.disabled = money < refresh
@@ -3126,6 +2621,11 @@ func _rebuild_black_picker(active: bool) -> void:
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
+	# 房主开菜单会 s_pause 全场暂停；若此时房主掉线，SceneTree.paused 不会被
+	# change_scene_to_file 重置，新主菜单会继承暂停态 → 按钮/Room 列表 Timer
+	# 全部不响应，界面看着正常却完全点不动（见 fix/v0.0.2）。
+	get_tree().paused = false
+	Engine.time_scale = 1.0
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _on_exit() -> void:
@@ -3137,358 +2637,3 @@ func _on_exit() -> void:
 func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec, false).timeout
 
-func _take_shot(path: String) -> void:
-	await get_tree().create_timer(0.4).timeout
-	while board.is_showing_deck_card():
-		await get_tree().create_timer(0.25).timeout
-	board.fit_overview()
-	await get_tree().create_timer(0.2).timeout
-	board.cam_locked = true  # 摆拍期间锁住自动镜头，避免对局推进拽走视角
-	if _shot_rot > 0:
-		board.rotate_to_edge(_shot_rot, true)  # 摆拍：转到对应座位的视角
-		await get_tree().create_timer(0.15).timeout
-	if not path.contains("table"):
-		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
-		board.focus_grid(27, 0.8, true)
-		await get_tree().create_timer(0.15).timeout
-		_on_tile_clicked(27)  # 顺便展示格子详情卡
-	if not path.contains("plain"):
-		board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
-		board.spin_wheel(12)
-		# 赌局界面预览（单行假数据，验证布局用）
-		s_casino_start.rpc("炸弹猫", 800, 3200, [my_peer])
-		s_casino_turn.rpc(my_peer, 1, {my_peer: 1}, {my_peer: 2}, 9, true)
-		s_casino_event.rpc("你 摸到一张【拆除】揣进兜里", "move")
-		s_casino_event.rpc("你 摸到炸弹，紧急打出【拆除】化解！", "move")
-		s_casino_event.rpc("你 摸到一条小鱼", "good")
-	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
-	for i in 3:
-		await get_tree().create_timer(0.6).timeout
-		await RenderingServer.frame_post_draw
-		var p := path if i == 0 else path.replace(".png", "_%d.png" % i)
-		get_viewport().get_texture().get_image().save_png(p)
-		print("SHOT SAVED ", p)
-	get_tree().quit(0)
-
-# ================= 赌桌小游戏：炸弹猫 =================
-
-func _casino_card_name(c: String) -> String:
-	match c:
-		"bomb": return "炸弹"
-		"defuse": return "拆除"
-		_: return "小鱼"
-
-func _bombcat_deck() -> Array:
-	var deck := ["bomb", "bomb", "bomb", "defuse", "defuse",
-		"fish", "fish", "fish", "fish", "fish", "fish", "fish"]
-	deck.shuffle()
-	return deck
-
-func _casino_next_epoch() -> int:
-	_casino_epoch += 1
-	_casino_action = {"epoch": -1, "action": ""}
-	return _casino_epoch
-
-## 等待人类玩家行动；超时默认抽牌堆顶
-func _casino_wait_action(epoch: int, timeout: float) -> String:
-	var waited := 0.0
-	while waited < timeout and running:
-		await _wait(0.1)
-		waited += 0.1
-		if int(_casino_action.epoch) == epoch:
-			return String(_casino_action.action)
-	return "top"
-
-## 落进赌场格：全员下注，跑一局炸弹猫，赢家通吃
-func _run_casino(p: Dictionary) -> void:
-	var alive := hp.filter(func(x) -> bool: return bool(x.alive))
-	if alive.size() < 2:
-		_log("%s 走进赌场，却无人奉陪，悻悻离开" % p.name, "#8a90a5")
-		return
-	var pot := 0
-	for a in alive:
-		var pay: int = mini(CASINO_STAKE, int(a.money))
-		a.money = int(a.money) - pay
-		pot += pay
-	_broadcast_state()
-	var order: Array = []
-	for a in alive:
-		order.append(int(a.peer))
-	s_casino_start.rpc("炸弹猫", CASINO_STAKE, pot, order)
-	_log("全员下注 %s，奖池 %s，赢家通吃！" % [
-		GameData.fmt_money(CASINO_STAKE), GameData.fmt_money(pot)], "#f0a0c0")
-
-	var deck := _bombcat_deck()
-	var defuse := {}
-	var fish := {}
-	var used_peek := {}
-	for a in alive:
-		defuse[int(a.peer)] = 0
-		fish[int(a.peer)] = 0
-	var table: Array = order.duplicate()
-	var idx := 0
-	var guard := 0
-	while running and table.size() > 1 and not deck.is_empty() and guard < 64:
-		guard += 1
-		var peer: int = table[idx]
-		var pl := _player_by_peer(peer)
-		var epoch := _casino_next_epoch()
-		var can_peek: bool = not used_peek.has(peer)
-		s_casino_turn.rpc(peer, epoch, defuse, fish, int(deck.size()), not _is_managed(pl) and can_peek)
-		var drew := "top"
-		if _is_managed(pl):
-			await _wait(0.7)
-		else:
-			drew = await _casino_wait_action(epoch, 9.0)
-			while drew == "peek" and running:
-				used_peek[peer] = true
-				s_casino_peek.rpc_id(peer, _casino_card_name(String(deck.back())))
-				s_casino_event.rpc("%s 偷看了牌堆顶" % pl.name, "move")
-				epoch = _casino_next_epoch()
-				s_casino_turn.rpc(peer, epoch, defuse, fish, int(deck.size()), false)
-				drew = await _casino_wait_action(epoch, 7.0)
-		if not running:
-			return
-		var card: String = String(deck.pop_back()) if drew != "bottom" else String(deck.pop_front())
-		if card == "bomb":
-			if int(defuse[peer]) > 0:
-				defuse[peer] = int(defuse[peer]) - 1
-				s_casino_event.rpc("%s 摸到炸弹，紧急打出【拆除】化解！" % pl.name, "move")
-			else:
-				s_casino_event.rpc("%s 摸到炸弹，轰！出局！" % pl.name, "bad")
-				table.erase(peer)
-		elif card == "defuse":
-			defuse[peer] = int(defuse[peer]) + 1
-			s_casino_event.rpc("%s 摸到一张【拆除】揣进兜里" % pl.name, "move")
-		else:
-			fish[peer] = int(fish[peer]) + 1
-			s_casino_event.rpc("%s 摸到一条小鱼" % pl.name, "good")
-		idx += 1
-		if idx >= table.size():
-			idx = 0
-		await _wait(0.85)
-	if not running:
-		return
-
-	var winner := -1
-	if table.size() == 1:
-		winner = int(table[0])
-	elif deck.is_empty():
-		var best := -1
-		for peer2 in order:
-			if table.has(peer2) and int(fish[peer2]) > best:
-				best = int(fish[peer2])
-				winner = int(peer2)
-	if winner == -1:
-		s_casino_end.rpc(-1, 0)
-		_log("赌局不了了之，奖池退还", "#8a90a5")
-		return
-	var wp := _player_by_peer(winner)
-	wp.money = int(wp.money) + pot
-	s_casino_end.rpc(winner, pot)
-	_log("%s 赢下【炸弹猫】，独吞奖池 %s！" % [wp.name, GameData.fmt_money(pot)], "#f0a0c0")
-	_broadcast_state()
-	await _wait(2.8)
-
-@rpc("authority", "call_local", "reliable")
-func s_casino_start(game_name: String, stake: int, pot: int, order: Array) -> void:
-	_close_casino()
-	_casino_order = order
-	_casino_table_pot = pot
-	board.update_casino(pot, "开局中 · %s" % game_name)
-	_casino_layer = Control.new()
-	_casino_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_casino_layer.z_index = 55
-	_casino_layer.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(_casino_layer)
-	var dim := ColorRect.new()
-	dim.color = Color(0.04, 0.03, 0.06, 0.55)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_casino_layer.add_child(dim)
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_casino_layer.add_child(center)
-	var panel := UIKit.panel_container(UIKit.PANEL, 14, Color(0.93, 0.30, 0.55), 2, 10)
-	panel.custom_minimum_size = Vector2(540, 0)
-	center.add_child(panel)
-	var pm := UIKit.margins(20, 20, 16, 16)
-	panel.add_child(pm)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	pm.add_child(v)
-	var title_row := HBoxContainer.new()
-	title_row.add_theme_constant_override("separation", 10)
-	v.add_child(title_row)
-	title_row.add_child(UIKit.label("宿舍赌场 · %s" % game_name, 20, Color(0.98, 0.58, 0.78)))
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_row.add_child(spacer)
-	_casino_pot_label = UIKit.label("奖池 %s" % GameData.fmt_money(pot), 17, UIKit.ACCENT)
-	title_row.add_child(_casino_pot_label)
-	v.add_child(UIKit.label("每人入局费 %s · 赢家通吃 · 摸到炸弹没【拆除】就出局" % GameData.fmt_money(stake),
-		13, UIKit.TEXT_DIM))
-	var rows_panel := UIKit.panel_container(Color(0.10, 0.11, 0.16, 0.6), 10)
-	v.add_child(rows_panel)
-	var rm := UIKit.margins(10, 10, 6, 6)
-	rows_panel.add_child(rm)
-	var rows_box := VBoxContainer.new()
-	rows_box.add_theme_constant_override("separation", 4)
-	rm.add_child(rows_box)
-	for peer in order:
-		var row := PanelContainer.new()
-		var sb := UIKit.stylebox(Color(0, 0, 0, 0), 8, Color(0, 0, 0, 0), 1)
-		row.add_theme_stylebox_override("panel", sb)
-		var m := UIKit.margins(6, 6, 3, 3)
-		row.add_child(m)
-		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 8)
-		m.add_child(h)
-		var pidx := order.find(peer)
-		h.add_child(UIKit.chip(GameData.PLAYER_COLORS[pidx % GameData.PLAYER_COLORS.size()], 14))
-		var nm := UIKit.label(_name_by_peer(int(peer)), 14, UIKit.TEXT)
-		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		h.add_child(nm)
-		var dl := UIKit.label("拆除 ×0", 13, Color(0.66, 0.52, 0.95))
-		h.add_child(dl)
-		var fl := UIKit.label("小鱼 ×0", 13, UIKit.GOOD)
-		h.add_child(fl)
-		rows_box.add_child(row)
-		_casino_rows[int(peer)] = {"root": row, "sb": sb, "defuse_l": dl, "fish_l": fl}
-	_casino_deck_label = UIKit.label("牌堆剩余 12 张", 13, UIKit.TEXT_DIM)
-	v.add_child(_casino_deck_label)
-	_casino_log = RichTextLabel.new()
-	_casino_log.scroll_following = true
-	_casino_log.custom_minimum_size = Vector2(0, 108)
-	_casino_log.add_theme_font_size_override("normal_font_size", 13)
-	v.add_child(_casino_log)
-	_casino_status = UIKit.label("", 14, UIKit.TEXT)
-	_casino_status.custom_minimum_size = Vector2(0, 20)
-	v.add_child(_casino_status)
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 8)
-	v.add_child(btn_row)
-	_casino_btn_peek = UIKit.button("透视一次（看牌堆顶）", 14)
-	_casino_btn_peek.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_casino_btn_peek.pressed.connect(func() -> void: _on_casino_action("peek"))
-	btn_row.add_child(_casino_btn_peek)
-	_casino_btn_top = UIKit.button("抽牌堆顶", 14, "primary")
-	_casino_btn_top.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_casino_btn_top.pressed.connect(func() -> void: _on_casino_action("top"))
-	btn_row.add_child(_casino_btn_top)
-	_casino_btn_bottom = UIKit.button("抽牌堆底", 14)
-	_casino_btn_bottom.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_casino_btn_bottom.pressed.connect(func() -> void: _on_casino_action("bottom"))
-	btn_row.add_child(_casino_btn_bottom)
-	for b in [_casino_btn_peek, _casino_btn_top, _casino_btn_bottom]:
-		b.disabled = true
-	_casino_my_epoch = -1
-	Fx.play("card", -2.0)
-
-@rpc("authority", "call_local", "reliable")
-func s_casino_turn(peer: int, epoch: int, defuse: Dictionary, fish: Dictionary, deck_left: int, interactive: bool) -> void:
-	board.update_casino(_casino_table_pot, "轮到 %s · 牌堆剩 %d 张" % [_name_by_peer(peer), deck_left])
-	if _casino_layer == null or not is_instance_valid(_casino_layer):
-		return
-	_casino_deck_label.text = "牌堆剩余 %d 张" % deck_left
-	for k in _casino_rows:
-		var row: Dictionary = _casino_rows[k]
-		var active: bool = int(k) == peer
-		var sb: StyleBoxFlat = row.sb
-		sb.bg_color = Color(0.93, 0.30, 0.55, 0.12) if active else Color(0, 0, 0, 0)
-		sb.border_color = Color(0.93, 0.30, 0.55, 0.6) if active else Color(0, 0, 0, 0)
-		row.defuse_l.text = "拆除 ×%d" % int(defuse.get(k, 0))
-		row.fish_l.text = "小鱼 ×%d" % int(fish.get(k, 0))
-	var my := peer == my_peer and interactive
-	_casino_my_epoch = epoch if my else -1
-	_casino_btn_top.disabled = not my
-	_casino_btn_bottom.disabled = not my
-	_casino_btn_peek.disabled = not my or not interactive
-	if my:
-		_casino_status.text = "轮到你！选择从哪抽一张（透视可先偷看牌堆顶）"
-		_casino_status.add_theme_color_override("font_color", UIKit.ACCENT)
-	else:
-		_casino_status.text = "等待 %s 行动…" % _name_by_peer(peer)
-		_casino_status.add_theme_color_override("font_color", UIKit.TEXT_DIM)
-
-@rpc("authority", "call_local", "reliable")
-func s_casino_event(text: String, kind: String) -> void:
-	if _casino_log == null or not is_instance_valid(_casino_log):
-		return
-	var col := "#dfe3ee"
-	match kind:
-		"good": col = "#74d188"
-		"bad": col = "#ef7b74"
-		"move": col = "#8fb7f2"
-	_log_text_append(_casino_log, text, col)
-	if kind == "bad":
-		Fx.play("bust", -6.0)
-
-func _log_text_append(rt: RichTextLabel, text: String, col: String) -> void:
-	var safe := text.replace("[", "［")
-	rt.append_text("[color=%s]%s[/color]\n" % [col, safe])
-
-@rpc("authority", "call_remote", "reliable")
-func s_casino_peek(card: String) -> void:
-	if _casino_log == null or not is_instance_valid(_casino_log):
-		return
-	_log_text_append(_casino_log, "（透视）牌堆顶是【%s】" % card, "#f0c064")
-
-@rpc("authority", "call_local", "reliable")
-func s_casino_end(winner_peer: int, pot: int) -> void:
-	_casino_table_pot = 0
-	board.update_casino(0, "歇业中")
-	if _casino_layer == null or not is_instance_valid(_casino_layer):
-		return
-	_casino_my_epoch = -1
-	for b in [_casino_btn_peek, _casino_btn_top, _casino_btn_bottom]:
-		b.disabled = true
-	if winner_peer == -1:
-		_casino_status.text = "赌局不了了之…"
-	elif winner_peer == my_peer:
-		_casino_status.text = "你赢下了 %s 奖池，通吃全场！" % GameData.fmt_money(pot)
-		_casino_status.add_theme_color_override("font_color", UIKit.ACCENT)
-		Fx.play("cash", 0.0)
-	else:
-		_casino_status.text = "%s 独吞奖池 %s！" % [_name_by_peer(winner_peer), GameData.fmt_money(pot)]
-		_casino_status.add_theme_color_override("font_color", Color(0.98, 0.58, 0.78))
-	var t := create_tween()
-	t.tween_interval(2.6)
-	t.tween_callback(_close_casino)
-
-func _on_casino_action(action: String) -> void:
-	if _casino_my_epoch < 0:
-		return
-	var epoch := _casino_my_epoch
-	_casino_my_epoch = -1
-	for b in [_casino_btn_peek, _casino_btn_top, _casino_btn_bottom]:
-		b.disabled = true
-	if multiplayer.is_server():
-		_casino_action = {"epoch": epoch, "action": action}
-	else:
-		c_casino_action.rpc_id(1, epoch, action)
-
-@rpc("any_peer", "call_remote", "reliable")
-func c_casino_action(epoch: int, action: String) -> void:
-	if not multiplayer.is_server():
-		return
-	_casino_action = {"epoch": epoch, "action": action}
-
-func _close_casino() -> void:
-	_casino_my_epoch = -1
-	if _casino_layer != null and is_instance_valid(_casino_layer):
-		_casino_layer.queue_free()
-	_casino_layer = null
-	_casino_rows = {}
-	_casino_log = null
-
-
-func _dev_player_edit(edit: Callable) -> void:
-	if not multiplayer.is_server():
-		return
-	var p := _dev_selected()
-	if p.is_empty():
-		return
-	edit.call(p)
-	_broadcast_state()

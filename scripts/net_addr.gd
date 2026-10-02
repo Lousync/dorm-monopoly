@@ -25,6 +25,25 @@ static func parse_endpoint(text: String, default_port: int) -> Array:
 		return []
 	return [host, port]
 
+## 拼「主机:端口」展示串。IPv6 必须带方括号，否则 parse_endpoint 无法把端口
+## 与地址本身区分开（`2001:db8::1:8000` 整体会被当成主机名）——见 fix/v0.0.2。
+static func format_endpoint(host: String, port: int) -> String:
+	if host.contains(":"):
+		return "[%s]:%d" % [host, port]
+	return "%s:%d" % [host, port]
+
+## 解析房间发现广播的 INFO 报文（房主 → 客户端）。
+## 格式：<proto>|INFO|<房名>|<人数>/<上限>|<状态>|<端口>
+static func parse_room_info(text: String) -> Dictionary:
+	var parts := text.split("|")
+	if parts.size() != 6 or parts[1] != "INFO":
+		return {}
+	var port := int(parts[5])
+	if port <= 0 or port > 65535:
+		return {}
+	return {"proto": String(parts[0]), "name": String(parts[2]),
+		"count": String(parts[3]), "state": String(parts[4]), "port": port}
+
 ## 本机地址分类，便于把可用的直连地址展示给朋友。
 static func split_addresses() -> Dictionary:
 	var res := {"lan4": [], "pub4": [], "lan6": [], "pub6": []}
