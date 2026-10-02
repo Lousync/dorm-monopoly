@@ -17,6 +17,7 @@ func _check(cond: bool, what: String) -> void:
 func _run() -> void:
 	print("== 操作限时挡位 ==")
 	_test_mapping()
+	_test_rules_text()     # 纯静态，无引擎依赖
 	_test_broadcast()
 	_test_in_game_tier()   # 无 await，直接调
 	await _test_window()   # 协程：不等它跑完 quit() 会先执行，断言全部落空（假绿）
@@ -77,6 +78,8 @@ func _test_in_game_tier() -> void:
 	g._refresh_tier_ui()
 	_check(g.tier_row.visible, "房主看得到可点的挡位 chips")
 	_check(not g.tier_readonly.visible, "房主不显示只读行")
+	# 小标题只跟 chips 一侧显隐：否则客户端会看到「操作限时」小标题 + 只读行两行同义文本
+	_check(g.tier_title.visible == g.tier_row.visible, "小标题与 chips 同步显隐")
 	# g 是 Node 类型，动态属性访问返回 Variant，不能写 `:=`（类型推不出来）
 	var rev: int = g._timeout_rev
 	g._set_timeout_tier("30")
@@ -109,6 +112,19 @@ func _test_mapping() -> void:
 	for t in GameSettings.TIERS:
 		_check(GameSettings.TIER_LABELS.has(t), "挡位 %s 有中文标签" % t)
 
+## 规则说明文案必须跟着挡位走：非默认档下不能再说「35 秒不掷」这类现状秒数。
+## 纯静态（只读 RulesText 的字符串），不依赖引擎与对局。
+func _test_rules_text() -> void:
+	var none_body := ""
+	for pg in RulesText.pages(GameSettings.TIER_NONE):
+		none_body += String(pg.body)
+	_check(none_body.contains("不限时"), "不限时档：规则正文含「不限时」")
+	_check(not none_body.contains("35"), "不限时档：规则正文不含「35」（不写死现状秒数）")
+	var t15_body := ""
+	for pg in RulesText.pages("15"):
+		t15_body += String(pg.body)
+	_check(t15_body.contains("15"), "15 秒档：规则正文含「15」")
+
 ## 探针：跑一次 _await_turn_window，结果写进 out[0]，arm 次数写进 arm[0]
 func _probe(g: Node, kind: String, alive_ref: Array, out: Array, arm: Array) -> void:
 	# g 是 Node 类型，动态调用返回 Variant，不能写 `:=`（类型推不出来）
@@ -121,7 +137,14 @@ func _test_window() -> void:
 	var g := _host_game(7797)
 	if g == null:
 		return
-	g.running = true   # _await_turn_window 以 running 为前置；此时对局循环已退出，不会来抢
+	# _await_turn_window 以 running 为前置，必须把它打开；但不能立刻打开：
+	# _host_setup() 同步把 running 设回 true 后又 `await _wait(1.5)` → _broadcast_state()
+	# → _run_game()，而 _run_game 只在首个 await（再 0.3 秒）之后才判 `while running`。
+	# 若此刻就把 running 设真，t0+1.5s 时那个循环会真的开跑 _play_turn(甲)——今天的绿灯纯属侥幸。
+	# 所以先让它死透（1.9s > 1.5+0.3），再打开，只为满足探针的前置条件。
+	g.running = false
+	await create_timer(1.9).timeout
+	g.running = true
 
 	# 不限时：不会托管；环节一结束立刻返回 false
 	g._settings.timeout_tier = GameSettings.TIER_NONE
@@ -164,4 +187,8 @@ func _test_window() -> void:
 	_check(out3[0] == true, "15 秒档：到点返回 true（该自动托管）")
 	_check(int(arm3[0]) == 1, "15 秒档：到点前只 arm 一次")
 	Engine.time_scale = 1.0
+	# 守门断言：上面打开 running 只是为了满足探针的前置条件，对局循环必须仍是死的。
+	# 旧写法在 t0 就把 running 设真 → t0+1.8s 起 _run_game 会真的跑 _play_turn(甲)，
+	# 那一步会推进 _roll_epoch（只增不减）——这条断言就是拿来钉住它的。
+	_check(g._roll_epoch == 0, "对局循环未开跑（running 只是探针前置条件）")
 	g.queue_free()

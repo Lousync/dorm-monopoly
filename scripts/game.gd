@@ -31,6 +31,7 @@ var confirm_panel: PanelContainer
 var confirm_note: Label
 var vol_slider: HSlider
 var mute_check: CheckButton
+var tier_title: Label          # 对局内设置面板：「操作限时」小标题（只跟 chips 一侧显隐）
 var tier_row: HBoxContainer    # 对局内设置面板：挡位 chips（房主）
 var tier_readonly: Label       # 对局内设置面板：挡位只读文本（客户端）
 var pause_mask: ColorRect
@@ -38,6 +39,10 @@ var audio_volume := 1.0
 var audio_mute := false
 
 # ---------------- 开局设置（房主权威，见 docs/gameplay/开局设置.md §三之一） ----------------
+const _WINDOW_TICK := 0.1            # 操作窗口的探测分片（秒）；也是 _ask 的应答粒度：
+                                     # 玩家点了「买/不买」最多晚这么久被房主发现
+const _BAR_LEAD := 1.0               # 弹窗倒计时条比窗口早这么多秒到底（沿袭基线的既有手感，
+                                     # 条子归零即提交「拒绝」，见 _prompt_bar_arm）
 var _settings: GameSettings          # 房主：来自大厅配置；客户端：从状态快照同步
 var _timeout_rev := 0                # 挡位变化计数：等待中的环节据此重计时
 
@@ -143,7 +148,9 @@ var _prompt_token := -1
 # ---------------- 自动化测试 ----------------
 var at_mode := ""
 var at_rounds := 3
+var at_tier := ""    # --tier= 指定的挡位（客户端 autotest 据此断言收到了正确的快照）
 var _at_roll_epoch := -1
+var _at_client_done := false   # 客户端 autotest 已收尾（防 quit() 生效前重复打印）
 
 func _ready() -> void:
 	my_peer = multiplayer.get_unique_id()
@@ -157,6 +164,16 @@ func _ready() -> void:
 			at_rounds = maxi(1, int(a.substr(9)))
 		elif a.begins_with("--max-rounds="):
 			GameData.MAX_ROUNDS = maxi(1, int(a.substr(13)))
+		elif a.begins_with("--tier="):
+			# 自动回归用：把挡位写进大厅配置，下面的 _settings 副本因此取到它。
+			# 必须早于 _build_ui（规则面板按挡位取秒数）与 _host_setup（房主开局读挡位）。
+			var tid := a.substr(7)
+			if GameSettings.TIERS.has(tid):
+				at_tier = tid
+				if Net.game_settings != null:
+					Net.game_settings.timeout_tier = tid
+			else:
+				print("--tier 非法挡位，忽略：", tid)
 		elif a.begins_with("--shot="):
 			_shot_path = a.substr(7)
 		elif a.begins_with("--shot-rot="):
@@ -833,11 +850,14 @@ func _set_timeout_tier(id: String) -> void:
 		RulesPanel.select_tab(self, rules_tab)   # 规则文案里的秒数跟着变
 	_broadcast_state()
 
-## 刷新设置面板的「操作限时」一行：房主 = 可点 chips，客户端 = 只读文本
+## 刷新设置面板的「操作限时」一行：房主 = 小标题 + 可点 chips，客户端 = 一行只读文本。
+## 两侧互斥（小标题只跟 chips 一起显隐），否则客户端会看到「操作限时」两行同义文本。
+## 只读行文案的唯一来源就在这里（table_hud.gd 只建空标签），别再复制一份格式串。
 func _refresh_tier_ui() -> void:
-	if tier_row == null or tier_readonly == null:
+	if tier_row == null or tier_readonly == null or tier_title == null:
 		return
 	var is_host := multiplayer.is_server()
+	tier_title.visible = is_host
 	tier_row.visible = is_host
 	tier_readonly.visible = not is_host
 	tier_readonly.text = "操作限时：%s（房主设置）" % String(
@@ -916,14 +936,39 @@ func s_state(state: Dictionary) -> void:
 	if String(state.phase) == "ended":
 		_show_game_over()
 		if at_mode != "" and not multiplayer.is_server():
-			print("AUTOTEST CLIENT OK round=", state.round)
-			get_tree().quit(0)
+			_autotest_client_finish(state)
 	elif _shot_path != "" and not _shot_taken and (int(state.round) >= 2 or at_mode == ""):
 		_shot_taken = true
 		dev.take_shot(_shot_path)
 	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
-		print("AUTOTEST CLIENT OK round=", state.round)
-		get_tree().quit(0)
+		_autotest_client_finish(state)
+
+## 客户端 autotest 收尾：先校验挡位链路，再打印 OK 行退出。
+## quit() 要到本帧末才生效，期间还可能再收到一次 s_state —— 用标记挡住重复打印。
+func _autotest_client_finish(state: Dictionary) -> void:
+	if _at_client_done:
+		return
+	_at_client_done = true
+	if not _autotest_tier_ok(state):
+		return   # 已在里面打印 FAIL 并 quit(1)
+	print("AUTOTEST CLIENT OK round=%d tier=%s chips=%s readonly=%s" % [
+		int(state.round), String(state.get("timeout_tier", "")),
+		tier_row.visible, tier_readonly.visible])
+	get_tree().quit(0)
+
+## 只用 `--autotest=` 时才跑：被传了 `--tier=` 的客户端必须收到同挡位的快照，
+## 且「操作限时」只读行可见、可点 chips 不可见（客户端只读 + 中途改档同步的取证）。
+## 不满足 → 打印 AUTOTEST CLIENT TIER FAIL 并 quit(1)，返回 false。
+func _autotest_tier_ok(state: Dictionary) -> bool:
+	if at_mode == "" or at_tier == "" or multiplayer.is_server():
+		return true
+	var got := String(state.get("timeout_tier", ""))
+	if got == at_tier and not tier_row.visible and tier_readonly.visible:
+		return true
+	print("AUTOTEST CLIENT TIER FAIL want=%s got=%s chips=%s readonly=%s" % [
+		at_tier, got, tier_row.visible, tier_readonly.visible])
+	get_tree().quit(1)
+	return false
 
 @rpc("authority", "call_local", "reliable")
 func s_roll(v: int) -> void:
@@ -1478,17 +1523,20 @@ func _close_prompt() -> void:
 ## （重）启动弹窗倒计时条。sec <= 0（不限时）则只隐藏条子、不自动拒绝。
 ## 挡位中途变化时房主与客户端都会重新调用它（见 _await_turn_window / s_state）。
 func _prompt_bar_arm(token: int, sec: float) -> void:
-	if _prompt_tw != null and _prompt_tw.is_valid():
-		_prompt_tw.kill()
+	# 先判 token 再 kill：不是当前弹窗的（重）启动不该掐掉当前条子的 tween
 	if _prompt_bar == null or not is_instance_valid(_prompt_bar) or _prompt_token != token:
 		return
+	if _prompt_tw != null and _prompt_tw.is_valid():
+		_prompt_tw.kill()
 	if sec <= 0.0:
 		_prompt_bar.visible = false
 		return
 	_prompt_bar.visible = true
 	_prompt_bar.value = 100.0
 	_prompt_tw = create_tween()
-	_prompt_tw.tween_property(_prompt_bar, "value", 0.0, maxf(0.5, sec - 1.0))
+	# 条子提前 _BAR_LEAD 秒到底：tween_callback 会直接提交「拒绝」，
+	# 所以「15 秒」档实际在 14 秒生效——这是基线就有的口径，改动前先确认规则文案是否要跟。
+	_prompt_tw.tween_property(_prompt_bar, "value", 0.0, maxf(0.5, sec - _BAR_LEAD))
 	_prompt_tw.tween_callback(func() -> void:
 		if _prompt_token == token:
 			_answer(token, false)
@@ -2708,14 +2756,17 @@ func _await_turn_window(kind: String, alive: Callable, on_arm := Callable()) -> 
 		var sec := GameSettings.turn_seconds(_settings.timeout_tier, kind)
 		if on_arm.is_valid():
 			on_arm.call(sec)
-		# 分片等待（0.25 秒一探，开销可忽略）：环节结束、挡位变化、到点超时都能及时响应。
+		# 分片等待（_WINDOW_TICK 一探，开销可忽略）：环节结束、挡位变化、到点超时都能及时响应。
 		# 不能整段 `await _wait(sec)`——那样挡位中途变化要等满一整段才按新值重计时。
+		# 到期判定锚定窗口起点的绝对时刻，不累加每跳的名义时长：SceneTreeTimer 要下一帧才触发，
+		# 累加会每跳少算 0~1 帧，长窗口（掷轮 140 跳）越跑越晚。
+		# 时间基准乘 Engine.time_scale：_wait 走 SceneTreeTimer，吃的本就是缩放后的时间
+		# （只有 autotest 会改它），不乘的话自动回归里的等待会被放大到不可接受。
 		# sec <= 0（不限时）→ 没有到期时刻，只等前两种。
-		var waited := 0.0
+		var t0 := Time.get_ticks_msec()
 		while running and alive.call() and _timeout_rev == rev:
-			if sec > 0.0 and waited >= sec:
+			if sec > 0.0 and float(Time.get_ticks_msec() - t0) / 1000.0 * Engine.time_scale >= sec:
 				return true
-			await _wait(0.25)
-			waited += 0.25
+			await _wait(_WINDOW_TICK)
 	return false
 
