@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型：赌场改造（相机聚焦 / 抽游戏 / 投骰子）</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #dfe3ee; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	/* 视口 */
+	#stage { width: 1280px; height: 800px; flex: none; position: relative; overflow: hidden;
+		background: radial-gradient(ellipse at 50% 25%, #1b2030 0%, #10121c 55%, #0a0c13 100%); }
+
+	/* ===== 世界（棋盘 + 赌场区域都在这里；相机变换作用在它上面） ===== */
+	#world { position: absolute; left: 0; top: 0; width: 1600px; height: 1000px;
+		transform-origin: 0 0; will-change: transform; }
+	.tile { position: absolute; width: 44px; height: 44px; border-radius: 6px;
+		background: #171a29; border: 1px solid #2c3046; }
+	.tile s { display: block; height: 8px; }
+	.tile em { display: block; font-style: normal; font-size: 9px; color: #8b93ad; text-align: center; }
+	#wheelHub { position: absolute; left: 800px; top: 560px; width: 190px; height: 190px;
+		margin: -95px 0 0 -95px; border-radius: 50%;
+		background: repeating-conic-gradient(#2c3350 0 27.7deg, #3a4266 27.7deg 55.4deg);
+		border: 5px solid #b5761a; }
+	#wheelHub::after { content: ""; position: absolute; left: 50%; top: 50%; width: 24px; height: 24px;
+		margin: -12px 0 0 -12px; border-radius: 50%; background: #f5b342; }
+
+	.fx { position: absolute; border-radius: 16px; }
+	.fx b { position: absolute; left: 18px; top: 12px; font-size: 18px; }
+	.fx.shop { left: 160px; top: 120px; width: 560px; height: 360px;
+		background: linear-gradient(180deg,#241809,#1c1206); border: 3px solid #5c3f1f; }
+	.fx.shop b { color: #f0e2c2; }
+
+	/* ===== 赌场区域（世界坐标 640×400，相机 2× 后正好铺满 1280×800） ===== */
+	#casino { position: absolute; left: 880px; top: 120px; width: 640px; height: 400px; overflow: hidden;
+		border-radius: 18px; border: 3px solid #b5761a;
+		background: radial-gradient(ellipse at 50% 38%, #14683f 0%, #0d4d2e 62%, #0a3d24 100%);
+		box-shadow: inset 0 0 0 2px rgba(255,214,120,.28); }
+	#casino .frame { position: absolute; inset: 14px; border-radius: 10px;
+		border: 1px solid rgba(255,214,120,.22); pointer-events: none; }
+	#czTitle { position: absolute; left: 0; right: 0; top: 12px; text-align: center;
+		color: #ffe3a6; letter-spacing: 4px; font-size: 15px; text-shadow: 0 2px 8px #000; }
+	#czHint { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
+		color: #a7d9be; font-size: 10px; opacity: 0; transition: opacity .5s; }
+	#casino.open #czHint { opacity: .85; }
+
+	/* ---- 抽游戏（CSGO 式） ---- */
+	#draw { position: absolute; left: 40px; top: 62px; width: 560px; }
+	#draw .cap { text-align: center; color: #ffe3a6; font-size: 13px; margin-bottom: 8px; letter-spacing: 2px; }
+	.reel { position: relative; height: 118px; overflow: hidden; border-radius: 10px;
+		background: rgba(3,14,9,.55); border: 1px solid rgba(255,214,120,.35);
+		box-shadow: inset 0 0 34px rgba(0,0,0,.6); }
+	.reel .marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 3px;
+		background: linear-gradient(180deg, transparent, #ffd88a, #f0a72e, #ffd88a, transparent);
+		transform: translateX(-50%); z-index: 3; box-shadow: 0 0 12px rgba(245,179,66,.9); }
+	.reel .fade { position: absolute; top: 0; bottom: 0; width: 96px; z-index: 2; pointer-events: none; }
+	.reel .fade.l { left: 0; background: linear-gradient(90deg, rgba(3,14,9,.95), transparent); }
+	.reel .fade.r { right: 0; background: linear-gradient(-90deg, rgba(3,14,9,.95), transparent); }
+	.track { display: flex; gap: 12px; padding: 10px; height: 100%; align-items: center; will-change: transform; }
+	.gcard { flex: none; width: 84px; height: 98px; border-radius: 8px;
+		background: linear-gradient(180deg,#20304a,#141d2e); border: 2px solid #46628c;
+		display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+	.gcard .gi { font-size: 32px; line-height: 1; }
+	.gcard .gn { font-size: 10px; color: #cfe0ff; }
+	.gcard.locked { border-color: #3a4058; opacity: .55; }
+	.gcard.win { border-color: #ffd88a; box-shadow: 0 0 20px rgba(245,179,66,.85); animation: winpulse .5s ease-out; }
+	@keyframes winpulse { 0% { transform: scale(1); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+	/* ---- 投骰子场景 ---- */
+	#scene { position: absolute; inset: 0; opacity: 0; transition: opacity .5s; }
+	#scene.show { opacity: 1; }
+	#scene .table { position: absolute; left: 50%; top: 54%; width: 520px; height: 280px;
+		transform: translate(-50%,-50%); border-radius: 46% / 34%;
+		background: radial-gradient(ellipse at 50% 40%, #1f9a5f 0%, #0f5c37 60%, #0a4027 100%);
+		border: 6px solid #6b4a22; box-shadow: inset 0 0 30px rgba(0,0,0,.35); }
+	#tcenter { position: absolute; left: 50%; top: 54%; transform: translate(-50%,-50%);
+		display: flex; gap: 16px; z-index: 2; }
+	.seat { position: absolute; display: flex; align-items: center; gap: 5px;
+		padding: 4px 9px; border-radius: 14px; background: rgba(6,18,12,.82);
+		border: 1px solid rgba(255,255,255,.18); font-size: 10px; }
+	.seat .chip { width: 10px; height: 10px; border-radius: 50%; }
+	.seat .mn { color: #f5b342; font-size: 9px; }
+	.seat.win { border-color: #ffd88a; box-shadow: 0 0 14px rgba(245,179,66,.8); background: rgba(60,40,8,.9); }
+	.seat.n { left: 50%; top: 34px; transform: translateX(-50%); }
+	.seat.s { left: 50%; bottom: 30px; transform: translateX(-50%); }
+	.seat.w { left: 26px; top: 54%; transform: translateY(-50%); }
+	.seat.e { right: 26px; top: 54%; transform: translateY(-50%); }
+	.die { width: 46px; height: 46px; border-radius: 9px; background: #f4f1e6; color: #22262f;
+		display: flex; align-items: center; justify-content: center; font-size: 34px; line-height: 1;
+		box-shadow: 0 5px 12px rgba(0,0,0,.5), inset 0 -3px 0 rgba(0,0,0,.12); }
+	.die.roll { animation: tumble .28s linear infinite; }
+	@keyframes tumble { 0% { transform: rotate(0) translateY(0); }
+		25% { transform: rotate(90deg) translateY(-5px); } 50% { transform: rotate(180deg) translateY(0); }
+		75% { transform: rotate(270deg) translateY(-4px); } 100% { transform: rotate(360deg) translateY(0); } }
+	.die.win { outline: 3px solid #ffd88a; box-shadow: 0 0 20px rgba(245,179,66,.9); }
+	#pot { position: absolute; left: 50%; top: 54%; transform: translate(-50%,-50%);
+		text-align: center; z-index: 1; pointer-events: none; }
+	#pot u { display: block; text-decoration: none; color: #7fae8c; font-size: 9px; }
+	#pot b { color: #ffd88a; font-size: 18px; text-shadow: 0 2px 8px #000; }
+	#result { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%);
+		font-size: 14px; color: #ffe3a6; letter-spacing: 1px; opacity: 0; transition: opacity .4s; white-space: nowrap; }
+	#result.show { opacity: 1; }
+
+	/* ===== 屏幕层 HUD（不随相机变化） ===== */
+	#status { position: absolute; left: 24px; top: 20px; z-index: 20; font-size: 14px; color: #cfe0ff;
+		background: rgba(8,12,20,.8); border: 1px solid #333a52; border-radius: 8px; padding: 7px 14px; }
+	#status b { color: #f5b342; }
+	#cam { position: absolute; right: 24px; top: 20px; z-index: 20; font-size: 12px; color: #9aa2b3;
+		background: rgba(8,12,20,.8); border: 1px solid #333a52; border-radius: 8px; padding: 6px 12px; }
+	#ctl { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20;
+		display: flex; gap: 10px; align-items: center; background: rgba(8,12,20,.85);
+		border: 1px solid #333a52; border-radius: 10px; padding: 8px 12px; }
+	#ctl button { font-size: 13px; color: #cfe0ff; background: #1d2131; border: 1px solid #333a52;
+		border-radius: 7px; padding: 6px 14px; cursor: pointer; }
+	#ctl button:hover { border-color: #f5b342; color: #ffd88a; }
+	#ctl button:disabled { opacity: .35; cursor: default; }
+	#ctl button.primary { background: linear-gradient(180deg,#ffd88a,#f0a72e); color: #3a2405;
+		border-color: #f5b342; font-weight: bold; }
+	#note { position: absolute; right: 16px; bottom: 88px; width: 306px; z-index: 20;
+		background: rgba(8,20,12,.9); border: 1px dashed #4e8f5c; border-radius: 8px;
+		padding: 8px 11px; font-size: 10.5px; color: #9fd3ab; line-height: 15px; }
+	#note b { color: #cfe8d4; }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+
+	<!-- 世界：棋盘 + 赌场区域（相机作用于此） -->
+	<div id="world">
+		<div id="ring"></div>
+		<div id="wheelHub"></div>
+		<div class="fx shop"><b>小卖部</b></div>
+
+		<div id="casino">
+			<div class="frame"></div>
+			<div id="czTitle">宿 舍 赌 场</div>
+
+			<div id="draw">
+				<div class="cap">正在抽取本局游戏…</div>
+				<div class="reel">
+					<div class="fade l"></div><div class="fade r"></div><div class="marker"></div>
+					<div class="track" id="track"></div>
+				</div>
+			</div>
+
+			<div id="scene">
+				<div class="table"></div>
+				<div id="pot"><u>本局奖池</u><b>¥3,200</b></div>
+				<div id="tcenter"></div>
+				<div id="seats"></div>
+				<div id="result"></div>
+			</div>
+
+			<div id="czHint">相机可拖拽平移 · 滚轮缩放（放大 / 缩小）</div>
+		</div>
+	</div>
+
+	<!-- 屏幕层 -->
+	<div id="status">阶段：<b>待触发</b></div>
+	<div id="cam">相机 0.80× · (0, 0)</div>
+	<div id="ctl">
+		<button class="primary" id="b1" onclick="enterCasino()">🎲 踩到赌场</button>
+		<button id="b2" onclick="startDraw()" disabled>开始抽游戏</button>
+		<button id="b3" onclick="rollDice()" disabled>投骰子</button>
+		<button id="b4" onclick="reset()">⟲ 重播</button>
+	</div>
+	<div id="note">
+		<b>原型说明（已定项）</b><br>
+		· 进入赌场：**相机**移到赌场区域并缩放到其边缘铺满屏（不是缩放赌场物件）。<br>
+		· 到位后相机**照常可拖拽平移 + 滚轮缩放**，非定死。<br>
+		· 6 面骰、每人同时掷、最大者通吃；平局→并列者**平分**。<br>
+		· 每人下注 ¥800，4 人奖池 ¥3,200。<br>
+		· 抽游戏：池内有占位，当前**固定抽到「投骰子」**。<br>
+		· 炸弹猫已按你的要求移除（本原型不含）。
+	</div>
+</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const PC = ["#e5484d", "#3b82f6", "#22c55e", "#f59e0b"];
+const DICE = ["⚀","⚁","⚂","⚃","⚄","⚅"];
+
+const WORLD_W = 1600, WORLD_H = 1000;
+const CAS = { x: 880, y: 120, w: 640, h: 400 };   // 赌场区域（世界坐标，16:10）
+
+// 棋盘 56 格（沿世界外圈）
+(function () {
+	const ring = $("ring");
+	const m = 50, cols = 18, rows = 12, S = 44;
+	const cols2 = ["#d8a03c","#c05a7a","#4e8fe0","#58c468","#9a6fe0","#e8943a","#5a8fe0","#8b93ad"];
+	const c1 = cols - 1, c2 = c1 + (rows - 2);
+	for (let i = 0; i < 56; i++) {
+		let col, row;
+		if (i <= c1) { col = c1 - i; row = rows - 1; }
+		else if (i <= c2) { col = 0; row = rows - 1 - (i - c1); }
+		else if (i <= c2 + cols - 1) { col = i - (c2 + 1); row = 0; }
+		else { col = cols - 1; row = i - (c2 + cols); }
+		const d = document.createElement("div"); d.className = "tile";
+		const s = document.createElement("s"); const e = document.createElement("em");
+		if (i === 0) { s.style.background = "#f5b342"; e.textContent = "起点"; }
+		else { s.style.background = cols2[i % cols2.length]; e.textContent = i % 3 === 0 ? "机会" : ""; }
+		d.appendChild(s); d.appendChild(e);
+		d.style.left = (m + col * (WORLD_W - 2 * m) / (cols - 1)) + "px";
+		d.style.top = (m + row * (WORLD_H - 2 * m) / (rows - 1)) + "px";
+		ring.appendChild(d);
+	}
+})();
+
+// ===== 相机 =====
+const cam = { x: 0, y: 0, s: 0.8 };   // 屏幕 = 世界 * s + (x,y)
+function applyCam(animate) {
+	const w = $("world");
+	w.style.transition = animate ? "transform 1.25s cubic-bezier(.5,.05,.2,1)" : "none";
+	w.style.transform = "translate(" + cam.x + "px," + cam.y + "px) scale(" + cam.s + ")";
+	$("cam").textContent = "相机 " + cam.s.toFixed(2) + "× · (" + Math.round(cam.x) + ", " + Math.round(cam.y) + ")";
+}
+function frameRect(r, animate) {   // 让世界矩形 r 的边缘正好铺满视口
+	cam.s = 1280 / r.w;
+	cam.x = -r.x * cam.s;
+	cam.y = -r.y * cam.s;
+	applyCam(animate);
+}
+
+const PLAYERS = [
+	{ name: "房主", color: 0 }, { name: "机器人A", color: 1 },
+	{ name: "机器人B", color: 2 }, { name: "机器人C", color: 3 },
+];
+const GAMES = [
+	{ id: "dice", name: "投骰子", icon: "🎲", real: true },
+	{ id: "g2", name: "敬请期待", icon: "❓", real: false },
+	{ id: "g3", name: "敬请期待", icon: "❓", real: false },
+	{ id: "g4", name: "敬请期待", icon: "❓", real: false },
+];
+const STAKE = 800;
+let state = "idle";
+
+function setStatus(t) { $("status").innerHTML = "阶段：<b>" + t + "</b>"; }
+
+function buildReel() {
+	const track = $("track"); track.innerHTML = "";
+	const n = 40, winAt = 32;
+	for (let i = 0; i < n; i++) {
+		const g = (i === winAt) ? GAMES[0] : GAMES[(i % 3) + 1];
+		const d = document.createElement("div");
+		d.className = "gcard" + (g.real ? "" : " locked");
+		d.innerHTML = '<div class="gi">' + g.icon + '</div><div class="gn">' + g.name + '</div>';
+		if (i === winAt) d.id = "theWinCard";
+		track.appendChild(d);
+	}
+	track.dataset.winCard = winAt;
+}
+
+function enterCasino() {
+	if (state !== "idle") return;
+	state = "zoom";
+	setStatus("相机聚焦赌场…");
+	buildReel();
+	$("b1").disabled = true;
+	frameRect(CAS, true);            // 相机移到赌场并缩放到铺满屏
+	setTimeout(() => { $("casino").classList.add("open"); }, 900);
+	setTimeout(() => {
+		state = "moved";
+		setStatus("已到赌场 · 可拖动");
+		$("b2").disabled = false;
+		startDraw();
+	}, 1400);
+}
+
+function startDraw() {
+	if (state !== "moved") return;
+	state = "draw";
+	setStatus("抽取本局游戏…");
+	$("b2").disabled = true;
+	$("scene").classList.remove("show");
+	$("draw").style.display = "block"; $("draw").style.opacity = 1;
+	const track = $("track");
+	const winAt = parseInt(track.dataset.winCard, 10);
+	const cardW = 84 + 12;
+	const reelW = track.parentElement.clientWidth;
+	const target = -(winAt * cardW + 48 - reelW / 2);
+	track.style.transition = "none"; track.style.transform = "translateX(0)";
+	requestAnimationFrame(() => {
+		track.style.transition = "transform 4.2s cubic-bezier(.12,.72,.14,1)";
+		track.style.transform = "translateX(" + (target - 22) + "px)";
+		setTimeout(() => {
+			track.style.transition = "transform .35s ease-out";
+			track.style.transform = "translateX(" + target + "px)";
+		}, 3900);
+	});
+	setTimeout(() => {
+		const card = $("theWinCard"); if (card) card.classList.add("win");
+		setStatus("抽到：投骰子");
+		setTimeout(morphToDice, 750);
+	}, 4300);
+}
+
+function morphToDice() {
+	state = "dice";
+	$("draw").style.transition = "opacity .4s"; $("draw").style.opacity = 0;
+	setTimeout(() => { $("draw").style.display = "none"; }, 420);
+	buildTable();
+	$("scene").classList.add("show");
+	$("b3").disabled = false;
+	setStatus("投骰子 · 全员同时掷");
+	$("result").classList.remove("show");
+}
+
+function buildTable() {
+	const tcenter = $("tcenter"); tcenter.innerHTML = "";
+	const seats = $("seats"); seats.innerHTML = "";
+	const pos = ["n", "s", "w", "e"];
+	PLAYERS.forEach((p, i) => {
+		const die = document.createElement("div"); die.className = "die"; die.id = "die-" + i;
+		die.textContent = DICE[0]; tcenter.appendChild(die);
+		const s = document.createElement("div"); s.className = "seat " + pos[i];
+		s.id = "seat-" + i;
+		s.innerHTML = '<div class="chip" style="background:' + PC[p.color] + '"></div>' + p.name +
+			' <span class="mn" id="mn-' + p.color + '"></span>';
+		seats.appendChild(s);
+	});
+}
+
+function rollDice() {
+	if (state !== "dice") return;
+	state = "rolling";
+	$("b3").disabled = true;
+	$("result").classList.remove("show");
+	setStatus("骰子滚动中…");
+	const dice = PLAYERS.map((_, i) => $("die-" + i));
+	dice.forEach(d => d.classList.add("roll"));
+	const timer = setInterval(() => {
+		dice.forEach(d => d.textContent = DICE[Math.floor(Math.random() * 6)]);
+	}, 90);
+	setTimeout(() => {
+		clearInterval(timer);
+		dice.forEach(d => d.classList.remove("roll"));
+		reveal(PLAYERS.map(() => 1 + Math.floor(Math.random() * 6)));
+	}, 1600);
+}
+
+function reveal(vals) {
+	vals.forEach((v, i) => $("die-" + i).textContent = DICE[v - 1]);
+	PLAYERS.forEach((p, i) => { $("mn-" + p.color).textContent = "掷出 " + vals[i]; });
+	const max = Math.max(...vals);
+	const wins = vals.map((v, i) => v === max ? i : -1).filter(i => i >= 0);
+	const pot = PLAYERS.length * STAKE;
+	wins.forEach(i => { $("die-" + i).classList.add("win"); $("seat-" + i).classList.add("win"); });
+	if (wins.length === 1) {
+		setStatus("赢家：" + PLAYERS[wins[0]].name + "（" + max + " 点）通吃");
+		$("result").textContent = "🎉 " + PLAYERS[wins[0]].name + " 拿走全部 ¥" + pot.toLocaleString();
+	} else {
+		const share = Math.floor(pot / wins.length);
+		const names = wins.map(i => PLAYERS[i].name).join("、");
+		setStatus("平局（" + max + " 点）· " + wins.length + " 人平分");
+		$("result").textContent = "🤝 " + names + " 平分奖池（各 ¥" + share.toLocaleString() + "）";
+	}
+	$("result").classList.add("show");
+	state = "done";
+	$("b1").disabled = false;
+	$("b1").textContent = "🎲 再来一局";
+}
+
+function reset() {
+	state = "idle";
+	$("casino").classList.remove("open");
+	$("draw").style.display = "block"; $("draw").style.opacity = 1;
+	$("scene").classList.remove("show");
+	const track = $("track"); track.style.transition = "none"; track.style.transform = "translateX(0)";
+	$("result").classList.remove("show");
+	$("b1").disabled = false; $("b1").textContent = "🎲 踩到赌场";
+	$("b2").disabled = true; $("b3").disabled = true;
+	frameRect({ x: 0, y: 0, w: WORLD_W, h: WORLD_H }, true);   // 回到棋盘总览
+	setStatus("待触发");
+}
+
+// ===== 相机控制：拖拽平移 + 滚轮缩放（世界层，非物件） =====
+(function () {
+	let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+	const stage = $("stage");
+	stage.addEventListener("pointerdown", e => {
+		if (state === "idle" || state === "zoom") return;
+		drag = true; sx = e.clientX; sy = e.clientY; ox = cam.x; oy = cam.y;
+		stage.style.cursor = "grabbing"; e.preventDefault();
+	});
+	window.addEventListener("pointermove", e => {
+		if (!drag) return;
+		cam.x = ox + (e.clientX - sx);
+		cam.y = oy + (e.clientY - sy);
+		clampPan(); applyCam(false);
+	});
+	window.addEventListener("pointerup", () => { drag = false; stage.style.cursor = ""; });
+	stage.addEventListener("wheel", e => {
+		if (state === "idle" || state === "zoom") return;
+		e.preventDefault();
+		const f = Math.exp(-e.deltaY * 0.0012);
+		const ns = Math.max(0.4, Math.min(4.0, cam.s * f));
+		// 以视口中心为锚点缩放
+		const wx = (640 - cam.x) / cam.s, wy = (400 - cam.y) / cam.s;
+		cam.s = ns; cam.x = 640 - wx * ns; cam.y = 400 - wy * ns;
+		clampPan(); applyCam(false);
+	}, { passive: false });
+	function clampPan() {
+		const minX = 160 - WORLD_W * cam.s, maxX = 1280 - 160;
+		const minY = 120 - WORLD_H * cam.s, maxY = 800 - 120;
+		cam.x = Math.max(minX, Math.min(maxX, cam.x));
+		cam.y = Math.max(minY, Math.min(maxY, cam.y));
+	}
+})();
+
+// 初始：相机总览整个棋盘
+frameRect({ x: 0, y: 0, w: WORLD_W, h: WORLD_H }, false);
+
+function fit() { const s = Math.min(innerWidth / 1280, innerHeight / 800); $("stage").style.transform = "scale(" + s + ")"; }
+addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>
