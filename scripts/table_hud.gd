@@ -235,11 +235,10 @@ static func build_play_ui(g: Node) -> void:
 	# 原先这块是常驻的「操作提示」文本；现改为默认隐藏，操作提示与完整规则
 	# 收进左下角的「📖 规则说明」面板（见 rules_panel.gd / rules_text.gd）。
 	g.info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
-	g.info_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	g.info_panel.offset_left = 14
-	g.info_panel.offset_right = 356
-	g.info_panel.offset_top = -232
-	g.info_panel.offset_bottom = -66
+	# 不再钉在左下角：悬浮在被点格子的正上方，位置由 game._place_info_panel 逐帧摆
+	g.info_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	g.info_panel.custom_minimum_size = Vector2(330, 170)
+	g.info_panel.size = Vector2(330, 170)
 	g.info_panel.visible = false
 	g.add_child(g.info_panel)
 	g.info_sb = UIKit.stylebox(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1)
@@ -265,6 +264,9 @@ static func build_play_ui(g: Node) -> void:
 	head.add_child(info_close)
 	g.info_body = UIKit.label("点棋盘上任意格子看详情", 13, UIKit.TEXT)
 	g.info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# 锁死换行宽度：卡片改成显式尺寸（悬浮在格子上方）之后，锚点不再提供宽度，
+	# 自动换行的 Label 在未知宽度下会算出爆炸的最小高度，把卡片撑成一块大板
+	g.info_body.custom_minimum_size = Vector2(298, 0)
 	iv.add_child(g.info_body)
 
 	# 右上：战报 / 聊天（可折叠，保持桌面干净）

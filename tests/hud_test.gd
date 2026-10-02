@@ -226,6 +226,31 @@ func _run() -> void:
 	g.board.focus_point_zoom(Vector2(1008.0, 600.0), 0.78)
 	_check(g.board._zoom > z0 + 0.05, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
 
+	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
+	g.board._set_token_hover(1)
+	_check(g.board._token_tip != null and g.board._token_tip.visible, "悬停后信息条显示")
+	_check(String(g.board._token_tip_name.text) == "甲",
+		"显示昵称（实得「%s」）" % String(g.board._token_tip_name.text))
+	_check(String(g.board._token_tip_sub.text).contains("身家")
+		and String(g.board._token_tip_sub.text).contains("名"),
+		"显示身家与排名（实得「%s」）" % String(g.board._token_tip_sub.text))
+	g.board._set_token_hover(-1)
+	_check(not g.board._token_tip.visible, "移开后信息条收起")
+
+	print("== 格详情卡：悬浮在被点格子的上方 ==")
+	g.board.cam_locked = false
+	g.board.fit_overview(true)
+	g._on_tile_clicked(27)
+	await process_frame
+	await process_frame
+	_check(g.info_panel.visible, "点格子后详情卡显示")
+	var tc: Vector2 = g.board.tile_screen_pos(27)
+	var pc: Vector2 = g.info_panel.position
+	var pcz: float = pc.x + g.info_panel.size.x * 0.5
+	_check(absf(pcz - tc.x) < 4.0, "卡片横向居中于该格（卡中心 %.0f / 格 %.0f）" % [pcz, tc.x])
+	_check(pc.y + g.info_panel.size.y < tc.y, "卡片在格子上方（卡底 %.0f / 格 %.0f）"
+		% [pc.y + g.info_panel.size.y, tc.y])
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

@@ -31,11 +31,15 @@ const CASINO_STAKE := 800
 const BOARD_COLS := 18
 const BOARD_ROWS := 12
 
+## 玩家色板，顺序与 Kenney 棋子贴图一一对应（assets/pieces/piece*_05.png）。
+## **取的是贴图的真实主色**：以前这里是另一套色值，于是「格子的归属色条 / 名册色块 /
+## 座位卡色块」和「棋盘上的棋子」颜色对不上，玩家认不出某块地是谁的。
+## 注意 slot0 的贴图虽然文件名叫 Red，实际主色是**橙**（Kenney 的命名）。
 const PLAYER_COLORS := [
-	Color(0.898, 0.282, 0.302),  # 红
-	Color(0.231, 0.510, 0.965),  # 蓝
-	Color(0.133, 0.773, 0.373),  # 绿
-	Color(0.961, 0.620, 0.043),  # 黄
+	Color(0.910, 0.416, 0.090),  # pieceRed_05    #E86A17
+	Color(0.118, 0.655, 0.882),  # pieceBlue_05   #1EA7E1
+	Color(0.451, 0.804, 0.294),  # pieceGreen_05  #73CD4B
+	Color(1.000, 0.800, 0.000),  # pieceYellow_05 #FFCC00
 ]
 
 ## 地产沿路径由便宜到贵：价格线性递增，租金 = 价格 × 比例。
@@ -64,6 +68,26 @@ const PROPERTY_ICONS := [
 	"daily", "service", "canteen", "study", "sport",
 	"teach", "dorm", "fun", "night", "health",
 ]
+
+## 价位沿路径的分配顺序：把 30 个价位**打乱后固定**下来 ——
+## 同一套盘面每局一致（大富翁类的盘面要能背），但不再是「越往后越贵」。
+## 第 k 块地取 prop_price(PROP_PRICE_ORDER[k])。
+const PROP_PRICE_ORDER := [
+	10, 8, 4, 25, 12, 27, 13, 21, 1, 23,
+	0, 9, 3, 19, 20, 28, 29, 7, 17, 15,
+	5, 18, 14, 22, 2, 11, 26, 6, 16, 24,
+]
+
+## 身家 = 现金 + Σ(地价 + 等级 × 升级费)。**收敛到这一处**，
+## 免得房主结算、HUD 名册、棋盘悬停提示各写一遍同样的公式。
+static func net_worth_of(peer: int, money: int, tiles: Array) -> int:
+	var w := money
+	for i in mini(tiles.size(), TILES.size()):
+		var t: Dictionary = tiles[i]
+		if int(t.get("owner", NO_OWNER)) != peer:
+			continue
+		w += int(TILES[i].price) + int(t.get("level", 0)) * upgrade_cost(i)
+	return w
 
 ## 第 k 块地（k = 0..29，按路径序）的价格与租金
 static func prop_price(k: int) -> int:
@@ -207,10 +231,11 @@ static func _build_tiles() -> Array:
 		50,                   # 右边
 	]
 	for k in PROPERTY_NAMES.size():
+		var rank: int = PROP_PRICE_ORDER[k]     # 价位按固定乱序分配，不再沿路径递增
 		t[runs[int(k / 3)] + (k % 3)] = {
 			"type": "property", "name": PROPERTY_NAMES[k],
 			"icon": PROPERTY_ICONS[int(k / 3)],
-			"price": prop_price(k), "rent": prop_rent(k),
+			"price": prop_price(rank), "rent": prop_rent(rank),
 		}
 
 	# 剩余格按确定性序列填充：E=机会/命运 F=缴费 B=兼职 R=免费休息

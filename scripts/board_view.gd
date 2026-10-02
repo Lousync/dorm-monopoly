@@ -77,6 +77,11 @@ var _levels: Array = []        # 上一次渲染的等级（用于房子弹跳�
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
 var _tile_tw := {}             # 每格进行中的补间
 var _tokens := {}              # peer -> 棋子 Panel
+var _token_tip: PanelContainer # 悬停棋子时浮出的信息条（屏幕空间，不随镜头旋转）
+var _token_tip_name: Label
+var _token_tip_sub: Label
+var _tip_peer := -1            # 当前悬停到谁
+var _peers_info := {}          # peer -> {name, color, worth, rank, alive}
 var _animating := {}           # peer -> bool
 var _ring: Panel
 var _ring_peer := -1
@@ -268,7 +273,7 @@ func _build_tiles() -> void:
 				p.add_child(ic)
 
 		var name_c: Color = Color(0.98, 0.58, 0.78) if casino else (SHOP_ACCENT if d.type == "shop" else UIKit.TEXT)
-		var name_l := UIKit.label(d.name, 18, UIKit.ACCENT if corner else name_c)
+		var name_l := UIKit.bold_label(d.name, 18, UIKit.ACCENT if corner else name_c)
 		name_l.position = Vector2(5, 18)
 		name_l.size = Vector2(TILE - GAP * 2.0 - 10, 44)
 		name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -584,7 +589,9 @@ func _deck_back_tex(deck: String) -> Texture2D:
 	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
 		else "res://assets/cards/atlas_back_blue_brown.svg")
 
-## 铺满整张牌的卡背图案
+## 铺满整张牌的卡背图案。
+## 素材本身是白底彩纹，直接铺会和「深蓝 + 金」的界面打架 —— 压成低透明度的
+## 金色/紫色线纹，叠在深色卡体上，看起来就是同一族的卡背；两套牌堆仍一眼可分。
 func _make_card_art(deck: String) -> TextureRect:
 	var tr := TextureRect.new()
 	tr.texture = _deck_back_tex(deck)
@@ -592,6 +599,7 @@ func _make_card_art(deck: String) -> TextureRect:
 	tr.stretch_mode = TextureRect.STRETCH_SCALE
 	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tr.modulate = Color(1.0, 0.86, 0.55, 0.30) if deck == "机会" else Color(0.78, 0.72, 1.0, 0.30)
 	return tr
 
 ## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（牌堆名 + 卡文）
@@ -872,6 +880,7 @@ func _gui_input(ev: InputEvent) -> void:
 		else:
 			set_hover(_index_at(mm.position))
 			_set_seat_hover(_seat_edge_at(mm.position))
+			_set_token_hover(_token_at_view(mm.position))
 
 ## 设置悬停格（-1 清除），触发高亮渐变
 func set_hover(idx: int) -> void:
@@ -1523,6 +1532,22 @@ func render(state: Dictionary) -> void:
 		color_of[int(p.peer)] = GameData.PLAYER_COLORS[int(p.color)]
 	_owner_color_map = color_of
 
+	# 悬停棋子时要浮出「昵称 / 身家 / 排名」——身家与排名在这里一次算好
+	var pinfo := {}
+	var worths := []
+	for p in players:
+		var peer := int(p.peer)
+		var w := GameData.net_worth_of(peer, int(p.get("money", 0)), tiles)
+		pinfo[peer] = {
+			"name": String(p.get("name", "?")), "color": color_of[peer],
+			"worth": w, "rank": 0, "alive": bool(p.get("alive", true)),
+		}
+		worths.append([w, peer])
+	worths.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) > int(b[0]))
+	for i in worths.size():
+		pinfo[int(worths[i][1])]["rank"] = i + 1
+	_peers_info = pinfo
+
 	for i in _tile_sb.size():
 		var owner_id := GameData.NO_OWNER
 		var level := 0
@@ -1729,6 +1754,85 @@ func token_world_pos(peer: int) -> Vector2:
 ## 棋子在游戏界面坐标（飘字用，含视角旋转）
 func token_screen_pos(peer: int) -> Vector2:
 	return global_position + _view_from_world(token_world_pos(peer))
+
+## 某个格子的**屏幕坐标**（格子中心）——格详情卡要悬浮在它上方
+func tile_screen_pos(idx: int) -> Vector2:
+	return global_position + _view_from_world(tile_pos(idx) + Vector2(TILE, TILE) * 0.5)
+
+## 鼠标（board 局部坐标）落在哪个棋子上；-1 = 没有。重叠时取最近的那个。
+func _token_at_view(view_pos: Vector2) -> int:
+	var w := _world_from_view(view_pos)
+	var best := -1
+	var best_d := INF
+	for peer in _tokens:
+		var tk: Control = _tokens[peer]
+		if tk == null or not is_instance_valid(tk):
+			continue
+		var c: Vector2 = tk.position + tk.size * 0.5
+		var half: Vector2 = tk.size * 0.5 + Vector2(10.0, 14.0)   # 给点容差，好点中
+		if absf(w.x - c.x) > half.x or absf(w.y - c.y) > half.y:
+			continue
+		var d := w.distance_squared_to(c)
+		if d < best_d:
+			best_d = d
+			best = int(peer)
+	return best
+
+## 悬停到棋子上：浮出昵称 / 身家 / 排名（自己也一样能看到）
+func _set_token_hover(peer: int) -> void:
+	if peer == _tip_peer:
+		# 还是同一个人：镜头可能动了，重新摆一下位置就行
+		if peer >= 0 and _token_tip != null and is_instance_valid(_token_tip) and _token_tip.visible:
+			_place_token_tip(peer)
+		return
+	_tip_peer = peer
+	if peer < 0 or not _peers_info.has(peer):
+		if _token_tip != null and is_instance_valid(_token_tip):
+			_token_tip.visible = false
+		return
+	_ensure_token_tip()
+	var info: Dictionary = _peers_info[peer]
+	_token_tip_name.text = String(info.get("name", "?"))
+	_token_tip_name.add_theme_color_override("font_color", info.get("color", UIKit.TEXT))
+	_token_tip_sub.text = "身家 %s · 第 %d 名%s" % [
+		GameData.fmt_money(int(info.get("worth", 0))), int(info.get("rank", 0)),
+		"" if bool(info.get("alive", true)) else " · 已出局",
+	]
+	_token_tip.visible = true
+	_place_token_tip(peer)
+
+func _ensure_token_tip() -> void:
+	if _token_tip != null and is_instance_valid(_token_tip):
+		return
+	_token_tip = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.94), 10,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 6)
+	_token_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_token_tip.z_index = 60
+	_token_tip.visible = false
+	add_child(_token_tip)
+	var m := UIKit.margins(12, 12, 7, 7)
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_token_tip.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	m.add_child(v)
+	_token_tip_name = UIKit.label("", 15, UIKit.TEXT)
+	_token_tip_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_token_tip_name)
+	_token_tip_sub = UIKit.label("", 12, UIKit.TEXT_DIM)
+	_token_tip_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_token_tip_sub)
+
+## 信息条摆在棋子正上方，并夹在可视区内
+func _place_token_tip(peer: int) -> void:
+	if _token_tip == null or not is_instance_valid(_token_tip):
+		return
+	var c := _view_from_world(token_world_pos(peer))     # board 局部坐标
+	var sz := _token_tip.size
+	var pos := Vector2(c.x - sz.x * 0.5, c.y - sz.y - 38.0)
+	pos.x = clampf(pos.x, 6.0, maxf(6.0, size.x - sz.x - 6.0))
+	pos.y = clampf(pos.y, 6.0, maxf(6.0, size.y - sz.y - 6.0))
+	_token_tip.position = pos
 
 func _kill_token_tw(peer: int) -> void:
 	if not _tokens.has(peer):

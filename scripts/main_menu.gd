@@ -39,8 +39,9 @@ func _ready() -> void:
 	# 中间留白给操作面板——启动页一眼就是「宿舍大富翁」。
 	var bg_board := MenuBoardDecor.new()
 	bg_board.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg_board.count_x = 12
-	bg_board.count_y = 7
+	# 环做薄一点（每边格数多一点），内区就往外让 —— 标题与页脚不会贴着环的内沿
+	bg_board.count_x = 14
+	bg_board.count_y = 10
 	bg_board.pad = 0.0
 	bg_board.with_center = false
 	add_child(bg_board)

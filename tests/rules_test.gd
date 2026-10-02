@@ -113,27 +113,31 @@ func _test_board_shape() -> void:
 	_check(bonus == 6, "6 个兼职/奖励格")
 	_check(rests == 5, "5 个休息格（4 空教室 + 角上卧谈会）")
 	_check(casinos == 2, "2 个宿舍赌场格")
-	# 30 块地沿路径由便宜到贵：价格与租金都严格递增（不再有分组与成套翻倍）
-	var mono := true
-	var prev_p := -1
-	var prev_r := -1
-	for i in GameData.TILES.size():
-		if GameData.TILES[i].type != "property":
-			continue
-		var p := int(GameData.TILES[i].price)
-		var r := int(GameData.TILES[i].rent)
-		if p <= prev_p or r <= prev_r:
-			mono = false
-		prev_p = p
-		prev_r = r
-	_check(mono, "地价与租金沿路径严格递增")
-	# 公式与数据必须一致：改 PROB_* 常量时不会忘了同步 TILES
+	# 价位是「打乱后固定」的：30 块地拿到的正好是 30 个价位的一个排列，
+	# 且**不再**沿路径递增（那正是这次要去掉的排法）
 	var pi: Array = _prop_indices()
-	_check(int(GameData.TILES[pi[0]].price) == GameData.prop_price(0)
-		and int(GameData.TILES[pi[29]].price) == GameData.prop_price(29),
-		"首末地价与 prop_price 公式一致")
-	_check(int(GameData.TILES[pi[pi.size() - 1]].rent) == GameData.prop_rent(pi.size() - 1),
-		"末块租金与 prop_rent 公式一致")
+	var seen := {}
+	var mono := true
+	var prev := -1
+	for i in pi:
+		var p := int(GameData.TILES[i].price)
+		seen[p] = true
+		if p <= prev:
+			mono = false
+		prev = p
+	_check(seen.size() == 30, "30 块地的价位各不相同（实得 %d 种）" % seen.size())
+	_check(not mono, "价位不再沿路径递增（已打乱）")
+	var flag := {}
+	for rank in GameData.PROP_PRICE_ORDER:
+		flag[rank] = true
+	_check(GameData.PROP_PRICE_ORDER.size() == 30 and flag.size() == 30,
+		"PROP_PRICE_ORDER 是 0~29 的一个排列（%d 项 / %d 种）"
+		% [GameData.PROP_PRICE_ORDER.size(), flag.size()])
+	# 公式与数据必须一致：改 PROP_* 常量时不会忘了同步 TILES
+	_check(int(GameData.TILES[pi[0]].price) == GameData.prop_price(GameData.PROP_PRICE_ORDER[0]),
+		"第 1 块地价 = 它那一位的档位价")
+	_check(int(GameData.TILES[pi[0]].rent) == GameData.prop_rent(GameData.PROP_PRICE_ORDER[0]),
+		"第 1 块租金 = 它那一位的档位租")
 	# 地产没有 group 字段了（拆分组后不应残留）
 	var leftover := 0
 	for i in GameData.TILES.size():

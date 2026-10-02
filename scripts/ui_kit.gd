@@ -47,6 +47,26 @@ static func icon(name: String) -> Texture2D:
 static func piece_tex(color_idx: int) -> Texture2D:
 	return tex("res://assets/pieces/piece%s_05.png" % PIECE_COLORS[clampi(color_idx, 0, 3)])
 
+## 粗体字体（系统 CJK 字体的 700 字重）——与 theme.tres 同一族，只是加粗。
+## 项目里没有粗体字体资源文件，用 SystemFont 现取；取不到时静默退化为常规字重。
+static var _font_bold: Font
+static func font_bold() -> Font:
+	if _font_bold == null:
+		var f := SystemFont.new()
+		f.font_names = PackedStringArray([
+			"Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+			"SimHei", "sans-serif",
+		])
+		f.set("font_weight", 700)
+		_font_bold = f
+	return _font_bold
+
+## 粗体标签（格子上的地点名这类要一眼看清的文本）
+static func bold_label(text: String, size := 15, color := TEXT) -> Label:
+	var l := label(text, size, color)
+	l.add_theme_font_override("font", font_bold())
+	return l
+
 ## HUD 图标（assets/icons/ui_*.png，Twemoji CC-BY 4.0）：规则/战报/骰子/设置…
 static func ui_icon(name: String) -> Texture2D:
 	return tex("res://assets/icons/ui_%s.png" % name)

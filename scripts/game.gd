@@ -87,6 +87,7 @@ var _black_sig := ""
 
 # ---------------- 格详情卡 / 规则说明（左下角，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
+var _info_tile := -1              # 格详情卡当前挂在哪一格（-1 = 没显示）
 var info_title: Label
 var info_body: Label
 var info_sb: StyleBoxFlat
@@ -1344,11 +1345,27 @@ func _on_tile_clicked(idx: int) -> void:
 	info_sb.border_color = Color(accent.r, accent.g, accent.b, 0.7)
 	info_panel.add_theme_stylebox_override("panel", info_sb)
 	# 规则说明展开时占着左下角，格详情卡让位（见 _set_rules_open）
+	_info_tile = idx
 	info_panel.visible = not rules_open
+	_place_info_panel()
 	info_panel.pivot_offset = info_panel.size * 0.5
 	info_panel.scale = Vector2(0.94, 0.94)
 	var tw := create_tween()
 	tw.tween_property(info_panel, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+## 格详情卡悬浮在被点格子的正上方（原来是钉在屏幕左下角，和格子对不上号）。
+## 镜头会平移/缩放/旋转，所以逐帧跟着格子走；上方放不下就翻到格子下方，并夹在屏幕内。
+func _place_info_panel() -> void:
+	if info_panel == null or not info_panel.visible or _info_tile < 0 or board == null:
+		return
+	var c := board.tile_screen_pos(_info_tile)
+	var sz := info_panel.size
+	var pos := Vector2(c.x - sz.x * 0.5, c.y - sz.y - 20.0)
+	if pos.y < 8.0:
+		pos.y = c.y + 20.0
+	pos.x = clampf(pos.x, 8.0, maxf(8.0, size.x - sz.x - 8.0))
+	pos.y = clampf(pos.y, 8.0, maxf(8.0, size.y - sz.y - 8.0))
+	info_panel.position = pos
 
 # ================= 弹窗与结算 =================
 
@@ -1543,7 +1560,10 @@ func _refresh_chat() -> void:
 	while _chat_shown < Net.chat_history.size():
 		var line := str(Net.chat_history[_chat_shown])
 		_chat_shown += 1
-		log_text.append_text("[color=#7f8699]%s[/color]\n" % line.replace("[", "［"))
+		var safe := line.replace("[", "［")
+		log_text.append_text("[color=#7f8699]%s[/color]\n" % safe)
+		# 聊天也要在屏幕上方弹一条：战报框默认收起，只写进记录里等于看不见
+		_push_log_toast("[color=#9db2d8]%s[/color]" % safe)
 	
 # ================= 道具卡图鉴（模板预览） =================
 
@@ -2537,6 +2557,7 @@ func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 
 
 func _process(_delta: float) -> void:
+	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
 	# 底栏（牌垫阶段条 + 操作条）统一成屏幕底部一条固定操作坞，不再锚在自己座位卡下沿：
 	# 原来「自己视角贴座位卡、转开视角改贴屏幕底」，按钮会跟着镜头满屏跳，转视角时
 	# 阶段条还会整条消失（fix/v0.0.2 打的补丁）。固定之后位置恒定、阶段永远可见。
@@ -2612,8 +2633,7 @@ func _dock_band() -> Vector2:
 	var x0 := 14.0
 	if rules_panel != null and rules_panel.visible:
 		x0 = maxf(x0, rules_panel.offset_right + 10.0)
-	elif info_panel != null and info_panel.visible:
-		x0 = maxf(x0, info_panel.offset_right + 10.0)
+	# 格详情卡已改成悬浮在格子上方，不再占左下角，所以不需要再为它让位
 	var x1 := size.x - 14.0
 	if log_panel != null and log_panel.visible:
 		# 战报栏挂 TOP_RIGHT 锚点，所以它的左边缘 = 屏宽 + offset_left（不写死宽度）
