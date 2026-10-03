@@ -461,7 +461,7 @@ func _test_camera_window_resize(g) -> void:
 	g.board._process(0.0)             # 首次布局：fit_overview
 	_check(g.board.size.x > 10.0, "棋盘控件已布局（w=%.0f）" % g.board.size.x)
 	g.board._zoom = 1.2
-	g.board.focus_grid(27, 0.8, true) # 模拟对局中途镜头停在某格
+	g.board.focus_grid(27, 2.0, true) # 模拟对局中途镜头停在某格（2.0 是「全景的倍数」，见 board_view 顶部常量）
 	var center_before: Vector2 = g.board._center
 	g.board.emit_signal("resized")
 	g.board._process(0.016)

@@ -376,6 +376,13 @@ func take_shot(path: String) -> void:
 	# 这样后面的 focus_grid 拉近才生效 —— 用来复现「玩家自己看到的近景」
 	g.board.cam_locked = not path.contains("freecam")
 	# （原 _shot_rot 分支已随转视角一起删除，见 v0.5.0 批次 1）
+	# 文件名带 tilt：把 **3D 相机**拉到另一个俯角（30°）出图，用来和默认 50° 对比构图。
+	# 只动 3D 相机；SubViewport 内的 2D 相机（focus_grid 那一套）不受影响。
+	# 建议配 table 用（如 xx_tilt_table_plain.png），停在围桌全景做纯俯角对比。
+	if path.contains("tilt") and g.table3d != null:
+		var d := 4.0
+		var rad := deg_to_rad(30.0)     # 出图对比用：更平的俯角
+		g.table3d.camera.look_at_from_position(Vector3(0.0, d * tan(rad), d), Vector3.ZERO, Vector3.UP)
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
 		# 倍率是「全景的倍数」：2.0 ≈ 屏幕时代那个 0.8（0.8/0.40，见 board_view 顶部常量）
