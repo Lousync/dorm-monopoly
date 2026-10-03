@@ -102,10 +102,14 @@ func screen_to_uv(screen_pt: Vector2) -> Variant:
 ## 只改「相机到桌面中心的距离」、方向不变 —— 于是俯角恒定，推拉不会把桌子翻成平视。
 ## 夹取上下限，免得太近钻进桌面、太远让桌子退到屏幕一角。
 func dolly(factor: float) -> void:
-	var to_center := -camera.global_position      # 相机看向原点
+	# 位置 = 方位 * 距离，方位必须原样保留。若把「相机指向桌面中心的方向」
+	# （-camera.global_position）当位置赋回去，相机就绕原点镜像到桌子的另一侧（y<0），
+	# 而 basis 不变 ⇒ 射线仍朝下、与桌面交于 t<0，被 Plane.intersects_ray 拒绝
+	# ⇒ screen_to_uv 对所有屏幕点返回 null ⇒ 点击与悬停整体失效。
+	var dir := camera.global_position.normalized()   # 相机在桌面中心的哪个方位
 	var dist := camera.global_position.length()
 	var nd := clampf(dist / factor, 2.0, 14.0)
-	camera.global_position = to_center.normalized() * nd
+	camera.global_position = dir * nd
 
 ## 鼠标事件映射进 SubViewport。键盘等其它事件原样放行。
 func _unhandled_input(event: InputEvent) -> void:

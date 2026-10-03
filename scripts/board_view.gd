@@ -871,8 +871,9 @@ func _zoom_at(factor: float, anchor: Vector2) -> void:
 func _gui_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton:
 		var mb := ev as InputEventMouseButton
-		# 滚轮不再自己缩放：方向盘已交给 3D 相机（Table3D._unhandled_input → dolly），
-		# 2D 相机的 _zoom 只留给掷轮/抽卡的推近演出（_zoom_at 因此仍被演出路径使用）。
+		# 滚轮不再自己缩放：方向盘已交给 3D 相机（Table3D._unhandled_input → dolly）。
+		# 2D 相机的 _zoom 仍由掷轮/抽卡的推近演出（focus_point_zoom / focus_grid）驱动；
+		# _zoom_at 现在没有调用者，按计划保留（备 2D 缩放用）。
 		if mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
 			if mb.pressed:
 				_dragging = true

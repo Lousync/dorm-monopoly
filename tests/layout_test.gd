@@ -86,15 +86,33 @@ func _run() -> void:
 	_check(off != null and not Rect2(Vector2.ZERO, Vector2(vp_size)).has_point(off as Vector2),
 		"桌面之外的屏幕点返回桌面外坐标（实得 %s）" % off)
 
-	print("== 滚轮推拉：factor > 1 拉近 ==")
+	print("== 滚轮推拉：factor > 1 拉近，且只改距离、不改方位 ==")
 	var d0: float = t3.camera.global_position.length()
+	var dir0: Vector3 = t3.camera.global_position.normalized()
 	t3.dolly(1.12)
 	var d1: float = t3.camera.global_position.length()
 	_check(d1 < d0, "滚轮上滚（factor 1.12）把相机拉近（%.2f → %.2f）" % [d0, d1])
+	# 只验距离是不够的：把「指向中心的方向」当位置赋回去会把相机绕原点镜像到桌子另一侧，
+	# 距离照样变小、两次 dolly 照样抵消（互为逆操作），于是 bug 被完全掩盖。必须钉住方位。
+	_check(t3.camera.global_position.normalized().distance_to(dir0) < 0.0001,
+		"推拉只改距离、方位不变（实得 %s，期望 %s）" % [t3.camera.global_position.normalized(), dir0])
+	_check(t3.camera.global_position.y > 0.0,
+		"推拉后相机仍在桌面之上（实得 y=%.2f）" % t3.camera.global_position.y)
 	t3.dolly(1.0 / 1.12)
 	_check(absf(t3.camera.global_position.length() - d0) < 0.01, "反向推拉回到原距离")
+	_check(t3.camera.global_position.normalized().distance_to(dir0) < 0.0001, "反向推拉后方位同样不变")
+	t3.dolly(1000.0)
+	_check(absf(t3.camera.global_position.length() - 2.0) < 0.01,
+		"拉到极限夹在下限 2.0（实得 %.2f）" % t3.camera.global_position.length())
+	t3.dolly(0.001)
+	_check(absf(t3.camera.global_position.length() - 14.0) < 0.01,
+		"推远夹在上限 14.0（实得 %.2f）" % t3.camera.global_position.length())
 
 	print("== 事件注入端到端：屏幕点 → 3D 映射 → SubViewport 内的 2D 控件 ==")
+	# 先真的滚一格再点（review 指出的结构缺口：两次 dolly 互为逆操作、且只验距离，
+	# 镜像 bug 会被完全掩盖）。相机一旦被镜像到 y<0，射线与桌面交于 t<0 被拒
+	# ⇒ screen_to_viewport 对所有屏幕点返回 null ⇒ 下面这几条必红。
+	t3.dolly(1.12)
 	# 在 SubViewport 里挂一个铺满的探针控件（后加 = 盖在 BoardView 之上），
 	# 验证整条链：屏幕点 push 进根视口 → 3D 容器算出 SubViewport 坐标 → push_input 送达 2D 控件。
 	var probe := Control.new()
