@@ -647,6 +647,107 @@ func _run() -> void:
 	g._cancel_target()
 	_check(g.selected_slot == -1, "收尾：选中态清空（实得 %d）" % g.selected_slot)
 
+	print("== 丢弃入口已回补：手牌右键 = 丢弃（两步确认，走既有 _discard_item）==")
+	# 座位卡「✕」随牌位拆除后 `_on_discard_clicked` 一度**没有发射方**（终审 R1）；
+	# 现在右键落在手牌上即丢弃：第一下进入待确认（牌身染红）、第二下真丢。
+	# 证据必须落在**玩法侧**：房主侧背包真的少一件，且走的是既有 `_discard_item`（没绕开玩法）。
+	# 走**真实**的 `_on_table_click`（按键由 TableView3D 的输入映射带进来）。
+	g.my_peer = 2
+	g.hp = [
+		{"peer": 2, "name": "我", "color": 1, "bot": false, "alive": true, "money": 20000,
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "silence": 0, "shield": 0,
+			"items": [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]},
+	]
+	var s_disc: Dictionary = _state(2, false)
+	s_disc.await = "item"
+	s_disc.await_peer = 2
+	for p in s_disc.players:
+		if int(p.peer) == 2:
+			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.s_state(s_disc)
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	_check(int(g._player_by_peer(2).items.size()) == 3, "前置：房主侧背包 3 件（实得 %d）"
+		% int(g._player_by_peer(2).items.size()))
+	var c1: Vector2 = tph.hand_rect(1).get_center()
+	_check(g._on_table_click(c1, MOUSE_BUTTON_RIGHT), "右键点第二张牌：这次点击被手牌消费（丢弃入口回来了）")
+	_check(g._discard_pending == 1, "第一下右键：进入待确认（实得 %d）" % g._discard_pending)
+	_check(int(g._player_by_peer(2).items.size()) == 3, "第一下右键：**还没**真丢（背包仍 3 件）")
+	_check(tph._hand_disc == 1, "待确认那张牌身的红标已贴上（实得 _hand_disc=%d）" % tph._hand_disc)
+	var dcol: Color = tph._hand_body_mats[1].albedo_color
+	_check(dcol.r > dcol.g + 0.3 and dcol.r > dcol.b + 0.3, "牌身染红（实得 %s）" % str(dcol))
+	_check(tph._hand_face_mats[1].albedo_color == Color.WHITE, "牌面贴图**没**被染（face 材质仍是原色）")
+	_check(absf(tph.hand_rect(1).get_center().y - c1.y) < 3.0, "待确认**不**抬起（抬起是选中态的事）")
+	# 广播后不丢：`_refresh_table_props` 会按 `_discard_pending` 重放红标（与 set_hand_selected 同款）
+	g.s_state(s_disc)
+	await process_frame
+	g._process(0.0)
+	_check(tph._hand_disc == 1 and g._discard_pending == 1, "广播重摆手牌后待确认态不漂（实得 %d / %d）"
+		% [tph._hand_disc, g._discard_pending])
+	# 第二下右键：真丢 —— 走既有 _discard_item（背包少一件、待确认清掉）
+	_check(g._on_table_click(c1, MOUSE_BUTTON_RIGHT), "第二下右键：仍被手牌消费")
+	_check(g._discard_pending == -1, "第二下右键：待确认清掉（实得 %d）" % g._discard_pending)
+	var its_after: Array = g._player_by_peer(2).items
+	_check(its_after.size() == 2, "第二下右键：房主侧背包真的少了一件（实得 %d）" % its_after.size())
+	var ids_after: Array = []
+	for it in its_after:
+		ids_after.append(String(it.id))
+	_check(not ids_after.has("跑腿券"), "丢掉的正是点中的那张（跑腿券）——走既有 _discard_item（剩 %s）" % str(ids_after))
+
+	# 生效条件：非 playing 阶段 / 选目标中 → 右键手牌**不消费**（落回棋盘 = 既有取消）
+	var s_not: Dictionary = s_disc.duplicate(true)
+	s_not.phase = "ended"
+	g.s_state(s_not)
+	await process_frame
+	g._process(0.0)
+	var n_not: int = int(g._player_by_peer(2).items.size())
+	_check(not g._on_table_click(tph.hand_rect(0).get_center(), MOUSE_BUTTON_RIGHT),
+		"非 playing 阶段：右键手牌不消费（落回棋盘，那里右键仍是取消）")
+	_check(g._discard_pending == -1 and int(g._player_by_peer(2).items.size()) == n_not,
+		"非 playing 阶段：既不进待确认、也不丢")
+
+	print("== 选目标期间：手牌让位给格子（终审 R2）==")
+	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子，而牌底那 3~5 格
+	# 会被手牌抢答成「改选另一张牌」⇒ 指向性格子的道具打不到自家附近的格子。修完后手牌在
+	# 选目标期间对点击**完全透明**：左键落回棋盘 = 选格、右键 = 既有取消。
+	g.hp[0].items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.s_state(s_disc)
+	await process_frame
+	g._process(0.0)
+	var cov_tile := -1
+	var cov_card := -1
+	var cov_pt := Vector2.ZERO
+	for i in GameData.TILES.size():
+		if g.board.tile_grid(i).y != GameData.BOARD_ROWS - 1:
+			continue
+		var cell: Rect2 = cell_of.call(i)
+		var low := Vector2(cell.get_center().x, cell.end.y - 3.0)
+		for k in tph.hand_count():
+			if tph.hand_rect(k).has_point(low):
+				cov_tile = i
+				cov_card = k
+				cov_pt = low
+				break
+		if cov_tile >= 0:
+			break
+	_check(cov_tile >= 0, "找到一个被手牌盖住下沿的近排格子（实得 #%d / 牌 %d）" % [cov_tile, cov_card])
+	if cov_tile >= 0:
+		_check(tph.hand_hit(cov_pt) >= 0, "（对照）这个点确实落在手牌命中盒里")
+		# 进选地块态，把该格设为可选；此期间点它必须**不被手牌消费**
+		g._begin_tile_target(0, [cov_tile])
+		_check(g._tgt_stage == "tile" and g._tgt_tiles.has(cov_tile), "进了选地块态、该格可选")
+		var eaten2: bool = g._on_table_click(cov_pt, MOUSE_BUTTON_LEFT)
+		_check(not eaten2, "选目标期间：点被牌盖住的格子，手牌不消费（让位给格子）")
+		_check(not g._on_table_click(tph.hand_rect(0).get_center(), MOUSE_BUTTON_RIGHT),
+			"选目标期间：右键手牌也不消费（落回棋盘 = 既有取消）")
+		_check(g.selected_slot == -1, "选目标期间点牌不改选中态（实得 %d）" % g.selected_slot)
+		_check(g.board._index_at(cov_pt) == cov_tile, "该点仍解算到这格（会照原样进桌垫 → tile_clicked）")
+		if not eaten2:                    # 没被手牌吃掉，才谈得上"点到了那格"
+			g._on_tile_clicked(cov_tile)  # 桌垫那一端（tile_clicked）接的就是它
+			_check(g._tgt_stage == "", "该格被选中 → 选目标态收尾（实得「%s」）" % g._tgt_stage)
+		g._cancel_target()
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

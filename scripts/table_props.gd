@@ -22,16 +22,29 @@ const HIT_SLACK := 1.20
 ## 露出来的只是一道矮棱。抬得越低越好 —— 相机会把「离桌面的高度」投影成屏幕上的一段位移，
 ## 抬得越高，实体相对桌垫图案就越"漂"（实测抬 0.08 世界单位时，默认取景下屏幕上移约 17px）。
 const PROPS_Y := 0.02
-## 尺寸口径：**实物是世界常数，图案才跟 `_zoom`** —— 这条区别是故意的，不是漏改。
-##
-## 唯一的例外是转盘轮缘（`build_wheel` 里量真变换、随 `_zoom` 变）：它必须与
-## **印在桌垫上的**那个轮子重合，而桌垫图案随 2D 镜头缩放，不跟就会脱开。
-## 筹码 / 体力件 / 手牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
-## 不是"桌子变大了"，实物不该跟着长 —— 所以它们的尺寸写死在世界单位里。
-##
-## 手牌还多一层：它的**命中矩形**必须跟玩家看到的位置一致，那要过相机
-##（`hand_rect` 是量真投影，不是常数）—— 尺寸是世界常数与命中盒跟相机，
-## 这两件事互不矛盾：一个说"牌多大"，一个说"你在屏幕上点哪儿算点到它"。
+
+# 尺寸口径：**实物是世界常数，图案才跟 `_zoom`** —— 这条区别是故意的，不是漏改。
+#
+# 唯一的例外是转盘轮缘（`build_wheel` 里量真变换、随 `_zoom` 变）：它必须与
+# **印在桌垫上的**那个轮子重合，而桌垫图案随 2D 镜头缩放，不跟就会脱开。
+# 筹码 / 体力件 / 手牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
+# 不是"桌子变大了"，实物不该跟着长 —— 所以它们的尺寸写死在世界单位里。
+#
+# 手牌还多一层：它的**命中矩形**必须跟玩家看到的位置一致，那要过相机
+#（`hand_rect` 是量真投影，不是常数）—— 尺寸是世界常数与命中盒跟相机，
+# 这两件事互不矛盾：一个说"牌多大"，一个说"你在屏幕上点哪儿算点到它"。
+#
+# 摆放约定（物件 vs 2D 相机，2026-10-03 终审 I1 定案）：
+# **只有转盘轮缘跟 2D 相机，筹码 / 体力件 / 手牌一律不跟**。
+#   轮缘 — 位置来自 `board.wheel_screen_pos()` / 半径来自 `200 × _zoom`（量真变换）：它必须贴
+#           **印在桌垫上的**那个轮盘，而桌垫图案随 2D 取景缩放 ⇒ 跟着走。
+#   其余 — 位置走**画布常量**（`CHIP_BASE_PX` / `PIP_BASE_PX` / `HAND_BASE_PX`）：它们是
+#           **自由立在桌上的实物**，不该因为"印出来的图案"变了而移动。相机推近是「你凑近看」，
+#           不是「桌子被重新排版」。
+# **代价（必须记住）**：抽卡动画会把 2D 取景推到 ≥2×（`board_view.gd` 的 `DECK_PUSH_FACTOR`），
+# 那一刻桌垫图案整体滑动、而实物纹丝不动 ——「手牌不压座位栏 / 不压自己那排格子」这些断言
+# **只在全景取景下成立**。批次 4 要连续移相机 ⇒ **必须继承这条决定**（实物不跟相机），
+# 并为轮缘决定是否补每帧跟 `_zoom`（当前只在每次状态广播刷新，见 `game._refresh_table_props`）。
 
 ## 每 ¥5,000 一枚筹码。对着出图定：开局 ¥20,000 → 4 枚（正好半摞，一眼看出起始身家几何）；
 ## 常见的租金 / 罚款多在几百到几千，一档 5,000 意味着零星收支不动筹码堆、攒够一大笔才长一枚
@@ -237,8 +250,9 @@ func _make_pip() -> MeshInstance3D:
 # ---------------- 自己的手牌（道具） ----------------
 #
 # 一排**有厚度的实体卡**：近端、微微朝自己倾斜 —— 取代原来座位卡上那 5 个道具牌位。
-# 命中判定（hand_hit / hand_rect）与选中反馈（set_hand_selected）都在这儿；
-# 「点中之后选中谁、什么时候能出牌」是 game.gd 的事（_on_table_click → _on_hand_clicked）。
+# 命中判定（hand_hit / hand_rect）与状态反馈（set_hand_selected 选中 / set_hand_discard_pending
+# 待确认丢弃）都在这儿；「点中之后选中谁、什么时候能出牌、右键丢弃谁」是 game.gd 的事
+#（_on_table_click → _on_hand_clicked / _on_discard_clicked）。
 # 与筹码 / 体力件同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），
 # 尺寸是世界常数（见 PROPS_Y 下面那段），刷新幂等（节点池只建一次）。
 
@@ -277,6 +291,9 @@ const HAND_FAN_DEG := 8.0
 ## 抬高是竖直方向的位移，相机俯角 50° 把它压成 cos(50°) 倍，屏幕上只挪了约 10 像素
 ##（0.05 那版实测只挪 6 画布像素，选中的牌与邻牌几乎分不出来）。
 const HAND_SEL_LIFT := 0.10
+## 待确认丢弃时**牌身**染成的红（只改牌身材质色，**不动牌面贴图**：图标仍要认得出来）。
+## 红色要压得住品质色（白/绿/蓝/紫/橙都染得红），所以饱和度取高、值取中上。
+const HAND_DISCARD_COLOR := Color(0.86, 0.28, 0.26)
 
 var _hand_root: Node3D
 var _hand: Array[MeshInstance3D] = []
@@ -287,6 +304,7 @@ var _hand_face_mesh: PlaneMesh
 var _hand_n := 0
 var _hand_items: Array = []      # 最近一次 set_hand 的背包（重摆位置时要用，见 set_hand_selected）
 var _hand_sel := -1              # 选中的那张（-1 = 都不选）；由 game.gd 同步过来
+var _hand_disc := -1             # 待确认丢弃的那张（-1 = 无）；由 game.gd 同步过来
 
 ## 按背包摆手牌；items 每项形如 {"id": "招财猫", "charges": 3, "cd": 0}。
 ## 读的是**已同步**的状态（game.gd 用 _state_player(my_peer)），客户端同样可用。
@@ -298,6 +316,8 @@ func set_hand(items: Array) -> void:
 	_hand_n = n
 	if _hand_sel >= n:
 		_hand_sel = -1               # 牌变少了：原先选中的那张已经不在了
+	if _hand_disc >= n:
+		_hand_disc = -1              # 同理：原先待丢弃的那张已经不在了
 	if n <= 0 and _hand.is_empty():
 		return                                  # 一直空手：连池子都不必建
 	if _hand_root == null:
@@ -316,6 +336,15 @@ func set_hand_selected(i: int) -> void:
 	_hand_sel = i if (i >= 0 and i < _hand_n) else -1
 	_apply_hand_layout()
 
+## 待确认丢弃的那张牌：**牌身染红**（i = -1 都不染）。**不动牌面贴图** —— 图标仍要认得出来。
+##
+## **不是**玩法状态：单一来源是 game.gd 的 `_discard_pending`，这里只跟着画
+##（game._sync_hand_discard_pending 在设/清时立即贴一次，_refresh_table_props 每次广播再重放一遍）。
+## 与选中态互斥由玩法侧保证（选中任意一张会清掉待丢弃）；万一同时给出，红色优先 —— 丢弃更"危险"。
+func set_hand_discard_pending(i: int) -> void:
+	_hand_disc = i if (i >= 0 and i < _hand_n) else -1
+	_apply_hand_layout()
+
 ## 按当前的 _hand_items / _hand_n / _hand_sel 把所有牌重摆一遍：
 ## 位置（扇形 + 弧 + 朝自己倾斜 + 选中抬起）、品质色（选中的提亮）、牌面图标。
 func _apply_hand_layout() -> void:
@@ -327,9 +356,12 @@ func _apply_hand_layout() -> void:
 		var id := String((_hand_items[i] as Dictionary).get("id", ""))
 		var d := ItemData.def(id)
 		# 品质色是**数据契约**：键就是 "白"/"绿"/"蓝"/"紫"/"橙"（item_data.gd）。
-		# 选中的那张提亮（不改品质色本身的语义，只是加亮一档）。
+		# 选中 → 提亮一档（不改品质色的语义，只是加亮）；待确认丢弃 → 染红（红色优先）。
 		var q: Color = ItemData.QUALITY_COLORS.get(String(d.get("quality", "白")), Color.WHITE)
-		_hand_body_mats[i].albedo_color = q.lightened(0.35) if i == _hand_sel else q
+		if i == _hand_disc:
+			_hand_body_mats[i].albedo_color = HAND_DISCARD_COLOR
+		else:
+			_hand_body_mats[i].albedo_color = q.lightened(0.35) if i == _hand_sel else q
 		# 牌面：有图标素材就贴上（近端那点尺寸下，图标是"这是哪件道具"的唯一线索）；没有就只剩品质色
 		var face := card.get_node_or_null("Face") as MeshInstance3D
 		if face != null:

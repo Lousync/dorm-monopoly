@@ -43,6 +43,8 @@ var props: Node3D
 var table_props: TableProps
 
 ## 桌面上的实体被点中时先问这里；返回 true 表示已消费（不再送进 SubViewport）。
+## 签名：`func(canvas_px: Vector2, button: int) -> bool` —— **按键一起带过去**，因为实体对不同
+## 键的语义不同（手牌：左键选中 / 右键丢弃；转盘：只吃左键），只给位置的话实体层无从分辨。
 ## 默认无效（Callable()），即不拦截任何点击 —— 只有 game.gd 接上后才有实体可点。
 var on_table_click: Callable = Callable()
 
@@ -281,7 +283,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		# 实体物件优先：命中转盘 / 手牌等实体则消费掉，不再送进 SubViewport。
 		# 只判按下：一次点击消费一次即可，松开的收尾由上面的旗标分支负责。
-		if mb.pressed and on_table_click.is_valid() and bool(on_table_click.call(pos as Vector2)):
+		# 按键原样传进实体层（左/右键语义不同，见 on_table_click 的签名说明）。
+		if mb.pressed and on_table_click.is_valid() \
+				and bool(on_table_click.call(pos as Vector2, mb.button_index)):
 			_consumed_press_btn = mb.button_index
 			get_viewport().set_input_as_handled()
 			return

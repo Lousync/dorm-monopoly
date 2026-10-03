@@ -54,8 +54,8 @@ var _shop_epoch := 0
 var _awaiting_item := 0    # 道具阶段行动者（0 = 无）
 var _item_epoch := 0
 var _item_action := {}
-var selected_slot := -1        # 当前选中的道具槽（阶段二；点手中牌 / 牌垫牌位都写它）
-var _discard_pending := -1     # 卡片「✕」丢弃的二次确认槽位（-1=无）
+var selected_slot := -1        # 当前选中的道具槽（阶段二；点桌上的手中牌由它记录）
+var _discard_pending := -1     # 丢弃的二次确认槽位（手牌右键第一下点亮它；-1=无）
 var cheat_picker: Control
 var cheat_slot := -1
 var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1=无）
@@ -855,38 +855,57 @@ func _end_game(wpeer: int, line: String) -> void:
 
 # ================= 房主：交互 =================
 
-## 桌面实体被点中（画布像素）：命中手牌就选中 / 取消，命中转盘就掷轮；
+## 桌面实体被点中（画布像素 + 鼠标键）：命中手牌就左键选中 / 右键丢弃，命中转盘就掷轮；
 ## 返回 true 表示这次点击已被实体消费。未命中返回 false，点击照旧送进桌垫
-##（点格子、点座位那些不受影响）。两条后果都沿用**既有的**路径，不新增 RPC、不新写一套。
-func _on_table_click(canvas_px: Vector2) -> bool:
+##（点格子、点座位那些不受影响）。各条后果都沿用**既有的**路径，不新增 RPC、不新写一套。
+##
+## button 由 TableView3D 的输入映射原样带进来（MOUSE_BUTTON_LEFT / RIGHT），实体层据此分辨语义。
+func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> bool:
 	if table3d == null or table3d.table_props == null:
 		return false
 	var tp = table3d.table_props
-	# 1) 手牌优先：命中一张牌 = 选中，再点同一张 = 取消。**只在道具阶段吃点击** ——
-	#    牌是常驻显示的（每次广播都摆一遍），别的阶段点它没有意义，吃下点击就等于把本该
-	#    落到格子上的一次点击吞成「什么都没发生」。这条闸是必须的：手牌的命中盒与**近排
-	#    格子**的条带必然重叠（牌就落在自己面前那排格子的下沿上，实测见 task-5-report），
+	# 1) 手牌优先：左键命中一张牌 = 选中，再点同一张 = 取消；右键命中一张牌 = 丢弃（两步确认）。
+	#    左键**只在道具阶段吃点击** —— 牌是常驻显示的（每次广播都摆一遍），别的阶段点它没有意义，
+	#    吃下点击就等于把本该落到格子上的一次点击吞成「什么都没发生」。这条闸是必须的：手牌的
+	#    命中盒与**近排格子**的条带必然重叠（牌就落在自己面前那排格子的下沿上，实测见 task-5-report），
 	#    没有闸的话非道具阶段点那几格的下缘会被无意义地吞掉（测试里有配对用例钉住：
 	#    同样的点，非道具阶段必须落回桌垫、道具阶段才归牌）。
-	#    闸**不含** `_tgt_stage == ""`：选目标期间（牌垫上挂着「点地图选择目标格」的提示）
-	#    点牌仍然是「改选另一张牌」，不动目标态 —— 这是**有意**的，不是漏掉的。在那里放行给
-	#    底下的格子会变成「点着牌却选中了格子」，比现在更糟；退出选目标态走 Esc / 右键。
+	#    闸**含** `_tgt_stage == ""`（见 _hand_clickable）：选目标期间（牌垫上挂着「点地图选择目标格」
+	#    的提示）玩家**正要**点格子，而牌底那 3~5 格会被牌抢答成「改选另一张牌」⇒ 指向性格子的道具
+	#    将打不到自家附近的格子。所以选目标期间手牌对点击**完全透明**：左键落回棋盘 = 选格，
+	#    右键 = 既有的取消。退出选目标态走 Esc / 右键（点牌不再参与）。
 	#    出牌不在这里：选中之后由牌垫上的「使用道具」按钮走既有的 _on_use_pressed（两段式
 	#    选目标 / 直接发 _send_use_item）——玩法路径一行没改。
 	var hi: int = tp.hand_hit(canvas_px)
-	if hi >= 0 and _hand_clickable(hi):
-		_on_hand_clicked(hi)
-		return true
-	# 2) 转盘
-	if tp.wheel_hit(canvas_px):
+	if hi >= 0:
+		if button == MOUSE_BUTTON_RIGHT:
+			# 右键丢弃：走**既有的** _on_discard_clicked（第一步点亮待确认、第二步真丢 →
+			# _discard_item / c_discard）。生效条件是「正在进行的对局」且「没在选目标」；
+			# 其余情形（非 playing / 选目标中）**不消费**，落回棋盘 —— 右键在那里是既有的取消。
+			# 这条正是补回「主动丢弃」入口（终审 R1）：座位卡的「✕」随牌位拆除后，
+			# _on_discard_clicked 一度没有发射方。
+			if String(st.get("phase", "")) == "playing" and _tgt_stage == "":
+				_on_discard_clicked(my_peer, hi)
+				return true
+		elif _hand_clickable(hi):
+			_on_hand_clicked(hi)
+			return true
+	# 2) 转盘：**只吃左键**（掷轮是主操作）。其它按键不消费 —— 右键落在转盘上等同落在棋盘上
+	#    （既有的取消），于是「右键 = 牌上丢弃 / 转盘上不动作 / 棋盘上取消」三者自洽。
+	if button == MOUSE_BUTTON_LEFT and tp.wheel_hit(canvas_px):
 		_on_roll_pressed()
 		return true
 	return false
 
-## 这张手牌此刻点得动吗：轮到我、正在道具阶段，且这一张是已实装的道具。
+## 这张手牌此刻点得动吗：轮到我、正在道具阶段、没在选目标，且这一张是已实装的道具。
 ## 判据与 _on_item_slot_clicked 的守卫**同源** —— 只有它真会做事的那一次点击才该被手牌消费。
+## `_tgt_stage == ""` 是后补的一条（终审 R2）：选目标期间玩家正要**点格子**，而牌底那 3~5 格
+## 会被手牌抢答成「改选另一张牌」⇒ 指向性格子的道具打不到自家附近的格子（功能性漏洞）。
+## 放行给桌垫之后，左键落回棋盘 = 选格、右键 = 既有的取消 —— 手牌在选目标期间对点击完全透明。
 func _hand_clickable(hi: int) -> bool:
 	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
+		return false
+	if _tgt_stage != "":
 		return false
 	var items: Array = _state_player(my_peer).get("items", [])
 	if hi < 0 or hi >= items.size():
@@ -895,14 +914,13 @@ func _hand_clickable(hi: int) -> bool:
 
 ## 点手中的牌：选中 / 再点同一张取消。选中即调用**既有的** _on_item_slot_clicked
 ##（牌位时代的入口，玩法侧一个字没改）；出牌仍由牌垫上的「使用道具」走 _on_use_pressed。
+## 选中的**表现侧**（桌上那张牌抬起 + 提亮）由 _on_item_slot_clicked 内部统一同步，这里不补。
 func _on_hand_clicked(hi: int) -> void:
 	if selected_slot == hi:
 		_clear_item_selection()
 		_refresh_actions()
 		return
 	_on_item_slot_clicked(my_peer, hi)
-	if selected_slot == hi and table3d != null and table3d.table_props != null:
-		table3d.table_props.set_hand_selected(hi)
 
 ## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 两处表现侧（牌垫牌位 / 桌上手牌）。
 ## 三处必须一起动 —— 只清 selected_slot，牌垫上会留一块绿光、桌上一张牌还抬着。
@@ -1280,6 +1298,8 @@ func _refresh_table_props() -> void:
 	# 选中反馈（抬起 + 提亮）画在桌上那张牌身上：set_hand 重摆位置时不会带上它，
 	# 所以每次广播都按玩法侧的 selected_slot 重设一遍（单一来源始终是 selected_slot）。
 	table3d.table_props.set_hand_selected(selected_slot)
+	# 待确认丢弃的红标同理：单一来源是 _discard_pending，每次广播重放一遍，广播后不丢。
+	table3d.table_props.set_hand_discard_pending(_discard_pending)
 
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
@@ -3011,7 +3031,12 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 	board.set_phase_buttons("转转盘", "primary" if spin_active else "normal", not spin_active,
 		use_txt, use_style, use_dis)
 
-## 点牌垫上的道具卡 → 选中（绿光）
+## 选中一件道具（玩法侧入口，唯一）：写 selected_slot 并把**表现侧**一起同步。
+##
+## 表现侧有两处，必须都在这一个函数里做：① 桌上手牌抬起 + 提亮（`table_props.set_hand_selected`）；
+## ② 待确认丢弃的红标清掉（选中任何一张 = 撤回待丢弃）。**不留给调用点** —— 原先那行
+## `set_hand_selected` 补在唯一调用点（`_on_hand_clicked`），将来任何新入口（批次 5 的立牌）都会
+## 静默丢掉可见的选中反馈。`board.set_item_selected` 现在空转（座位卡牌位已拆），保留是为玩法侧接口不变。
 func _on_item_slot_clicked(peer: int, slot: int) -> void:
 	if peer != my_peer:
 		return
@@ -3029,6 +3054,9 @@ func _on_item_slot_clicked(peer: int, slot: int) -> void:
 	if board != null:
 		board.set_item_selected(my_peer, slot)
 		board.mark_discard_pending(-1, -1)
+	if table3d != null and table3d.table_props != null:
+		table3d.table_props.set_hand_selected(slot)     # 桌上那张牌抬起 + 提亮
+	_sync_hand_discard_pending()                        # 撤回上一步的待丢弃红标
 	_refresh_actions()
 
 ## 阶段二：使用选中的道具（按类型弹点数框 / 选玩家 / 点地）
@@ -3066,7 +3094,9 @@ func _on_skip_pressed() -> void:
 	else:
 		c_item_skip.rpc()
 
-## 卡片右上角「✕」：第一次点亮（待确认），第二次真丢。任何时候可用
+## 丢弃一件道具（两步确认）：第一次点亮「待确认」（牌身染红），第二次真丢。
+## 落点现在是**桌面手牌上点右键**（见 _on_table_click）；本函数是那条右键链路的唯一后果函数，
+## 沿用座位卡时代的两步语义与 _discard_item / c_discard 路径，一行玩法没改。
 func _on_discard_clicked(peer: int, slot: int) -> void:
 	if peer != my_peer:
 		return
@@ -3082,6 +3112,15 @@ func _on_discard_clicked(peer: int, slot: int) -> void:
 		_discard_pending = slot
 		if board != null:
 			board.mark_discard_pending(my_peer, slot)
+	# 可见反馈：待确认那张手牌染红。设 / 清待确认时**不广播**，所以这里立即贴一次，
+	# 不然要等下一次状态到达才变色（_refresh_table_props 里另有重放，保证广播后不丢）。
+	_sync_hand_discard_pending()
+
+## 把「待确认丢弃」的可见反馈贴到桌上手牌：单一来源是 _discard_pending，与 _refresh_table_props
+## 里的重放同源。任何写 _discard_pending 的地方都该在写完调它一次。
+func _sync_hand_discard_pending() -> void:
+	if table3d != null and table3d.table_props != null:
+		table3d.table_props.set_hand_discard_pending(_discard_pending)
 
 ## 丢弃道具：从背包移除、回道具池
 func _discard_item(peer: int, slot: int) -> void:
