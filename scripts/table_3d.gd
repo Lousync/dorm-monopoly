@@ -213,13 +213,22 @@ func _apply_camera() -> void:
 		camera.look_at(Vector3.ZERO, Vector3.UP)
 	else:
 		camera.look_at_from_position(pos, Vector3.ZERO, Vector3.UP)
+	# 视角量顺带推给桌上实体（批次 4 Task 2：手牌跟着淡出，看不见就点不到）。推在**这里**、
+	# 不推在 `_process` 的循环体里 —— `_process` 在 view_t == view_target 时早退，而 snap_view
+	#（`--shot` 全部摆拍与测试都走它）**根本不经过 `_process`**：推在循环体里的话，摆拍与测试
+	# 那条路上的手牌永远不会淡，淡出等于没做。本函数是"相机 / 视角量变了"的唯一出口
+	#（snap_view 与 _process 都调它），所以这是唯一不会漏的推送点。
+	if table_props != null:
+		table_props.set_view_t(view_t)
 
 ## 逐帧把 view_t 平滑逼近 view_target。指数逼近：每帧把剩余差距乘 e^(-VIEW_SNAP*delta)，
 ## 与帧率无关（60fps 与 144fps 走同样的时间曲线），且**永不过冲**（单调逼近）。
 ##
 ## 相等时直接早退：省掉每帧的 look_at（相机不动就没必要重摆）。
-## 注意：这里早退掉的只是"摆相机"这一件事；Task 2 要把 view_t 推给桌上实体（手牌淡出），
-## 加的时候得想清楚"相等也得推"（set_hand 重建节点后透明度要重新贴），别跟着一起早退。
+## 注意：这里早退掉的只是"摆相机"这一件事 —— 批次 4 Task 2 的「把手牌视角量推给桌上实体」
+## 挂在 `_apply_camera` 上（那条路覆盖 snap_view，见那里的注释），不跟着一起早退；
+## 而 snap_view 那条路走完之后也不需要 `_process` 再推：`set_hand` 重建节点后会自己补贴
+## 当前透明度（table_props._apply_hand_layout 末尾）。
 func _process(delta: float) -> void:
 	if is_equal_approx(view_t, view_target):
 		return

@@ -295,6 +295,29 @@ const HAND_SEL_LIFT := 0.10
 ## 红色要压得住品质色（白/绿/蓝/紫/橙都染得红），所以饱和度取高、值取中上。
 const HAND_DISCARD_COLOR := Color(0.86, 0.28, 0.26)
 
+# ---- 批次 4 Task 2：手牌随视角淡出（看不见就点不到） ----
+#
+# 视角量 `view_t`（见 table_3d.gd）是**纯本地表现**：0 = 3D 第一人称（手里有牌、能出牌），
+# 1 = 2D 桌面（只看地图）。手牌在这一端**淡出**，于是「出牌要回 3D」这条玩法意图不需要任何
+# 玩法代码来保证 —— 只要一条规则：**看不见就点不到**（淡到 HAND_HIT_MIN_ALPHA 以下，
+# `hand_hit` 直接返回 -1）。`game._on_table_click` 判手牌只走 `hand_hit`，所以 game.gd 一行不改：
+# 左键选中 / 右键丢弃（那条也先取 `hi = hand_hit(...)` 再分左右键）在 2D 端自然都落空
+# —— **丢弃与出牌一样要回 3D，不为它开特例**，否则「2D 端能丢牌、不能出牌」就成了半套规则。
+#
+# 窗口取 0.35→0.65：两端各留一段**完全**不透明 / **完全**看不见的稳定区，中间才是过渡。
+## 从视角量的 0.35 起开始淡出。
+const HAND_FADE_LO := 0.35
+## 到 0.65 淡完（≈0）。两端各留一段稳定区：0.35 之前全不透明、0.65 之后完全看不见
+##（滚轮一格 0.25 ⇒ 3D 端要滚两格才看得出变化，不会一滚就闪一下）。
+const HAND_FADE_HI := 0.65
+## 低于此不参与命中 —— 「看不见就点不到」那一条规则就落在这里。
+## 取 0.15（≈ 只剩一成半）而不是 0：留一点余量，免得贴着淡出窗口边缘的一档变成
+## 「还能勉强看见、却已经点不到」（玩家会觉得是 bug）。反过来，只要淡到"看不清是哪张牌"，
+## 就已经不该可点了 —— 命中盒与牌面图标是同一件事的两面。
+const HAND_HIT_MIN_ALPHA := 0.15
+
+var _view_t := 0.0               # 当前视角量（由 TableView3D 推过来；手牌的显示与命中都只看它）
+
 var _hand_root: Node3D
 var _hand: Array[MeshInstance3D] = []
 var _hand_body_mats: Array[StandardMaterial3D] = []   # 牌身品质色：逐张一份
@@ -327,6 +350,8 @@ func set_hand(items: Array) -> void:
 	while _hand.size() < n:
 		_hand.append(_make_card())
 	_apply_hand_layout()
+	# 透明度由 `_apply_hand_layout` 末尾统一补贴（见那里的注释）—— 新建 / 重摆的牌不会以
+	# 默认的不透明露到下一次状态广播之前。
 
 ## 选中的那张牌：抬起 + 提亮；i = -1 都不选。越界（含牌不够 5 张）当作不选。
 ##
@@ -344,6 +369,56 @@ func set_hand_selected(i: int) -> void:
 func set_hand_discard_pending(i: int) -> void:
 	_hand_disc = i if (i >= 0 and i < _hand_n) else -1
 	_apply_hand_layout()
+
+## 设当前视角量（由 `TableView3D._apply_camera` 推过来，见那里的注释）。
+##
+## **幂等且带早退**：值没变就直接返回 —— `_apply_camera` 每帧都调它，而摆相机本身就有早退，
+## 这里同理（相同视角下重贴一遍 alpha 是白跑）。
+##
+## 注意「值没变就不用贴」的前提是**重摆手牌的那几条路会自己补贴**（`_apply_hand_layout` 末尾
+## 统一调 `_apply_hand_alpha`）—— 少了那一笔，新建 / 重摆出来的牌会一直保持默认的不透明。
+func set_view_t(t: float) -> void:
+	var nt := clampf(t, 0.0, 1.0)
+	if is_equal_approx(nt, _view_t):
+		return
+	_view_t = nt
+	_apply_hand_alpha()
+
+## 当前手牌的不透明度：3D 端 1，2D 端 0，中间是 HAND_FADE_LO→HI 的平滑过渡。
+## smoothstep 而不是线性：两端多一段"几乎不变"的平缓区，滚轮走到头才明显淡掉。
+func hand_alpha() -> float:
+	return 1.0 - smoothstep(HAND_FADE_LO, HAND_FADE_HI, _view_t)
+
+## 把 hand_alpha 贴到手牌上：整排的 visible + **逐张**材质的 alpha。
+##
+## 整排隐藏（而不是只把 alpha 调到 0）是给"淡完"那一段用的：alpha 0 的牌仍会参与排序与
+## 阴影投射，白跑一份。牌身与牌面是**逐张一份**材质（品质色 / 图标各异，见 _make_card），
+## 所以可以逐张改 —— 共用一份的话会把整排一起调淡（那不是本函数的问题，是材质本来就不共享）。
+##
+## **牌面贴图不动**：只改 alpha。贴图是"这是哪件道具"的唯一线索，染它没有意义。
+func _apply_hand_alpha() -> void:
+	var a := hand_alpha()
+	var shown := a > 0.02
+	# _hand_root 在 set_hand 之前是 null（一开始空手就不建池子）——
+	# 这里必须先判空再写 visible，写成 `_hand_root.visible = _hand_root != null and shown`
+	# 会在 set_hand 之前空访问崩掉（短路只保护右半边，左边那半照求值）。
+	if _hand_root != null:
+		_hand_root.visible = shown
+	if not shown:
+		return
+	for i in _hand_body_mats.size():
+		var m: StandardMaterial3D = _hand_body_mats[i]
+		# 牌身原本是不透明的（默认 TRANSPARENCY_DISABLED），不改成 ALPHA 的话 albedo_color.a 不起作用
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		var bc := m.albedo_color
+		bc.a = a
+		m.albedo_color = bc
+		if i < _hand_face_mats.size():
+			var fm: StandardMaterial3D = _hand_face_mats[i]
+			fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA   # 牌面本来就是 ALPHA（图标 PNG 有透明边）
+			var fc := fm.albedo_color
+			fc.a = a
+			fm.albedo_color = fc
 
 ## 按当前的 _hand_items / _hand_n / _hand_sel 把所有牌重摆一遍：
 ## 位置（扇形 + 弧 + 朝自己倾斜 + 选中抬起）、品质色（选中的提亮）、牌面图标。
@@ -381,6 +456,11 @@ func _apply_hand_layout() -> void:
 		card.global_position = w
 		# 欧拉序是默认的 YXZ：先绕自己的 X 倾斜、再绕世界 Y 岔开，正是"摊成扇形还都朝着我"
 		card.rotation = Vector3(deg_to_rad(HAND_TILT_DEG), deg_to_rad(-k * HAND_FAN_DEG), 0.0)
+	# 末尾统一补贴透明度（批次 4 Task 2）：本函数上面那一笔 `albedo_color = 品质色` 是**整份覆盖**，
+	# 会把 alpha 写回 1.0 —— 半透明的牌于是会在视角不动时"弹"回不透明（选中、待确认丢弃、
+	# 每次状态广播重摆都是这条路径）。放在这里而不是各调用点：重摆的每条路（set_hand /
+	# set_hand_selected / set_hand_discard_pending）都经过本函数，一处收口最不容易漏。
+	_apply_hand_alpha()
 
 func _item_icon(icon: String) -> Texture2D:
 	if icon == "":
@@ -489,7 +569,16 @@ func _hand_mat_rect(i: int) -> Rect2:
 ## 画布像素命中第几张牌；**-1 = 没命中**（本函数自己的约定，与 GameData 的哨兵值无关）。
 ## 扇形里相邻两张的命中盒可能压住一两个像素：取**离相机最近**的那张 —— 不透明物件里
 ## 它才是画在上面的那张，免得"看着是这张、点下去选中另一张"。
+##
+## 批次 4 Task 2 起多一条闸：**看不见就点不到** —— 手牌淡到 HAND_HIT_MIN_ALPHA 以下（2D 端
+## 一带）直接返回 -1，连命中盒都不必算。这条闸就是「2D 端出牌要回 3D」的**全部**实现：
+## `game._on_table_click` 判手牌只走本函数（左键选中 / **右键丢弃也走它** —— 先取 hi 再分
+## 左右键），所以 2D 端点不到牌 = 既选不中也丢不掉。丢弃与出牌一样要回 3D，**不为丢弃开特例**：
+## 只在 2D 端禁出牌、却留着丢弃，等于留半套规则，玩家会以为牌还能点。
+## 命中的几何判据（hand_rect）不受影响：淡出只改显示与命中，不改牌在桌上的位置。
 func hand_hit(canvas_px: Vector2) -> int:
+	if hand_alpha() < HAND_HIT_MIN_ALPHA:
+		return -1
 	var best := -1
 	var best_z := -INF
 	for i in _hand_n:

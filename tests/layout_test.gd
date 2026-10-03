@@ -713,10 +713,17 @@ func _run() -> void:
 					% tp4.hand_rect(1).get_center().distance_to(seen4.call(1)))
 			_check((hr.get_child(1) as Node3D).global_position.is_equal_approx(wpos_before),
 				"换视角不改实物的世界位置（牌钉在固定桌位上）")
-			# 再往 2D 端推一段（滚轮推移的同一件事，只是推得更远）：同样"点看得见的那面"必须照样命中
+			# 再往 2D 端推一段（滚轮推移的同一件事，只是推得更远）：越过淡出窗口（0.65）之后
+			# 手牌已经看不见了 —— 批次 4 Task 2 起「看不见就点不到」，hand_hit 直接给 -1。
+			# 这条断言原先写的是"推向 2D 端仍命中"，而**那正是批次 4 要改掉的语义**（2D 端出牌
+			# 要回 3D），所以改成钉新的那条；「命中盒跟着相机走」由上面 0.5 那档 + 下面这条几何
+			# 断言继续钉住（淡出只改显示与命中，不改几何）。
 			t3.snap_view(0.7)
 			await process_frame
-			_check(tp4.hand_hit(seen4.call(1)) == 1, "视角推向 2D 端后点同一张牌仍命中它")
+			_check(tp4.hand_hit(seen4.call(1)) == -1,
+				"视角推过淡出窗口（0.7）后手牌看不见 ⇒ 不再命中（-1）")
+			_check(tp4.hand_rect(1).get_center().distance_to(seen4.call(1)) < 8.0,
+				"越过淡出窗口后命中盒几何照旧跟着相机（淡出不改几何）")
 			# 取景回 3D 端：下面的位置断言必须在 game.gd 里真实的那一版取景下做
 			t3.snap_view(0.0)
 			await process_frame
@@ -800,6 +807,69 @@ func _run() -> void:
 			_check(clash4 == 0, "手牌命中盒里没有筹码 / 体力件（重叠 %d 处）" % clash4)
 			_check(nearest4 > deepest4, "手牌整排比筹码 / 体力件更靠自己（%.0f > %.0f 画布 y）"
 				% [nearest4, deepest4])
+
+			# ---- 批次 4 Task 2：手牌随视角淡出（看不见就点不到） ----
+			# 视角量 view_t 是**纯本地表现**（不进 s_state、不同步）：3D 端看得见也点得到，
+			# 2D 端看不见也点不到 —— 出牌要回 3D。核心只有一条规则：`hand_hit` 在淡到看不见时
+			# 返回 -1；`game._on_table_click` 判手牌只走 hand_hit，于是 game.gd 一行都不用改
+			#（右键丢弃同理：丢弃和出牌一样要回 3D，不为它开特例）。
+			# 断言一律走可观察量（hand_alpha 的返回值、材质上的 alpha、Hand 节点的 visible），
+			# 不把 _apply_hand_alpha 的推导再写一遍。
+			print("== 手牌随视角淡出：看不见就点不到 ==")
+			var body5 := (hr.get_child(0) as MeshInstance3D).material_override as StandardMaterial3D
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}])
+			tp4.set_view_t(0.0)
+			_check(tp4.hand_alpha() > 0.99, "3D 端手牌全不透明（实得 %.2f）" % tp4.hand_alpha())
+			_check((hr as Node3D).visible and body5.albedo_color.a > 0.99,
+				"3D 端整排可见、牌身材质也是不透明的（实得 %.2f）" % body5.albedo_color.a)
+			_check(tp4.hand_hit(tp4.hand_rect(0).get_center()) == 0, "3D 端点得到第一张")
+			tp4.set_view_t(1.0)
+			_check(tp4.hand_alpha() < 0.02, "2D 端手牌基本看不见（实得 %.3f）" % tp4.hand_alpha())
+			_check(not (hr as Node3D).visible, "2D 端整排手牌节点已隐藏（不是只把材质调淡）")
+			_check(tp4.hand_hit(tp4.hand_rect(0).get_center()) == -1,
+				"2D 端点不到（hand_hit 返回 -1）")
+			tp4.set_view_t(0.5)
+			var mid5: float = tp4.hand_alpha()
+			_check(mid5 > 0.02 and mid5 < 0.98, "中段是过渡值（实得 %.2f）" % mid5)
+			_check((hr as Node3D).visible, "中段整排仍可见（只是半透明）")
+			_check(absf(body5.albedo_color.a - mid5) < 0.01,
+				"半透明度真贴到了牌身材质上（材质 %.2f / hand_alpha %.2f）"
+					% [body5.albedo_color.a, mid5])
+			_check(body5.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA,
+				"牌身材质开了 alpha 混合（否则 albedo.a 不起作用）")
+			# 重摆会把牌身颜色**整份重写**（品质色 / 选中提亮 / 待确认丢弃都是这一笔）——
+			# 那一笔若顺带把 alpha 写回 1.0，半透明的牌就会在视角不动时"弹"回不透明
+			# （视角不再变化 ⇒ set_view_t 早退 ⇒ 再也没人来修）。选中 / 取消各走一遍这条路径。
+			tp4.set_hand_selected(1)
+			_check(absf(body5.albedo_color.a - mid5) < 0.01,
+				"重摆（选中）之后仍是半透明（实得 %.2f，应为 %.2f）" % [body5.albedo_color.a, mid5])
+			tp4.set_hand_selected(-1)
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}])
+			_check(absf(body5.albedo_color.a - mid5) < 0.01,
+				"重摆手牌之后仍是半透明（实得 %.2f，应为 %.2f）" % [body5.albedo_color.a, mid5])
+			tp4.set_view_t(0.0)
+
+			# 接线：淡出必须由 `_apply_camera()` 末尾推一次完成。推进 `_process` 的循环体里
+			# 就会**整条摆拍链路漏掉** —— `_process` 在 view_t == view_target 时早退，而
+			# snap_view（测试与全部 `--shot` 摆拍都走它）根本不经过 `_process`。
+			print("== 视角量由 _apply_camera 推到手牌（摆拍 / 测试走 snap_view）==")
+			t3.snap_view(0.0)
+			await process_frame
+			_check(tp4.hand_alpha() > 0.99, "snap_view(0) 之后手牌回到全不透明（实得 %.2f）" % tp4.hand_alpha())
+			t3.snap_view(1.0)
+			_check(tp4.hand_alpha() < 0.02, "snap_view(1) 之后手牌淡到看不见（实得 %.3f）" % tp4.hand_alpha())
+			# 滚轮那条路（set_view 改目标 → _process 逐帧推移）也要把 view_t 带到手牌上。
+			# 按**真实时间**收敛判，不按帧数：无头下一帧跑多快由机器决定（同 Task 1 的写法）。
+			t3.snap_view(0.0)
+			t3.set_view(1.0)
+			var t5 := Time.get_ticks_msec()
+			while tp4.hand_alpha() > 0.02 and Time.get_ticks_msec() - t5 < 3000:
+				await process_frame
+			_check(tp4.hand_alpha() < 0.02,
+				"滚轮推到底后手牌跟着淡掉（view_t=%.3f，实得 alpha %.3f）" % [t3.view_t, tp4.hand_alpha()])
+			t3.snap_view(0.0)
+			await process_frame
+			_check(tp4.hand_alpha() > 0.99, "回 3D 端手牌恢复不透明（实得 %.2f）" % tp4.hand_alpha())
 
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
