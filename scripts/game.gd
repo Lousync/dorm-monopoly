@@ -12,12 +12,6 @@ const STEP_TIME := 0.15   # 每格跳子时长
 # ---------------- UI 引用 ----------------
 var board: BoardView
 var table3d: TableView3D      # 2.5D 桌面容器（scripts/table_3d.gd）
-var status_label: Label
-var roll_btn: Button
-var mat_bar: PanelContainer
-var action_bar: PanelContainer   # 操作条：转动转盘 / 道具按钮（与视角无关，见 fix/v0.0.2）
-var ph1_lab: Label
-var ph2_lab: Label
 var log_head: Label
 var opt_btn: Button
 var menu_layer: Control
@@ -60,13 +54,8 @@ var _shop_epoch := 0
 var _awaiting_item := 0    # 道具阶段行动者（0 = 无）
 var _item_epoch := 0
 var _item_action := {}
-var item_btn_box: HBoxContainer
-var use_phase_btn: Button      # 阶段二「使用道具 / 跳过」
-var selected_slot := -1        # 牌垫上选中的道具卡槽（阶段二）
+var selected_slot := -1        # 当前选中的道具槽（阶段二；点手中牌 / 牌垫牌位都写它）
 var _discard_pending := -1     # 卡片「✕」丢弃的二次确认槽位（-1=无）
-var ph1_pill: Control
-var ph2_pill: Control
-var ph_arrow_l: Label
 var cheat_picker: Control
 var cheat_slot := -1
 var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1=无）
@@ -120,12 +109,10 @@ var rules_body: RichTextLabel
 var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
 var rules_tab := ""
-var dock_plate: Panel            # 底栏底板（把阶段条与操作条包成一整块，见 _place_dock）
 var roster_box: VBoxContainer      # 右栏名册（固定 4 行，见 _refresh_rail）
 var roster_rows: Array = []
 var _rail_sig := ""
 var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
-var _pulse_t := 0.0               # 「该你掷了」按钮的呼吸相位（持续动画走 _process）
 var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，簇收起）
 var _op_left := 0.0               # 本机显示用剩余秒数：广播到达时重置，_process 逐帧扣 delta
                                   # （暂停时 _process 不跑 → 计时与房主的窗口一起冻结）
@@ -234,21 +221,18 @@ func _ready() -> void:
 	# 否则两行同时可见，要等首次改挡才归位
 	_refresh_tier_ui()
 
+	# 客户端这里不再写任何东西：原来那句「等待房主同步状态…」写在底栏状态条上，
+	# 底栏已随批次 3 Task 6 取消（等房主的首份 s_state 广播即可，见 _broadcast_state）。
 	if multiplayer.is_server():
 		_host_setup()
-	else:
-		status_label.text = "等待房主同步状态…"
 
-	roll_btn.pressed.connect(_on_roll_pressed)
 	board.set_self_peer(my_peer)
 	board.item_slot_clicked.connect(_on_item_slot_clicked)
 	board.item_discard_clicked.connect(_on_discard_clicked)
 	board.phase_spin_clicked.connect(_on_roll_pressed)
 	board.phase_use_clicked.connect(_on_use_pressed)
 	board.cancel_clicked.connect(_cancel_target)
-	table3d.on_table_click = _on_table_click   # 桌面实体（转盘等）先于桌垫内容消费点击
-	if use_phase_btn != null:
-		use_phase_btn.pressed.connect(_on_use_pressed)
+	table3d.on_table_click = _on_table_click   # 桌面实体（转盘 / 手牌）先于桌垫内容消费点击
 	Net.chat_received.connect(_refresh_chat)
 	Net.connection_lost.connect(_on_conn_lost)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -297,7 +281,7 @@ func enter_lab_mode() -> void:
 
 func _lab_hide_hud() -> void:
 	# card_panel（左上角公告）已并入屏幕上方居中的 log_toast，故这里改成隐藏气泡
-	for c in [mat_bar, roll_btn, opt_btn, log_panel, log_toggle, status_label, log_toast]:
+	for c in [opt_btn, log_panel, log_toggle, log_toast]:
 		if c != null and is_instance_valid(c):
 			c.visible = false
 
@@ -933,7 +917,9 @@ func _clear_item_selection() -> void:
 func _on_roll_pressed() -> void:
 	if String(st.get("await", "")) != "roll" or int(st.get("turn", -1)) != my_peer:
 		return
-	roll_btn.disabled = true  # 即时反馈，等下一次状态广播再恢复
+	# 原先这里 `roll_btn.disabled = true` 做「按下即置灰」的本地即时反馈；底栏已随
+	# 批次 3 Task 6 拆除，这条反馈也一并去掉。重复点击由房主侧的 `_awaiting_roll` 兜住：
+	# 第一次掷出后它立刻归 0（`_play_turn`），后续点击在此处就被 await/turn 守卫挡住。
 	if multiplayer.is_server():
 		if _awaiting_roll == my_peer:
 			roll_received.emit()
@@ -1357,10 +1343,9 @@ func _refresh_players() -> void:
 				Color(1.0, 0.85, 0.3, 0.85) if i < stamina else Color(1, 1, 1, 0.07),
 				4, Color(0, 0, 0, 0.25), 1))
 
-		# 道具牌位：公开背包（名字 + 品质描边 + 冷却标记）
-		var items: Array = p.get("items", [])
-		for i in (row.slots as Array).size():
-			board.set_seat_slot(peer, i, items[i] if i < items.size() else null)
+		# 座位卡上的道具牌位已随批次 3 Task 6 拆除（背包改由桌面上的手中牌实体呈现，
+		# 公开背包这一层暂时真空 —— 见 doc/development/开发台账.md §三）。
+		# 这里原来那圈 `board.set_seat_slot(...)` 随之删除。
 
 		# 金额：滚动数字 + 涨跌闪色 + 棋盘飘字
 		var target := int(p.money)
@@ -1487,46 +1472,16 @@ func _refresh_actions() -> void:
 	var phase := String(st.get("phase", "playing"))
 	var await_state := String(st.get("await", ""))
 	var is_my_roll := await_state == "roll" and int(st.get("turn", -1)) == my_peer
-	roll_btn.disabled = not is_my_roll
-	roll_btn.visible = false   # 阶段按钮已上牌垫（世界坐标）；坞里的停用
-	UIKit.restyle_button(roll_btn, "primary" if is_my_roll else "normal")
 	var my_turn := phase == "playing" and int(st.get("turn", -1)) == my_peer
-	if ph1_lab != null:
-		ph1_lab.add_theme_color_override("font_color",
-			UIKit.ACCENT if (my_turn and await_state == "roll") else UIKit.TEXT_DIM)
-	if ph2_lab != null:
-		ph2_lab.add_theme_color_override("font_color",
-			UIKit.ACCENT if (my_turn and await_state != "roll") else UIKit.TEXT_DIM)
 	_refresh_item_buttons(my_turn, await_state)
-	var turn_name := _name_by_peer(int(st.get("turn", -1)))
-	match await_state:
-		"item":
-			status_label.text = "轮到你使用道具！" if int(st.get("await_peer", -1)) == my_peer \
-				else "等待 %s 使用道具…" % turn_name
-		"shop":
-			status_label.text = "慢慢逛，看好就买" if int(st.get("await_peer", -1)) == my_peer \
-				else "%s 在小卖部购物…" % turn_name
-		"black":
-			status_label.text = "黑市开张：用你的地皮结账！" if int(st.get("await_peer", -1)) == my_peer \
-				else "%s 在黑市交易…" % turn_name
-		"roll":
-			if is_my_roll:
-				status_label.text = "轮到你转盘了！"
-				if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
-						and not board.is_rotating():
-					board.focus_peer(my_peer)
-			else:
-				status_label.text = "等待 %s 转盘…" % turn_name
-		"prompt":
-			if int(st.get("await_peer", -1)) == my_peer:
-				status_label.text = "轮到你决定！"
-			else:
-				status_label.text = "等待 %s 做决定…" % _name_by_peer(int(st.get("await_peer", -1)))
-		_:
-			if phase == "playing":
-				status_label.text = "%s 的回合" % turn_name
-			else:
-				status_label.text = "游戏结束"
+	# 「轮到你转盘了」——原来这里写底栏状态条文案并顺手把镜头对回自己。底栏已随批次 3
+	# Task 6 取消：**状态文案这一层信息没有了**（见 doc/development/架构总览.md §五），
+	# 「该你了」改由牌垫阶段按钮的点亮/置灰（set_phase_buttons 的 style）与座位卡上的
+	# 操作倒计时承担，发生过的事由战报承担。镜头对焦这半与文字无关，保留。
+	if await_state == "roll" and is_my_roll:
+		if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
+				and not board.is_rotating():
+			board.focus_peer(my_peer)
 	# 自动化测试：轮到自己时自动掷骰（用 roll_epoch 区分连掷的新请求）
 	if at_mode != "" and is_my_roll and int(st.get("roll_epoch", -1)) != _at_roll_epoch:
 		_at_roll_epoch = int(st.get("roll_epoch", -1))
@@ -3027,8 +2982,6 @@ func _apply_coco(p: Dictionary) -> void:
 func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 	if board == null:
 		return
-	if use_phase_btn != null:
-		use_phase_btn.visible = false   # 坞里的停用；阶段按钮已上牌垫
 	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
 	# 非道具阶段 → 清掉选中（绿光收掉）与未完成的选目标态
 	if not using and selected_slot >= 0:
@@ -3283,11 +3236,6 @@ func _cancel_target() -> void:
 
 # ================= 选项菜单 / 房主暂停 / 设置 =================
 
-func _pill_label(p: Control) -> Label:
-	for c in p.find_children("", "Label", true, false):
-		return c as Label
-	return null
-
 func _build_menu_ui() -> void:
 	TableHud.build_menu_ui(self)
 ## 切换暂停菜单族的当前面板（""=全部收起）。
@@ -3396,13 +3344,12 @@ func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 
 func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
-	# 底栏（牌垫阶段条 + 操作条）统一成屏幕底部一条固定操作坞，不再锚在自己座位卡下沿：
-	# 原来「自己视角贴座位卡、转开视角改贴屏幕底」，按钮会跟着镜头满屏跳，转视角时
-	# 阶段条还会整条消失（fix/v0.0.2 打的补丁）。固定之后位置恒定、阶段永远可见。
-	if mat_bar == null:
-		return
+	# 屏幕底部原来还有一条固定操作坞（牌垫阶段条 + 操作条 + 底板）。批次 3 Task 6 把它
+	# 整条拆了：掷轮改点桌面转盘、出牌改点手中牌（选中后点牌垫「使用道具」确认）、
+	# 现金与体力在桌上。**注意这里不能留 `if <坞成员> == null: return` 之类的提前返回** ——
+	# 那会把下面小卖部 / 黑市 / 操作倒计时 / 开发者面板整段静默打死（本任务真踩过这个坑，
+	# hud_test 有对应的守卫断言）。
 	var phase := String(st.get("phase", ""))
-	var show := board.seat_count() > 0 and phase == "playing"
 	# 交易面板独立于视角：保证行动者一定能操作（相机可能停在棋子上而非自家座位）
 	var shop_mine: bool = phase == "playing" and int(st.get("shop_peer", 0)) == my_peer \
 		and int(st.get("shop_open", -1)) >= 0
@@ -3422,53 +3369,9 @@ func _process(_delta: float) -> void:
 	else:
 		black_picker.visible = false
 		_black_sig = ""
-	mat_bar.visible = show and not shop_mine and not black_mine
-	var want_actions: bool = phase == "playing" and (roll_btn.visible or item_btn_box.visible)
-	action_bar.visible = want_actions and not shop_mine and not black_mine
-	_place_dock()  # 交易/黑市条顶掉底栏时，内部会把底板一并收掉
 	_refresh_op_timer(_delta)
-	# 「该你掷了」时按钮轻微呼吸：持续动画手写相位（项目的表现层约定）
-	if roll_btn.visible and not roll_btn.disabled and roll_btn.size.x > 1.0:
-		_pulse_t += _delta
-		roll_btn.pivot_offset = roll_btn.size * 0.5
-		var sc := 1.0 + 0.022 * (0.5 + 0.5 * sin(_pulse_t * 4.4))
-		roll_btn.scale = Vector2(sc, sc)
-	elif roll_btn.scale != Vector2.ONE:
-		roll_btn.scale = Vector2.ONE
-		_pulse_t = 0.0
 	if dev.enabled:
 		dev.refresh_panel()
-
-## 底栏统一贴底居中：可见的两条并排成一条操作坞，横向夹进可用带；
-## 顶边对齐（两条容器高度差一两像素，对齐顶边看起来才是一条）。
-func _place_dock() -> void:
-	var parts: Array = []
-	for c in [mat_bar, action_bar]:
-		if c != null and c.visible:
-			parts.append(c)
-	if parts.is_empty():
-		if dock_plate != null:
-			dock_plate.visible = false
-		return
-	var gap := 8.0
-	var total := 0.0
-	var tallest := 0.0
-	for c in parts:
-		total += c.size.x
-		tallest = maxf(tallest, c.size.y)
-	total += gap * float(parts.size() - 1)
-	var left := _clamp_dock_x(size.x * 0.5 - total * 0.5, total, _dock_band())
-	var top := size.y - 16.0 - tallest
-	var x := left
-	for c in parts:
-		c.position = Vector2(x, top)
-		x += c.size.x + gap
-	# 底板兜住整行：留 7px 内边距，读数上就是「一整块操作坞」而不是两条浮着的条
-	if dock_plate != null:
-		var pad := 7.0
-		dock_plate.visible = true
-		dock_plate.position = Vector2(left - pad, top - pad)
-		dock_plate.size = Vector2(total + pad * 2.0, tallest + pad * 2.0)
 
 ## 操作倒计时（D 方案）：嵌在当前行动者的座位卡里、随座位朝向旋转。
 ## 广播一秒一条，本机逐帧扣 delta 插值：暂停时 _process 不跑、计时随房主窗口一起冻结，
@@ -3511,8 +3414,9 @@ func _refresh_shop_timer(kind_text: String) -> void:
 			shop_timer_left.text = "不限时"
 			shop_timer_left.add_theme_color_override("font_color", UIKit.TEXT_DIM)
 
-## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
-## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。
+## 屏幕底部「贴底条」可用的横向带（左起 / 右止）。现在只剩黑市操作条在用（底栏已随
+## 批次 3 Task 6 拆除）；它只按屏幕居中，一旦左下角展开规则说明面板、或右上角战报栏
+## 展开，就会被压住，所以按两侧栏的实际几何夹位。
 func _dock_band() -> Vector2:
 	var x0 := 14.0
 	if rules_panel != null and rules_panel.visible:
@@ -3524,7 +3428,7 @@ func _dock_band() -> Vector2:
 		x1 = minf(x1, size.x + log_panel.offset_left - 8.0)
 	return Vector2(x0, maxf(x1, x0 + 120.0))
 
-## 把底栏左边缘夹进可用带内（带太窄时以左边缘为准，宁可溢出也不推到屏幕外）
+## 把贴底条左边缘夹进可用带内（带太窄时以左边缘为准，宁可溢出也不推到屏幕外）
 func _clamp_dock_x(want: float, width: float, band: Vector2) -> float:
 	return clampf(want, band.x, maxf(band.x, band.y - width))
 

@@ -1,5 +1,5 @@
 extends SceneTree
-## HUD 回归：右栏名册 + 底栏（含「客户端视角」这一段）
+## HUD 回归：右栏名册 + 底部操作坞**已拆**的反向契约 + 桌上实体入口（含「客户端视角」这一段）
 ##
 ## 为什么要有「客户端视角」：`s_state` 是 call_local，房主与客户端跑的是同一个处理函数，
 ## 差别只在「谁算出的状态」和 `my_peer`。所以喂一份状态、把 my_peer 设成客户端，
@@ -119,29 +119,43 @@ func _run() -> void:
 	await process_frame
 	_check(g._rail_sig == sig_before, "同一状态重复广播不复算（签名不变）")
 
-	print("== 底栏与底板 ==")
+	print("== 底部操作坞已拆（批次 3 Task 6）：底栏没有，玩法入口还在 ==")
 	g.my_peer = 2
 	g.s_state(_state(2, false))
 	g._refresh_actions()
 	await process_frame
 	await process_frame
 	g._process(0.0)
-	_check(g.mat_bar.visible, "底栏（状态条）可见；阶段按钮已移到牌垫上")
-	_check(g.dock_plate.visible, "底板随底栏一起出现")
-	var band: Vector2 = g._dock_band()
-	_check(g.dock_plate.position.x >= band.x - 0.5, "底板左缘不越过可用带（实得 %.0f / 带左 %.0f）"
-		% [g.dock_plate.position.x, band.x])
-	_check(g.dock_plate.position.x + g.dock_plate.size.x <= band.y + 0.5,
-		"底板右缘不越过可用带（实得 %.0f / 带右 %.0f）"
-			% [g.dock_plate.position.x + g.dock_plate.size.x, band.y])
+	# 反向契约：坞的成员（含状态条）必须从 game 上**删净**，而不是留成一块不可见的空壳。
+	# 一律用 g.get() 读 —— 成员真删掉时它返回 null；直接写 g.mat_bar 会因标识符不存在而报错。
+	var gone: Array = []
+	for n in ["mat_bar", "action_bar", "dock_plate", "roll_btn", "use_phase_btn", "item_btn_box",
+			"status_label", "ph1_lab", "ph2_lab", "ph1_pill", "ph2_pill", "ph_arrow_l"]:
+		if g.get(n) != null:
+			gone.append(n)
+	_check(gone.is_empty(), "底部操作坞的成员已删净（残留：%s）" % str(gone))
+	# 另一半：坞拆了，**玩法入口**必须还在 —— 牌垫上的两个阶段按钮是掷轮与出牌确认的落点
+	#（坞里的 roll_btn / use_phase_btn 早就 visible=false，真正管事的一直是这两枚）。
+	_check(g.board._phase_spin != null and g.board._phase_spin.is_visible_in_tree(),
+		"牌垫上的「转转盘」仍在（掷轮入口）")
+	_check(g.board._phase_use != null and String(g.board._phase_use.text) != "",
+		"牌垫上的「使用道具」仍在（出牌确认的唯一落点，实得「%s」）" % String(g.board._phase_use.text))
+	# 陷阱：`_process` 原有一句 `if mat_bar == null: return` 的**提前返回**。只删构建、不删守卫的话，
+	# `_process` 后半段（小卖部 / 黑市 / 操作倒计时 / 开发者面板）会**静默**不再执行。
+	# 这里用「倒计时簇仍被推进」把后半段钉住（簇的推送在 `_process` 最末）。
+	g.s_op_timer("roll", 30.0, 30.0, 3)
+	g._process(0.0)
+	await process_frame
+	_check((g.board.seat(3).op_timer as Control).visible,
+		"_process 的后半段仍在跑（倒计时簇没被提前返回吞掉）")
+	g.s_op_timer("", 0.0, 0.0, -1)
+	g._process(0.0)
 
-	print("== 交易条顶掉底栏时底板一起收 ==")
+	print("== 小卖部全屏层照旧（坞拆了与它无关）==")
 	g.s_state(_state(2, true))            # shop_peer = 我
 	g._process(0.0)
 	await process_frame
 	_check(g.shop_layer.visible, "小卖部全屏界面可见")
-	_check(not g.mat_bar.visible, "底栏让位")
-	_check(not g.dock_plate.visible, "底板一并收掉（不会留一块空底板）")
 
 	print("== 战报：默认收起 + 消息在屏幕上方弹出 ==")
 	_check(not g.log_panel.visible, "战报框默认收起")
@@ -387,8 +401,8 @@ func _run() -> void:
 		"窗口关闭后所有座位卡的簇收起")
 
 	print("== 点转盘 = 掷轮入口（批次 3 Task 2）==")
-	# 为什么挑 roll_received 当证据：底栏那个「转动转盘」按钮 Task 6 要删，`roll_btn.disabled`
-	# 活不到那时；而 roll_received 是**掷轮这件事本身** —— game.gd 的 _play_turn 正 await 它，
+	# 为什么挑 roll_received 当证据：底栏那个「转动转盘」按钮已随 Task 6 拆除，`roll_btn.disabled`
+	# 早就不存在；而 roll_received 是**掷轮这件事本身** —— game.gd 的 _play_turn 正 await 它，
 	# 房主侧玩家点不点转盘，最终都落到这一条信号上。这里跑的是房主侧分支（`--script` 下
 	# multiplayer 是默认接口、unique_id = 1 ⇒ is_server() 恒真，同 casino_test 的说明）；
 	# 客户端那条走 c_roll，是另一条路，本机不联机验不了。
@@ -424,7 +438,7 @@ func _run() -> void:
 
 	print("== 点手中牌：选中 / 取消（批次 3 Task 5）==")
 	# 走**真实**的 `_on_table_click`（table_3d 命中实体那条链路），命中点取 `hand_rect` 的中心。
-	# 证据一律挑 Task 6 之后还活着的可观察量：`selected_slot`（玩法侧的选中态，单一来源）、
+	# 证据一律挑底栏拆掉之后还活着的可观察量：`selected_slot`（玩法侧的选中态，单一来源）、
 	# `hand_rect`（桌上手牌自己的命中盒）、`info_panel`（格详情卡）——底栏按钮与座位卡牌位都不碰。
 	g.my_peer = 2
 	var s_hand: Dictionary = _state(2, false)
@@ -446,7 +460,7 @@ func _run() -> void:
 	var y_before: float = c0.y
 	_check(g._on_table_click(c0), "点第一张牌：这次点击被手牌消费")
 	_check(g.selected_slot == 0, "点第一张 → 选中下标 0（实得 %d）" % g.selected_slot)
-	# 选中反馈在**3D**上（Task 6 拆掉座位卡牌位后 set_item_selected 会空转，选中反馈不能挂在它上面）：
+	# 选中反馈在**3D**上（座位卡牌位已随 Task 6 拆掉，board.set_item_selected 现在空转）：
 	# 牌抬起来 → 屏幕上看更高 → 射线打到桌面的点更远 → 画布 y 变小。
 	_check(tph.hand_rect(0).get_center().y < y_before - 3.0,
 		"选中的牌抬起来了（命中盒中心 %.0f → %.0f）" % [y_before, tph.hand_rect(0).get_center().y])

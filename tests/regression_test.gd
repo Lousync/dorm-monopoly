@@ -89,7 +89,7 @@ func _run() -> void:
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	# 场景/脚本编译失败时成员是 null，后续断言里的表达式会先报错、根本走不到
 	# _check，于是整轮「全过」——必须在这里显式拦下（见 fix/v0.0.2）
-	if g.board == null or g.item_btn_box == null or g.shop_layer == null:
+	if g.board == null or g.roster_box == null or g.shop_layer == null:
 		printerr("  FAIL - 对局场景未正确加载（脚本编译失败？）")
 		print("REGRESSION TEST: SCENE LOAD FAILED")
 		quit(1)
@@ -315,19 +315,28 @@ func _test_ui_widgets_applied(g) -> void:
 	print("== HUD 控件回填（TableHud → game 同名成员）==")
 	# _build_ui 现在靠 set(k, w[k]) 回填，名字对不上是「静默失败」——
 	# 控件为 null 也不会报错，只会界面缺一块。这里逐个钉住。
-	var names := ["board", "mat_bar", "action_bar", "roll_btn", "item_btn_box",
+	var names := ["board",
 		"shop_layer", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
 		"log_text", "log_head", "log_toggle", "info_panel", "info_title",
-		"info_body", "info_sb", "status_label", "chat_edit",
-		"opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",
-		"ph_arrow_l", "black_btns", "black_hint",
+		"info_body", "info_sb", "chat_edit",
+		"opt_btn", "black_btns", "black_hint",
 		"menu_dim", "menu_wraps", "rules_btn", "rules_panel", "rules_body", "rules_tabs",
-		"dock_plate", "roster_box", "roster_rows"]
+		"roster_box", "roster_rows"]
 	var missing: Array = []
 	for n in names:
 		if g.get(n) == null:
 			missing.append(n)
 	_check(missing.is_empty(), "全部 %d 个控件已回填（缺失：%s）" % [names.size(), str(missing)])
+	# 反向契约（批次 3 Task 6）：底栏那 12 个名字必须**从表里刻意去掉** —— 它们已被删除，
+	# 留在表里就是一条恒假的红条。这里把「确实删掉了」也钉住：谁要是把它们加回来，
+	# 等于坞又长出来了，这条会先红。
+	var removed := ["mat_bar", "action_bar", "dock_plate", "roll_btn", "use_phase_btn", "item_btn_box",
+		"status_label", "ph1_lab", "ph2_lab", "ph1_pill", "ph2_pill", "ph_arrow_l"]
+	var back: Array = []
+	for n in removed:
+		if g.get(n) != null:
+			back.append(n)
+	_check(back.is_empty(), "底部操作坞的成员仍未回填（残留：%s）" % str(back))
 
 func _test_dev_panel(g) -> void:
 	print("== 开发者面板（已搬到 dev_tools.gd）==")
@@ -492,7 +501,10 @@ func _test_roll_button_off_home_view(g) -> void:
 	_check(g.board._phase_spin != null and g.board._phase_spin.is_visible_in_tree(),
 		"牌垫上有「转转盘」按钮")
 	_check(not g.board._phase_spin.disabled, "轮到我掷轮时「转转盘」可点")
-	_check(g.mat_bar.is_visible_in_tree(), "状态条仍显示")
+	# 底栏已随批次 3 Task 6 拆除：这里不再有"状态条仍显示"这回事，改成反向契约 + 出牌落点。
+	_check(g.get("mat_bar") == null, "底栏成员已删净（不会留成一块不可见的空壳）")
+	_check(g.board._phase_use != null and g.board._phase_use.is_visible_in_tree(),
+		"牌垫上「使用道具」也在 —— 拆掉底栏后它是出牌确认的唯一落点")
 
 ## 指向性道具：点棋盘选玩家 / 两段式手选地块（本轮返工）
 func _test_targeting(g) -> void:

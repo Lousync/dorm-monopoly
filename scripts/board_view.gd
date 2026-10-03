@@ -10,6 +10,10 @@ class_name BoardView
 
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
+## 下面两条原属「座位卡道具牌位」那一排（已随批次 3 Task 6 拆除），现在**没有发射方**：
+## 选道具改由桌面上的手中牌实体调 `game._on_item_slot_clicked`，丢弃按钮的落点待定。
+## 信号与连接一律保留 —— 玩法入口函数（`_on_item_slot_clicked` / `_on_discard_clicked`）
+## 仍在，接口别动。
 signal item_slot_clicked(peer: int, slot: int)   # 牌垫道具卡点选（阶段二选道具）
 signal item_discard_clicked(peer: int, slot: int) # 卡片右上角「✕」丢弃
 signal phase_spin_clicked()          # 牌垫上的「转转盘」
@@ -56,7 +60,6 @@ static func _make_board_offset() -> Vector2:
 	var hole_bottom := TABLE.end.y - BAND_TB
 	return Vector2(HOLE_MX, hole_bottom - HOLE_GAP_BOTTOM - WORLD.y)
 const SEAT_SIZE := Vector2(1068, 220)
-const SLOT_SIZE := Vector2(148, 196)
 
 var auto_follow := true      # 用户拖拽后关闭，点「跟随」按钮恢复
 var cam_locked := false      # 摆拍/剧情演出时锁住自动镜头（focus_* 直接忽略）
@@ -1164,28 +1167,11 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 	tleft.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	trow.add_child(tleft)
 
-	var slots: Array = []
-	var speer := int(p.peer)
-	for i in 5:
-		var sp := Panel.new()
-		sp.position = Vector2(254.0 + float(i) * (SLOT_SIZE.x + 10.0), 12)
-		sp.size = SLOT_SIZE
-		sp.mouse_filter = Control.MOUSE_FILTER_STOP   # 可点选
-		sp.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.035), 10,
-			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55), 1))
-		root.add_child(sp)
-		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
-		plus.set_anchors_preset(Control.PRESET_FULL_RECT)
-		plus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		plus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		sp.add_child(plus)
-		var si := i
-		sp.gui_input.connect(func(ev: InputEvent) -> void:
-			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
-					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-				item_slot_clicked.emit(speer, si))
-		slots.append(sp)
+	# 座位卡上的「道具牌位」那一排（5 个 148×196 的卡槽 + 点选 + ✕ 丢弃）已随批次 3 Task 6
+	# 拆掉：背包改由桌面上的**手中牌实体**呈现（table_props.gd），选/出牌也都在那边。
+	# 这里不再建 slots，故 seats 字典里没有 `slots` 键（读它的地方一律 `sd.get("slots", [])`，
+	# 拿到空数组即空转，不崩）。**公开背包**（看别人的道具）这一层暂时是真空，见
+	# doc/development/开发台账.md §三 —— 要等批次 5 的立牌带回来。
 
 	# 牌垫右端的两个阶段按钮（竖排；只挂在自己座位；随桌子世界旋转）
 	if e == 0:
@@ -1207,7 +1193,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 
 	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
 		"est_l": est_l, "badge_slot": badge_slot, "hl": seat_hl,
-		"pips": pips, "slots": slots, "edge": e, "peer": int(p.peer),
+		"pips": pips, "edge": e, "peer": int(p.peer),
 		"op_timer": trow, "op_kind_l": tkind, "op_track": ttrack, "op_fill": tfill, "op_left_l": tleft,
 		"shown": int(p.money), "tw": null}
 
@@ -1276,7 +1262,7 @@ func set_op_timer(owner_peer: int, kind_text: String, left: float, total: float)
 
 ## 被选中的道具卡（绿光）：peer=-1 表示无
 var item_selected := {"peer": -1, "slot": -1}
-var self_peer := 1                    # 本地玩家（其道具卡上才挂「✕」丢弃）
+var self_peer := 1                    # 本地玩家（原用于「道具牌位」那一排，该排已拆，保留接口）
 var _discard_hl := {"peer": -1, "slot": -1}
 var _phase_spin: Button               # 牌垫上的「转转盘」
 var _phase_use: Button                # 牌垫上的「使用道具」
@@ -1343,7 +1329,10 @@ func _pulse_select(on: bool) -> void:
 	_select_tw.tween_method(apply, 1.0, 0.45, 0.7).set_trans(Tween.TRANS_SINE)
 	_select_tw.tween_method(apply, 0.45, 1.0, 0.7).set_trans(Tween.TRANS_SINE)
 
-## 丢弃待确认：把那张卡的「✕」点亮成红色
+## 丢弃待确认：把那张卡的「✕」点亮成红色。
+## **座位卡道具牌位已随批次 3 Task 6 拆除** ⇒ 循环体拿到的是空数组（`sd.get("slots", [])`），
+## 这里只记 `_discard_hl` 这份状态，不再有可点亮的「✕」。丢弃按钮的新落点待定，见
+## doc/development/开发台账.md §三。
 func mark_discard_pending(peer: int, slot: int) -> void:
 	_discard_hl = {"peer": peer, "slot": slot}
 	for e in _seats:
@@ -1360,6 +1349,10 @@ func mark_discard_pending(peer: int, slot: int) -> void:
 				(b as Button).modulate = Color(1, 0.45, 0.45) \
 					if (int(peer) == self_peer and int(slot) == i) else Color(1, 1, 1, 0.78)
 
+## 记「当前选中的道具槽」并给座位卡牌位上绿光。座位卡牌位已拆（Task 6）⇒ 高亮循环空转，
+## 只留 `item_selected` 这份状态（选中的**可见**反馈在桌面上那张手牌自己身上，见
+## table_props.set_hand_selected）。保留本函数是因为玩法侧（game.gd 的
+## `_on_item_slot_clicked` / `_clear_item_selection`）仍在写它。
 func set_item_selected(peer: int, slot: int) -> void:
 	item_selected = {"peer": peer, "slot": slot}
 	for e in _seats:
@@ -1375,58 +1368,6 @@ func set_item_selected(peer: int, slot: int) -> void:
 				Color(0.42, 0.85, 0.55, 0.14) if on else Color(1, 1, 1, 0.035), 10,
 				Color(0.42, 0.85, 0.55, 0.95) if on else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55),
 				2 if on else 1))
-
-## 道具牌位：公开背包（定稿卡面模板小卡；空位显示 +）
-func set_seat_slot(peer: int, idx: int, item) -> void:
-	var e := int(_seat_of_peer.get(peer, -1))
-	if e == -1 or not _seats.has(e):
-		return
-	var slots: Array = _seats[e].slots
-	if idx < 0 or idx >= slots.size():
-		return
-	var sp: Panel = slots[idx]
-	var key := ""
-	var count := -1
-	var melt := false
-	if item != null:
-		key = "%s|%d|%d|%d" % [String(item.id), int(item.get("cd", 0)),
-			int(item.get("charges", 0)), int(item.get("melt_left", -1))]
-		if int(item.get("charges", 0)) > 0:
-			count = int(item.charges)  # 计数位替换冷却（§12）：黑卡=剩余次数
-		elif String(item.id) == "空想者的香皂":
-			count = int(item.get("melt_left", 10))  # 香皂=剩余融化回合
-			melt = count <= 5  # 融化占位表现：剩 5 回合内出融化带
-		elif int(item.get("cd", 0)) > 0:
-			count = int(item.cd)
-	if String(sp.get_meta("slot_key", "")) == key:
-		return
-	sp.set_meta("slot_key", key)
-	for c in sp.get_children():
-		c.queue_free()
-	if item != null:
-		# count 是「计数位」（黑卡次数/香皂融化回合/冷却回合），只有冷却才压暗
-		var cooling: bool = int(item.get("charges", 0)) <= 0 and int(item.get("cd", 0)) > 0
-		sp.add_child(ItemCard.make(String(item.id), SLOT_SIZE,
-			{"count": count, "melt": melt, "cooling": cooling}))
-		# 本地玩家的卡右上角挂「✕」丢弃（点两次确认）
-		if peer == self_peer:
-			var disc := Button.new()
-			disc.name = "disc_x"
-			disc.text = "✕"
-			disc.position = Vector2(SLOT_SIZE.x - 26, 2)
-			disc.size = Vector2(24, 22)
-			disc.add_theme_font_size_override("font_size", 13)
-			disc.mouse_filter = Control.MOUSE_FILTER_STOP
-			disc.modulate = Color(1, 1, 1, 0.78)
-			disc.pressed.connect(func() -> void: item_discard_clicked.emit(peer, idx))
-			sp.add_child(disc)
-	else:
-		var plus := UIKit.label("+", 34, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.4))
-		plus.set_anchors_preset(Control.PRESET_FULL_RECT)
-		plus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		plus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		sp.add_child(plus)
 
 ## 镜头调试信息（开发者面板）
 func cam_info() -> String:

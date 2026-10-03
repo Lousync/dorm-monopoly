@@ -3,7 +3,7 @@ extends RefCounted
 ## 对局内 HUD 的全部控件构建 —— 从 game.gd 的 _build_ui / _build_menu_ui 整段搬出
 ##（见审查结论：这里原本 ~500 行全是控件搭建，和对局状态机挤在一个文件里）。
 ##
-## 控件直接写回宿主的同名成员（g.mat_bar = ...），而不是返回局部变量：
+## 控件直接写回宿主的同名成员（g.log_toast = ...），而不是返回局部变量：
 ## 原代码里存在「先用后建」的引用（回调里用 vol_slider，而它几十行之后才创建），
 ## 那正是靠成员变量的晚绑定才成立的；换成局部变量会被 lambda 按值捕获成 null。
 
@@ -67,66 +67,12 @@ static func build_play_ui(g: Node) -> void:
 	hud.add_child(g.log_toast)
 
 
-	# 底栏底板：把阶段条与操作条包成一整块（只做外观，不吃鼠标）。
-	# 先于两条 add_child，保证它在下面一层。
-	g.dock_plate = UIKit.dock_plate()
-	g.dock_plate.visible = false
-	g.add_child(g.dock_plate)
-
-	# 牌垫阶段条（屏幕层，贴屏幕底部）：状态 / 回合两阶段
-	g.mat_bar = UIKit.ghost_panel(12)
-	g.mat_bar.custom_minimum_size = Vector2(440, 46)
-	g.mat_bar.visible = false
-	g.add_child(g.mat_bar)
-	var mbm := UIKit.margins(12, 10, 7, 7)
-	g.mat_bar.add_child(mbm)
-	var mrow := HBoxContainer.new()
-	mrow.add_theme_constant_override("separation", 8)
-	mbm.add_child(mrow)
-	g.status_label = UIKit.label("", 13, UIKit.TEXT)
-	g.status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	g.status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	mrow.add_child(g.status_label)
-	var ph1 := UIKit.pill("① 转轮盘", UIKit.TEXT_DIM, 11)
-	mrow.add_child(ph1)
-	var ph_arrow := UIKit.label("→", 12, UIKit.TEXT_DIM)
-	mrow.add_child(ph_arrow)
-	var ph2 := UIKit.pill("② 使用道具", UIKit.TEXT_DIM, 11)
-	mrow.add_child(ph2)
-	g.ph1_lab = g._pill_label(ph1)
-	g.ph2_lab = g._pill_label(ph2)
-	g.ph1_pill = ph1
-	g.ph2_pill = ph2
-	g.ph_arrow_l = ph_arrow
-	# 阶段提示改由牌垫上的两个按钮承担（当前阶段黄/点完灰），旧的 pills 隐去
-	ph1.visible = false
-	ph2.visible = false
-	ph_arrow.visible = false
-
-	# 操作条（屏幕层，与视角无关）：转动转盘 / 道具按钮。
-	# 它原先挂在牌垫阶段条里，而阶段条在转离自己视角时会整条隐藏（牌垫贴自己
-	# 座位卡，转到别人视角就跑到屏幕外）。于是「按 Tab 看别人」会把自己的掷骰
-	# 按钮和道具栏一起收走，只能等 35 秒超时代掷（见 fix/v0.0.2）。
-	# 拆成独立一层：自己视角时仍贴在自己座位卡下沿，转离视角时改贴屏幕底部。
-	g.action_bar = UIKit.ghost_panel(12)
-	g.action_bar.visible = false
-	g.add_child(g.action_bar)
-	var abm := UIKit.margins(10, 8, 7, 7)
-	g.action_bar.add_child(abm)
-	var arow := HBoxContainer.new()
-	arow.add_theme_constant_override("separation", 8)
-	abm.add_child(arow)
-	# 阶段按钮：转转盘 / 使用道具（当前阶段黄、点完灰），外加小「跳过」
-	g.roll_btn = UIKit.button("转转盘", 13)
-	g.roll_btn.disabled = true
-	arow.add_child(g.roll_btn)
-	g.use_phase_btn = UIKit.button("使用道具", 13)
-	g.use_phase_btn.disabled = true
-	arow.add_child(g.use_phase_btn)
-	# 兼容旧引用：逐件按钮盒不再使用（改为点牌垫道具卡选）
-	g.item_btn_box = HBoxContainer.new()
-	g.item_btn_box.visible = false
-	arow.add_child(g.item_btn_box)
+	# 屏幕底部的操作坞（牌垫阶段条 + 操作条 + 共用底板）已随批次 3 Task 6 整条拆除：
+	# 掷轮改点桌面上的转盘实体、出牌改点手中牌（选中后点**牌垫上**的「使用道具」确认）、
+	# 现金与体力在桌上。所以这里不再建 mat_bar / action_bar / dock_plate / roll_btn /
+	# use_phase_btn / item_btn_box / status_label —— 玩家侧的操作入口只剩桌面上那些实体
+	# 与牌垫阶段按钮（`board.set_phase_buttons`，见 board_view.gd）。
+	# 注意别顺手把**牌垫**那两个按钮或 `_place_overlay_bar`（黑市还在用）也删了。
 
 	# 小卖部全屏界面（触发时独占；照 menu_layer 那套：全屏压暗底 + 居中面板，两者一起显隐）
 	g.shop_layer = Control.new()
@@ -381,8 +327,8 @@ static func build_play_ui(g: Node) -> void:
 
 	g.log_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	g.log_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	# 宽度 300（原 340）：右侧栏太宽时底部操作条会被它压住，
-	# 见 game.gd:_dock_band（底栏按可用带夹位）
+	# 宽度 300（原 340）：右侧栏太宽时会压住贴底的黑市操作条，
+	# 见 game.gd:_dock_band（贴底条按可用带夹位）
 	g.log_panel.offset_left = -300
 	g.log_panel.offset_right = -12
 	g.log_panel.offset_top = 46
