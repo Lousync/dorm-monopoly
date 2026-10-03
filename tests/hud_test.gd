@@ -40,6 +40,30 @@ func _standee_timer(g, i: int) -> Label3D:
 		return null
 	return root.get_child(i).get_node_or_null("Timer") as Label3D
 
+## 第 i 块立牌的**牌面在屏幕上的**包围盒（板八角经真投影链）。四角身家条是屏幕层 Control，
+## 要跟它比"同不同框"就得取屏幕坐标 —— 立牌那条"折回画布像素"的命中链（`_standee_rect`）
+## 是另一套口径，不能拿来跟屏幕层的矩形相交。
+func _standee_screen_rect(g, i: int) -> Rect2:
+	var tp = g.table3d.table_props
+	var sr: Node = tp.get_node_or_null("Standees")
+	if sr == null or i < 0 or i >= sr.get_child_count():
+		return Rect2()
+	var plate := (sr.get_child(i) as Node3D).get_node_or_null("Plate") as MeshInstance3D
+	if plate == null or not (plate.mesh is BoxMesh):
+		return Rect2()
+	var bm: BoxMesh = plate.mesh
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	for sx in [-0.5, 0.5]:
+		for sy in [-0.5, 0.5]:
+			for sz in [-0.5, 0.5]:
+				var c: Vector3 = plate.global_transform * Vector3(
+					bm.size.x * float(sx), bm.size.y * float(sy), bm.size.z * float(sz))
+				var p: Vector2 = g.table3d.camera.unproject_position(c)
+				mn = mn.min(p)
+				mx = mx.max(p)
+	return Rect2(mn, mx - mn)
+
 ## 第 i 块立牌上的倒计时进度条（底轨 / 填充）
 func _standee_bar(g, i: int, nm: String) -> MeshInstance3D:
 	var root: Node = g.table3d.table_props.get_node_or_null("Standees")
@@ -157,6 +181,36 @@ func _run() -> void:
 		"行动者（我）那条名字变金")
 	_check((bars[1].name_l as Label).get_theme_color("font_color") != UK.ACCENT,
 		"非行动者那条名字不变金")
+	# 现金那一行（修复波 B）：身家 = 现金 + 地产，只报身家时买卖 / 付租看不到自己有多少现金。
+	# 期望值同样按**数据表**算（写死金额会随起始资金调整假红）。
+	var cash_of := func(peer: int) -> int:
+		return int(g._state_player(peer).get("money", 0))
+	_check(String(bars[0].money_l.text) == "现金 " + GameData.fmt_money(cash_of.call(2)),
+		"自己那条写了现金（实得「%s」，期望 %s）" % [String(bars[0].money_l.text),
+			GameData.fmt_money(cash_of.call(2))])
+	_check(String(bars[3].money_l.text) == "现金 " + GameData.fmt_money(cash_of.call(1)),
+		"甲那条写了现金（实得「%s」）" % String(bars[3].money_l.text))
+	_check(String(bars[2].money_l.text) == "",
+		"破产那家的现金行留空（不报数字；控件不隐藏 —— 藏了四条就不一样高了）")
+	# 写死的条尺寸必须装得下内容：内容更大会把面板撑大，底边那两条就朝下长进「规则说明」按钮。
+	# 常驻占位（倒计时行）保证四条**永远**一样高 —— 行动者换人时那一角不会一开一合。
+	var TH = load("res://scripts/table_hud.gd")
+	var content_max := 0.0
+	for b in vis_bars:
+		var root_c: Control = b.root
+		# 量内容真实需要的高度：**把写死的那份先清零**再问 —— `get_combined_minimum_size()`
+		# 会把 `custom_minimum_size` 也并进去，不清零就永远等于那个写死的数、看不出内容撑不撑破。
+		var keep: Vector2 = root_c.custom_minimum_size
+		root_c.custom_minimum_size = Vector2.ZERO
+		var need: Vector2 = root_c.get_combined_minimum_size()
+		root_c.custom_minimum_size = keep
+		content_max = maxf(content_max, need.y)
+		_check(is_equal_approx(root_c.size.y, TH.CORNER_BAR_SIZE.y) \
+				and is_equal_approx(root_c.size.x, TH.CORNER_BAR_SIZE.x),
+			"四角条尺寸 = CORNER_BAR_SIZE（实得 %s）" % str(root_c.size))
+	print("    [实测] 四角条内容最小高 %.1f / CORNER_BAR_SIZE %s" % [content_max, str(TH.CORNER_BAR_SIZE)])
+	_check(content_max <= TH.CORNER_BAR_SIZE.y + 0.01,
+		"写死的高度装得下内容（内容最小高 %.1f ≤ %.1f）" % [content_max, TH.CORNER_BAR_SIZE.y])
 	# 四角条不许挡住三个角按钮（左上暂停 / 右上战报 / 左下规则说明），也不许出屏。
 	# 位置是"对着出图定"的（见 table_hud.CORNER_SLOTS），这条把结论钉住。
 	var quad_hit := {}
@@ -180,6 +234,29 @@ func _run() -> void:
 	_check(quad_hit.size() == 4, "四条各占一个角（实得 %d 个角）" % quad_hit.size())
 	_check(off_screen == 0, "四条都完整落在屏幕内（出屏 %d 条）" % off_screen)
 	_check(overlap_bad == 0, "四条都没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
+	# 四角条与立牌**不同框**（修复波 G）：此前只在注释里声称"四个角都是空的"，没有断言。
+	# 两端都要核（3D 端自己的立牌藏着、2D 端它才现身在最靠下的桌沿）。判据 = 屏幕矩形不相交。
+	var srh_g: Node = g.table3d.table_props.get_node_or_null("Standees")
+	var cross_pairs := 0
+	var cross_view := -1.0
+	for vt in [0.0, 1.0]:
+		g.table3d.snap_view(vt)
+		await process_frame
+		await process_frame
+		for i in (srh_g.get_child_count() if srh_g != null else 0):
+			if not (srh_g.get_child(i) as Node3D).visible:
+				continue
+			var rs: Rect2 = _standee_screen_rect(g, i)
+			for b in vis_bars:
+				if rs.intersects((b.root as Control).get_global_rect()):
+					cross_pairs += 1
+					cross_view = vt
+					print("    [穿帮] view_t=%.1f 立牌 %d %s × 角标 peer %d %s" % [
+						vt, i, rs, int(b.peer), (b.root as Control).get_global_rect()])
+	_check(cross_pairs == 0, "四角条与立牌在 3D / 2D 两端都不同框（重叠 %d 处，view_t=%s）"
+		% [cross_pairs, str(cross_view)])
+	g.table3d.snap_view(0.0)
+	await process_frame
 
 	print("== 客户端视角：行动者不是我 ==")
 	g.my_peer = 9                         # 观战/掉线后重连之类：自己不在名册里
@@ -454,6 +531,37 @@ func _run() -> void:
 		"显示环节名与剩余秒数（实得「%s」）" % String(tm2.text))
 	var bar2: MeshInstance3D = _standee_bar(g, i2, "Fill")
 	_check(bar2 != null and bar2.scale.x > 0.9, "进度条接近满格（实得 %.2f）" % bar2.scale.x)
+	# ---- 修复波 A：同一份倒计时**镜像到行动者的四角条** ----
+	# 为什么必须有：立牌那份挂行动者，而**自己**的立牌在 3D 端藏着（STANDEE_SELF_HIDE_T）
+	# ⇒ 自己的回合在 3D 端看不到还剩几秒。四角条两端都常驻，是唯一合适的落点。
+	var cbar_of := func(peer: int) -> Dictionary:
+		for b in g.corner_bars:
+			if int(b.peer) == peer:
+				return b
+		return {}
+	var cb2: Dictionary = cbar_of.call(2)      # 乙 = 行动者
+	var cb1: Dictionary = cbar_of.call(1)      # 甲 = 非行动者
+	_check(not cb2.is_empty() and (cb2.timer_kind as Label).visible,
+		"行动者的四角条上出现倒计时（环节名可见）")
+	_check(String((cb2.timer_kind as Label).text) == "掷轮",
+		"四角条上写环节名（实得「%s」）" % String((cb2.timer_kind as Label).text))
+	_check(String((cb2.timer_left as Label).text) == "35 秒",
+		"四角条上写剩余秒数（实得「%s」）" % String((cb2.timer_left as Label).text))
+	var ctk2: ColorRect = cb2.timer_track
+	var cfl2: ColorRect = cb2.timer_fill
+	_check(ctk2.visible and cfl2.size.x > 0.9 * maxf(ctk2.size.x, 1.0),
+		"四角条上的细进度条接近满格（%.1f / %.1f）" % [cfl2.size.x, ctk2.size.x])
+	_check(not (cb1.timer_kind as Label).visible and not (cb1.timer_track as ColorRect).visible
+			and not (cb1.timer_left as Label).visible,
+		"其余三条不显示倒计时（只出现在行动者那一条上）")
+	# 行常驻占位：倒计时**出现之后**那一条不许变高（变了四条边线就不齐、还会挤角按钮）
+	var heights_ok := true
+	for b in g.corner_bars:
+		if not is_equal_approx((b.root as Control).size.y, TH.CORNER_BAR_SIZE.y):
+			heights_ok = false
+			print("    [实测] 倒计时出现后 peer %d 那条高 %.1f（应 %.1f）" % [
+				int(b.peer), (b.root as Control).size.y, TH.CORNER_BAR_SIZE.y])
+	_check(heights_ok, "倒计时出现后四条仍一样高（= CORNER_BAR_SIZE.y）")
 	# 广播一秒一条，本机 _process 逐帧扣 delta 插值——喂剩 5 秒的道具窗口，
 	# 等 1.5 秒（自然帧累积扣减），进度条应明显缩水、环节名跟着窗口走
 	g.s_op_timer("item", 5.0, 12.0, 2)
@@ -473,6 +581,10 @@ func _run() -> void:
 		"窗口换人时倒计时跟到丙的立牌")
 	_check(String(tm3.text) == "黑市 15 秒",
 		"环节名「黑市」（实得「%s」）" % String(tm3.text))
+	# 四角条那一份跟着换人（同一个 _op_owner，不另立判据）
+	var cb3: Dictionary = cbar_of.call(3)
+	_check((cb3.timer_kind as Label).visible and not (cb2.timer_kind as Label).visible,
+		"四角条上的倒计时跟着行动者换到丙那一条")
 	# 不限时：仍显示环节名，但不写"0 秒"、进度条整条收起（语义原在座位卡上："不限时"）
 	g.s_op_timer("roll", 0.0, 0.0, 3)
 	g._process(0.0)
@@ -481,11 +593,21 @@ func _run() -> void:
 		"不限时窗口仍显示环节名但进度条藏掉")
 	_check(String(tm3.text) == "掷轮",
 		"不限时文案不写秒数（实得「%s」）" % String(tm3.text))
+	# 四角条同一口径：环节名留着，秒数与进度条一起收起
+	_check((cb3.timer_kind as Label).visible and String((cb3.timer_kind as Label).text) == "掷轮"
+			and not (cb3.timer_left as Label).visible and not (cb3.timer_track as ColorRect).visible,
+		"四角条不限时：只写环节名，不写秒数、不画进度条")
 	# 窗口关闭：kind="" 四块一起收
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
 	await process_frame
 	_check(not tm3.visible and not tm2.visible, "窗口关闭后所有立牌的倒计时收起")
+	var any_corner_timer := false
+	for b in g.corner_bars:
+		if (b.timer_kind as Label).visible or (b.timer_track as ColorRect).visible \
+				or (b.timer_left as Label).visible:
+			any_corner_timer = true
+	_check(not any_corner_timer, "窗口关闭后四条四角条的倒计时内容全部收起（四条都不显示）")
 
 	print("== 点转盘 = 掷轮入口（批次 3 Task 2）==")
 	# 为什么挑 roll_received 当证据：底栏那个「转动转盘」按钮已随 Task 6 拆除，`roll_btn.disabled`
@@ -995,6 +1117,49 @@ func _run() -> void:
 				% [w1, GameData.fmt_money(want_w), GameData.fmt_money(12000)])
 		_check(String((srh.get_child(2).get_node("Worth") as Label3D).text) == "已出局",
 			"破产那家（丁）写「已出局」")
+		# ---- 字号 / 可读性（修复波 E）----
+		# 设计稿 §五 反转第 4 条点名"立牌上的名字 / 身家要能读"。这里量**屏幕包围盒高**
+		#（1280×800、围桌全景），把下限钉住 —— 只改字号、不动这条断言，等于放行一次静默回退。
+		# 量的是字盒高（含 ascent/descent），肉眼看到的字高约它的六成（见 table_props 那段取证）。
+		var lab_px := func(i: int, nm: String) -> float:
+			var l := (srh.get_child(i) as Node3D).get_node_or_null(nm) as Label3D
+			if l == null or l.text == "":
+				return -1.0
+			var ab: AABB = l.get_aabb()
+			var mn := Vector2(INF, INF)
+			var mx := Vector2(-INF, -INF)
+			for sx in [-0.5, 0.5]:
+				for sy in [-0.5, 0.5]:
+					for sz in [-0.5, 0.5]:
+						var c: Vector3 = l.global_transform * (ab.position + Vector3(
+							ab.size.x * float(sx), ab.size.y * float(sy), ab.size.z * float(sz)))
+						var p: Vector2 = g.table3d.camera.unproject_position(c)
+						mn = mn.min(p)
+						mx = mx.max(p)
+			return mx.y - mn.y
+		tph.set_standee_timer(tph.standee_peer(1), "小卖部", 60.0, 60.0)   # 最长的一行倒计时
+		await process_frame
+		await process_frame
+		var px_name: float = lab_px.call(1, "Name")
+		var px_worth: float = lab_px.call(1, "Worth")
+		var px_count: float = lab_px.call(1, "Count")
+		var px_timer: float = lab_px.call(1, "Timer")
+		print("    [实测] 立牌字号 → 屏幕包围盒高（1280×800 / 围桌全景）：名字 %.1f · 身家 %.1f · 件数 %.1f · 倒计时 %.1f px" % [
+			px_name, px_worth, px_count, px_timer])
+		_check(px_name >= 15.0, "名字那一档可读（%.1f px ≥ 15）" % px_name)
+		_check(px_worth >= 14.0, "身家那一档提到名字同级可读（%.1f px ≥ 14）" % px_worth)
+		_check(px_count >= 11.0, "件数提到可读档（%.1f px ≥ 11）" % px_count)
+		_check(px_timer >= 11.0, "倒计时提到可读档（%.1f px ≥ 11）" % px_timer)
+		# 提字号不许把文字撑出牌面（板宽是硬约束 —— 见 table_props.STANDEE_SIZE：上界 1.1）
+		var plate_w: float = ((srh.get_child(1).get_node("Plate") as MeshInstance3D).mesh as BoxMesh).size.x
+		var widest := 0.0
+		for nm2 in ["Name", "Worth", "Count", "Timer"]:
+			var l2 := (srh.get_child(1) as Node3D).get_node_or_null(nm2) as Label3D
+			if l2 != null and l2.text != "":
+				widest = maxf(widest, l2.get_aabb().size.x)
+		print("    [实测] 最宽一行 %.3f 世界单位 / 板宽 %.3f（宽的上界 1.1）" % [widest, plate_w])
+		_check(widest <= plate_w, "四行文字都没撑出牌面（最宽 %.3f ≤ 板宽 %.3f）" % [widest, plate_w])
+		tph.set_standee_timer(GameData.NO_PEER, "", 0.0, 0.0)
 		_check(not (srh.get_child(0) as Node3D).visible,
 			"3D 端自己的立牌藏起来（view_t = 0）")
 		# 「看得见的那块牌面」= 板心经真实点击链路折回画布像素

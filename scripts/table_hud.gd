@@ -392,12 +392,29 @@ static func build_play_ui(g: Node) -> void:
 	chat_row.add_child(send_btn)
 
 ## 四角条的尺寸（屏幕像素）。**写死并显式设成 `custom_minimum_size`**：面板的高度是内容撑出来的
-## （13 + 14 两行字 + 内外边距），只给 `offset_*` 的话 Godot 会按最小尺寸把它撑大 —— 底边那两条
-## 会朝**下**长进「规则说明」按钮里（实测 63 > 48，压住 5 像素）。写死 + 按它算偏移，两边永远一致。
-const CORNER_BAR_SIZE := Vector2(195.0, 64.0)
+## （名字 + 身家 + 现金 + 倒计时行 + 内外边距），只给 `offset_*` 的话 Godot 会按最小尺寸把它撑大
+## —— 底边那两条会朝**下**长进「规则说明」按钮里（实测 63 > 48，压住 5 像素）。
+## 写死 + 按它算偏移，两边永远一致。**改条内容（行数 / 字号）必须重取这个数**：
+## 取法 = 建完四条之后读一次 `root.get_combined_minimum_size()`（`tests/hud_test.gd` 里有一条
+## 断言把两者钉在一起，撑大 / 撑不满都会红）。
+##
+## 批次 5 修复波（A/B）从 64 提到 **104**：多了**现金那一行小字**（B）与**操作倒计时行**（A），
+## 而后者是**常驻占位**（`CORNER_TIMER_ROW_H`，只切内容显隐）—— 所以四条**永远**是同一个高度，
+## 行动者那一角的面板不会随窗口开合一开一合。
+## 104 = 实测内容最小高（`tests/hud_test.gd` 把写死的值清零后量到的；打印在测试日志里）。
+## **改行数 / 字号 / CORNER_TIMER_ROW_H 之后必须重取**（那条断言会红）。
+const CORNER_BAR_SIZE := Vector2(195.0, 104.0)
+## 倒计时行的常驻占位高度（屏幕像素）。行本身恒可见（见上），里面三个内容（环节名 / 进度条 /
+## 秒数）按"是不是当前行动者"切显隐。
+## **必须 ≥ 行内任一控件的自然最小高**（11 号字的两枚标签更高）—— 否则行动者那一角在倒计时
+## 出现时会把自己撑高，四条就不再一样高（`tests/hud_test.gd` 有"倒计时出现后那一条没变高"的断言）。
+const CORNER_TIMER_ROW_H := 19
 
 ## 四角身家条的落位：**屏幕四角**，与桌位一一对应（`game._seat_peers` 的顺序）。
 ## 每项 = 锚点 + 到屏幕边的距离（`mx` 离左右边、`my` 离上下边）。
+## 注：条高从 64 提到 98 之后，上边那两条朝**下**长、下边那两条朝**上**长（`my` 是外沿到屏幕边
+## 的距离，与高度无关）—— 三个角按钮都在条**之外**（左上按钮底 38 < 条顶 48），下边的规则说明
+## 按钮顶 ≈754 > 条底 744，两条都还空着（`tests/hud_test.gd` 的重叠断言替它站岗）。
 ##
 ## 位置是**对着出图定的**，两条硬约束：
 ##   ① **不让开** 三个角按钮 —— 左上「暂停」（12,10–92,38）、右上「战报」（底 40）、
@@ -419,9 +436,16 @@ const CORNER_SLOTS := [
 	{"preset": Control.PRESET_BOTTOM_RIGHT, "mx": 12.0, "my": 56.0},
 ]
 
-## 一条四角身家条：棋子色小片 + 名次徽章 + 「名字 / 身家」两行。
-## 建一次就不动结构，之后只由 `game._refresh_corner_bars` 改文字 / 换徽章 / 换描边 ——
+## 一条四角身家条：棋子色小片 + 名次徽章 + 「名字 / 身家 / 现金」三行 + 一条**操作倒计时行**。
+## 建一次就不动结构，之后只由 `game._refresh_corner_bars`（名字 / 身家 / 现金 / 徽章 / 描边）
+## 与 `game._refresh_corner_timer`（倒计时行）改文字与显隐 ——
 ## 整条 `mouse_filter = IGNORE`：它只是读数，绝不吃点击（四角下面还有棋盘与按钮）。
+##
+## **现金那一行（B）**：身家 = 现金 + 地产，只报身家时玩家在买卖 / 付租那一刻看不到自己有多少
+## 现金（座位卡与右栏名册栏都已退场，筹码又按 ¥5,000 分档）⇒ 身家做大字、现金做第二行小字，
+## 四条都显示，口径与名册栏时代一致。
+## **倒计时那一行（A）**：环节名 + 细进度条 + 剩余秒数，**只在当前行动者那一条上**出现
+##（其余三条的内容藏起来）。行**常驻占位**（只切内容）—— 否则行动者换人时那一条会一开一合。
 static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dictionary:
 	var root := UIKit.panel_container(Color(0.085, 0.095, 0.138, 0.82), 10,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4)
@@ -453,10 +477,15 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 	var m := UIKit.margins(9, 10, 5, 5)
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(m)
+	# 外层竖排：上面是「棋子 / 徽章 / 三行字」，下面挂倒计时行（常驻占位，见函数头）
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 3)
+	outer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	m.add_child(outer)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 7)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(row)
+	outer.add_child(row)
 	var chip_slot := Control.new()
 	chip_slot.custom_minimum_size = Vector2(18, 18)
 	chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -477,13 +506,49 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_l.custom_minimum_size = Vector2(84, 0)
 	col.add_child(name_l)
-	var worth_l := UIKit.label("", 14, UIKit.ACCENT)
+	# 身家 = 大字（名次的依据）
+	var worth_l := UIKit.label("", 17, UIKit.ACCENT)
 	worth_l.custom_minimum_size = Vector2(84, 0)
 	col.add_child(worth_l)
+	# 现金 = 第二行小字（B）：身家是「现金 + 地产」，买卖 / 付租要看的是这一行
+	var money_l := UIKit.label("", 11, UIKit.TEXT_DIM)
+	money_l.custom_minimum_size = Vector2(84, 0)
+	col.add_child(money_l)
+
+	# 操作倒计时行（A）：环节名 + 细进度条 + 剩余秒数。行恒可见（占位），内容按需显隐。
+	var timer_row := HBoxContainer.new()
+	timer_row.add_theme_constant_override("separation", 5)
+	timer_row.custom_minimum_size = Vector2(0, CORNER_TIMER_ROW_H)
+	timer_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	outer.add_child(timer_row)
+	var timer_kind := UIKit.label("", 11, UIKit.ACCENT)
+	timer_kind.visible = false
+	timer_row.add_child(timer_kind)
+	var timer_track := ColorRect.new()
+	timer_track.color = Color(1, 1, 1, 0.13)
+	timer_track.custom_minimum_size = Vector2(0, 6)      # 细进度条
+	timer_track.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	timer_track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	timer_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	timer_track.visible = false
+	timer_row.add_child(timer_track)
+	var timer_fill := ColorRect.new()
+	timer_fill.color = UIKit.ACCENT
+	timer_fill.size = Vector2(0, 6)                      # 宽度由 _refresh_corner_timer 按剩余比例设
+	timer_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	timer_track.add_child(timer_fill)
+	var timer_left := UIKit.label("", 11, UIKit.ACCENT)
+	timer_left.custom_minimum_size = Vector2(38, 0)
+	timer_left.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	timer_left.visible = false
+	timer_row.add_child(timer_left)
+
 	return {
 		"root": root, "chip_slot": chip_slot, "chip": null, "chip_color": -999,
 		"badge_slot": badge_slot, "badge": null, "badge_rank": -1,
-		"name_l": name_l, "worth_l": worth_l,
+		"name_l": name_l, "worth_l": worth_l, "money_l": money_l,
+		"timer_row": timer_row, "timer_kind": timer_kind, "timer_track": timer_track,
+		"timer_fill": timer_fill, "timer_left": timer_left,
 		"peer": GameData.NO_PEER, "border_active": false,
 	}
 

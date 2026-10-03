@@ -1487,6 +1487,10 @@ func _refresh_players() -> void:
 ## **角位 = 桌位**：第 i 条挂的玩家 = `_seat_peers()[i]`，与桌上第 i 块立牌是同一个人 ——
 ## 于是"选目标态哪块立牌亮着"与"哪一条角标在这儿"对得上。
 ##
+## 每一条三行：名字（自己标「我」/ 破产标「破产」）、**身家**（大字）、**现金**（第二行小字，B）。
+## 现金那行取的就是 `standing` 里现成的 `money`（`_refresh_players` 里已算好，**不重算**）——
+## 身家 = 现金 + 地产，只有身家时玩家在买卖 / 付租那一刻看不到自己有多少现金。
+##
 ## 数据一律取 `_refresh_players` 顶部**同一次**算出来的 `standing`（按身家倒序、带 rank）——
 ## 与 `board.render` 的悬停信息、以及房主的 `_net_worth` 同一公式，客户端也准
 ##（读的是已同步的 st.tiles）。**不要在这里另算一遍身家**。
@@ -1555,6 +1559,10 @@ func _refresh_corner_bars(standing: Array) -> void:
 		worth_l.text = "已出局" if not alive else GameData.fmt_money(int(e.worth))
 		worth_l.add_theme_color_override("font_color",
 			UIKit.TEXT_DIM if not alive else UIKit.ACCENT)
+		# 现金（B）：身家是「现金 + 地产」，决定买卖 / 付租的是这一行。破产那家没有现金可言，
+		# 留空（**不隐藏控件** —— 藏了会把这一条的内容高度改掉、四条边线就不齐了）。
+		var money_l: Label = bar.money_l
+		money_l.text = "" if not alive else "现金 %s" % GameData.fmt_money(int(e.get("money", 0)))
 		# 轮到谁行动：那一条描金边（与立牌上的倒计时、牌垫按钮的点亮是同一件事）。
 		# 只在真变化时换样式盒（每次换都是一次九宫格纹理查找）。
 		if bool(bar.border_active) != active:
@@ -3551,6 +3559,54 @@ func _refresh_op_timer(delta: float) -> void:
 		if shop_layer != null and shop_layer.visible:
 			_refresh_shop_timer(kind_text)
 	_op_shown = show
+	# 四角条那一份**每帧都贴**（不受上面那道 `show or _op_shown` 早退限制）：角位与行动者
+	# 会随状态广播重排（`_refresh_corner_bars` 改 bar.peer），只贴"变化的那一次"会漏。
+	_refresh_corner_timer()
+
+## 四角条上的操作倒计时（批次 5 修复波 A）：把**当前行动者**那份倒计时镜像到 TA 的四角条上。
+##
+## **为什么必须有这一条**：立牌上那份只挂在行动者那一块，而**自己**的立牌在 3D 端是藏起来的
+##（`table_props.STANDEE_SELF_HIDE_T`）⇒ 自己的回合在 3D 端看不到还剩几秒（批次 4 时它在
+## 座位卡上，3D 端看得见）。四角条在 3D / 2D 两端都常驻，是唯一合适的落点。
+##
+## **不另立计时**：数据就是 `_op_*` 这同一份（广播重置 + 本机逐帧扣 delta 的那个插值）。
+## 暂停时 `_process` 不跑 ⇒ 这里也不会被调用 ⇒ 与房主窗口一起冻结，**同一条暂停语义**。
+##
+## 形态：环节名 + 细进度条 + 剩余秒数，**只出现在 `_op_owner` 那一条上**（其余三条内容收起）；
+## 没有操作窗口时四条的倒计时内容一律收起。`_op_total <= 0`（黑市那种不限时）= 仍写环节名，
+## 但**不写秒数、不画进度条** —— 与立牌、小卖部面板那两份逐条对齐（三处同一口径）。
+func _refresh_corner_timer() -> void:
+	if corner_bars.is_empty():
+		return
+	var show := _op_kind != ""
+	var timed := show and _op_total > 0.0
+	var kind_text := String(OP_KIND_LABELS.get(_op_kind, _op_kind)) if show else ""
+	var warn: bool = timed and _op_left <= 5.0
+	for b in corner_bars:
+		var bar: Dictionary = b
+		var on: bool = show and int(bar.peer) == _op_owner
+		# 只切**行内内容**的显隐：行本身常驻占位（`table_hud.CORNER_TIMER_ROW_H`），
+		# 否则行动者换人时那一条会一开一合，四个角的边线就看齐不了了。
+		var kind_l: Label = bar.timer_kind
+		var left_l: Label = bar.timer_left
+		var track: ColorRect = bar.timer_track
+		kind_l.visible = on
+		left_l.visible = on and timed
+		track.visible = on and timed
+		if not on:
+			continue
+		if kind_l.text != kind_text:
+			kind_l.text = kind_text
+		kind_l.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.ACCENT)
+		if not timed:
+			continue
+		var txt := "%d 秒" % ceili(maxf(_op_left, 0.0))
+		if left_l.text != txt:
+			left_l.text = txt
+		left_l.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.TEXT)
+		# 进度条：左端固定、长度按剩余比例缩（底轨常驻、填充显式设宽度 —— 同小卖部那条）
+		var fill: ColorRect = bar.timer_fill
+		fill.size.x = maxf(track.size.x, 1.0) * clampf(_op_left / _op_total, 0.0, 1.0)
 
 ## 小卖部面板底部的倒计时：呈现口径与立牌上那条（原座位卡那条）逐条对齐。
 ## 数据全部来自 _op_*（由 s_op_timer 广播 + 本机逐帧扣 delta），不另起一套计时，
