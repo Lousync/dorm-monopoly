@@ -528,6 +528,15 @@ func wheel_center() -> Vector2:
 func wheel_screen_pos() -> Vector2:
 	return global_position + _view_from_world(wheel_center())
 
+## 转盘在画布上的**半径**（画布像素，与 wheel_screen_pos 同口径）。
+## 转盘的尺寸是 `_world` 的局部值（_build_wheel 里 size = 400），而 `_world` 带**镜头倍率**
+##（_apply_cam: `_world.scale = _zoom`），所以它落到画布上只有 `200 × _zoom` —— 取景、
+## 滚轮推拉、抽卡推近、人数变化都会改它。3D 实体（TableProps 的轮缘）得按这个半径换算成
+## 世界单位，才能一直跟住桌垫上画出来的那个轮子。
+## 只读查询，不碰镜头与玩法（与 Task 4 要加的手牌锚点同类）。
+func wheel_screen_radius() -> float:
+	return _wheel.size.x * 0.5 * _zoom if _wheel != null else 0.0
+
 ## 转盘点数：镜头对准转盘，转完后镜头回到行动棋子
 func spin_wheel(value: int, restore_peer := GameData.NO_PEER) -> void:
 	if _wheel == null:

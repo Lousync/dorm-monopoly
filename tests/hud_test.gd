@@ -386,6 +386,42 @@ func _run() -> void:
 	_check(not (seat3.op_timer as Control).visible and not (seat2.op_timer as Control).visible,
 		"窗口关闭后所有座位卡的簇收起")
 
+	print("== 点转盘 = 掷轮入口（批次 3 Task 2）==")
+	# 为什么挑 roll_received 当证据：底栏那个「转动转盘」按钮 Task 6 要删，`roll_btn.disabled`
+	# 活不到那时；而 roll_received 是**掷轮这件事本身** —— game.gd 的 _play_turn 正 await 它，
+	# 房主侧玩家点不点转盘，最终都落到这一条信号上。这里跑的是房主侧分支（`--script` 下
+	# multiplayer 是默认接口、unique_id = 1 ⇒ is_server() 恒真，同 casino_test 的说明）；
+	# 客户端那条走 c_roll，是另一条路，本机不联机验不了。
+	g.my_peer = 2
+	g.s_state(_state(2, false))          # await="roll"、turn=2=我 ⇒ 正是我的掷轮窗口
+	await process_frame
+	# 房主侧「轮到谁掷」的权威值（_play_turn 里设）。本测试不跑对局循环，直接给。
+	g._awaiting_roll = 2
+	var rolls := [0]
+	var on_roll := func() -> void: rolls[0] += 1
+	g.roll_received.connect(on_roll)
+	var wc: Vector2 = g.board.wheel_screen_pos()
+	var wr: float = g.board.wheel_screen_radius()
+	_check(g._on_table_click(wc), "点转盘圆心：返回 true（这次点击被实体消费）")
+	_check(rolls[0] == 1, "点转盘圆心：掷轮路径走通（roll_received 发出，实得 %d 次）" % rolls[0])
+	_check(g._on_table_click(wc + Vector2(wr * 0.5, 0.0)), "轮缘上（半径一半处）也算命中")
+	_check(rolls[0] == 2, "轮缘上同样掷轮（实得 %d 次）" % rolls[0])
+	# 负路径一：不在掷轮环节 —— 点击仍被转盘消费（返回 true，不会漏给桌垫），但**不掷轮**
+	var s_item: Dictionary = _state(2, false)
+	s_item.await = "item"
+	g.s_state(s_item)
+	g._awaiting_roll = 2
+	await process_frame
+	_check(g._on_table_click(wc), "非掷轮环节（await=item）：点击仍被转盘消费")
+	_check(rolls[0] == 2, "非掷轮环节：不掷轮（实得 %d 次）" % rolls[0])
+	# 负路径二：不是我的回合 —— 同理不掷轮
+	g.s_state(_state(1, false))
+	g._awaiting_roll = 2
+	await process_frame
+	_check(g._on_table_click(wc), "不是我的回合：点击仍被转盘消费")
+	_check(rolls[0] == 2, "不是我的回合：不掷轮（实得 %d 次）" % rolls[0])
+	g.roll_received.disconnect(on_roll)
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

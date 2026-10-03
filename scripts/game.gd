@@ -167,7 +167,6 @@ var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/
 
 # ---------------- 表现层状态 ----------------
 var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
-var _wheel_built := false   # 桌面实体转盘是否已建：只在首个状态（落座 + 取景之后）建一次
 var _chat_shown := 0
 var _prompt_dlg: Control
 var _prompt_tw: Tween
@@ -1219,6 +1218,22 @@ func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 
 # ================= 界面刷新 =================
 
+## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（Task 3 会在这里加筹码堆 / 体力件 / 手牌）。
+##
+## 为什么**每次状态广播**都要刷、而不是建一次就完：物件的圆心与半径都是 BoardView 的
+## **画布像素**口径（`wheel_screen_pos` / `wheel_screen_radius`），而半径 = `200 × 镜头倍率`，
+## 倍率会被取景 / 滚轮推拉 / 抽卡推近 / 人数变化改动 —— 只建一次，实体就会与桌垫上画出来的
+## 图案脱开（转盘尤其明显：轮缘对不上盘面）。build_wheel 是幂等的，只改 transform 与
+## mesh 尺寸，**不重建节点**，所以每次状态都调它没有代价。
+func _refresh_table_props() -> void:
+	if table3d == null or table3d.table_props == null or board == null:
+		return
+	# 布局还没跑（首个 _process 之前）时取景没做，wheel_screen_pos/radius 都是错的 ——
+	# 这一轮先跳过，等下一次状态广播（那时早有尺寸了）。判据与 build_seats 内部同源。
+	if board.size.x <= 10.0:
+		return
+	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
+
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
 		if int(p.peer) == peer:
@@ -1233,14 +1248,8 @@ func _refresh_players() -> void:
 		var pls: Array = st.get("players", [])
 		if not pls.is_empty():
 			board.build_seats(pls, my_peer)
-	# 桌面实体转盘：只在**首次收到状态、且座位已落位之后**建一次（每次 s_state 都建 = 重复堆叠 + 泄漏）。
-	# 时机有讲究：位置取自 board.wheel_screen_pos()（2048² 画布像素，与桌垫同一套坐标），
-	# 而这个值要过镜头变换 —— 座位落位时 BoardView 才会硬取景（build_seats 里 fit_overview），
-	# 取景之前算出来的位置是错的。`size.x > 10` 与 build_seats 内部那条判据同源：布局没跑时
-	# 取景还没做，这次就先不建、等下一次状态广播（那时早就有尺寸了）。
-	if not _wheel_built and board.seat_count() > 0 and board.size.x > 10.0:
-		_wheel_built = true
-		table3d.table_props.build_wheel(board.wheel_screen_pos())
+	# 桌面实体物件：每次状态广播都重新贴回桌垫坐标（见 _refresh_table_props 的注释）
+	_refresh_table_props()
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
 	var est_map := {}

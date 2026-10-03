@@ -346,30 +346,71 @@ func _run() -> void:
 		"画布中心落在桌面上（y 与桌垫齐平）")
 
 	# ---- 批次 3 Task 2：可点转盘（桌面实体） ----
-	# 这里是**裸 TableView3D**：game.gd 的接线（首个状态后 build_wheel）根本没跑过，所以测试
-	# 自己先建一次，断言的才是「建好之后命中判定对不对」。中心一律取 wheel_screen_pos() ——
-	# 它才是 2048² 画布像素（game.gd:1525 的注释 / table_3d.gd:200 都这么用）；
-	# wheel_center() 是 _world 局部坐标，中间还要过 _view_from_world 那一跳，
-	# 照它建会把转盘摆到错的位置（下面那条 world_to_canvas_px 回算就是钉这个的）。
-	print("== 可点转盘：命中判定 ==")
-	var wheel_px: Vector2 = t3.board.wheel_screen_pos()
-	t3.table_props.build_wheel(wheel_px)
+	# 这里是**裸 TableView3D**：game.gd 的接线（状态刷新时 _refresh_table_props）根本没跑过，
+	# 所以测试自己先建一次，断言的才是「建好之后对不对」。中心与半径一律取 BoardView 的
+	# **画布口径**（wheel_screen_pos / wheel_screen_radius）—— wheel_center() 是 _world 局部
+	# 坐标，中间还要过 _view_from_world 那一跳，照它建会把转盘摆到错的位置。
+	print("== 可点转盘：轮缘 + 命中判定 ==")
 	_check(t3.table_props != null, "容器挂了 TableProps")
-	_check(t3.table_props.wheel_hit(wheel_px), "转盘圆心算命中")
-	_check(t3.table_props.wheel_hit(wheel_px + Vector2(30, 0)), "半径内算命中")
-	_check(not t3.table_props.wheel_hit(wheel_px + Vector2(900, 0)), "远处不算命中")
-	# 实体真的立在那个画布位置上、且有厚度：位置算错（照 wheel_center 建）时回算对不上。
-	_check(t3.table_props.get_child_count() == 1, "转盘实体已挂进 TableProps（实得 %d 个）"
-		% t3.table_props.get_child_count())
-	if t3.table_props.get_child_count() == 1:
-		var wbody: Node3D = t3.table_props.get_child(0)
-		var back_px: Vector2 = t3.world_to_canvas_px(wbody.global_position)
-		_check(back_px.distance_to(wheel_px) < 1.0,
-			"圆柱立在转盘画布位置上（实得 %s，期望 %s）" % [back_px, wheel_px])
-		_check(wbody.global_position.y > t3.table_mesh.global_position.y,
-			"圆柱在桌垫之上（实得 y=%.3f）" % wbody.global_position.y)
-		_check(wbody is MeshInstance3D and (wbody as MeshInstance3D).mesh is CylinderMesh,
-			"转盘实体是有厚度的圆柱（不是一块平面）")
+	if t3.table_props == null:
+		# 红跑（TableProps 还没接进来）时这里就会红 —— 下面那些依赖它，跳过而不是崩掉挂死
+		_check(false, "TableProps 未就绪，转盘断言整段跳过")
+	else:
+		var wheel_px: Vector2 = t3.board.wheel_screen_pos()
+		var wheel_r: float = t3.board.wheel_screen_radius()
+		# 半径必须是**画布**口径：_wheel.size.x × 0.5 × 镜头倍率。写死一个常数就会随取景漂。
+		_check(absf(wheel_r - 200.0 * t3.board._zoom) < 0.01,
+			"画面半径 = 200 × 镜头倍率（实得 %.1f 画布像素，_zoom=%.3f）" % [wheel_r, t3.board._zoom])
+		t3.table_props.build_wheel(wheel_px, wheel_r)
+		_check(t3.table_props.wheel_hit(wheel_px), "转盘圆心算命中")
+		_check(t3.table_props.wheel_hit(wheel_px + Vector2(wheel_r * 0.5, 0.0)), "半径内算命中")
+		_check(not t3.table_props.wheel_hit(wheel_px + Vector2(900.0, 0.0)), "远处不算命中")
+		# 实体真的立在那个画布位置上：位置算错（照 wheel_center 建）时这条回算对不上。
+		_check(t3.table_props.get_child_count() == 1, "转盘实体已挂进 TableProps（实得 %d 个）"
+			% t3.table_props.get_child_count())
+		if t3.table_props.get_child_count() == 1:
+			var wbody: Node3D = t3.table_props.get_child(0)
+			var back_px: Vector2 = t3.world_to_canvas_px(wbody.global_position)
+			_check(back_px.distance_to(wheel_px) < 1.0,
+				"轮缘圆心落在转盘画布位置上（实得 %s，期望 %s）" % [back_px, wheel_px])
+			_check(wbody.global_position.y > t3.table_mesh.global_position.y,
+				"轮缘抬在桌垫之上（实得 y=%.3f）" % wbody.global_position.y)
+			# 硬要求（review 判定的硬伤）：**中间必须透空** —— 盘面 / 13 个数字 / 转动动画
+			# 是玩法反馈本身，不能被实体盖住。圆环才行，圆盘 / 实心圆柱一律不行。
+			var tmesh: TorusMesh = null
+			if wbody is MeshInstance3D and (wbody as MeshInstance3D).mesh is TorusMesh:
+				tmesh = (wbody as MeshInstance3D).mesh as TorusMesh
+			_check(tmesh != null, "转盘实体是圆环（不是圆盘 / 实心圆柱）")
+			if tmesh != null:
+				# 换算回画布像素比：桌面 TABLE_SIZE.x 世界单位铺满 VP_SIZE.x 画布像素。
+				# 注意 TorusMesh 的两个半径是**环的径向范围**（孔洞边缘 / 外沿），不是管子半径。
+				var px_per_world: float = float(t3.VP_SIZE.x) / t3.TABLE_SIZE.x
+				var hole_r: float = tmesh.inner_radius * px_per_world
+				var out_r: float = tmesh.outer_radius * px_per_world
+				# WheelView：数字在 0.63R、扇区外沿 0.93R、金属外圈 0.91~1.0R（相对轮子半径）
+				_check(hole_r >= 0.63 * wheel_r,
+					"中间透空到数字之外（孔半径 %.0f ≥ 数字半径 %.0f 画布像素）"
+						% [hole_r, 0.63 * wheel_r])
+				_check(out_r >= wheel_r * 0.98 and out_r <= wheel_r * 1.15,
+					"轮缘外沿包住画出来的轮子、且不过度外扩（%.0f 画布像素 vs 轮子 %.0f）"
+						% [out_r, wheel_r])
+				# 管子半径 = 半环宽（TorusMesh 的两个半径是径向范围，不是管子半径）
+				var tube_r: float = (tmesh.outer_radius - tmesh.inner_radius) * 0.5 * px_per_world
+				_check(tube_r >= 0.05 * wheel_r,
+					"轮缘有可见的厚度、不是一根线（管子半径 %.0f ≥ %.0f 画布像素）"
+						% [tube_r, 0.05 * wheel_r])
+			# 跟住画面半径：滚轮推拉 / 取景 / 抽卡推近都会改 _zoom，实体必须跟着变。
+			# 只改 transform 与 mesh 尺寸，**不重建节点**（状态广播很频繁）。
+			var first_node: Node = t3.table_props.get_child(0)
+			var first_mesh: TorusMesh = (first_node as MeshInstance3D).mesh as TorusMesh
+			var r_before: float = first_mesh.outer_radius
+			t3.table_props.build_wheel(wheel_px, wheel_r * 1.5)
+			_check(t3.table_props.get_child_count() == 1 and t3.table_props.get_child(0) == first_node,
+				"重复调用只重算尺寸、不重建节点（实得 %d 个）" % t3.table_props.get_child_count())
+			_check(absf(first_mesh.outer_radius - r_before * 1.5) < 0.0001,
+				"画面半径变大后轮缘跟着放大（%.4f → %.4f）" % [r_before, first_mesh.outer_radius])
+			_check(t3.table_props.wheel_hit(wheel_px + Vector2(wheel_r * 1.4, 0.0)),
+				"命中半径也跟着放大（%.0f 画布像素处仍算命中）" % (wheel_r * 1.4))
 
 	t3.queue_free()
 
