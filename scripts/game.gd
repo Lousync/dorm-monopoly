@@ -56,6 +56,13 @@ var _item_epoch := 0
 var _item_action := {}
 var selected_slot := -1        # 当前选中的道具槽（阶段二；点桌上的手中牌由它记录）
 var _discard_pending := -1     # 丢弃的二次确认槽位（手牌右键第一下点亮它；-1=无）
+## 待确认丢弃**记住的那件道具 id**（与 `_discard_pending` 同生共死）。
+##
+## 为什么按 **id** 而不是按下标认这把「待确认」：下标是**位置**，背包一重排（交换生的换牌 /
+## 蛋蛋节发牌 / 别处把它消耗掉）同一个下标就指向**另一张**牌 —— 只看下标的话，红标会落到玩家
+## **从未 arm 过**的那张牌上，下一次右键**一下就把它丢了**（本该两步）。所以 arm 时记下 id，
+## 每次重放红标之前先核对：id 对不上 = 这把待确认已经不作数，就地解除（见 `_refresh_table_props`）。
+var _discard_pending_id := ""
 var cheat_picker: Control
 var cheat_slot := -1
 var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1=无）
@@ -1303,6 +1310,18 @@ func _refresh_table_props() -> void:
 	# 所以每次广播都按玩法侧的 selected_slot 重设一遍（单一来源始终是 selected_slot）。
 	table3d.table_props.set_hand_selected(selected_slot)
 	# 待确认丢弃的红标同理：单一来源是 _discard_pending，每次广播重放一遍，广播后不丢。
+	# 但**重放前先核对这把待确认还作不作数**：armed 之后它原本永不解除 ⇒ ①阶段一结束，
+	# 红标整轮挂着，下一次右键**一下**就把牌丢了（本该两步确认）；②背包在此期间重排，
+	# 下标指到了另一张牌，红标落到玩家从未 arm 过的牌上、一次右键就丢错东西。
+	# 判据按 **id** 认牌而不是按下标（下标会在重排时指向另一张，理由见 _discard_pending_id）。
+	# 注意它只是**表现层**的本地状态：不进 s_state、不改玩法，清掉之后照旧把 -1 重放下去。
+	if _discard_pending >= 0:
+		var hand_items: Array = mine.get("items", [])
+		var stale: bool = String(st.get("phase", "")) != "playing" \
+			or _discard_pending >= hand_items.size() \
+			or String(hand_items[_discard_pending].id) != _discard_pending_id
+		if stale:
+			_clear_discard_pending()
 	table3d.table_props.set_hand_discard_pending(_discard_pending)
 
 func _name_by_peer(peer: int) -> String:
@@ -3054,7 +3073,7 @@ func _on_item_slot_clicked(peer: int, slot: int) -> void:
 		return
 	# 任意道具都可选中（被动也能选中以丢弃）；能不能用由「使用」按钮三态表示
 	selected_slot = slot
-	_discard_pending = -1
+	_clear_discard_pending()                            # 选中任何一张 = 撤回上一步的待丢弃（槽位与 id 一起清）
 	if board != null:
 		board.set_item_selected(my_peer, slot)
 		board.mark_discard_pending(-1, -1)
@@ -3105,7 +3124,7 @@ func _on_discard_clicked(peer: int, slot: int) -> void:
 	if peer != my_peer:
 		return
 	if _discard_pending == slot:
-		_discard_pending = -1
+		_clear_discard_pending()
 		if board != null:
 			board.mark_discard_pending(-1, -1)
 		if multiplayer.is_server():
@@ -3113,12 +3132,23 @@ func _on_discard_clicked(peer: int, slot: int) -> void:
 		else:
 			c_discard.rpc(slot)
 	else:
+		# 除了下标，还要记下这件的 **id**：背包重排后下标会指向另一张牌，只有 id 认得出来
+		# 「我 arm 的到底是哪一件」（理由与判据见 _discard_pending_id）。
+		var items: Array = _state_player(my_peer).get("items", [])
 		_discard_pending = slot
+		_discard_pending_id = String(items[slot].id) if slot < items.size() else ""
 		if board != null:
 			board.mark_discard_pending(my_peer, slot)
 	# 可见反馈：待确认那张手牌染红。设 / 清待确认时**不广播**，所以这里立即贴一次，
 	# 不然要等下一次状态到达才变色（_refresh_table_props 里另有重放，保证广播后不丢）。
 	_sync_hand_discard_pending()
+
+## 解除「待确认丢弃」（槽位与记住的 id 一起清）。**单一入口** —— 三处解除点（选中别的牌 /
+## 第二下右键真丢 / 重放前发现这把待确认已失效）都该走它，别单独写 `_discard_pending = -1`
+## 把 id 漏在原地（漏掉的后果见 _discard_pending_id 的注释）。调用方各自负责补表现侧同步。
+func _clear_discard_pending() -> void:
+	_discard_pending = -1
+	_discard_pending_id = ""
 
 ## 把「待确认丢弃」的可见反馈贴到桌上手牌：单一来源是 _discard_pending，与 _refresh_table_props
 ## 里的重放同源。任何写 _discard_pending 的地方都该在写完调它一次。

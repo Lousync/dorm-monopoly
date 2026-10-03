@@ -420,6 +420,14 @@ func _run() -> void:
 	_check(rolls[0] == 1, "点转盘圆心：掷轮路径走通（roll_received 发出，实得 %d 次）" % rolls[0])
 	_check(g._on_table_click(wc + Vector2(wr * 0.5, 0.0)), "轮缘上（半径一半处）也算命中")
 	_check(rolls[0] == 2, "轮缘上同样掷轮（实得 %d 次）" % rolls[0])
+	# 转盘**只吃左键**（修复波）：右键落在转盘上**不消费** —— 落回棋盘 = 既有的取消。
+	# 这条没有用例就是静默回归（右键又能掷轮）而所有套件仍然全绿：别的用例都不碰
+	# `MOUSE_BUTTON_RIGHT` 的转盘分支。此处断言两件事：不消费 + 掷轮计数不变。
+	_check(not g._on_table_click(wc, MOUSE_BUTTON_RIGHT),
+		"右键落在转盘上不消费（落回棋盘 = 取消）")
+	_check(not g._on_table_click(wc + Vector2(wr * 0.5, 0.0), MOUSE_BUTTON_RIGHT),
+		"右键落在轮缘上同样不消费")
+	_check(rolls[0] == 2, "右键落在转盘上**不掷轮**（掷轮计数没变，实得 %d 次）" % rolls[0])
 	# 负路径一：不在掷轮环节 —— 点击仍被转盘消费（返回 true，不会漏给桌垫），但**不掷轮**
 	var s_item: Dictionary = _state(2, false)
 	s_item.await = "item"
@@ -706,6 +714,73 @@ func _run() -> void:
 		"非 playing 阶段：右键手牌不消费（落回棋盘，那里右键仍是取消）")
 	_check(g._discard_pending == -1 and int(g._player_by_peer(2).items.size()) == n_not,
 		"非 playing 阶段：既不进待确认、也不丢")
+
+	print("== 待确认丢弃不再永不解除（终审 Minor）==")
+	# 背景：`_discard_pending` 原先 armed 之后**永不解除**，而 `_refresh_table_props` 每次广播
+	# 会**无条件重放**它，于是 ① 阶段一结束红标整轮挂着，下一次右键**一下**就把牌丢了（本该两步）；
+	# ② armed 期间背包重排（交换生换牌 / 蛋蛋节发牌），下标指到**另一张**牌 ⇒ 红标落到玩家
+	# 从未 arm 过的那张上，一次右键就丢错东西。修法：重放前按 **id** 核对这把待确认还作不作数
+	#（判据与理由见 game.gd 的 `_discard_pending_id`）。这里两条各钉一次。
+	g.my_peer = 2
+	var s_re: Dictionary = _state(2, false)
+	s_re.await = "item"
+	s_re.await_peer = 2
+	for p in s_re.players:
+		if int(p.peer) == 2:
+			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.hp = [
+		{"peer": 2, "name": "我", "color": 1, "bot": false, "alive": true, "money": 20000,
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "silence": 0, "shield": 0,
+			"items": [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]},
+	]
+	g.s_state(s_re)
+	await process_frame
+	g._process(0.0)
+
+	# ① 背包重排：该下标的 **id 变了**（位置不变、内容变了 —— 交换生换牌就长这样）
+	var cr: Vector2 = tph.hand_rect(1).get_center()
+	_check(g._on_table_click(cr, MOUSE_BUTTON_RIGHT), "（前置）右键第二张：进待确认")
+	_check(g._discard_pending == 1 and tph._hand_disc == 1,
+		"（前置）待确认槽位 = 1、红标已贴（实得 %d / %d）" % [g._discard_pending, tph._hand_disc])
+	var s_re2: Dictionary = s_re.duplicate(true)
+	for p in s_re2.players:
+		if int(p.peer) == 2:
+			p.items = [{"id": "共享单车", "cd": 0}, {"id": "招财猫", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.hp[0].items = [{"id": "共享单车", "cd": 0}, {"id": "招财猫", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.s_state(s_re2)
+	await process_frame
+	g._process(0.0)
+	_check(g._discard_pending == -1, "重排后该下标的 id 变了：待确认自动解除（实得 %d）" % g._discard_pending)
+	_check(tph._hand_disc == -1, "红标随之收掉（实得 _hand_disc=%d）" % tph._hand_disc)
+	# 关键：解除之后下一次右键只**进入待确认**，不会一下就把牌丢出去
+	var n_re: int = int(g._player_by_peer(2).items.size())
+	_check(g._on_table_click(tph.hand_rect(1).get_center(), MOUSE_BUTTON_RIGHT), "解除后再右键：仍被手牌消费")
+	_check(g._discard_pending == 1, "解除后再右键：只进入待确认（实得 %d）" % g._discard_pending)
+	_check(int(g._player_by_peer(2).items.size()) == n_re,
+		"解除后再右键：**没有**真丢（背包仍 %d 件）——两步确认回来了" % n_re)
+	g._cancel_target()
+
+	# ② armed 之后阶段结束（非 playing）：同样解除，红标不跨阶段挂着
+	var s_re3: Dictionary = _state(2, false)
+	s_re3.await = "item"
+	s_re3.await_peer = 2
+	for p in s_re3.players:
+		if int(p.peer) == 2:
+			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.hp[0].items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.s_state(s_re3)
+	await process_frame
+	g._process(0.0)
+	_check(g._on_table_click(tph.hand_rect(0).get_center(), MOUSE_BUTTON_RIGHT), "（前置）右键第一张：进待确认")
+	_check(g._discard_pending == 0 and tph._hand_disc == 0,
+		"（前置）待确认槽位 = 0、红标已贴（实得 %d / %d）" % [g._discard_pending, tph._hand_disc])
+	var s_re4: Dictionary = s_re3.duplicate(true)
+	s_re4.phase = "ended"                      # 阶段结束（任何非 playing 的值）
+	g.s_state(s_re4)
+	await process_frame
+	g._process(0.0)
+	_check(g._discard_pending == -1, "阶段结束时待确认解除（实得 %d）" % g._discard_pending)
+	_check(tph._hand_disc == -1, "阶段结束后红标收掉（实得 _hand_disc=%d）" % tph._hand_disc)
 
 	print("== 选目标期间：手牌让位给格子（终审 R2）==")
 	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子，而牌底那 3~5 格
