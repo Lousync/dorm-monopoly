@@ -73,23 +73,31 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
-	print("== 贴图窗口 = 整张画布（交互优先于比例，见 T4c）==")
-	# 画布 = 整张方桌（棋盘 + 四条座位栏 + 上下死区）。T4 曾把窗口裁到 y∈[348,2048] 让
-	# 「棋盘铺满桌面」，但上家座位栏在画布 y∈[16,211] —— 它在画布内、却在窗口外，
-	# 桌面上既看不见也点不到（指向性道具选不中上家）。裁定：窗口必须覆盖整张画布，
-	# 比例目标推迟到批次 3（座位栏将换成桌上立牌）。窗口是否够大由下面 T4c 那段钉住。
+	print("== 贴图窗口 = 桌垫（棋盘 + 一圈留白），不再铺满整张画布 ==")
+	# 批次 5 Task 2：座位栏换成了桌上立牌，画布不再需要为它们预留 —— 窗口从"整张画布"
+	# 收到"桌垫"（`BoardView.MAT_RECT`）。批次 2 的 T4c 之所以把窗口恢复成整张画布，
+	# 是因为当时上家座位栏会落到窗口之外、既看不见也点不到；座位栏一走，这条约束随之解除。
+	# 窗口是否覆盖了该覆盖的东西，由下面「两条牌堆都在窗口内」那段钉住。
 	var win: Rect2 = t3.TEX_WINDOW_PX
 	_check(win.position.x >= 0.0 and win.position.y >= 0.0
 			and win.position.x + win.size.x <= 2048.0 and win.position.y + win.size.y <= 2048.0,
 		"贴图窗口落在画布内（窗口 %s）" % win)
-	_check(win == Rect2(Vector2.ZERO, Vector2(t3.VP_SIZE)),
-		"贴图窗口 = 整张画布（%s，交互优先于比例）" % win)
-	# 这条曾写成 `TABLE_D / TABLE_W ≈ win.size.y / win.size.x` —— 而 TABLE_D 就是这么
-	# 定义的（`TABLE_W * win.size.y / win.size.x`），同义反复、永远不会红。改成钉具体数值：
-	# 桌面为 8×8 正方形（窗口 = 整张方画布 ⇒ 进深 == 宽）。真正的贴图拉伸守卫是下面那条
-	# 「材质取样窗口 == 映射窗口」。
-	_check(t3.TABLE_W == 8.0 and t3.TABLE_D == 8.0,
-		"桌面为 8×8 正方形（宽 %.2f / 进深 %.2f）" % [t3.TABLE_W, t3.TABLE_D])
+	_check(win != Rect2(Vector2.ZERO, Vector2(t3.VP_SIZE)),
+		"窗口已收到桌垫区（不再 = 整张画布 %s）" % win)
+	# 窗口与桌垫（`BoardView.MAT_RECT`）是同一块地方的两种口径。两条必须同时成立：
+	#   ① 比例一致 —— 否则贴图被拉伸；② 都居中 —— 取景（fit_overview）就是把桌垫铺成
+	#      "画布正中、窗口那么大" 这一块，两边一旦错开，画面与命中就悄悄脱钩。
+	# 这条是**跨类**的一致性断言（画布口径 vs 世界口径），改窗口或改桌垫都得两边一起改。
+	var matr: Rect2 = t3.board.MAT_RECT
+	_check(absf(win.size.x / win.size.y - matr.size.x / matr.size.y) < 0.001,
+		"窗口比例 = 桌垫比例（%.4f vs %.4f —— 否则贴图会被拉伸）"
+			% [win.size.x / win.size.y, matr.size.x / matr.size.y])
+	_check(absf(win.get_center().x - 1024.0) < 1.0 and absf(win.get_center().y - 1024.0) < 1.0,
+		"窗口在画布正中（中心 %s）" % win.get_center())
+	# 桌面宽仍是 8 世界单位；进深由窗口比例派生（窗口比画布矮 ⇒ 桌面不再是正方形）。
+	# 不写死 6.15：那等于把窗口尺寸抄一遍（改窗口就得改这里），只钉"进深与窗口同比例"。
+	_check(absf(t3.TABLE_W - 8.0) < 0.001 and absf(t3.TABLE_D - 8.0 * win.size.y / win.size.x) < 0.001,
+		"桌面宽 8、进深按窗口比例（宽 %.2f / 进深 %.2f）" % [t3.TABLE_W, t3.TABLE_D])
 	# 材质取样窗口必须与输入映射同源：只改几何不改材质 → 看到的是整张桌子、点到的却是窗口那块。
 	# （本任务实现时真踩过这个坑：出图「变好」了、点击却整体错位。）
 	var canvas := Vector2(t3.VP_SIZE)
@@ -190,12 +198,17 @@ func _run() -> void:
 	var min_margin := INF
 	var min_margin_wt := -1.0
 	var margin_log := ""
+	# 四角一律从**桌垫**（TABLE_SIZE）现取，不写死 ±4：桌面不再是正方形（进深由窗口比例定）。
+	# 为什么是桌垫而不是外圈木纹：木纹是"桌子本身"，第一人称下桌子伸出画面是自然的；
+	# 要全程入画的是**看得见的棋面**（桌垫）与**四块立牌**（下面那条专门钉它）。
+	var hw: float = t3.TABLE_SIZE.x * 0.5
+	var hd: float = t3.TABLE_SIZE.y * 0.5
 	for i in 21:
 		var wt := i * 0.05
 		t3.snap_view(wt)
 		var m := INF
-		for sx in [-4.0, 4.0]:
-			for sz in [-4.0, 4.0]:
+		for sx in [-hw, hw]:
+			for sz in [-hd, hd]:
 				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
 				m = minf(m, minf(minf(sp.x, vr.size.x - sp.x), minf(sp.y, vr.size.y - sp.y)))
 		margin_log += "%.0f " % m
@@ -214,8 +227,8 @@ func _run() -> void:
 		t3.snap_view(wt)
 		var mn := Vector2(INF, INF)
 		var mx := Vector2(-INF, -INF)
-		for sx in [-4.0, 4.0]:
-			for sz in [-4.0, 4.0]:
+		for sx in [-hw, hw]:
+			for sz in [-hd, hd]:
 				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
 				mn = mn.min(sp)
 				mx = mx.max(sp)
@@ -224,6 +237,49 @@ func _run() -> void:
 	_check(area_ratio > 0.6 and area_ratio < 1.6,
 		"两端桌面投影大小接近（面积比 %.2f，须在 [0.6,1.6]；3D 端 %s / 2D 端 %s）"
 			% [area_ratio, boxes[0], boxes[1]])
+	# 桌面在不在画面里还不够：**四块立牌**（批次 5 Task 2 起"点玩家选目标"的唯一入口）
+	# 也必须在整条轨道上看得见 —— 它们的桌位（STANDEE_BASE_PX）是画布常量，窗口一改就得重取，
+	# 重取错了这里会红。量的是**牌面八个角**（真·看得见的那块，不是桌面上那个落点）。
+	# 量在一台**临时**的 TableProps 上（不进 t3.table_props）：那台的子节点数被后面
+	# 的筹码 / 轮缘断言数着，这里塞一块立牌进去会把它们带偏。
+	var S0 = load("res://scripts/table_props.gd")
+	var tp0 = S0.new()
+	tp0.setup(t3)
+	root.add_child(tp0)
+	var srows0: Array = []
+	for i in 4:
+		srows0.append({"peer": i + 1, "name": "P%d" % (i + 1), "worth": 1, "color_idx": i,
+			"alive": true, "items": [], "is_self": false})
+	tp0.set_standees(srows0)
+	await process_frame
+	var sroot0: Node = tp0.get_node_or_null("Standees")
+	var worst_standee := INF
+	var worst_standee_wt := -1.0
+	if sroot0 == null:
+		_check(false, "立牌父节点缺了，「立牌全程在画面内」整段跳过")
+	else:
+		for i in 21:
+			var wt2 := i * 0.05
+			t3.snap_view(wt2)
+			var m2 := INF
+			for j in 4:
+				var plate0 = (sroot0.get_child(j) as Node3D).get_node("Plate") as MeshInstance3D
+				for sx in [-0.5, 0.5]:
+					for sy in [-0.5, 0.5]:
+						for sz in [-0.5, 0.5]:
+							var c0: Vector3 = plate0.global_transform * Vector3(
+								0.70 * float(sx), 0.72 * float(sy), 0.03 * float(sz))
+							var sp0: Vector2 = t3.camera.unproject_position(c0)
+							m2 = minf(m2, minf(minf(sp0.x, vr.size.x - sp0.x),
+								minf(sp0.y, vr.size.y - sp0.y)))
+			if m2 < worst_standee:
+				worst_standee = m2
+				worst_standee_wt = wt2
+		_check(worst_standee > 5.0,
+			"四块立牌的牌面在整条轨道 21 档都看得见（最小余量 %.1f px @ view_t=%.2f，须 > 5px）"
+				% [worst_standee, worst_standee_wt])
+	t3.snap_view(0.0)
+	tp0.free()
 	# 滚轮改的是目标值，不是硬切
 	t3.snap_view(0.0)
 	t3.set_view(1.0)
@@ -544,22 +600,13 @@ func _run() -> void:
 		_check(false, "TableProps 未就绪，筹码 / 体力件断言整段跳过")
 	else:
 		var S3 = load("res://scripts/table_props.gd")
-		# 先把这台容器取景到「四人围桌」那一版（game.gd 里跑的就是它）：上面那些断言跑在
-		# **没有座位**的裸容器上，取景是退化的（四条座位栏都被推出画布之外，自己那条栏的上沿
-		# 画布 y≈2104 > 2048）。拿退化取景当基准的话，「实体没压在自己座位栏上」这条会变成
-		# 空洞（把筹码摆到画布 y=2000 也照样过）。重取景不影响已经跑完的那些断言。
-		var pls3 := []
-		for i in 4:
-			pls3.append({"peer": i + 1, "name": "P%d" % (i + 1), "color": i, "bot": false,
-				"money": 20000, "pos": 0, "alive": true, "skip": 0,
-				"stamina": 3, "items": [], "item_used": false})
-		t3.board.build_seats(pls3, 1)
-		# 自己那条座位栏（画布近端画出来的 UI）的上沿。筹码与体力件都必须落在它之外。
-		var bar_top: float = t3.board._view_from_world(t3.board._seat_bar(0).position).y
-		# 再往上一条线：自己那一排格子的**外沿**（棋盘格区的近端边）—— 实体越过它
-		# 就是压在自己那排格子的图案上了（属性名 / 价格）。这条比座位栏更贴近「不压 UI」。
+		# 取景一律是"桌垫概览"那一版（`fit_overview`）：座位栏退场后它与"有没有座位"再无关系，
+		# 画布口径也只剩这一套。上面那些断言可能留下过被推近的镜头，这里拉回全景再量位置。
+		t3.board.fit_overview(true)
+		# 唯一的"别压上去"的线：自己那一排格子的**外沿**（棋盘格区的近端边）—— 实体越过它
+		# 就是压在自己那排格子的图案上了（属性名 / 价格）。批次 5 Task 2 之前还要躲座位栏，
+		# 座位栏一走就只剩这一条（也更贴近本意）。
 		var row_top: float = t3.board._view_from_world(t3.board.BOARD_OFFSET + t3.board.WORLD).y
-		_check(bar_top < 2048.0, "取景已进到围桌那一版（座位栏在画布内，上沿画布 y=%.0f）" % bar_top)
 		_check(S3.chip_count(0) == 0, "0 元 → 0 枚")
 		_check(S3.chip_count(-100) == 0, "欠债（负数）→ 0 枚")
 		_check(S3.chip_count(4999) == 0, "不足一档 → 0 枚")
@@ -592,27 +639,27 @@ func _run() -> void:
 			tp3.set_chips(100000)
 			_check(cr.get_child_count() == pool3 and cr.get_child(0) == first3,
 				"重复调用不重建节点（%d → %d 个）" % [pool3, cr.get_child_count()])
-			# 位置：整摞都得落在**空桌垫**上 —— 全在自己那条座位栏的上沿之外。
-			# 近端画布上画着座位卡 UI（Task 6 才拆），实体压上去就是压在画出来的 UI 上。
-			var over_ui := 0
+			# 位置：整摞都得落在**自己面前的空桌垫**上 —— 在棋盘格区之外（`row_top` 之内），
+			# 且仍在桌垫之内（批次 5 Task 2 起桌垫就是画布的窗口，越过它等于"摆到木桌上了"）。
 			var over_row := 0
 			var sunk := 0
+			var off_mat := 0
 			var nearest := 0.0
 			for ch in cr.get_children():
 				if not (ch as Node3D).visible:
 					continue
 				var cpx: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
-				if cpx.y >= bar_top:
-					over_ui += 1
 				if cpx.y >= row_top:
 					over_row += 1
+				if not t3.TEX_WINDOW_PX.has_point(cpx):
+					off_mat += 1
 				if (ch as Node3D).global_position.y <= t3.table_mesh.global_position.y:
 					sunk += 1
 				nearest = maxf(nearest, cpx.y)
-			_check(over_ui == 0, "筹码没压在自己座位栏上（越界 %d 枚，栏上沿画布 y=%.0f）" % [over_ui, bar_top])
 			_check(over_row == 0, "筹码没压在自己那排格子上（越界 %d 枚，格区近端画布 y=%.0f）" % [over_row, row_top])
+			_check(off_mat == 0, "筹码都落在桌垫之内（越出窗口 %d 枚）" % off_mat)
 			_check(sunk == 0, "筹码都浮在桌垫之上（陷进去 %d 枚）" % sunk)
-			_check(nearest > 1024.0, "筹码在自己这半张桌子（近端，最靠里一枚画布 y=%.0f > 1024）" % nearest)
+			_check(nearest > row_top - 500.0, "筹码在自己这半张桌子（近端，最靠里一枚画布 y=%.0f）" % nearest)
 
 		print("== 体力件：一排小件、用掉的熄灭 ==")
 		tp3.set_stamina(3, 5)
@@ -643,21 +690,21 @@ func _run() -> void:
 			tp3.set_stamina(2, 6)
 			_check(sr.get_child_count() == pool_s and sr.get_child(0) == first_s,
 				"重复调用不重建体力件节点（%d → %d 个）" % [pool_s, sr.get_child_count()])
-			var over_ui_s := 0
 			var over_row_s := 0
 			var sunk_s := 0
+			var off_mat_s := 0
 			for ch in sr.get_children():
 				if not (ch as Node3D).visible:
 					continue
 				var spx: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
-				if spx.y >= bar_top:
-					over_ui_s += 1
 				if spx.y >= row_top:
 					over_row_s += 1
+				if not t3.TEX_WINDOW_PX.has_point(spx):
+					off_mat_s += 1
 				if (ch as Node3D).global_position.y <= t3.table_mesh.global_position.y:
 					sunk_s += 1
-			_check(over_ui_s == 0, "体力件没压在自己座位栏上（越界 %d 件）" % over_ui_s)
 			_check(over_row_s == 0, "体力件没压在自己那排格子上（越界 %d 件）" % over_row_s)
+			_check(off_mat_s == 0, "体力件都落在桌垫之内（越出窗口 %d 件）" % off_mat_s)
 			_check(sunk_s == 0, "体力件都坐在桌垫之上（陷进去 %d 件）" % sunk_s)
 
 	# ---- 批次 3 Task 4：手中牌（显示） ----
@@ -815,30 +862,35 @@ func _run() -> void:
 				"重摆手牌后选中的那张仍抬着（画布 y %.0f）" % tp4.hand_rect(1).get_center().y)
 			tp4.set_hand_selected(-1)
 
-			# 位置：整排落在**自己面前的近端空桌垫**上 —— 不压座位栏 / 不压自己那排格子 /
+			# 位置：整排落在**自己面前的近端空桌垫**上 —— 在桌垫之内 / 不与自己那排格子错位 /
 			# 不与筹码堆和体力件重叠。筹码与体力件的位置**从它们自己的节点读**（不是抄常量）。
 			print("== 手中牌：落在近端空桌垫上、不与筹码 / 体力件打架 ==")
 			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
 			await process_frame
-			var bar_top4: float = t3.board._view_from_world(t3.board._seat_bar(0).position).y
-			var over_ui4 := 0
-			var over_rect4 := 0
+			# 唯一的线：**桌垫的下沿**。手牌整排是"自己面前那张近端桌垫"上的实物 ——
+			# 落点与看得见的那块（投影盒）都得在桌垫之内、且都在桌垫下半幅。
+			# （注意：它**会**擦到自己那排格子的下边框，那是有意的、也是 hud_test 的
+			#  R2/R38 那几条断言的实测前提 —— 所以这里不钉"不压格子"。）
+			var mat_px4: Rect2 = t3.board.mat_rect_px()
+			var off_mat4 := 0
+			var off_bottom4 := 0
 			var sunk4 := 0
 			var nearest4 := 0.0
 			for i in 3:
 				var mi := hr.get_child(i) as MeshInstance3D
 				var bp: Vector2 = t3.world_to_canvas_px(mi.global_position)
-				if bp.y >= bar_top4:
-					over_ui4 += 1
-				if tp4.hand_rect(i).end.y >= bar_top4:
-					over_rect4 += 1
+				if not mat_px4.has_point(bp):
+					off_mat4 += 1
+				if tp4.hand_rect(i).end.y > mat_px4.end.y:
+					off_bottom4 += 1
 				if mi.global_position.y <= t3.table_mesh.global_position.y:
 					sunk4 += 1
 				nearest4 = maxf(nearest4, bp.y)
-			_check(over_ui4 == 0, "手牌没压在自己座位栏上（越界 %d 张，栏上沿画布 y=%.0f）" % [over_ui4, bar_top4])
-			_check(over_rect4 == 0, "连看得见的那块也没伸到座位栏里（越界 %d 张）" % over_rect4)
+			_check(off_mat4 == 0, "手牌整排落在桌垫之内（越出窗口 %d 张）" % off_mat4)
+			_check(off_bottom4 == 0, "连看得见的那块也没垂到桌垫外（悬出 %d 张，桌垫下沿画布 y=%.0f）"
+				% [off_bottom4, mat_px4.end.y])
 			_check(sunk4 == 0, "手牌都浮在桌垫之上（陷进去 %d 张）" % sunk4)
-			_check(nearest4 > 1024.0, "手牌在自己这半张桌子（近端，最靠里一张画布 y=%.0f）" % nearest4)
+			_check(nearest4 > mat_px4.get_center().y, "手牌在自己这半张桌子（近端，最靠里一张画布 y=%.0f）" % nearest4)
 			# 不与筹码堆 / 体力件重叠：把它们的**实际落点**读出来，命中盒里不许有它们。
 			var others4: Array = []
 			var chip_root4: Node = tp4.get_node_or_null("Chips")
@@ -1043,20 +1095,27 @@ func _run() -> void:
 			_check(thick, "四块都是有**厚度**的薄板（BoxMesh，厚度 ≥ 0.01 世界单位）")
 			_check(lean, "四块都**向后倾**（牌面顶边比板底更靠远端 —— 2D 端才看得见一块面）")
 			_check(opaque, "牌面是不透明材质（不进透明队列 ⇒ 写深度、投得出影子）")
-			# 四块都立在桌面上（不是浮空也不是陷进去），且落在**桌沿那四条座位栏**的位置上
+			# 四块都立在桌面上（不是浮空也不是陷进去），且落在**四条边的中线上**：
+			# 底沿 z>0 / 上沿 z<0 / 左侧 x<0 / 右侧 x>0，且横向偏移在一条中线上（左右那两块 z≈0）。
+			# 具体数值由 STANDEE_BASE_PX 经窗口换算定（见下面「立牌仍贴在桌沿」那段的几何判据），
+			# 这里只钉"四条边各一块、方向别配错"。
 			var on_table := true
 			var at_edge := true
 			for i in 4:
 				var rp: Vector3 = (sr.get_child(i) as Node3D).global_position
 				if absf(rp.y - (t3.table_mesh.global_position.y + tpS.PROPS_Y)) > 0.001:
 					on_table = false
-				# 桌位 = 四条座位栏的中心：底沿 z≈+3.49 / 上沿 z≈-3.49 / 左右 x≈±3.56
-				var want: Vector2 = [Vector2(0.0, 3.49), Vector2(-3.56, 0.0),
-					Vector2(0.0, -3.49), Vector2(3.56, 0.0)][i]
-				if absf(rp.x - want.x) > 0.1 or absf(rp.z - want.y) > 0.1:
+				var ehw: float = t3.TABLE_SIZE.x * 0.5
+				var ehd: float = t3.TABLE_SIZE.y * 0.5
+				# 底 / 左 / 上 / 右 四块各自该在哪条边上（板心都在桌垫之外那一圈）
+				var ok_edge: bool = [rp.z > ehd and absf(rp.x) < 0.05,
+					rp.x < -ehw and absf(rp.z) < 0.05,
+					rp.z < -ehd and absf(rp.x) < 0.05,
+					rp.x > ehw and absf(rp.z) < 0.05][i]
+				if not ok_edge:
 					at_edge = false
 			_check(on_table, "四块都坐在桌面上（y = 桌垫 + PROPS_Y）")
-			_check(at_edge, "四块分别立在桌子四边（底 / 左 / 上 / 右的座位栏中心）")
+			_check(at_edge, "四块分别立在桌子四边（底 / 左 / 上 / 右各一块，都在桌垫之外那圈上）")
 
 			# 牌面文字：名字 / 身家（破产与座位卡同款："已出局"）
 			_check(String((sr.get_child(1).get_node("Name") as Label3D).text) == "乙",
@@ -1196,85 +1255,81 @@ func _run() -> void:
 
 	t3.queue_free()
 
-	# ---- Task 4b：座位栏是否落在画布外（先取证） ----
-	# 四条座位栏是「指向性道具点人选目标」的区域。座位栏比棋盘占位更宽（左右各 256px、
-	# 上下各 286px），若取景只按「棋盘 + 空区」算，栏条就会落到 0..2048 画布之外、点不到。
-	# 这里用真身容器（不是裸 BoardView）：座位落位发生在取景之后（客户端等 s_state 才建座），
-	# 复现的正是「首次取景时还没有座位」这条路径。
-	print("== 装了座位之后，四条座位栏是否都在画布内 ==")
+	# ---- 批次 5 Task 2：座位栏退场，改钉"窗口覆盖了什么 + 立牌还在不在桌沿" ----
+	# T4b/T4c/T-a 那三条（"四条座位栏都在画布内 / 窗口内 / 屏幕内"）随座位栏一起删了：
+	# 它们守的是"指向性道具点得到人"，而那个入口现在是**3D 立牌**（由 hud_test 的
+	# 「点对手立牌能选目标」守着）。这里换成三条新的：
+	#   ① 反向契约：座位卡那一套真的没了、也没有留下四条空栏；
+	#   ② 窗口必须覆盖**棋盘与两摞牌堆**（可见且可点到）——批次 2 的 T4c 就是踩了这个坑
+	#     （窗口裁过头 ⇒ 画布内有、桌面上看不见也点不到）才把窗口恢复成整张画布的；
+	#   ③ 四块立牌仍贴在**桌沿**（桌垫之外、木桌之内）—— 窗口一改，立牌坐标必须跟着重取
+	#     （Task 1 的代码注释里预告过这条）。
+	print("== 座位卡退场：画布里没有座位栏，棋盘与牌堆仍在窗口内 ==")
 	var t4 = load("res://scripts/table_3d.gd").new()
 	root.add_child(t4)
 	await process_frame
 	await process_frame
-	# 装四个座位（peer 1..4；这里只要位置，不联网）
-	var pls := []
-	for i in 4:
-		pls.append({"peer": i + 1, "name": "P%d" % (i + 1), "color": i, "bot": false,
-			"money": 20000, "pos": 0, "alive": true, "skip": 0, "sleep": 0,
-			"stamina": 3, "items": [], "item_used": false})
-	# 先钉住「这段复现的是客户端路径」：客户端要等 s_state 才建座，那时首次取景早已做完
-	# （_fitted=true），build_seats 才会走 fit_overview 硬取景；若容器哪天不再被上面两帧
-	# await 布局，_fitted 会是 false，这段就静默退化成房主路径（首帧取景时才建座）、变空洞。
-	_check(t4.board._fitted, "建座前已完成首次取景（复现客户端路径）")
-	t4.board.build_seats(pls, 1)
-	t4.board._process(0.0)        # 触发首帧布局/取景
 	t4.board._process(0.0)
-	var vp4 := Rect2(Vector2.ZERO, Vector2(t4.viewport.size))
-	var out := 0
-	for e in 4:
-		# _seat_bar 给的是**世界坐标**；要回答「在不在画布内」必须先过镜头变换换成画布（视图）坐标，
-		# 否则拿世界矩形直接跟 0..2048 比 —— 两边不同空间，四条永远算越界（假红）。
-		var bar: Rect2 = t4.board._seat_bar(e)
-		var c0: Vector2 = t4.board._view_from_world(bar.position)
-		var c1: Vector2 = t4.board._view_from_world(bar.end)
-		var bar_view := Rect2(c0, c1 - c0).abs()
-		print("    边 %d：世界 %s → 画布 %s" % [e, bar, bar_view])
-		if not vp4.encloses(bar_view):
-			out += 1
-			print("    [越界] 边 %d 的座位栏 %s 不在画布 %s 内" % [e, bar_view, vp4])
-	_check(out == 0, "四条座位栏都在画布内（越界 %d 条）" % out)
-
-	# ---- Task 4c：座位栏还得落在**纹理窗口**内 ----
-	# 画布内 ≠ 桌面上可见可点：桌面材质只取 TEX_WINDOW_PX 那一块，输入映射由同源的窗口
-	# 换算（screen_to_viewport）。T4 为「棋盘铺满桌面」把窗口上边裁到 348，而上家（对家）
-	# 那条座位栏正落在画布 y∈[16,211] —— 它在画布内、却在窗口外，于是既看不见也点不到，
-	# 指向性道具（交换生 / 跑腿券 / 强拆令）选不中上家。窗口必须覆盖整张画布。
-	print("== 四条座位栏都在纹理窗口内（可见且可点到） ==")
-	# 同上的空间问题：_seat_bar 给世界坐标，TEX_WINDOW_PX 是画布坐标，先过镜头变换再比。
+	t4.board.fit_overview(true)
 	var win4: Rect2 = t4.TEX_WINDOW_PX
-	var out_win := 0
-	for e in 4:
-		var bar4: Rect2 = t4.board._seat_bar(e)
-		var w0: Vector2 = t4.board._view_from_world(bar4.position)
-		var w1: Vector2 = t4.board._view_from_world(bar4.end)
-		var cbar := Rect2(w0, w1 - w0).abs()
-		if not win4.encloses(cbar):
-			out_win += 1
-			print("    [窗口外] 边 %d 的座位栏（画布）%s 不在窗口 %s 内" % [e, cbar, win4])
-	_check(out_win == 0, "四条座位栏都在纹理窗口内（窗口外 %d 条）" % out_win)
-
-	# ---- T-a：座位栏还得落在**可见屏幕**内（triage #10） ----
-	# 「画布内」+「窗口内」都不等于「玩家看得见」：窗口是贴在 3D 桌面上的贴图，还要过相机投影。
-	# `CAM_DIST` 从 4.4 提到 5.8 就是因为近端（自己那侧）的座位栏被顶出屏幕底部，
-	# 而当时没有任何断言能红 —— 只有出图能抓。这条把整条「画布 → 屏幕」链路钉进测试：
-	# 座位栏的四个角经 `_view_from_world → viewport_to_screen` 换算后必须落在窗口可见矩形内。
-	print("== 四条座位栏都落在可见屏幕内 ==")
-	var screen4: Rect2 = t4.get_viewport().get_visible_rect()
-	var out_scr := 0
-	for e in 4:
-		var bar_e: Rect2 = t4.board._seat_bar(e)
-		# 四个角的世界坐标；Rect2.end 是右下角
-		var corners: Array = [bar_e.position, Vector2(bar_e.end.x, bar_e.position.y),
-			bar_e.end, Vector2(bar_e.position.x, bar_e.end.y)]
-		for c in corners:
-			var sp = t4.viewport_to_screen(t4.board._view_from_world(c))
-			# 用含边界的比较（Rect2.has_point 会排除右/下缘），免得刚好贴边时假红
-			var ok: bool = sp != null and (sp as Vector2).x >= 0.0 and (sp as Vector2).y >= 0.0 \
-				and (sp as Vector2).x <= screen4.size.x and (sp as Vector2).y <= screen4.size.y
-			if not ok:
-				out_scr += 1
-				print("    [屏外] 边 %d 角 %s → 屏幕 %s（屏幕 %s）" % [e, c, sp, screen4])
-	_check(out_scr == 0, "四条座位栏的四个角都在可见屏幕内（屏外角 %d 个）" % out_scr)
+	var vp4 := Rect2(Vector2.ZERO, Vector2(t4.viewport.size))
+	var b4 = t4.board
+	# ① 反向契约
+	_check(b4.get_node_or_null("PhaseButtons") != null, "画布上有一条独立的阶段按钮层（不挂在座位卡上）")
+	_check(b4.get("_seats") == null and b4.get("_seat_of_peer") == null,
+		"座位卡的表（_seats / _seat_of_peer）已从 BoardView 上删净")
+	# ② 棋盘 + 两摞牌堆都得在窗口内（画布口径），且窗口在画布内
+	var chest4 := Rect2(b4._view_from_world(b4.BOARD_OFFSET),
+		b4._view_from_world(b4.BOARD_OFFSET + b4.WORLD) - b4._view_from_world(b4.BOARD_OFFSET))
+	_check(vp4.encloses(chest4), "棋盘整块落在画布内（%s）" % chest4)
+	_check(win4.encloses(chest4), "棋盘整块落在纹理窗口内（可见且可点）")
+	var deck_out := 0
+	var deck_zone_out := 0
+	for d in ["机会", "命运"]:
+		var dc: Vector2 = b4._view_from_world(b4.deck_center(d))
+		# 牌堆底板 280×180（见 board_view._build_deck），要整块在窗口里
+		var zone := Rect2(dc - Vector2(140.0, 90.0), Vector2(280.0, 180.0))
+		if not win4.has_point(dc):
+			deck_out += 1
+		if not win4.encloses(zone):
+			deck_zone_out += 1
+		print("    牌堆 %s：中心（画布）%s 底板 %s" % [d, dc, zone])
+	_check(deck_out == 0, "两摞牌堆的中心都在纹理窗口内（窗口外 %d 摞）" % deck_out)
+	_check(deck_zone_out == 0, "两摞牌堆的底板整块在纹理窗口内（越界 %d 摞）" % deck_zone_out)
+	# ③ 四块立牌的桌位：底 / 左 / 上 / 右。判据用**世界坐标**（桌垫口径）：
+	#    ① 在桌垫之外（不压在棋盘 / 桌垫上）② 在木桌之内（没飞出桌沿）。
+	var S4 = load("res://scripts/table_props.gd")
+	var half_w: float = t4.TABLE_SIZE.x * 0.5
+	var half_d: float = t4.TABLE_SIZE.y * 0.5
+	var wood_out: float = half_w + t4.WOOD_FRAME      # 木桌外沿（宽 == 深，都是方形外扩）
+	var off_mat := 0
+	var off_wood := 0
+	for i in 4:
+		var bpx: Vector2 = S4.STANDEE_BASE_PX[i]
+		var w: Vector3 = t4.canvas_px_to_world(bpx)
+		var shalf: Vector2 = Vector2(S4.STANDEE_SIZE.x, S4.STANDEE_SIZE.y) * 0.5
+		# 立牌是一块板：x 方向占 ±半宽，z 方向只占厚度——判"在桌垫之外"用它的**板心**
+		var outside_mat: bool = absf(w.x) > half_w + shalf.x or absf(w.z) > half_d + shalf.y
+		var inside_wood: bool = absf(w.x) + shalf.x <= wood_out and absf(w.z) + shalf.x <= wood_out
+		print("    立牌 %d：世界 %s（桌垫半宽 %.2f / 半深 %.2f，木桌外沿 %.2f）"
+			% [i, w, half_w, half_d, wood_out])
+		if not outside_mat:
+			off_mat += 1
+		if not inside_wood:
+			off_wood += 1
+	# 底 / 上两块在 z 上、左 / 右两块在 x 上：四块**都**要在桌垫之外、木桌之内
+	_check(off_mat == 0, "四块立牌都立在桌垫之外（压在桌垫上的 %d 块）" % off_mat)
+	_check(off_wood == 0, "四块立牌都没飞出木桌沿（飞出去的 %d 块）" % off_wood)
+	# 对称性：左右两块 x 互为相反数、上下两块 z 互为相反数（对着出图核过的那四个桌位）
+	var sx0: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[0])
+	var sx1: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[1])
+	var sx2: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[2])
+	var sx3: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[3])
+	_check(absf(sx0.x) < 0.01 and absf(sx2.x) < 0.01 and absf(sx1.z) < 0.01 and absf(sx3.z) < 0.01,
+		"四块立牌各自在四条边的中线上（底/上在 x=0、左/右在 z=0）")
+	_check(is_equal_approx(sx1.x, -sx3.x) and is_equal_approx(sx0.z, -sx2.z),
+		"左右 / 上下两块关于桌心对称（x %.2f/%.2f、z %.2f/%.2f）"
+			% [sx1.x, sx3.x, sx0.z, sx2.z])
 	t4.queue_free()
 
 	if fails == 0:

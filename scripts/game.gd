@@ -93,7 +93,7 @@ var shop_refresh_btn: Button
 var shop_leave_btn: Button
 var shop_tile_l: Label
 var shop_money_l: Label           # 面板里的现金读数（买按钮置灰时看得出理由）
-var shop_timer_row: HBoxContainer # 面板里的倒计时行：与座位卡同一份 _op_* 数据
+var shop_timer_row: HBoxContainer # 面板里的倒计时行：与立牌倒计时同一份 _op_* 数据（独立控件，不依赖座位卡）
 var shop_timer_kind: Label
 var shop_timer_track: ColorRect
 var shop_timer_fill: ColorRect
@@ -138,7 +138,7 @@ var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，�
 var _op_left := 0.0               # 本机显示用剩余秒数：广播到达时重置，_process 逐帧扣 delta
                                   # （暂停时 _process 不跑 → 计时与房主的窗口一起冻结）
 var _op_total := 0.0              # 窗口总时长；<=0 = 不限时（不显示进度条）
-var _op_owner := -1               # 窗口归属玩家（倒计时显示在他的座位卡上）
+var _op_owner := -1               # 窗口归属玩家（倒计时显示在他的立牌上）
 var _op_shown := false            # 上一帧是否在显示（用于收起时只补推一次隐藏）
 var log_text: RichTextLabel
 var log_panel: PanelContainer
@@ -174,7 +174,9 @@ var _shot_taken := false
 var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/房子这类局中状态就调大）
 
 # ---------------- 表现层状态 ----------------
-var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
+## peer -> 上一次显示的金额（收支播报的判据）。座位卡与它上面那块滚动数字的
+## 控件已随批次 5 Task 2 退场，这份状态搬到对局层自己身上（语义与 row.shown 一字未改）。
+var _money_shown := {}
 var _chat_shown := 0
 var _prompt_dlg: Control
 var _prompt_tw: Tween
@@ -247,7 +249,6 @@ func _ready() -> void:
 	if multiplayer.is_server():
 		_host_setup()
 
-	board.set_self_peer(my_peer)
 	board.item_slot_clicked.connect(_on_item_slot_clicked)
 	board.item_discard_clicked.connect(_on_discard_clicked)
 	board.phase_spin_clicked.connect(_on_roll_pressed)
@@ -918,8 +919,9 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 		return true
 	# 3) 立牌：**只在"选目标"态吃点击** —— 判据与 `_on_seat_clicked` 的第一行**同源**
 	#    （它只在 `_tgt_stage == "peer"` 且目标不是自己时才做事；其余情形它是无害的空转）。
-	#    非选目标态下点立牌**没有后果**，消费它就是白吞一次点击 —— 而立牌正贴在四条座位栏的位置上，
-	#    那是"点地图选玩家"和近端近排格子的常规区域，凭空多一块死区是不能接受的。
+	#    非选目标态下点立牌**没有后果**，消费它就是白吞一次点击 —— 立牌立在桌沿的木纹带上
+	#    （桌垫之外），而它那块屏幕区域与近端那排格子 / 手牌是相接的，
+	#    凭空多一块死区是不能接受的。
 	#    只吃左键：右键在棋盘上是既有的取消（转盘上同理不吃），立牌不该破例。
 	#    排在**手牌与转盘之后**：那两处一个在近端、一个在盘心，与桌沿的立牌互不重叠；
 	#    反过来把立牌排前面，2D 端（自己的立牌这时看得见也点得到）会先把手牌 / 格子那一片吃掉。
@@ -1090,7 +1092,7 @@ func _refresh_tier_ui() -> void:
 ## 操作窗口剩余时间（全员可见）走这条专用 RPC，而不进 _broadcast_state：
 ## 它按秒高频变化，进全量状态会让所有端每秒白渲染一整帧棋盘。
 ## kind="" 表示当前没有操作窗口（收簇）；total<=0 = 不限时；owner_peer = 窗口归属玩家
-## （倒计时嵌在他的座位卡上，D 方案）。
+## （倒计时挂在他的立牌上，D 方案）。
 @rpc("authority", "call_local", "reliable")
 func s_op_timer(kind: String, left: float, total: float, owner_peer: int) -> void:
 	_op_kind = kind
@@ -1321,7 +1323,7 @@ func _refresh_table_props() -> void:
 	if table3d == null or table3d.table_props == null or board == null:
 		return
 	# 布局还没跑（首个 _process 之前）时取景没做，wheel_screen_pos/radius 都是错的 ——
-	# 这一轮先跳过，等下一次状态广播（那时早有尺寸了）。判据与 build_seats 内部同源。
+	# 这一轮先跳过，等下一次状态广播（那时早有尺寸了）。判据与 fit_overview 的触发条件同源。
 	if board.size.x <= 10.0:
 		return
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
@@ -1371,9 +1373,10 @@ func _state_worth(peer: int) -> int:
 	return v
 
 ## 四块立牌的**数据**（批次 5 Task 1）。行序 = 桌位顺序（底 / 左 / 上 / 右）：
-## 与 `board.build_seats` 同源，把 st.players **轮转成"自己打头、其余按行动序"**
-## —— 于是 STANDEE_BASE_PX[0..3] 依次对上 e0..e3（自己 / 下家 / 对家 / 上家），
-## 立牌与（Task 2 才拆的）座位栏严丝合缝站在同一侧。
+## 把 st.players **轮转成"自己打头、其余按行动序"** —— 于是 `STANDEE_BASE_PX[0..3]`
+## 依次对上 e0..e3（自己 / 下家 / 对家 / 上家）。这条轮转**原来与 `board.build_seats` 同源**，
+## 而那个函数已随批次 5 Task 2 删除（座位卡整体退场）——立牌现在是这条路唯一的去处，
+## 桌位顺序就由本函数 + `STANDEE_BASE_PX` 一处定义。
 ## 身家走 `_state_worth`（读 st.tiles）而不是 host 专有的 `_net_worth`：客户端也要显示。
 func _refresh_standees() -> void:
 	var t3 = table3d
@@ -1406,92 +1409,19 @@ func _name_by_peer(peer: int) -> String:
 	return "?"
 
 func _refresh_players() -> void:
-	var seen := {}
-	var phase := String(st.get("phase", "playing"))
-	# 座位一次性落位（按行动顺序：自己坐底，下家在左，对家在上，上家在右）
-	if board.seat_count() == 0:
-		var pls: Array = st.get("players", [])
-		if not pls.is_empty():
-			board.build_seats(pls, my_peer)
 	# 桌面实体物件：每次状态广播都重新贴回桌垫坐标（见 _refresh_table_props 的注释）
 	_refresh_table_props()
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
-	var est_map := {}
 	var prop_map := {}   # peer -> 地产块数（右栏名册复用，避免再算一遍）
 	for p in st.get("players", []):
 		var peer := int(p.peer)
-		seen[peer] = true
-		var row: Dictionary = _player_rows.get(peer, {})
-		if row.is_empty():
-			row = board.seat(peer)
-			if row.is_empty():
-				continue
-			_player_rows[peer] = row
-		var active: bool = phase == "playing" and int(st.get("turn", -1)) == peer
-		var sb: StyleBoxFlat = row.sb
-		sb.bg_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.13) if active else Color(0.52, 0.56, 0.68, 0.05)
-		sb.border_color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.65) if active else Color(0, 0, 0, 0)
+		# 座位卡已随批次 5 Task 2 整体退场：这里**不再**给四条座位栏刷名字 / 现金 / 棋子 /
+		# 体力 / 回合描边（`board._player_rows` 那套一并删除）。名字与身家现在由桌上的
+		# 3D 立牌承担（`_refresh_standees`，就在上一行 `_refresh_table_props` 里），
+		# 公开背包也归它；画布上不再有"哪张卡"可写。
+		# 金额滚动 / 涨跌闪色也**没有落点了**，但飘字与音效仍以**棋子**为锚（下面那段），保留。
 
-		var tags := ""
-		if active:
-			tags += "▶ "
-		if bool(p.bot):
-			tags += "（机器人）"
-		if not bool(p.alive):
-			tags += "（破产）"
-		elif int(p.skip) > 0:
-			tags += "（反省中）"
-		elif int(p.get("sleep", 0)) > 0:
-			tags += "（小黑屋）"
-		row.name_l.text = String(p.name) + tags
-
-		# 棋子（Kenney 小人 / 纯色圆片）：破产时整体置灰
-		var chip_c: Control = row.chip
-		chip_c.modulate = Color(0.42, 0.42, 0.48, 0.85) if not bool(p.alive) else Color.WHITE
-		var seat_root: Control = row.get("root")
-		if seat_root != null:
-			seat_root.modulate = Color(1, 1, 1, 0.55) if not bool(p.alive) else Color.WHITE
-
-		# 体力闪电（道具系统的展示预留，暂为常量 3/5）
-		var stamina := int(p.get("stamina", 3))
-		for i in (row.pips as Array).size():
-			var pip: Panel = row.pips[i]
-			pip.add_theme_stylebox_override("panel", UIKit.stylebox(
-				Color(1.0, 0.85, 0.3, 0.85) if i < stamina else Color(1, 1, 1, 0.07),
-				4, Color(0, 0, 0, 0.25), 1))
-
-		# 座位卡上的道具牌位已随批次 3 Task 6 拆除（背包改由桌面上的手中牌实体呈现，
-		# 公开背包这一层暂时真空 —— 见 doc/development/开发台账.md §三）。
-		# 这里原来那圈 `board.set_seat_slot(...)` 随之删除。
-
-		# 金额：滚动数字 + 涨跌闪色 + 棋盘飘字
-		var target := int(p.money)
-		var shown := int(row.shown)
-		if shown != target:
-			var diff := target - shown
-			row.shown = target
-			if row.tw != null and (row.tw as Tween).is_valid():
-				row.tw.kill()
-			var tw := create_tween()
-			row.tw = tw
-			var ml: Label = row.money_l
-			tw.tween_method(func(v: int) -> void: ml.text = GameData.fmt_money(v), shown, target, 0.45) \
-				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-			var col := UIKit.GOOD if diff > 0 else UIKit.DANGER
-			ml.add_theme_color_override("font_color", col)
-			tw.tween_callback(func() -> void:
-				ml.add_theme_color_override("font_color", UIKit.TEXT)
-			).set_delay(0.6)
-			if bool(p.alive):
-				# 收租时这一帧会有两条飘字（付款方红、收款方绿），两者都以「各自棋子」为中心，
-				# 而全景缩放下两枚棋子可能只差十几像素、标签却有七八十像素宽 → 必然叠在一起。
-				# 按涨/跌分开纵向落点：进账往上飘、支出往下飘，拉开约 46px，任何格距都不重叠。
-				var fy := -26.0 if diff > 0 else 20.0
-				var pos := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, fy)
-				Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
-				Fx.play("cash" if diff > 0 else "pay", -5.0)
-				_spawn_money_fly(peer, diff, ml)
 		# 顶部战况面板：现金 / 地产数 / 身家（与房主 _net_worth 同一公式）
 		var prop_n := 0
 		var worth := int(p.money)
@@ -1500,19 +1430,29 @@ func _refresh_players() -> void:
 			if int(td.get("owner", GameData.NO_OWNER)) == peer:
 				prop_n += 1
 				worth += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
-		est_map[peer] = "地产 ×%d · 身家 %s" % [prop_n, GameData.fmt_money(worth)]
 		worth_map[peer] = worth
 		prop_map[peer] = prop_n
+		# 金额变动：数字滚动的那块控件没了，**收支反馈保留在棋子上的飘字 + 飞钞 + 音效**。
+		# 「上一次显示的金额」从行里搬到一个 peer -> int 的表（`_money_shown`），
+		# 判据与语义一字未改 —— 只有真的变了才播。
+		var target := int(p.money)
+		var shown := int(_money_shown.get(peer, target))
+		_money_shown[peer] = target
+		if shown != target and bool(p.alive):
+			var diff := target - shown
+			var col := UIKit.GOOD if diff > 0 else UIKit.DANGER
+			# 收租时这一帧会有两条飘字（付款方红、收款方绿），两者都以「各自棋子」为中心，
+			# 而全景缩放下两枚棋子可能只差十几像素、标签却有七八十像素宽 → 必然叠在一起。
+			# 按涨/跌分开纵向落点：进账往上飘、支出往下飘，拉开约 46px，任何格距都不重叠。
+			var fy := -26.0 if diff > 0 else 20.0
+			var pos := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, fy)
+			Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
+			Fx.play("cash" if diff > 0 else "pay", -5.0)
+			_spawn_money_fly(peer, diff)
 
-		if not bool(p.alive):
-			row.money_l.text = "已出局"
-			row.money_l.add_theme_color_override("font_color", UIKit.TEXT_DIM)
-
-	# 身家排名 → 座位徽章 + 地产/身家行
+	# 身家排名 → 右栏名册（座位卡上的排名徽章与"地产/身家"行随座位卡一起删了）
 	var order: Array = worth_map.keys()
 	order.sort_custom(func(a, b) -> bool: return int(worth_map[a]) > int(worth_map[b]))
-	for i in order.size():
-		board.update_seat_stats(int(order[i]), i + 1, String(est_map[int(order[i])]))
 
 	# 右栏名册复用上面刚算出的身家/排名（公式只留这一处，避免两套算法悄悄跑偏）
 	var standing: Array = []
@@ -1526,10 +1466,6 @@ func _refresh_players() -> void:
 			"props": int(prop_map.get(rp, 0)), "items": (rpl.get("items", []) as Array).size(),
 		})
 	_refresh_rail(standing)
-
-	for peer in _player_rows.keys():
-		if not seen.has(peer):
-			_player_rows.erase(peer)  # 座位是桌面世界的一部分，保留在桌上（掉线/出局只改显示）
 
 ## 右栏名册：按身家倒序填 4 行（名次 / 棋子色 / 名字 / 现金 / 地产·道具），
 ## 轮到谁行动就把谁的左侧竖条点亮，自己那行标出来。
@@ -1594,7 +1530,7 @@ func _refresh_actions() -> void:
 	_refresh_item_buttons(my_turn, await_state)
 	# 「轮到你转盘了」——原来这里写底栏状态条文案并顺手把镜头对回自己。底栏已随批次 3
 	# Task 6 取消：**状态文案这一层信息没有了**（见 doc/development/架构总览.md §五），
-	# 「该你了」改由牌垫阶段按钮的点亮/置灰（set_phase_buttons 的 style）与座位卡上的
+	# 「该你了」改由牌垫阶段按钮的点亮/置灰（set_phase_buttons 的 style）与立牌上的
 	# 操作倒计时承担，发生过的事由战报承担。镜头对焦这半与文字无关，保留。
 	if await_state == "roll" and is_my_roll:
 		if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
@@ -3134,7 +3070,8 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 ## 表现侧有两处，必须都在这一个函数里做：① 桌上手牌抬起 + 提亮（`table_props.set_hand_selected`）；
 ## ② 待确认丢弃的红标清掉（选中任何一张 = 撤回待丢弃）。**不留给调用点** —— 原先那行
 ## `set_hand_selected` 补在唯一调用点（`_on_hand_clicked`），将来任何新入口（批次 5 的立牌）都会
-## 静默丢掉可见的选中反馈。`board.set_item_selected` 现在空转（座位卡牌位已拆），保留是为玩法侧接口不变。
+## 静默丢掉可见的选中反馈。`board.set_item_selected` 现在只记状态、没有落点（座位卡已退场），
+## 保留是为玩法侧接口不变。
 func _on_item_slot_clicked(peer: int, slot: int) -> void:
 	if peer != my_peer:
 		return
@@ -3331,7 +3268,7 @@ func _begin_tile_target(slot: int, idxs) -> void:
 	if board != null:
 		board.set_select_tiles(arr)
 
-## 选玩家完成（棋盘座位卡点击）
+## 选玩家完成（桌上**立牌**点击 —— 座位卡已随批次 5 Task 2 退场，立牌是这条链路唯一的来源）
 func _on_seat_clicked(peer: int) -> void:
 	if _tgt_stage == "peer" and peer != my_peer:
 		var then := String(ItemData.def(_target_item_id()).get("then", ""))
@@ -3471,11 +3408,19 @@ func _apply_audio() -> void:
 	AudioServer.set_bus_mute(0, audio_mute)
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(audio_volume, 0.0001)))
 
-## 飞钞：金额变动时账单在棋子与座位卡金额栏之间飞（Monopoly GO 式收支反馈）
-func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
+## 飞钞：金额变动时账单在棋子与**那个人的立牌**之间飞（Monopoly GO 式收支反馈）。
+##
+## 座位卡已随批次 5 Task 2 退场，落点（原来传进来的金额 Label）换成桌上立牌的牌心
+## —— 立牌就是今天的"座位卡"，上面也写着身家。立牌还没建出来时退回棋子那一点，
+## 只影响飞钞的终点、不改变"金额变了才飞"的判据。
+func _spawn_money_fly(peer: int, diff: int) -> void:
 	var good := diff > 0
-	var card_at := ml.get_global_rect().get_center()
 	var token_at := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, -18)
+	var card_at := token_at
+	if table3d != null and table3d.table_props != null:
+		var sp = table3d.table_props.standee_screen_center(peer)
+		if sp != null:
+			card_at = sp as Vector2
 	for i in 4:
 		var bill := Panel.new()
 		bill.size = Vector2(22, 12)
@@ -3528,7 +3473,8 @@ func _process(_delta: float) -> void:
 	if dev.enabled:
 		dev.refresh_panel()
 
-## 操作倒计时（D 方案）：嵌在当前行动者的座位卡里、随座位朝向旋转。
+## 操作倒计时（D 方案）：**只挂当前行动者那一块**（留痕 §四 的原设计：嵌在行动者的
+## 座位卡里 —— 批次 5 Task 2 起载体换成桌上的 3D 立牌，这条"只挂行动者"的语义一字未改）。
 ## 广播一秒一条，本机逐帧扣 delta 插值：暂停时 _process 不跑、计时随房主窗口一起冻结，
 ## Engine.time_scale（仅 autotest 会改）也天然对齐——这正是持续动画走 _process 相位的约定。
 func _refresh_op_timer(delta: float) -> void:
@@ -3537,19 +3483,16 @@ func _refresh_op_timer(delta: float) -> void:
 		_op_left = maxf(_op_left - delta, 0.0)
 	if show or _op_shown:
 		var kind_text := String(OP_KIND_LABELS.get(_op_kind, _op_kind)) if show else ""
-		board.set_op_timer(_op_owner, kind_text, _op_left, _op_total)
-		# 同一份数据再推一份到桌上的立牌（批次 5 Task 1）。**不动上面那条**（座位卡还没拆，
-		# Task 2 才拆）。立牌上只有**当前行动者**那一块露倒计时（留痕 §四），
-		# 所以窗口收起时传 NO_PEER = 四块一起收起。
+		# 立牌上只有**当前行动者**那一块露倒计时，所以窗口收起时传 NO_PEER = 四块一起收起。
 		if table3d != null and table3d.table_props != null:
 			table3d.table_props.set_standee_timer(_op_owner if show else GameData.NO_PEER,
 				kind_text, _op_left, _op_total)
-		# 小卖部全屏界面盖住整块棋盘，座位卡上的倒计时在里面看不见：同一份数据再推一份到面板
+		# 小卖部全屏界面盖住整块棋盘，立牌上的倒计时在里面看不见：同一份数据再推一份到面板
 		if shop_layer != null and shop_layer.visible:
 			_refresh_shop_timer(kind_text)
 	_op_shown = show
 
-## 小卖部面板底部的倒计时：呈现口径与 board_view.set_op_timer（座位卡那条）逐条对齐。
+## 小卖部面板底部的倒计时：呈现口径与立牌上那条（原座位卡那条）逐条对齐。
 ## 数据全部来自 _op_*（由 s_op_timer 广播 + 本机逐帧扣 delta），不另起一套计时，
 ## 否则会与房主窗口漂移。kind_text="" 表示窗口已关，整行收起。
 func _refresh_shop_timer(kind_text: String) -> void:

@@ -41,6 +41,9 @@ static func build_play_ui(g: Node) -> void:
 	g.add_child(g.table3d)
 	g.board = g.table3d.board
 	g.board.tile_clicked.connect(g._on_tile_clicked)
+	# `seat_clicked` 自批次 5 Task 2 起**没有发射方**了（座位卡退场，"点玩家"改由桌上的 3D
+	# 立牌命中后直调 `_on_seat_clicked`）。连接保留：它接的是玩法入口，接口不动（同
+	# board_view 里 item_slot_clicked 那条先例）。
 	g.board.seat_clicked.connect(g._on_seat_clicked)
 
 	# 屏幕层暗角：铺满屏幕、四角压暗（Compatibility 没有 SSAO/景深，氛围靠它补）。

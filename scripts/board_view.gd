@@ -10,6 +10,10 @@ class_name BoardView
 ## 平移已删除（见批次 1）。
 
 signal tile_clicked(idx: int)
+## **已无发射方（批次 5 Task 2 起）**：座位卡整体退场后，画布里不再有"点玩家"的落点 ——
+## 「点玩家选目标」改由**桌上的 3D 立牌**承担，命中后直接调 `game._on_seat_clicked(peer)`
+##（见 game.gd `_on_table_click` 的第 3) 段）。信号与连接一律保留（同下面两条的先例）：
+## 玩法入口 `_on_seat_clicked` 仍在，接口别动。
 signal seat_clicked(peer: int)
 ## 下面两条原属「座位卡道具牌位」那一排（已随批次 3 Task 6 拆除），现在**没有发射方**：
 ## 选道具改由桌面上的手中牌实体调 `game._on_item_slot_clicked`，丢弃按钮的落点待定。
@@ -40,27 +44,26 @@ const DECK_BACK := 0.28
 ## 总时长（房主结算等待与它保持同步）。由四个相位派生，改相位不会忘记同步。
 const DECK_CARD_TIME := DECK_OUT + DECK_FLIP + DECK_HOLD + DECK_BACK
 
-# 正方形牌桌：四条操作栏拼成一个闭合方框，长方形棋盘嵌在框内
-# （底=本地玩家，左/上/右=对手，内容朝向各自主人）
-const BAND_SIDE := 240.0     # 左右操作栏宽（座位件厚 220 + 边距）
-const BAND_TB := 286.0       # 上下操作栏厚
-const HOLE_MX := 16.0        # 棋盘与左右栏的间隙
-# 方框边长由棋盘长边驱动，上下间隙动态配平，桌面恒为正方形
-static var TABLE := _make_table()
+## 棋盘在桌垫坐标系里的原点（世界坐标）：18×12 格 × 112 = 2016×1344 的那块。
+## 批次 5 Task 2 起四条座位栏离开了画布，棋盘不再被一个方框嵌着 —— 这个偏移现在只是
+## 「棋盘摆在桌垫的哪儿」，取景与桌垫窗口都以它 + MAT_RECT 为基准。
+const BOARD_OFFSET := Vector2(16.0, 226.0)
 
-## 棋盘下移贴住玩家数据区：下缘只留小缝，余下空隙留给顶部数据面板
-const HOLE_GAP_BOTTOM := 80.0
-static var BOARD_OFFSET := _make_board_offset()
+## 桌垫（印在木桌上的那块"布"）在**世界坐标**里的矩形 = 棋盘 + 一圈留白。
+## 左右/上等宽、**下边最厚**：那一条正是"玩家面前"（本地玩家坐近端），
+## 牌垫阶段按钮就落在那里（见 _place_phase_buttons）——留白是刻意的、不是随手取的边距。
+## 这块矩形就是桌面上看得见的那块桌垫：TableView3D 的 `TEX_WINDOW_PX`（画布口径）
+## 与它是**同一块地方的同一比例**，改一边必须改另一边（layout_test 有断言钉住两者一致）。
+const MAT_MX := 100.0
+const MAT_MT := 100.0
+const MAT_MB := 260.0
+static var MAT_RECT := Rect2(BOARD_OFFSET - Vector2(MAT_MX, MAT_MT),
+	WORLD + Vector2(MAT_MX * 2.0, MAT_MT + MAT_MB))
 
-static func _make_table() -> Rect2:
-	var side: float = WORLD.x + 2.0 * (BAND_SIDE + HOLE_MX)
-	var my: float = (side - 2.0 * BAND_TB - WORLD.y) * 0.5
-	return Rect2(-(BAND_SIDE + HOLE_MX), -(BAND_TB + my), side, side)
-
-static func _make_board_offset() -> Vector2:
-	var hole_bottom := TABLE.end.y - BAND_TB
-	return Vector2(HOLE_MX, hole_bottom - HOLE_GAP_BOTTOM - WORLD.y)
-const SEAT_SIZE := Vector2(1068, 220)
+## 桌垫在画布上的宽度（画布像素）。取景把 MAT_RECT **正好**塞成这个宽度、画布正中 ——
+## 于是桌垫内容刚好铺满 TableView3D 的纹理窗口（窗口宽就是它，也居中）。
+## 与 `TEX_WINDOW_PX` 是一套口径：改这个数必须同步改那边。
+const MAT_WINDOW_W := 2020.0
 
 var auto_follow := true      # 用户拖拽后关闭，点「跟随」按钮恢复
 var cam_locked := false      # 摆拍/剧情演出时锁住自动镜头（focus_* 直接忽略）
@@ -147,10 +150,9 @@ func _ready() -> void:
 	_build_tiles()
 	_build_interior()
 	_build_ring()
+	_build_phase_buttons()
 	resized.connect(func() -> void: _need_fit = true)
-	mouse_exited.connect(func() -> void:
-		set_hover(-1)
-		_set_seat_hover(-1))
+	mouse_exited.connect(func() -> void: set_hover(-1))
 
 # ---------------- 坐标换算 ----------------
 
@@ -180,19 +182,25 @@ func _apply_cam() -> void:
 	_world.scale = Vector2.ONE * _zoom
 	_table.rotation = _rot
 	_world.position = _visible_center().rotated(-_rot) - _center * _zoom
+	# 阶段按钮住在**画布层**（不跟 _world）：位置只由桌垫矩形与可视区中心决定，与镜头无关，
+	# 但可视区（窗口尺寸）会变，所以随每次摆相机一起重摆一次（很便宜）。
+	_place_phase_buttons()
 
-## 注视点限制在桌面内容内（旋转 90° 倍数时可视宽高互换）。
+## 注视点限制在桌垫内（旋转 90° 倍数时可视宽高互换）。
 ## rot 省略时用当前 _rot；但算「正要转去的那个视角」的目标时必须显式传 _rot_target，
 ## 否则会拿旋转前的可视宽高去夹取，目标点偏出数百像素（见 fix/v0.0.2）。
+## 边界用 MAT_RECT：它是画布内容的全部（座位栏退场后画布里只剩桌垫）。
+## 全景倍率下可视区比桌垫大（画布是方的、桌垫是横的），两条夹取都落到
+## 「居中对齐」那一支 —— 即全景时桌垫恒在正中，这正是取景要的。
 func _clamp_center(c: Vector2, rot: float = INF) -> Vector2:
 	var vr := _visible_rect()
 	var r: float = _rot if is_inf(rot) else rot
 	var half := (vr.size.rotated(-r) * 0.5).abs() / _zoom
-	var mn := TABLE.position + half
-	var mx := TABLE.end - half
+	var mn := MAT_RECT.position + half
+	var mx := MAT_RECT.end - half
 	var out := c
-	out.x = TABLE.get_center().x if mn.x > mx.x else clampf(c.x, mn.x, mx.x)
-	out.y = TABLE.get_center().y if mn.y > mx.y else clampf(c.y, mn.y, mx.y)
+	out.x = MAT_RECT.get_center().x if mn.x > mx.x else clampf(c.x, mn.x, mx.x)
+	out.y = MAT_RECT.get_center().y if mn.y > mx.y else clampf(c.y, mn.y, mx.y)
 	return out
 
 func _index_at(view_pos: Vector2) -> int:
@@ -206,10 +214,13 @@ func _index_at(view_pos: Vector2) -> int:
 # ---------------- 场景搭建 ----------------
 
 func _build_backdrop() -> void:
-	# 一整张连续的木纹桌面：棋盘区和操作栏坐在同一张桌上，没有材质接缝
+	# 桌垫：批次 2 那张"整张木纹桌面"贴图**降级为印在桌上的桌垫**（设计稿 §五 路线 B），
+	# 尺寸收到 MAT_RECT（棋盘 + 一圈留白）。四条座位栏拆掉后画布只剩这一块，
+	# 桌垫之外那一圈木桌由 TableView3D 的第二个平面（wood_floor.jpg）承担 ——
+	# 这里画出来的是"布"，那里才是"木"。
 	var table := Panel.new()
-	table.position = TABLE.position - Vector2(30, 30)
-	table.size = TABLE.size + Vector2(60, 60)
+	table.position = MAT_RECT.position
+	table.size = MAT_RECT.size
 	table.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	table.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.10, 0.085, 0.06), 30, Color(0.30, 0.23, 0.15), 3, 18))
 	_world.add_child(table)
@@ -223,7 +234,7 @@ func _build_backdrop() -> void:
 	wood.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	table.add_child(wood)
 
-	# 棋盘区：同一张木纹上轻微压暗 + 描边勾出边界，格子直接落在桌面上
+	# 棋盘区：同一张木纹上轻微压暗 + 描边勾出边界，格子直接落在桌垫上
 	var bg := Panel.new()
 	bg.position = BOARD_OFFSET - Vector2(26, 26)
 	bg.size = WORLD + Vector2(52, 52)
@@ -812,17 +823,21 @@ func _visible_rect() -> Rect2:
 func _zoom_from_factor(factor: float) -> float:
 	return clampf(factor, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR) * _fit_zoom
 
-## 全桌概览（把整张围桌塞进可视区域）；hard=true 立即到位
+## 桌垫概览（批次 5 Task 2 起就是"取景的全部"）：把**整块桌垫**（MAT_RECT）正好塞成
+## `MAT_WINDOW_W` 画布像素宽、画布正中 —— 于是桌垫内容与 TableView3D 的纹理窗口严丝合缝，
+## 桌面上就是"木桌 + 居中一块印着棋盘的桌垫"。hard=true 立即到位。
+##
+## 为什么不再按"可视区大小自适应"：窗口是一块**写死的**画布矩形（`TEX_WINDOW_PX`），
+## 若取景按可视区自适应，两者就会脱钩（画布一变，桌垫内容就滑出窗口）。
+## 这条把窗口与取景锁成同一个比例关系，`_place_phase_buttons` 也跟着它走。
 func fit_overview(hard := false) -> void:
 	auto_follow = false
 	_follow_peer = -1
 	_has_follow_pt = false
-	var vr := _visible_rect()
-	var occ := _occupied_rect()
-	# 基准倍率 = 整张围桌正好塞进可视区。全景就是它本身（1.0 倍），别的倍率都以它换算。
-	_fit_zoom = minf(vr.size.x / (occ.size.x + 40.0), vr.size.y / (occ.size.y + 40.0))
+	# 基准倍率 = 桌垫正好铺满窗口宽度。全景就是它本身（1.0 倍），别的倍率都以它换算。
+	_fit_zoom = MAT_WINDOW_W / MAT_RECT.size.x
 	_zoom = _zoom_from_factor(1.0)
-	_center_target = occ.get_center()
+	_center_target = MAT_RECT.get_center()
 	if hard:
 		_center = _center_target
 	_apply_cam()
@@ -903,15 +918,13 @@ func _gui_input(ev: InputEvent) -> void:
 				_press_pos = mb.position
 			elif _dragging:
 				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
-					var e := _seat_edge_at(mb.position)
-					if e != -1:
+					# 座位卡已拆（批次 5 Task 2）：画布里只剩棋盘与牌堆，左键单击 = 点格子。
+					# 「点玩家选目标」不再走画布 —— 立牌是 3D 实体，由 game._on_table_click
+					# 命中后转给既有的 _on_seat_clicked（见 scripts/game.gd 第 3) 段）。
+					var idx := _index_at(mb.position)
+					if idx >= 0:
 						Fx.play("click", -10.0)
-						seat_clicked.emit(int(_seats[e].peer))   # 仍要发：指向性道具靠它选目标
-					else:
-						var idx := _index_at(mb.position)
-						if idx >= 0:
-							Fx.play("click", -10.0)
-							tile_clicked.emit(idx)
+						tile_clicked.emit(idx)
 				elif mb.button_index == MOUSE_BUTTON_RIGHT and not _panning:
 					cancel_clicked.emit()   # 右键单击（非拖拽平移）取消当前选择
 				if not (mb.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)):
@@ -925,11 +938,15 @@ func _gui_input(ev: InputEvent) -> void:
 			# 相机平移本身不再需要：取景已由 3D 相机（TableView3D）接管，2D 相机不响应拖拽。
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
-				_set_seat_hover(-1)
 		else:
 			set_hover(_index_at(mm.position))
-			_set_seat_hover(_seat_edge_at(mm.position))
 			_set_token_hover(_token_at_view(mm.position))
+
+## 镜头是否还在转（对局层用它避让：转的时候不抢注视点）。
+## 转视角本身已在批次 1 删除（`_rot_target` 恒为 0），但 `_rotating` 这套状态保留 ——
+## 它是「镜头正在动、别来抢」这条判据的载体，`game._refresh_actions` 仍在读。
+func is_rotating() -> bool:
+	return _rotating
 
 ## 设置悬停格（-1 清除），触发高亮渐变
 func set_hover(idx: int) -> void:
@@ -942,263 +959,13 @@ func set_hover(idx: int) -> void:
 	if idx >= 0:
 		_animate_tile(idx, true)
 
-# ---------------- 四人围桌座位 ----------------
-
-var _seats := {}         # edge(0底 1左 2上 3右) -> 座位部件字典
-var _seat_of_peer := {}  # peer -> edge
-var _my_peer := -1
-
-## 按行动顺序落座：e0=自己，e1=下家(左)，e2=对家(上)，e3=上家(右)；人不满空位不建
-func build_seats(players: Array, my_peer: int) -> void:
-	for e in _seats:
-		(_seats[e].root as Control).queue_free()
-	_seats.clear()
-	_seat_of_peer.clear()
-	_my_peer = my_peer
-	var my_i := 0
-	for i in players.size():
-		if int(players[i].peer) == my_peer:
-			my_i = i
-			break
-	for k in players.size():
-		var p: Dictionary = players[(my_i + k) % players.size()]
-		_seats[k] = _make_seat(p, k)
-		_seat_of_peer[int(p.peer)] = k
-	# 座位栏比棋盘占位大一圈（左右各 BAND_SIDE+HOLE_MX、上下各 BAND_TB）：落位后必须重取景，
-	# 否则四条栏落在画布之外，指向性道具（交换生 / 跑腿券 / 强拆令）点不到人。
-	# 取景本身不用改：_occupied_rect() 已把座位栏 merge 进去，重算一次就够。
-	# 光置 _need_fit 不够：客户端要等 s_state 才建座，那时首次取景早已做完（_fitted=true），
-	# _process 会走 _apply_cam() 分支 —— 只重算变换，不重算基准倍率与注视点。故这里直接取景。
-	# （座位只在开局落一次 —— game.gd 以 seat_count()==0 为界 —— 这次硬取景就是初始镜头。）
-	if size.x > 10.0:
-		fit_overview(true)
-	else:
-		_need_fit = true   # 布局还没跑（首个 _process 之前）：交给它做首次取景，那时已含座位栏
-
-func seat_count() -> int:
-	return _seats.size()
-
-func seat(peer: int) -> Dictionary:
-	return _seats.get(int(_seat_of_peer.get(peer, -1)), {})
-
-## 第 e 条操作栏的方框区域（世界坐标）：上下栏横贯全边、左右栏嵌在上下栏之间，拼成闭合方框
-func _seat_bar(e: int) -> Rect2:
-	var ht := TABLE.position.y + BAND_TB
-	var hb := TABLE.end.y - BAND_TB
-	match e:
-		1: return Rect2(TABLE.position.x, ht, BAND_SIDE, hb - ht)
-		3: return Rect2(WORLD.x + HOLE_MX, ht, BAND_SIDE, hb - ht)
-		2: return Rect2(TABLE.position.x, TABLE.position.y, TABLE.size.x, BAND_TB)
-		_: return Rect2(TABLE.position.x, hb, TABLE.size.x, BAND_TB)
-
-func _seat_center(e: int) -> Vector2:
-	return _seat_bar(e).get_center()
-
-func _occupied_rect() -> Rect2:
-	var r := Rect2(Vector2.ZERO, WORLD).grow(30.0)
-	for e in _seats:
-		r = r.merge(_seat_bar(e))
-	# 顶部空区（棋盘上缘到上家操作栏之间的空白带）：没有上家座位时也要整体入画
-	var zone_top := TABLE.position.y + BAND_TB
-	r = r.merge(Rect2(Vector2(-HOLE_MX, zone_top),
-		Vector2(WORLD.x + 2.0 * HOLE_MX, BOARD_OFFSET.y - 26.0 - zone_top)))
-	return r
-
-func is_rotating() -> bool:
-	return _rotating
-
-func _seat_edge_at(view_pos: Vector2) -> int:
-	var wpt := _world_from_view(view_pos)
-	for e in _seats:
-		if _seat_bar(e).has_point(wpt):
-			return e
-	return -1
-
-func _seat_at(view_pos: Vector2) -> int:
-	var e := _seat_edge_at(view_pos)
-	return int(_seats[e].peer) if e != -1 else -1
-
-var _hover_seat := -1  # 悬停中的座位边（-1 无）
-
-## 悬停反馈：内容卡提亮 + 手势光标，明示「这块可以点」
-func _set_seat_hover(e: int) -> void:
-	if e == _hover_seat:
-		return
-	var old := _hover_seat
-	_hover_seat = e
-	if old != -1 and _seats.has(old):
-		_seat_hover_fx(old, false)
-	if e != -1 and _seats.has(e):
-		_seat_hover_fx(e, true)
-	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if e != -1 else Control.CURSOR_ARROW
-
-func _seat_hover_fx(e: int, hovered: bool) -> void:
-	var content: Control = _seats[e].get("content")
-	if content == null or not is_instance_valid(content):
-		return
-	var tw := create_tween()
-	tw.tween_property(content, "modulate", Color(1.16, 1.16, 1.24) if hovered else Color.WHITE, 0.12)
-
-## 一个座位：整条操作栏面板（拼方框的一边）+ 旋转排布的内容件
-## （头像/名字/现金/体力 + 5 个道具牌位），内容朝向座位主人
-func _make_seat(p: Dictionary, e: int) -> Dictionary:
-	var bar := _seat_bar(e)
-	var holder := Control.new()
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_world.add_child(holder)
-
-	# 栏底：极淡的暗色横条，只负责拼出方框轮廓，不描边不抢眼
-	var bar_sb := UIKit.stylebox(Color(0.03, 0.035, 0.06, 0.40), 18, Color(0, 0, 0, 0), 0)
-	var body := Panel.new()
-	body.position = bar.position
-	body.size = bar.size
-	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_theme_stylebox_override("panel", bar_sb)
-	holder.add_child(body)
-
-	var root := Control.new()
-	root.size = SEAT_SIZE
-	root.pivot_offset = SEAT_SIZE * 0.5
-	root.rotation_degrees = e * 90.0
-	root.position = bar.get_center() - SEAT_SIZE * 0.5
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(root)
-
-	# 内容卡：紧凑包住信息与牌位，回合高亮描边画在这里而不是整条栏上
-	var sb := UIKit.stylebox(Color(0.078, 0.086, 0.124, 0.88), 16, Color(0, 0, 0, 0), 2)
-	var card := Panel.new()
-	card.size = SEAT_SIZE
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_stylebox_override("panel", sb)
-	root.add_child(card)
-
-	# 「可选中」高亮叠层：指向性道具选玩家时点亮（世界坐标，随座位旋转）
-	var seat_hl := Panel.new()
-	seat_hl.size = SEAT_SIZE
-	seat_hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	seat_hl.visible = false
-	seat_hl.add_theme_stylebox_override("panel",
-		UIKit.stylebox(Color(0, 0, 0, 0), 16, SELECT_COLOR, 3, 0))
-	root.add_child(seat_hl)
-
-	var chip: Control
-	var piece := UIKit.piece_tex(int(p.color) % 4)
-	if piece != null:
-		var tr := TextureRect.new()
-		tr.texture = piece
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tr.position = Vector2(16, 16)
-		tr.size = Vector2(52, 60)
-		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		root.add_child(tr)
-		chip = tr
-	else:
-		chip = UIKit.chip(GameData.PLAYER_COLORS[int(p.color) % 4], 26)
-		chip.position = Vector2(22, 26)
-		root.add_child(chip)
-
-	var name_l := UIKit.label(String(p.name), 21, UIKit.TEXT)
-	name_l.position = Vector2(78, 14)
-	name_l.size = Vector2(158, 56)
-	name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(name_l)
-
-	var money_l := UIKit.label(GameData.fmt_money(int(p.money)), 22, UIKit.ACCENT)
-	money_l.position = Vector2(14, 92)
-	money_l.size = Vector2(224, 40)
-	money_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(money_l)
-
-	var stamina_row := HBoxContainer.new()
-	stamina_row.position = Vector2(14, 152)
-	stamina_row.size = Vector2(224, 40)
-	stamina_row.add_theme_constant_override("separation", 5)
-	stamina_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(stamina_row)
-	var bolt := UIKit.label("⚡", 20, Color(1.0, 0.85, 0.3))
-	bolt.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	stamina_row.add_child(bolt)
-	var pips: Array = []
-	for i in 5:
-		var pip := Panel.new()
-		pip.custom_minimum_size = Vector2(24, 30)
-		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pip.add_theme_stylebox_override("panel", UIKit.stylebox(Color(1, 1, 1, 0.07), 4, Color(0, 0, 0, 0.25), 1))
-		stamina_row.add_child(pip)
-		pips.append(pip)
-
-	var est_l := UIKit.label("", 13, UIKit.TEXT_DIM)
-	est_l.position = Vector2(14, 132)
-	est_l.size = Vector2(166, 18)
-	est_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	est_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(est_l)
-	var badge_slot := Control.new()
-	badge_slot.position = Vector2(186, 127)
-	badge_slot.size = Vector2(30, 30)
-	badge_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(badge_slot)
-
-	# 操作倒计时簇（D 方案，2026-10-02 拍板）：嵌在座位卡左列底行（体力行下方），
-	# 只有当前行动者的卡显示；随座位一起旋转。数据由 game.gd:_refresh_op_timer 每帧推送。
-	var trow := HBoxContainer.new()
-	trow.position = Vector2(14, 190)
-	trow.size = Vector2(224, 26)
-	trow.add_theme_constant_override("separation", 6)
-	trow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	trow.visible = false
-	root.add_child(trow)
-	var tkind := UIKit.label("", 14, UIKit.ACCENT)
-	trow.add_child(tkind)
-	var ttrack := ColorRect.new()
-	ttrack.color = Color(1, 1, 1, 0.13)
-	ttrack.custom_minimum_size = Vector2(84, 6)
-	ttrack.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	ttrack.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	trow.add_child(ttrack)
-	var tfill := ColorRect.new()
-	tfill.color = UIKit.ACCENT
-	tfill.size = Vector2(84, 6)
-	tfill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ttrack.add_child(tfill)
-	var tleft := UIKit.label("", 14, UIKit.TEXT)
-	tleft.custom_minimum_size = Vector2(48, 0)
-	tleft.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	tleft.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	trow.add_child(tleft)
-
-	# 座位卡上的「道具牌位」那一排（5 个 148×196 的卡槽 + 点选 + ✕ 丢弃）已随批次 3 Task 6
-	# 拆掉：背包改由桌面上的**手中牌实体**呈现（table_props.gd），选/出牌也都在那边。
-	# 这里不再建 slots，故 seats 字典里没有 `slots` 键（读它的地方一律 `sd.get("slots", [])`，
-	# 拿到空数组即空转，不崩）。**公开背包**（看别人的道具）这一层暂时是真空，见
-	# doc/development/开发台账.md §三 —— 要等批次 5 的立牌带回来。
-
-	# 牌垫右端的两个阶段按钮（竖排；只挂在自己座位；随桌子世界旋转）
-	if e == 0:
-		var pv := VBoxContainer.new()
-		pv.position = Vector2(bar.get_center().x + SEAT_SIZE.x * 0.5 + 12.0,
-			bar.get_center().y - SEAT_SIZE.y * 0.5 + 10.0)
-		pv.custom_minimum_size = Vector2(184, 0)
-		pv.add_theme_constant_override("separation", 16)
-		pv.mouse_filter = Control.MOUSE_FILTER_PASS
-		holder.add_child(pv)
-		_phase_spin = UIKit.button("转转盘", 22, "primary")
-		_phase_spin.custom_minimum_size = Vector2(184, 92)
-		_phase_spin.pressed.connect(func() -> void: phase_spin_clicked.emit())
-		pv.add_child(_phase_spin)
-		_phase_use = UIKit.button("使用道具", 22)
-		_phase_use.custom_minimum_size = Vector2(184, 92)
-		_phase_use.pressed.connect(func() -> void: phase_use_clicked.emit())
-		pv.add_child(_phase_use)
-
-	return {"root": holder, "content": root, "sb": sb, "chip": chip, "name_l": name_l, "money_l": money_l,
-		"est_l": est_l, "badge_slot": badge_slot, "hl": seat_hl,
-		"pips": pips, "edge": e, "peer": int(p.peer),
-		"op_timer": trow, "op_kind_l": tkind, "op_track": ttrack, "op_fill": tfill, "op_left_l": tleft,
-		"shown": int(p.money), "tw": null}
+	# 座位卡（四条操作栏 + 内容件 + 倒计时簇 + 道具牌位）已随批次 5 Task 2 **整体退场**：
+	# 名字 / 身家 / 公开背包 / 操作倒计时 / 点选目标全部改由**桌上的 3D 立牌**承担
+	#（scripts/table_props.gd 的 standees 子层，数据由 game._refresh_standees 驱动）。
+	# 画布里从此只剩棋盘与两摞牌堆；阶段按钮搬去了独立的画布层（_build_phase_buttons）。
+	#
+	# 注意下面几条**保留的接口**：它们今天没有座位卡可落点了，但玩法侧仍在调，
+	# 按批次 3 的先例「保留接口 + 加注说明」，不删。
 
 # ---------------- 相机缩放上限 + 开发者叠层 ----------------
 
@@ -1213,62 +980,63 @@ var dev_tile_index := false:
 
 const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部格名：菜绿
 
-## 座位卡统计：身家排名徽章 + 地产/身家行（数据由对局层刷新）
-func update_seat_stats(peer: int, rank: int, est_text: String) -> void:
-	var e := int(_seat_of_peer.get(peer, -1))
-	if e == -1 or not _seats.has(e):
-		return
-	var sd: Dictionary = _seats[e]
-	var el: Label = sd.get("est_l")
-	if el != null and is_instance_valid(el):
-		el.text = est_text
-	var slot: Control = sd.get("badge_slot")
-	if slot != null and is_instance_valid(slot):
-		for c in slot.get_children():
-			c.queue_free()
-		if rank > 0:
-			slot.add_child(UIKit.rank_badge(rank, 28))
-
-## 操作倒计时（D 方案）：只在 owner_peer 的座位卡上显示；kind_text="" 全部收起。
-## 环节名/剩余秒数由对局层每帧推送（_refresh_op_timer），本函数只做呈现。
-func set_op_timer(owner_peer: int, kind_text: String, left: float, total: float) -> void:
-	for e in _seats:
-		var sd: Dictionary = _seats[e]
-		var cl0 = sd.get("op_timer", null)
-		if cl0 == null or not is_instance_valid(cl0):
-			continue
-		var cl: Control = cl0
-		var mine: bool = kind_text != "" and int(sd.get("peer", -1)) == owner_peer
-		cl.visible = mine
-		if not mine:
-			continue
-		var kind_l: Label = sd.get("op_kind_l")
-		if kind_l.text != kind_text:
-			kind_l.text = kind_text
-		var left_l: Label = sd.get("op_left_l")
-		var track: ColorRect = sd.get("op_track")
-		if total > 0.0:
-			track.visible = true
-			var fill: ColorRect = sd.get("op_fill")
-			fill.size.x = track.size.x * clampf(left / total, 0.0, 1.0)
-			var warn := left <= 5.0
-			fill.color = UIKit.DANGER if warn else UIKit.ACCENT
-			var txt := "%d 秒" % ceili(left)
-			if left_l.text != txt:
-				left_l.text = txt
-				left_l.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.TEXT)
-		else:
-			track.visible = false
-			if left_l.text != "不限时":
-				left_l.text = "不限时"
-				left_l.add_theme_color_override("font_color", UIKit.TEXT_DIM)
-
 ## 被选中的道具卡（绿光）：peer=-1 表示无
 var item_selected := {"peer": -1, "slot": -1}
-var self_peer := 1                    # 本地玩家（原用于「道具牌位」那一排，该排已拆，保留接口）
 var _discard_hl := {"peer": -1, "slot": -1}
+
+# ---------------- 牌垫阶段按钮（画布上的独立层，批次 5 Task 2 改址） ----------------
+#
+# **为什么必须改址**：这两枚以前建在 `_make_seat` 的 `e == 0` 分支里、挂在"自己那条座位栏"上，
+# 而它们是**出牌确认（`_on_use_pressed`）的唯一落点**、也是掷轮的入口之一 —— 座位卡一拆，
+# 跟着消失就是"漏了就坏玩法"。现在它们住在一个与座位无关的独立画布层里，
+# 位置由桌垫矩形推导（见 `_place_phase_buttons`）：**玩家面前、不压棋盘内容**。
+# `set_phase_buttons(...)` 的签名与语义一字未动（regression_test 的两条断言替它站岗）。
+var _phase_layer: Control             # 独立画布层（不吃鼠标，只有按钮本身吃）
+var _phase_box: HBoxContainer         # 两枚按钮并排
 var _phase_spin: Button               # 牌垫上的「转转盘」
 var _phase_use: Button                # 牌垫上的「使用道具」
+
+## 建这两枚按钮（`_ready` 里建一次，此后只由 `set_phase_buttons` 改文案/配色/可用）。
+func _build_phase_buttons() -> void:
+	_phase_layer = Control.new()
+	_phase_layer.name = "PhaseButtons"
+	_phase_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 只有按钮本身吃点击
+	_phase_layer.z_index = 70        # 压在棋子 / 光环 / 格详情卡（15~60）之上，与旧座位卡同位阶
+	add_child(_phase_layer)
+	_phase_box = HBoxContainer.new()
+	_phase_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_phase_box.add_theme_constant_override("separation", 16)
+	_phase_layer.add_child(_phase_box)
+	_phase_spin = UIKit.button("转转盘", 22, "primary")
+	_phase_spin.custom_minimum_size = Vector2(184, 92)
+	_phase_spin.pressed.connect(func() -> void: phase_spin_clicked.emit())
+	_phase_box.add_child(_phase_spin)
+	_phase_use = UIKit.button("使用道具", 22)
+	_phase_use.custom_minimum_size = Vector2(184, 92)
+	_phase_use.pressed.connect(func() -> void: phase_use_clicked.emit())
+	_phase_box.add_child(_phase_use)
+	_place_phase_buttons()
+
+## 桌垫在**画布**上的矩形（px）：`MAT_RECT × 基准倍率`，中心恒在可视区中心
+##（取景就是这么定的）。它与 `TableView3D.TEX_WINDOW_PX` 是同一块地方 —— 一边是画布口径、
+## 一边是世界口径；`table_3d.gd` 里有一条断言把它们钉在一起。
+func mat_rect_px() -> Rect2:
+	var r := Rect2(Vector2.ZERO, MAT_RECT.size * _fit_zoom)
+	r.position = _visible_center() - r.size * 0.5
+	return r
+
+## 把按钮层摆到**桌垫下缘那条留白**正中（本地玩家坐近端，那里正是"玩家面前"）。
+##
+## 位置一律由 `mat_rect_px()` 推出来，**不新增任何硬编码的画布坐标**。
+## 放在**画布层**（不挂 `_world`）是刻意的：不跟 `_zoom`，掷轮 / 抽卡推近时按钮不会被放大或推出窗口。
+func _place_phase_buttons() -> void:
+	if _phase_box == null:
+		return
+	var mat_px := mat_rect_px()
+	var s: Vector2 = _phase_box.get_combined_minimum_size()
+	_phase_box.size = s
+	_phase_box.position = Vector2(mat_px.get_center().x - s.x * 0.5,
+		mat_px.end.y - (MAT_MB * _fit_zoom + s.y) * 0.5)
 
 ## 更新牌垫阶段按钮的文案/配色/可用（style: primary=黄 normal=灰 good=绿）
 func set_phase_buttons(spin_text: String, spin_style: String, spin_disabled: bool,
@@ -1282,10 +1050,7 @@ func set_phase_buttons(spin_text: String, spin_style: String, spin_disabled: boo
 		_phase_use.disabled = use_disabled
 		UIKit.restyle_button(_phase_use, use_style)
 
-func set_self_peer(peer: int) -> void:
-	self_peer = peer
-
-## 指向性道具：高亮可选玩家座位卡 / 可选格子（世界坐标；两者互斥）
+## 指向性道具：高亮可选格子（世界坐标；与"高亮可选玩家"互斥）
 func set_select_peers(peers: Array) -> void:
 	_set_hl_tiles([])
 	_set_hl_peers(peers)
@@ -1301,12 +1066,12 @@ func clear_select() -> void:
 	_set_hl_tiles([])
 	_pulse_select(false)
 
-func _set_hl_peers(peers: Array) -> void:
-	for e in _seats:
-		var sd: Dictionary = _seats[e]
-		var hl = sd.get("hl", null)
-		if hl != null and is_instance_valid(hl):
-			(hl as Panel).visible = int(sd.get("peer", -1)) in peers
+## 「哪些玩家此刻可被选中」的高亮：座位卡拆掉后**画布里没有落点了**（立牌是 3D 实体，
+## 见 table_props.gd）。今天这条反馈只剩屏幕层的一句文字提示（`game._show_target_hint`）。
+## **保留接口不删**（`game._begin_peer_target` 仍在调）：立牌上的可选中高亮是**已知的遗留**，
+## 登记在 .superpowers/sdd/v0.5.0-批次5-实施计划/task-2-report.md 的遗留顾虑里。
+func _set_hl_peers(_peers: Array) -> void:
+	pass
 
 func _set_hl_tiles(idxs: Array) -> void:
 	for i in _tile_hl.size():
@@ -1321,10 +1086,6 @@ func _pulse_select(on: bool) -> void:
 	if not on:
 		return
 	var apply := func(a: float) -> void:
-		for e in _seats:
-			var hl = _seats[e].get("hl", null)
-			if hl != null and is_instance_valid(hl) and (hl as Panel).visible:
-				hl.modulate.a = a
 		for hl in _tile_hl:
 			if hl != null and is_instance_valid(hl) and (hl as Panel).visible:
 				hl.modulate.a = a
@@ -1343,43 +1104,20 @@ func _pulse_select(on: bool) -> void:
 ## `table_props.set_hand_discard_pending`（牌身染红），见 doc/development/开发台账.md §三。
 func mark_discard_pending(peer: int, slot: int) -> void:
 	_discard_hl = {"peer": peer, "slot": slot}
-	for e in _seats:
-		var sd: Dictionary = _seats[e]
-		if int(sd.get("peer", -1)) != self_peer:
-			continue
-		var sls: Array = sd.get("slots", [])
-		for i in sls.size():
-			var sp: Panel = sls[i]
-			if not is_instance_valid(sp):
-				continue
-			var b := sp.get_node_or_null("disc_x")
-			if b != null:
-				(b as Button).modulate = Color(1, 0.45, 0.45) \
-					if (int(peer) == self_peer and int(slot) == i) else Color(1, 1, 1, 0.78)
+	# 座位卡已整体退场（批次 5 Task 2），这里没有牌位可以点红了 —— 只剩这份状态。
+	# 待确认的**可见**反馈在桌面上那张手牌自己身上（`table_props.set_hand_discard_pending`，
+	# 牌身染红）。保留函数是因为玩法侧（`game._on_discard_clicked`）仍在调，接口不能断。
 
-## 记「当前选中的道具槽」并给座位卡牌位上绿光。
+## 记「当前选中的道具槽」。
 ##
-## **当前不可达（高亮循环空转，不是死代码，别删）**：座位卡牌位已拆（Task 6）⇒
-## `sd.get("slots", [])` 恒空，下面的绿光循环跑不到；今天只剩 `item_selected` 这份状态。
+## **只剩状态、没有落点**（不是死代码，别删）：座位卡的牌位在批次 3 Task 6 拆掉、
+## 座位卡本身在批次 5 Task 2 退场 ⇒ 以前那两圈"给牌位点绿光"的循环无处可画。
 ## 选中的**可见**反馈在桌面上那张手牌自己身上（`table_props.set_hand_selected`：抬起 + 提亮）。
 ## **为什么留着**：玩法侧（`game._on_item_slot_clicked` / `_clear_item_selection`）仍在写它、
-## 接口不能断；且与 `mark_discard_pending` 同为「座位字典没有 `slots` 键」的书面记录，
-## **批次 5 的立牌会把牌位拿回来**，届时原样复活。
+## 接口不能断。公开背包（看别人的道具）现在由桌上立牌承担（`table_props.set_standees`），
+## 但那排小卡是"品质色 + 件数"、不接点选 —— 这条高亮**不会**跟着立牌复活。
 func set_item_selected(peer: int, slot: int) -> void:
 	item_selected = {"peer": peer, "slot": slot}
-	for e in _seats:
-		var sd: Dictionary = _seats[e]
-		var s_peer := int(sd.get("peer", -1))
-		var sls: Array = sd.get("slots", [])
-		for i in sls.size():
-			var sp: Panel = sls[i]
-			if not is_instance_valid(sp):
-				continue
-			var on := int(item_selected.peer) == s_peer and int(item_selected.slot) == i
-			sp.add_theme_stylebox_override("panel", UIKit.stylebox(
-				Color(0.42, 0.85, 0.55, 0.14) if on else Color(1, 1, 1, 0.035), 10,
-				Color(0.42, 0.85, 0.55, 0.95) if on else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55),
-				2 if on else 1))
 
 ## 镜头调试信息（开发者面板）
 func cam_info() -> String:

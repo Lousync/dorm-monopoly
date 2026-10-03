@@ -327,8 +327,10 @@ func refresh_panel() -> void:
 	lines.append("刷¥%d %s" % [int(g.st.get("refresh_price", 0)), shop_txt])
 	dev_state_l.text = "\n".join(lines)
 	dev_cam_l.text = g.board.cam_info()
-	# 玩家选择按钮懒建 + 文本刷新
-	if dev_pbtns.is_empty() and g.board.seat_count() > 0:
+	# 玩家选择按钮懒建 + 文本刷新。
+	# 判据原来是 `board.seat_count() > 0`（"座位卡建出来了 = 玩家表已知"）；座位卡已随
+	# 批次 5 Task 2 退场，改成直接看状态里的玩家表 —— 同一件事，少绕一层。
+	if dev_pbtns.is_empty() and not (g.st.get("players", []) as Array).is_empty():
 		for p in g.st.get("players", []):
 			var peer := int(p.peer)
 			var b := UIKit.button(String(p.name), 11)

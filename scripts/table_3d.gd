@@ -10,9 +10,18 @@ const TABLE_W := 8.0             # 桌面宽度（世界单位）
 const VP_SIZE := Vector2i(2048, 2048)   # SubViewport 分辨率（清晰度靠它，见设计稿 §十 风险）
 const CAM_TILT_DEG := 50.0       # 俯角：0 = 平视，90 = 正俯视
 const CAM_FOV := 55.0            # 收窄默认 75°：探针实测默认 FOV 下桌面只占屏 1/4
-const CAM_DIST := 5.8            # 相机到注视点的水平距离。窗口恢复为整张画布后桌面回到 8×8，
-                                 # 内容整体向近端挪了 0.68 个世界单位（新并入的顶部死区在远端），
-                                 # 原来 4.4 会把近端的下家座位栏顶出屏幕底部 —— 必须拉远。
+## 相机到注视点的水平距离（3D 端）。
+##
+## **批次 5 Task 2 重调过（5.8 → 5.2）**：桌面从 8×8 变成 8×6.15（窗口裁到桌垫、进深跟着窗口
+## 比例走，见 TEX_WINDOW_PX），加上外圈木纹后整张桌子是 10.4×8.55。5.8 是按"8×8 的方桌"定的，
+## 对今天这张浅一些、但要连木框一起入画的桌子就偏远了（桌子只占屏幕约三成）。
+## 5.2 是拿三条量夹出来的：
+##   * 木桌四角（±5.2 / ±4.28）在**整条视角轨道**上都在画面内，21 档最紧的一档余量 93.4px
+##     （layout_test 的取景断言按**木桌**四角量，不再是桌垫四角 —— 木桌才是"看得见的桌子"）；
+##   * 四块立牌**牌面**的八个角同样全程在画面内，最紧 21.8px；
+##   * 3D 端 ↔ 2D 端桌面投影面积比 0.83（须在 [0.6,1.6]）。
+## 再近（4.9 上下）木桌四角会开始贴边；再远则棋盘上的字更小、白占屏幕。
+const CAM_DIST := 5.2
 
 # ---- 批次 4：双视角。滚轮沿一条轨道在 3D 第一人称 ↔ 2D 桌面之间连续推移
 #（`dolly` 推拉整个删除，见设计稿 §四）。view_t ∈ [0,1] 是这条轨道上的位置。
@@ -43,21 +52,32 @@ const VIEW_DIST_2D := 8.6        # 2D 端「相机到注视点的 3D 距离」�
 const VIEW_STEP := 0.25          # 滚轮每格改多少（4 格从 3D 走到 2D）
 const VIEW_SNAP := 6.0           # 平滑逼近速率：每秒把剩余差距衰减 e^-6（帧率无关的指数逼近）
 
-# 纹理窗口 = 整张画布。取景会把内容（含四条座位栏）铺满画布，裁掉任一边都可能
-# 让某条座位栏既看不见也点不到（见 T4b/T4c）。比例目标推迟到批次 3（座位栏将换成桌上立牌）。
+# 纹理窗口 = **桌垫**（棋盘 + 一圈留白），不再铺满整张画布。座位栏已随批次 5 Task 2
+# 换成桌上立牌 ⇒ 画布不再需要为它们预留，批次 2 推迟的「棋盘铺满桌面」比例目标在这里兑现：
+# 窗口宽 = `BoardView.MAT_WINDOW_W`、与 `BoardView.MAT_RECT`（桌垫的世界矩形）同比例、
+# 且水平垂直都在画布正中 —— 取景（`BoardView.fit_overview`）正是按这个关系把桌垫内容
+# 铺成这一块。于是桌面上看到的 = 一块居中的桌垫 + 外圈的木桌（见 _build_table 的第二个平面）。
 #
-# 曾一度裁到 Rect2(0, 348, 2048, 1700) 让「棋盘铺满桌面」：上家的座位栏在画布 y∈[16,211]，
-# 正好落在被裁掉的顶部，于是它在画布内、却在窗口外 —— 桌面上既看不见也点不到，
-# 指向性道具（交换生 / 跑腿券 / 强拆令）选不中上家。交互优先于比例，恢复整张画布。
-const TEX_WINDOW_PX := Rect2(0.0, 0.0, 2048.0, 2048.0)
+# **改窗口必须两边一起改**：`BoardView.MAT_RECT` / `MAT_WINDOW_W` 与之同源，
+# layout_test 有一条断言钉住"桌垫比例 == 窗口比例且居中"。
+#
+# 历史（别丢掉这条教训）：批次 2 的 T4c 曾把窗口裁到 Rect2(0, 348, 2048, 1700) 让「棋盘铺满桌面」，
+# 而当时上家的**座位栏**在画布 y∈[16,211]、正落在被裁掉的顶部 —— 在画布内、却在窗口外，
+# 桌面上既看不见也点不到，指向性道具（交换生 / 跑腿券 / 强拆令）选不中上家。
+# 那时裁定"交互优先于比例"、恢复整张画布。今天座位栏已不在画布上，那条约束随之解除。
+const TEX_WINDOW_PX := Rect2(14.0, 247.36, 2020.0, 1553.28)
 # 桌面进深：与窗口同比例，否则贴图会被拉伸。
 const TABLE_D := TABLE_W * TEX_WINDOW_PX.size.y / TEX_WINDOW_PX.size.x
 const TABLE_SIZE := Vector2(TABLE_W, TABLE_D)
+## 木纹外框的宽度（世界单位）：桌垫之外铺木纹的那一圈。桌面平面本身**不放**到这么大 ——
+## 见 _build_table 里"第二个平面"的做法与理由。
+const WOOD_FRAME := 1.2
 
 var board: BoardView
 var viewport: SubViewport
 var camera: Camera3D
 var table_mesh: MeshInstance3D
+var wood_mesh: MeshInstance3D       # 木纹外框（桌垫之外那一圈木桌，见 _build_table）
 var vignette: ColorRect        # 屏幕层暗角贴片（build_vignette 造，挂在调用方给的屏幕上）
 
 var table_mat: StandardMaterial3D   # 桌面材质（取样窗口与 TEX_WINDOW_PX 同源）
@@ -140,11 +160,38 @@ func _build_table() -> void:
 	# 取样窗口必须和输入映射（TEX_WINDOW_PX）用同一块：材质默认采整张画布，
 	# 只改几何不改材质的话，看到的是整张桌子、点到的却是窗口那一块 —— 画面与命中不一致。
 	# uv1 采样是 UV * uv1_scale + uv1_offset（偏移在缩放之后）；uv1_* 是 Vector3，只用 xy。
-	table_mat.uv1_scale = Vector3(1.0, TEX_WINDOW_PX.size.y / float(VP_SIZE.y), 1.0)
+	# **两个分量都得给**：窗口曾是"整张画布"，x 那一路 scale 恒为 1 也碰巧对；
+	# 批次 5 Task 2 把窗口裁窄之后，再写死 1.0 就会沿 x 拉出 2020/2048 倍的错位
+	#（layout_test 的「取样窗口 == 映射窗口」那条立刻红 —— 它正是为这个坑留的）。
+	table_mat.uv1_scale = Vector3(TEX_WINDOW_PX.size.x / float(VP_SIZE.x),
+		TEX_WINDOW_PX.size.y / float(VP_SIZE.y), 1.0)
 	table_mat.uv1_offset = Vector3(TEX_WINDOW_PX.position.x / float(VP_SIZE.x),
 		TEX_WINDOW_PX.position.y / float(VP_SIZE.y), 0.0)
 	table_mesh.material_override = table_mat
 	add_child(table_mesh)
+
+	# ---- 木纹外框（批次 5 Task 2）：**第二个平面**，比桌垫大一圈、略低一点 ----
+	# 为什么用第二个平面而不是给桌垫加第二材质：桌垫那一面必须保持**单一材质**把
+	# `TEX_WINDOW_PX` 那一块精确采样上去（uv1_scale/offset 与输入映射同源，见上面那条注释），
+	# 再塞一层"框"进同一材质就得另写 shader 或加第二个 surface —— 前者是多一份要维护的
+	# 采样数学，后者在 gl_compatibility 下走多 pass。独立一个平面最简单，也最不容易把
+	# "看到的那块"与"点到的那块"拆开。它同时兜住了桌垫画布的透明像素
+	#（SubViewport 是 transparent_bg，桌垫外沿那些 alpha=0 的像素会直接露出这层木纹）。
+	wood_mesh = MeshInstance3D.new()
+	var wpm := PlaneMesh.new()
+	wpm.size = TABLE_SIZE + Vector2(WOOD_FRAME, WOOD_FRAME) * 2.0
+	wood_mesh.mesh = wpm
+	wood_mesh.position = Vector3(0.0, -0.012, 0.0)   # 略低于桌垫：共面的两片会闪
+	var wmat := StandardMaterial3D.new()
+	wmat.albedo_texture = UIKit.tex("res://assets/textures/wood_floor.jpg")
+	wmat.albedo_color = Color(0.62, 0.55, 0.46)      # 比桌垫亮一档：木桌是桌面，桌垫是印上去的那块
+	wmat.roughness = 0.88
+	wmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	wmat.texture_repeat = true
+	# 木纹按世界尺度重复（每 3 个世界单位一轮），不然一张贴图拉满整块桌子就成了糊色块。
+	wmat.uv1_scale = Vector3(wpm.size.x / 3.0, wpm.size.y / 3.0, 1.0)
+	wood_mesh.material_override = wmat
+	add_child(wood_mesh)
 
 	# 一盏暖色顶灯（设计稿 §二：OmniLight3D 带阴影）。用点光而不是平行光：平行光在桌面上
 	# 是均匀的，给不出纵深；点光吊在中心上方，桌面外圈自然压暗 —— Compatibility 没有 SSAO，

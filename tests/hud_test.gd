@@ -24,6 +24,29 @@ func _fresh_tiles() -> Array:
 		out.append({"owner": GameData.NO_OWNER, "level": 0})
 	return out
 
+## 某个 peer 的立牌是第几块（-1 = 没这块牌）。行序由 game._refresh_standees 定，
+## 这里不重写那套轮转，直接问立牌自己。
+func _standee_idx_of(g, peer: int) -> int:
+	var tp = g.table3d.table_props
+	for i in tp._standee_rows.size():
+		if tp.standee_peer(i) == peer:
+			return i
+	return -1
+
+## 第 i 块立牌上的倒计时标签（座位卡退场后，倒计时簇的落点就是它）。
+func _standee_timer(g, i: int) -> Label3D:
+	var root: Node = g.table3d.table_props.get_node_or_null("Standees")
+	if root == null or i < 0 or i >= root.get_child_count():
+		return null
+	return root.get_child(i).get_node_or_null("Timer") as Label3D
+
+## 第 i 块立牌上的倒计时进度条（底轨 / 填充）
+func _standee_bar(g, i: int, nm: String) -> MeshInstance3D:
+	var root: Node = g.table3d.table_props.get_node_or_null("Standees")
+	if root == null or i < 0 or i >= root.get_child_count():
+		return null
+	return root.get_child(i).get_node_or_null(nm) as MeshInstance3D
+
 ## 一份 4 人、身家互不相同的状态：甲(最富) 乙 丙 丁(最穷)，轮到我(=乙) 行动
 ## 棋盘上第一格小卖部（进店状态需要一个真实格号：shop_open 必须 >= 0）
 func _shop_tile() -> int:
@@ -146,8 +169,9 @@ func _run() -> void:
 	g.s_op_timer("roll", 30.0, 30.0, 3)
 	g._process(0.0)
 	await process_frame
-	_check((g.board.seat(3).op_timer as Control).visible,
-		"_process 的后半段仍在跑（倒计时簇没被提前返回吞掉）")
+	_check(_standee_timer(g, _standee_idx_of(g, 3)) != null
+			and _standee_timer(g, _standee_idx_of(g, 3)).visible,
+		"_process 的后半段仍在跑（倒计时没被提前返回吞掉）")
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
 
@@ -349,8 +373,8 @@ func _run() -> void:
 	_check(strip_sb is StyleBoxTexture,
 		"色条挂着真正的卡样式（实得 %s）" % ("null" if strip_sb == null else strip_sb.get_class()))
 
-	print("== 操作倒计时（D 方案）：嵌在行动者座位卡里 ==")
-	# 先建好座位（走真实 render 链路），再喂 s_op_timer 真实处理函数
+	print("== 操作倒计时（D 方案）：挂在当前行动者的立牌上 ==")
+	# 座位卡退场后，倒计时簇的落点换成立牌；数据链路一字未改（仍由 _refresh_op_timer 逐帧推）。
 	g.my_peer = 2
 	g.s_state(_state(2, false))
 	g._refresh_actions()
@@ -360,45 +384,48 @@ func _run() -> void:
 	g.s_op_timer("roll", 35.0, 35.0, 2)
 	g._process(0.0)
 	await process_frame
-	var seat2: Dictionary = g.board.seat(2)
-	var seat1: Dictionary = g.board.seat(1)
-	_check(not seat2.is_empty() and seat2.has("op_timer") and (seat2.op_timer as Control).visible,
-		"行动者（乙）的座位卡上倒计时簇显示")
-	_check(not (seat1.op_timer as Control).visible, "非行动者的座位卡不显示倒计时")
-	_check(String(seat2.op_kind_l.text) == "掷轮",
-		"显示环节名「掷轮」（实得「%s」）" % String(seat2.op_kind_l.text))
-	_check(seat2.op_fill.size.x > 80.0, "进度条接近满格（实得 %.0f）" % seat2.op_fill.size.x)
+	var i2: int = _standee_idx_of(g, 2)     # 乙 = 行动者
+	var i1: int = _standee_idx_of(g, 1)     # 甲 = 非行动者
+	var tm2: Label3D = _standee_timer(g, i2)
+	var tm1: Label3D = _standee_timer(g, i1)
+	_check(i2 >= 0 and tm2 != null and tm2.visible, "行动者（乙）的立牌上倒计时显示")
+	_check(tm1 != null and not tm1.visible, "非行动者的立牌不显示倒计时")
+	_check(String(tm2.text) == "掷轮 35 秒",
+		"显示环节名与剩余秒数（实得「%s」）" % String(tm2.text))
+	var bar2: MeshInstance3D = _standee_bar(g, i2, "Fill")
+	_check(bar2 != null and bar2.scale.x > 0.9, "进度条接近满格（实得 %.2f）" % bar2.scale.x)
 	# 广播一秒一条，本机 _process 逐帧扣 delta 插值——喂剩 5 秒的道具窗口，
 	# 等 1.5 秒（自然帧累积扣减），进度条应明显缩水、环节名跟着窗口走
 	g.s_op_timer("item", 5.0, 12.0, 2)
 	await create_timer(1.5).timeout
 	g._process(0.0)
-	var w0: float = seat2.op_fill.size.x
-	_check(w0 < 40.0 and w0 > 10.0, "一秒多后进度条平滑缩水到中段（实得 %.0f）" % w0)
-	_check(String(seat2.op_kind_l.text) == "道具",
-		"环节名跟着窗口走（实得「%s」）" % String(seat2.op_kind_l.text))
-	# 窗口换人：簇跟到丙的座位卡
+	var w0: float = bar2.scale.x
+	_check(w0 < 0.45 and w0 > 0.15, "一秒多后进度条平滑缩水到中段（实得 %.2f）" % w0)
+	_check(String(tm2.text).begins_with("道具"),
+		"环节名跟着窗口走（实得「%s」）" % String(tm2.text))
+	# 窗口换人：倒计时跟到丙的立牌
 	g.s_op_timer("black", 15.0, 20.0, 3)
 	g._process(0.0)
 	await process_frame
-	var seat3: Dictionary = g.board.seat(3)
-	_check((seat3.op_timer as Control).visible and not (seat2.op_timer as Control).visible,
-		"窗口换人时簇跟到丙的座位卡")
-	_check(String(seat3.op_kind_l.text) == "黑市",
-		"环节名「黑市」（实得「%s」）" % String(seat3.op_kind_l.text))
-	# 不限时：簇仍显示、进度槽整条藏掉
+	var i3: int = _standee_idx_of(g, 3)
+	var tm3: Label3D = _standee_timer(g, i3)
+	_check(tm3 != null and tm3.visible and not tm2.visible,
+		"窗口换人时倒计时跟到丙的立牌")
+	_check(String(tm3.text) == "黑市 15 秒",
+		"环节名「黑市」（实得「%s」）" % String(tm3.text))
+	# 不限时：仍显示环节名，但不写"0 秒"、进度条整条收起（语义原在座位卡上："不限时"）
 	g.s_op_timer("roll", 0.0, 0.0, 3)
 	g._process(0.0)
-	_check((seat3.op_timer as Control).visible and not (seat3.op_track as ColorRect).visible,
-		"不限时窗口仍显示簇但进度槽藏掉")
-	_check(String(seat3.op_left_l.text) == "不限时",
-		"不限时文案（实得「%s」）" % String(seat3.op_left_l.text))
-	# 窗口关闭：kind="" 全部收簇
+	_check(tm3.visible and not _standee_bar(g, i3, "Track").visible
+			and not _standee_bar(g, i3, "Fill").visible,
+		"不限时窗口仍显示环节名但进度条藏掉")
+	_check(String(tm3.text) == "掷轮",
+		"不限时文案不写秒数（实得「%s」）" % String(tm3.text))
+	# 窗口关闭：kind="" 四块一起收
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
 	await process_frame
-	_check(not (seat3.op_timer as Control).visible and not (seat2.op_timer as Control).visible,
-		"窗口关闭后所有座位卡的簇收起")
+	_check(not tm3.visible and not tm2.visible, "窗口关闭后所有立牌的倒计时收起")
 
 	print("== 点转盘 = 掷轮入口（批次 3 Task 2）==")
 	# 为什么挑 roll_received 当证据：底栏那个「转动转盘」按钮已随 Task 6 拆除，`roll_btn.disabled`
@@ -846,7 +873,7 @@ func _run() -> void:
 
 	print("== 立牌（批次 5 Task 1）：数据来自已同步的 st、点对手立牌能选目标 ==")
 	# 座位卡的 3D 版。数据全走 st.players / st.tiles（客户端也准），顺序按"自己打头、
-	# 其余按行动序"轮转 —— 与 board.build_seats 同源，STANDEE_BASE_PX[0..3] 就是四个桌位。
+	# 其余按行动序"轮转 —— 与 STANDEE_BASE_PX[0..3] 的四个桌位一一对应（座位卡已退场）。
 	# 点击那条：`_on_table_click` 里立牌只多一个命中分支，后果一律走**既有的** `_on_seat_clicked`。
 	g.my_peer = 2
 	g.s_state(_state(2, false))
@@ -888,7 +915,7 @@ func _run() -> void:
 			return got if got != null else Vector2(-9999.0, -9999.0)
 		var foe_pt: Vector2 = seen_h.call(3)          # 第 4 块 = 甲（peer 1）
 		_check(tph.standee_hit(foe_pt) == 3, "点甲那块立牌命中（实得 %d）" % tph.standee_hit(foe_pt))
-		# 非选目标态：立牌**不消费**点击 —— 它正贴在座位栏的位置上，那是棋盘上的常规区域，
+		# 非选目标态：立牌**不消费**点击 —— 它立在桌沿、与近端那排格子 / 手牌相接，
 		# 凭空多一块死区是不能接受的（判据与 _on_seat_clicked 同源：它那时本来就什么都不做）。
 		g._cancel_target()
 		_check(g._tgt_stage == "", "前置：当前不在选目标态")

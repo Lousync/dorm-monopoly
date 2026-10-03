@@ -31,17 +31,6 @@ func _mk_player(peer: int, nm: String) -> Dictionary:
 		"pos": 0, "alive": true, "skip": 0, "stamina": 3, "items": [], "item_used": false,
 		"cheat_roll": -1}
 
-## 重建座位：先停掉在途的金额滚动 tween（它们捕获了旧的标签节点，
-## 座位一重建就会写到已释放的控件上），再清掉 game 侧陈旧的行引用缓存。
-func _rebuild_seats(g, pls: Array) -> void:
-	for peer in g._player_rows:
-		var row: Dictionary = g._player_rows[peer]
-		var tw = row.get("tw")
-		if tw != null and (tw as Tween).is_valid():
-			tw.kill()
-	g.board.build_seats(pls, g.my_peer)
-	g._player_rows.clear()
-
 func _prop_idx(offset: int) -> int:
 	var n := 0
 	for i in GameData.TILES.size():
@@ -178,8 +167,8 @@ func _test_client_item_bar(g) -> void:
 	g.hp = []          # 客户端没有房主的 hp（hp 只在 _host_setup 里填充）
 	g.my_peer = 2
 	g.st = {"phase": "playing", "turn": 2, "await": "item", "await_peer": 2, "players": pls}
-	g.board.set_self_peer(2)
-	_rebuild_seats(g, pls)            # 建座位（边 0 = 自己），牌垫按钮随之生成
+	# 座位卡已随批次 5 Task 2 退场：不再需要 set_self_peer / 建座位 —— 牌垫阶段按钮
+	# 由 BoardView._ready 自己建（见 _test_roll_button_off_home_view 那条反向契约）。
 	g._refresh_item_buttons(true, "item")
 	_check(g.board._phase_use != null, "牌垫上有「使用道具」按钮")
 	_check(String(g.board._phase_use.text) == "跳过" and not g.board._phase_use.disabled,
@@ -273,7 +262,6 @@ func _test_view_rotation_removed(g) -> void:
 func _test_tab_space_no_longer_rotates(g) -> void:
 	print("== Tab / 空格 不再切视角 ==")
 	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
-	_rebuild_seats(g, pls)
 	g.board._process(0.0)
 	g.board._zoom = 1.2
 	var rot_target_before: float = g.board._rot_target
@@ -296,7 +284,6 @@ func _test_tab_space_no_longer_rotates(g) -> void:
 func _test_turn_ring_first_render(g) -> void:
 	print("== 首个行动玩家的脉冲光环应亮起 ==")
 	var pls := [_mk_player(1, "我"), _mk_player(2, "乙")]
-	_rebuild_seats(g, pls)
 	g.st = {
 		"phase": "playing", "turn": 1, "round": 1, "max_rounds": 30,
 		"players": [
@@ -467,7 +454,6 @@ func _test_room_info_port() -> void:
 func _test_camera_window_resize(g) -> void:
 	print("== 镜头状态：窗口缩放不重置镜头 ==")
 	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
-	_rebuild_seats(g, pls)
 	g.board._process(0.0)             # 首次布局：fit_overview
 	_check(g.board.size.x > 10.0, "棋盘控件已布局（w=%.0f）" % g.board.size.x)
 	g.board._zoom = 1.2
@@ -480,7 +466,7 @@ func _test_camera_window_resize(g) -> void:
 	_check(absf(g.board._rot) < 0.001, "镜头旋转恒为 0（实得 %.4f rad）" % g.board._rot)
 
 func _test_roll_button_off_home_view(g) -> void:
-	print("== 阶段按钮在牌垫上（世界坐标；本人掷轮时可点） ==")
+	print("== 阶段按钮在牌垫上（画布层；本人掷轮时可点） ==")
 	var pls := [
 		{"peer": 1, "name": "我", "color": 0, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": []},
@@ -494,7 +480,6 @@ func _test_roll_button_off_home_view(g) -> void:
 		"round": 1, "max_rounds": 30, "players": pls, "tiles": _fresh_tiles(),
 		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
 	}
-	_rebuild_seats(g, pls)            # 建立座位（边 0 = 自己）
 	g._refresh_actions()              # 阶段按钮的状态由状态决定
 	await process_frame
 	await process_frame               # 等容器布局算出真实尺寸
@@ -506,6 +491,31 @@ func _test_roll_button_off_home_view(g) -> void:
 	_check(g.get("mat_bar") == null, "底栏成员已删净（不会留成一块不可见的空壳）")
 	_check(g.board._phase_use != null and g.board._phase_use.is_visible_in_tree(),
 		"牌垫上「使用道具」也在 —— 拆掉底栏后它是出牌确认的唯一落点")
+	# 批次 5 Task 2 的反向契约：这两枚**不再**依赖座位卡（座位卡整体退场，它们搬去了
+	# 一个独立的画布层），且那个层真的在画布里、没压在棋盘上。
+	_check(g.board.get_node_or_null("PhaseButtons") != null,
+		"阶段按钮住在一个**独立画布层**里（不是挂在座位卡上）")
+	# 「不压棋盘内容」= 按钮的下沿要落在棋盘下沿之外（桌垫下缘那条留白里）。
+	# **先把镜头拉回全景**：按钮是画布层的固定坐标，而棋盘画在哪随镜头走 ——
+	# 不回到全景的话，量的是"某个推近镜头下棋盘在哪"，与按钮位置不可比（前面的用例
+	# 改过 _zoom / _center）。两个量都从画布口径现算，不写死坐标。
+	g.board.fit_overview(true)
+	var pbox: Control = g.board._phase_box
+	var chest_bottom: float = g.board._view_from_world(g.board.BOARD_OFFSET + g.board.WORLD).y
+	var pbox_end: float = 0.0 if pbox == null else Rect2(pbox.position, pbox.size).end.y
+	_check(pbox != null and pbox_end <= g.board.mat_rect_px().end.y,
+		"按钮落在桌垫之内（下沿 %.0f ≤ 桌垫下沿 %.0f）" % [pbox_end, g.board.mat_rect_px().end.y])
+	_check(pbox != null and Rect2(pbox.position, pbox.size).position.y >= chest_bottom,
+		"按钮不压棋盘内容（上沿 %.0f ≥ 棋盘下沿 %.0f）"
+			% [0.0 if pbox == null else pbox.position.y, chest_bottom])
+	# 座位卡那一套 API 必须**真的没了**（不是留着空壳）：谁把它加回来，这条先红。
+	var seat_api: Array = ["build_seats", "seat_count", "seat", "set_op_timer", "set_self_peer",
+		"update_seat_stats", "_make_seat", "_seat_bar"]
+	var back: Array = []
+	for m in seat_api:
+		if g.board.has_method(m):
+			back.append(m)
+	_check(back.is_empty(), "座位卡的成员函数已删净（残留：%s）" % str(back))
 
 ## 指向性道具：点棋盘选玩家 / 两段式手选地块（本轮返工）
 func _test_targeting(g) -> void:
