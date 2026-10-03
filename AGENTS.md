@@ -95,7 +95,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 `--autotest=host|client`、`--rounds=N`、`--max-rounds=N`、`--shot=`（截图）、
 `--card-gallery`（卡片图鉴）、`--menu-probe`（菜单探针）、`--dev`（开发者模式）、`--lab`（道具试验场）。
 
-**摆拍截图（改界面时自检用）**：`--shot=<路径>` 存 PNG。三个非显然的坑：
+**摆拍截图（改界面时自检用）**：`--shot=<路径>` 存 PNG。四个非显然的坑：
 
 - **不能加 `--headless`** —— 无头模式下 `get_viewport().get_texture()` 拿到的是**空帧**，
   截图必须开真实窗口跑。
@@ -110,15 +110,25 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   `focus_grid` 拉近才生效，用来复现「玩家自己看到的近景」；
   `hand` → 给房主**发几张不同品质的道具**（只在房主侧注入状态，不动玩法代码），
   用来拍「手里握着牌」——开局背包是空的；
-  `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）。
+  `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）；
+  `target` → 进**选目标态**（给房主发一张「强拆令」、只给最后一家两块地）核对"可选中的立牌
+  亮着、其余不亮"，**必须同时带 `plain`**（如 `xx_target_plain.png`）—— 不带的话后面那段
+  赌局预览会盖上整屏、什么都看不出来。
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
   **两条都会顺带推动手牌淡出**（`view2d` 端手里牌本就看不见）：想拍"手里有牌"，文件名别带
   `tilt` / `view2d` —— 否则会拿到一张空手牌，并当成 bug 去查。
   常拼的几个：**干净全景 `xx_table_plain.png`**、**近景＋格详情卡 `xx_plain.png`**、
-  **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**。
+  **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**、
+  **看选目标态 `xx_target_plain.png`**。
 - **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
+- **`--` 分隔符不能漏** —— 这些开关都读 `OS.get_cmdline_user_args()`（`--` **之后**的那一段）：
+  写成 `--path . --shot=x.png` 会被 Godot 自己吃掉（不报错、也不生效），必须是
+  `--path . -- --shot=x.png`。**漏了的表现是"跑完了但什么都没拍"、日志里一个字都不提**，
+  第一次出图最容易踩。
 
-配套：`--shot-game=1 --shot=<路径>` 单人直达对局；`--shot-lobby=<路径>` 直达大厅；
+配套：`--shot-game=1 --shot=<路径>` 单人直达对局 —— 注意**不补机器人**，牌桌上只有你一家，
+**要拍四家立牌 / 四角身家条请改用 `--autotest=host --rounds=N --shot=...`**；
+`--shot-lobby=<路径>` 直达大厅；
 `--shot-round=N` 指定**第几轮**摆拍（默认 2）——
 想看中后期才有的状态（满盘归属、各家装修）就把它调大，例如
 `--autotest=host --rounds=20 --shot-round=15 --shot=xx_table_plain.png`

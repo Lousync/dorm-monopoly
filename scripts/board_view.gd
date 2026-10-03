@@ -1097,20 +1097,17 @@ func _pulse_select(on: bool) -> void:
 	_select_tw.tween_method(apply, 1.0, 0.45, 0.7).set_trans(Tween.TRANS_SINE)
 	_select_tw.tween_method(apply, 0.45, 1.0, 0.7).set_trans(Tween.TRANS_SINE)
 
-## 丢弃待确认：把那张卡的「✕」点亮成红色。
+## 丢弃待确认：记下「哪一位玩家的第几个道具槽待确认丢弃」。
 ##
-## **当前不可达（循环体空转，不是死代码，别删）**：座位卡道具牌位已随批次 3 Task 6 拆除，
-## 于是 `sd.get("slots", [])` 恒为空数组、下面的红色循环一次都跑不到；本函数今天只剩
-## 「记下 `_discard_hl` 这份状态」的作用。**为什么留着**：① 玩法侧仍在调它
-##（`game._on_discard_clicked` / `_on_item_slot_clicked`），接口不能断；② 它是「座位字典为什么
-## 没有 `slots` 键」与**两步丢弃高亮**的唯一书面记录；③ **批次 5 的 3D 立牌会把牌位拿回来**，
-## 届时这个循环原样复活。丢弃的新落点是**手牌上点右键**，待确认的可见反馈在
-## `table_props.set_hand_discard_pending`（牌身染红），见 doc/development/开发台账.md §三。
+## **只剩状态、没有任何落点（不是死代码，别删）**：座位卡上的道具牌位在批次 3 Task 6 拆掉、
+## 座位卡本身在批次 5 Task 2 退场 ⇒ 原先"把那张卡的 ✕ 点红"的循环**已删除**，
+## `board_view` 里再没有可点红 / 点绿的落点（`开发台账.md` §三 记的就是这一句）。
+## 待确认的**可见**反馈在桌面上那张手牌自己身上（`table_props.set_hand_discard_pending`，
+## 牌身染红），入口是**手牌上点右键**（`game._on_table_click` → `_on_discard_clicked`）。
+## **为什么留着**：玩法侧（`game._on_discard_clicked`）仍在调它，接口不能断 ——
+## 与 `set_item_selected` / `_set_hl_peers` 同例（无落点的接口按批次 3 先例保留）。
 func mark_discard_pending(peer: int, slot: int) -> void:
 	_discard_hl = {"peer": peer, "slot": slot}
-	# 座位卡已整体退场（批次 5 Task 2），这里没有牌位可以点红了 —— 只剩这份状态。
-	# 待确认的**可见**反馈在桌面上那张手牌自己身上（`table_props.set_hand_discard_pending`，
-	# 牌身染红）。保留函数是因为玩法侧（`game._on_discard_clicked`）仍在调，接口不能断。
 
 ## 记「当前选中的道具槽」。
 ##
