@@ -235,11 +235,13 @@ func _run() -> void:
 	_check(off_screen == 0, "四条都完整落在屏幕内（出屏 %d 条）" % off_screen)
 	_check(overlap_bad == 0, "四条都没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
 	# 四角条与立牌**不同框**（修复波 G）：此前只在注释里声称"四个角都是空的"，没有断言。
-	# 两端都要核（3D 端自己的立牌藏着、2D 端它才现身在最靠下的桌沿）。判据 = 屏幕矩形不相交。
+	# 两端 + **中段三档**都要核（批次 6 Task 3 补 0.25/0.5/0.75）：两端安全推不出中间帧安全 ——
+	# 立牌在屏幕上的位置随俯角/距离一起插值，而中段恰是"距离插值最紧"的那一段
+	#（`table_3d.VIEW_DIST_2D` 那段：wt≈0.45–0.55 桌面四角余量最小）。判据 = 屏幕矩形不相交。
 	var srh_g: Node = g.table3d.table_props.get_node_or_null("Standees")
 	var cross_pairs := 0
 	var cross_view := -1.0
-	for vt in [0.0, 1.0]:
+	for vt in [0.0, 0.25, 0.5, 0.75, 1.0]:
 		g.table3d.snap_view(vt)
 		await process_frame
 		await process_frame
@@ -253,7 +255,7 @@ func _run() -> void:
 					cross_view = vt
 					print("    [穿帮] view_t=%.1f 立牌 %d %s × 角标 peer %d %s" % [
 						vt, i, rs, int(b.peer), (b.root as Control).get_global_rect()])
-	_check(cross_pairs == 0, "四角条与立牌在 3D / 2D 两端都不同框（重叠 %d 处，view_t=%s）"
+	_check(cross_pairs == 0, "四角条与立牌在 5 档 view_t（0/0.25/0.5/0.75/1.0）都不同框（重叠 %d 处，view_t=%s）"
 		% [cross_pairs, str(cross_view)])
 	g.table3d.snap_view(0.0)
 	await process_frame

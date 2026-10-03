@@ -23,6 +23,9 @@ var dev_roll_spin: SpinBox
 var dev_ts_l: Label
 var dev_inject_box: VBoxContainer
 var menu_probe := false
+## `--fps=秒数`：帧率实测的采样窗口长度（批次 6 Task 3 / 设计稿 §八 风险 1）。
+## 0 = 不测。见 `fps_probe_run`。
+var fps_probe := 0.0
 
 # ---------------- 转发给宿主 ----------------
 
@@ -368,6 +371,69 @@ func menu_probe_run() -> void:
 	print("PROBE final paused=", get_tree().paused)
 	print("PROBE DONE")
 	get_tree().quit(0)
+## 帧率实测（批次 6 Task 3）：在**默认对局取景**下逐帧量真实帧时间，打印平均值与最差一帧后退出。
+##
+## 用法：`--autotest=host --rounds=9999 --fps=8`
+##   * 走 `--autotest=host` 是为了**四家都在**（`--shot-game=1` 不补机器人 ⇒ 只有一块立牌、
+##     一条四角条，量出来的不是"默认对局"的量）；
+##   * `--rounds=9999` 只是让自动对局别在采样结束前自己收尾退出（本探针先退）。
+##
+## 口径（**照实记**，别把它读成"任何场景都这个数"）：
+##   * 计时用 `Time.get_ticks_usec()`（**真实时间**，不受 `Engine.time_scale` 影响）；
+##   * 采样从"对局真的跑起来之后 + 2 秒"开始（跳过建场与 shader 编译那几帧）；
+##   * 采样期间把 `Engine.time_scale` 按回 **1.0**：自动对局默认 3 倍速，那是"逻辑跑得快"
+##     而不是"渲染更重"，按回 1.0 量到的才是玩家自己玩时的那一档节奏。
+##   * 逐帧 `await RenderingServer.frame_post_draw` = 一帧一次，量的就是帧时间本身。
+##   * 单帧 >100ms 会**额外**打一行 `FPSPROBE SLOW`（附当时的 await / phase / draw call / 物件数），
+##     用来判断长帧是"场景内容变重了"还是别的原因 —— 正常跑不会刷屏。
+func fps_probe_run() -> void:
+	var waited := 0.0
+	while not g.running and waited < 40.0:
+		await get_tree().create_timer(0.25, true, false, true).timeout
+		waited += 0.25
+	await get_tree().create_timer(2.0, true, false, true).timeout
+	Engine.time_scale = 1.0
+	var t0 := Time.get_ticks_usec()
+	var last := t0
+	var frames := 0
+	var sum := 0.0
+	var worst := 0.0
+	var worst_at := 0.0
+	var times: Array[float] = []
+	var slow17 := 0
+	var slow33 := 0
+	while float(Time.get_ticks_usec() - t0) / 1000000.0 < fps_probe:
+		await RenderingServer.frame_post_draw
+		var now := Time.get_ticks_usec()
+		var dt := float(now - last) / 1000000.0
+		last = now
+		sum += dt
+		frames += 1
+		times.append(dt)
+		if dt > worst:
+			worst = dt
+			worst_at = float(now - t0) / 1000000.0
+		if dt > 0.0167:
+			slow17 += 1
+		if dt > 0.0333:
+			slow33 += 1
+		if dt > 0.1:
+			print("FPSPROBE SLOW t=%.2f dt_ms=%.0f await=%s phase=%s round=%d proc_ms=%.1f draw=%d obj=%d nodes=%d" % [
+				float(now - t0) / 1000000.0, dt * 1000.0, String(g.st.get("await", "")),
+				String(g.st.get("phase", "")), int(g.st.get("round", 0)),
+				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)),
+				int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))])
+	times.sort()
+	var n := maxf(float(frames), 1.0)
+	print("FPSPROBE seconds=%.1f frames=%d avg_ms=%.3f avg_fps=%.1f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f worst_ms=%.3f worst_fps=%.1f worst_at_s=%.2f over16.7=%d over33.3=%d"
+		% [fps_probe, frames, sum / n * 1000.0, n / maxf(sum, 0.0001),
+			times[int(n * 0.5)] * 1000.0, times[mini(int(n * 0.95), frames - 1)] * 1000.0,
+			times[mini(int(n * 0.99), frames - 1)] * 1000.0,
+			worst * 1000.0, 1.0 / maxf(worst, 0.0001), worst_at, slow17, slow33])
+	get_tree().quit(0)
+
 func take_shot(path: String) -> void:
 	await get_tree().create_timer(0.4).timeout
 	while g.board.is_showing_deck_card():
@@ -399,9 +465,19 @@ func take_shot(path: String) -> void:
 		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
 	if path.contains("pause"):
 		g._open_menu()           # 摆拍：打开暂停菜单
+	if path.contains("deckout"):
+		# 抽卡「抽出」摆拍（批次 6 Task 3）：**先把注视点就位**再抽 —— `play_deck_card` 的推近走
+		# `focus_point_zoom`（平滑逼近），不预先挪的话演出头几帧镜头还在往牌堆赶，
+		# 牌堆可能压根不在画面里。`hard = true` 立即居中，后面那一推就不再移动。
+		# 名字里同时带 **freecam**（= 不锁镜头，推近真的生效）与 **card**（跳过赌局浮层）。
+		g.board.focus_point(g.board.deck_center("机会") + Vector2(0, -110), true)
+		await get_tree().create_timer(0.2).timeout
 	if not path.contains("plain") or path.contains("card"):
 		g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
-		g.board.spin_wheel(12)
+		# deckout **不转轮**：`spin_wheel` 会把镜头焦点改到转盘（`focus_point`），
+		# 演出一开始镜头就往转盘跑，拍不到"牌从牌堆上起来"这一幕。
+		if not path.contains("deckout"):
+			g.board.spin_wheel(12)
 	if path.contains("level") and g.multiplayer.is_server():
 		# 摆拍：给前几块地各设一个装修等级（1..MAX_LEVEL），
 		# 方便核对格子上的房子图标与等级配色——机器人要很久才会主动装修，抓不到
@@ -464,6 +540,17 @@ func take_shot(path: String) -> void:
 				g.table3d.table_props.set_hand_selected(slot_t)
 			g._begin_peer_target(slot_t, false, true)
 			await get_tree().create_timer(0.25).timeout
+	# 文件名带 deckout：抽卡「抽出」只有 DECK_OUT = 0.34s，常规三帧的第一帧（0.6s）已经落在
+	# 翻面之后 —— 拍不到"牌从实体摞上被抽起"的那一刻。这里按两个时间点各补一张（**不等 0.6s**）：
+	#   0.06s（卡片刚离摞）与 0.16s（快到位）。配 **freecam**（= 不锁镜头、推近真的生效）用，
+	# 例如 `--shot-game=1 --shot=shots/xx_freecam_deckout_card.png`。
+	if path.contains("deckout"):
+		for tm in [["0.06", "a"], ["0.16", "b"]]:
+			await get_tree().create_timer(float(String(tm[0]))).timeout
+			await RenderingServer.frame_post_draw
+			var po := path.replace(".png", "_out%s.png" % String(tm[1]))
+			get_viewport().get_texture().get_image().save_png(po)
+			print("SHOT SAVED ", po)
 	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
 	for i in 3:
 		await get_tree().create_timer(0.6).timeout

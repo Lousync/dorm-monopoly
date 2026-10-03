@@ -128,11 +128,18 @@ var _deck_t := 0.0             # 抽卡动画相位计时（_process 驱动，�
 var _deck_from := Vector2.ZERO
 var _deck_shown := Vector2.ZERO
 ## 「抽出」的起点取哪儿：**实体牌堆顶面在画布上的落点**（批次 6 Task 2 —— 本批次 BoardView
-## 的唯一改动，见 doc/development/开发台账.md §三）。由 3D 侧的 `TableProps.deck_top_px` 注入
-## （同 `TableView3D.on_table_click` 的注入方式：BoardView 活在 2D 画布里，不该把 3D 物件层的
+## 的唯一改动的落点，见 doc/development/开发台账.md §三）。由 3D 侧的 `TableProps.deck_top_px`
+## 注入（同 `TableView3D.on_table_click` 的注入方式：BoardView 活在 2D 画布里，不该把 3D 物件层的
 ## 类型拖进它的编译链）。默认无效 ⇒ 退回原来那点（画布上的扁图案），动画照常演。
 ## 返回 `Vector2.ZERO` = 没有实体牌堆（同样退回原来那点）。
+##
+## **演出期间逐帧重取**（批次 6 Task 3）：起点不是"开演那一刻算一次"就够的 —— 推近之后镜头
+## 还会继续走（`auto_follow` 把 `_center` 指数逼近到牌堆），而实体摞每帧都重摆到"当下取景下
+## 印着的那块图案"上（`game._refresh_board_followers`）⇒ 起点也必须每帧跟着重取，
+## 否则卡片会从"上一帧的那一点"抽出 / 收回，推近时差好几百画布像素（见 `_refresh_deck_from`）。
 var deck_top_provider: Callable = Callable()
+## 当前正在演的那一摞的名字（`play_deck_card` 的 deck 参数）。逐帧重取起点时要用它去问 provider。
+var _deck_kind := ""
 var _deck_restore := GameData.NO_PEER
 var _deck_prev_zoom := 0.0     # 抽卡前的缩放，展示完还原（抽卡时会临时拉近看清牌面）
 
@@ -574,6 +581,17 @@ func is_wheel_spinning() -> bool:
 func deck_center(deck: String) -> Vector2:
 	return _deck_pos.get(deck, WORLD * 0.5)
 
+## **印在桌垫上**那摞卡背（`_build_deck` 画的那块）在**画布像素**里的落点 ——
+## 与 `wheel_screen_pos` / `token_screen_pos` 同一条链、同一口径（都是
+## `global_position + _view_from_world(某局部点)`；board 住在 SubViewport 原点，两者数值相等）。
+##
+## 为什么要有这个公开入口（批次 6 Task 3）：3D 侧的实体摞要接住的正是这块印刷图案，
+## 而 `game._refresh_board_followers` 原先自己拼 `board._view_from_world(board.deck_center(...))`
+## —— **漏了 `global_position` 那一项、还调了私有方法**。只因 board 在 SubViewport 原点才没出事；
+## 换个位置（或谁把这条链复制到别处）就会静默漂开。**跟图案走的物件一律走这个入口**。
+func deck_screen_pos(deck: String) -> Vector2:
+	return global_position + _view_from_world(deck_center(deck))
+
 ## 抽卡展示的相位动画（_process 驱动的相位手写，见项目约定）：
 ## 抽出（带一点回弹与倾斜）→ 绕竖轴翻面（压到 0 换面的瞬间提亮一记）→
 ## 停留（轻微上下浮动 + 呼吸微光）→ 收回。
@@ -581,6 +599,9 @@ func _tick_deck_card(delta: float) -> void:
 	if _deck_card == null or not is_instance_valid(_deck_card):
 		return
 	_deck_t += delta
+	# 起点在演出期间逐帧重取（批次 6 Task 3，理由见 `deck_top_provider` 那段）——
+	# 放在相位分发之前：四个相位都读 `_deck_from`（抽出从它出发、收回也回它）。
+	_refresh_deck_from()
 	var c: Control = _deck_card
 	var t := _deck_t
 	if t < DECK_OUT:
@@ -638,6 +659,19 @@ func _show_deck_face(back: bool) -> void:
 func _ease_out_back(t: float) -> float:
 	var c1 := 1.70158
 	return 1.0 + (c1 + 1.0) * pow(t - 1.0, 3.0) + c1 * pow(t - 1.0, 2.0)
+
+## 重取「抽出」的起点：把 provider 报的**画布像素**折成 `_world` 局部坐标
+## （起点要的是 `_world` 局部坐标，provider 给的是画布像素 ⇒ 必须过 `_world_from_view`）。
+##
+## 幂等、便宜（一次 `unproject_position` + `screen_to_viewport`），由 `_tick_deck_card` 每帧调；
+## provider 未接 / 没有实体牌堆（返回 ZERO）时**保持原值**（退回画布上那点扁图案，动画照常演）。
+func _refresh_deck_from() -> void:
+	if _deck_card == null or not is_instance_valid(_deck_card) or not deck_top_provider.is_valid():
+		return
+	var top_px: Vector2 = deck_top_provider.call(_deck_kind)
+	if top_px == Vector2.ZERO:
+		return
+	_deck_from = _world_from_view(top_px) - (_deck_card as Control).size * 0.5
 
 ## 是否正在牌堆位置展示抽卡（供对局层暂停「镜头跟棋子」抢占）
 func is_showing_deck_card() -> bool:
@@ -747,19 +781,11 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := Ga
 	_deck_front.visible = false
 	card.add_child(_deck_front)
 
+	# 起点的**退化口径** = 画布上那点扁图案；真正的起点由紧接着的 `_refresh_deck_from()`
+	# 从实体摞顶面覆盖（provider 未接 / 没有实体牌堆时保持这里给的值）。
 	var start := center - card.size * 0.5 + Vector2(0, 54)
-	# 批次 6 Task 2：**「抽出」的起点从画布上的扁图案改到实体摞的顶面**（本批次 BoardView 的
-	# 唯一改动）。四段动画的语义与节奏一字未动 —— 只换起点（"收回"也回这儿，因为收回的落点就是
-	# 它从哪儿抽出来的）。
-	# 起点要的是 `_world` 局部坐标，而 provider 给的是**画布像素**（3D 侧的口径）⇒ 过
-	# `_world_from_view` 折一次。少了这一跳，起点会按"画布像素当成局部坐标"落到几百像素之外。
-	if deck_top_provider.is_valid():
-		var top_px: Vector2 = deck_top_provider.call(deck)
-		if top_px != Vector2.ZERO:
-			start = _world_from_view(top_px) - card.size * 0.5
 	var shown := center - card.size * 0.5 - Vector2(0, 120)
 	shown.x = clampf(shown.x, 16.0, WORLD.x - card.size.x - 16.0)
-	card.position = start
 	card.modulate = Color(1, 1, 1, 0.0)
 	card.scale = Vector2(0.55, 0.55)
 	_deck_prev_zoom = _zoom
@@ -768,8 +794,15 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := Ga
 	focus_point_zoom(center + Vector2(0, -110), maxf(_zoom / _fit_zoom, DECK_PUSH_FACTOR))
 
 	_deck_card = card
+	_deck_kind = deck
 	_deck_t = 0.0
 	_deck_from = start
+	# 批次 6 Task 2：**「抽出」的起点从画布上的扁图案改到实体摞的顶面**（本批次 BoardView 的
+	# 唯一改动）。四段动画的语义与节奏一字未动 —— 只换起点（"收回"也回这儿，因为收回的落点就是
+	# 它从哪儿抽出来的）。放在 `focus_point_zoom` **之后**：取起点用的 `_world_from_view`
+	# 要的是推近后的镜头（推近那一档的 `_zoom` 是立即生效的）。
+	_refresh_deck_from()
+	card.position = _deck_from
 	_deck_shown = shown
 	_deck_restore = restore_peer
 

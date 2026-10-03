@@ -93,6 +93,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 **自动化开关**（用法与更多细节见 `doc/development/上手指南.md`）：
 `--autotest=host|client`、`--rounds=N`、`--max-rounds=N`、`--shot=`（截图）、
+`--fps=N`（帧率实测：采 N 秒后打印平均 / 分位 / 最差帧并退出）、
 `--card-gallery`（卡片图鉴）、`--menu-probe`（菜单探针）、`--dev`（开发者模式）、`--lab`（道具试验场）。
 
 **摆拍截图（改界面时自检用）**：`--shot=<路径>` 存 PNG。四个非显然的坑：
@@ -100,8 +101,13 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 - **不能加 `--headless`** —— 无头模式下 `get_viewport().get_texture()` 拿到的是**空帧**，
   截图必须开真实窗口跑。
 - **文件名同时决定摆拍内容**（`dev_tools.take_shot` 里按 `path.contains(...)` 分支）：
-  `plain` → 不弹赌场、不翻卡；`table` → 停在围桌全景（默认会拉近到 27 号格并弹出格详情卡）；
+  `plain` → 不弹赌场、不翻卡；`table` → 停在 3D 端全景（**不拉近、不弹格详情卡**；默认不写
+  `table` 时会先 `focus_grid(27, 2.0)` 拉近到 27 号格并弹出格详情卡）；
   `rules` → 展开规则说明；`pause` → 打开暂停菜单；`card` → 跳过赌局；
+  `deckout` → **抽卡「抽出」瞬间**：先把注视点挪到牌堆再抽，且在 **0.06s / 0.16s 各补一张**
+  （常规三帧的第一帧落在翻面之后，拍不到"牌从实体摞上被抽起"）—— 要**同时带 `freecam` 与
+  `card`**（如 `xx_freecam_deckout_card.png`：解锁镜头让推近生效 + 跳过赌局浮层），
+  且这个分支**不转轮**（转轮会把镜头焦点抢到转盘）；
   `tilt` → 走**真接口** `table3d.snap_view(0.5)` 把视角推到轨道中点（俯角 50°→**69°**、
   距离一并插值），配 `table` 用出纯视角对比图（如 `xx_tilt_table_plain.png`）；
   `view2d` → 走 `table3d.snap_view(1.0)` 推到 **2D 端**（近正俯视、只看桌上地图）出图，

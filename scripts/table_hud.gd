@@ -412,7 +412,8 @@ const CORNER_TIMER_ROW_H := 19
 
 ## 四角身家条的落位：**屏幕四角**，与桌位一一对应（`game._seat_peers` 的顺序）。
 ## 每项 = 锚点 + 到屏幕边的距离（`mx` 离左右边、`my` 离上下边）。
-## 注：条高从 64 提到 98 之后，上边那两条朝**下**长、下边那两条朝**上**长（`my` 是外沿到屏幕边
+## 注：条高从 64 提到 **104**（见 `CORNER_BAR_SIZE` 那段 —— 同一份实测值，这里不再另写一个数）之后，
+## 上边那两条朝**下**长、下边那两条朝**上**长（`my` 是外沿到屏幕边
 ## 的距离，与高度无关）—— 三个角按钮都在条**之外**（左上按钮底 38 < 条顶 48），下边的规则说明
 ## 按钮顶 ≈754 > 条底 744，两条都还空着（`tests/hud_test.gd` 的重叠断言替它站岗）。
 ##
@@ -763,7 +764,8 @@ static func build_menu_ui(g: Node) -> void:
 	cv_cancel.pressed.connect(g._close_cheat_picker)
 	cv2.add_child(cv_cancel)
 
-	# 指向性道具目标提示条（顶部居中）：点棋盘上的玩家卡/格子选目标；
+	# 指向性道具目标提示条（顶部居中）：**点桌上立牌 / 点格子**选目标（玩家卡随批次 5 的座位卡
+	# 一起退场了，选人的落点现在是自己/对手那块 3D 立牌，`table_props.standee_hit`）；
 	# 取消 = 点此「取消」或 Esc / 右键单击（拖拽平移不触发）
 	g.target_hint = Control.new()
 	g.target_hint.set_anchors_preset(Control.PRESET_FULL_RECT)

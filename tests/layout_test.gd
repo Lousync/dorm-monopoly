@@ -14,6 +14,28 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 某个距离上「能量 × 衰减」估出的相对照度（光池亮度 × 形状的**代理式**，见 C3 那段注释）。
+## `pow` 的底夹到 0：射程之外照度为 0（Godot 的 omni 光在射程外也确实是 0）。
+func _corner_irradiance(light: OmniLight3D, dist: float) -> float:
+	return light.light_energy * pow(maxf(1.0 - dist / light.omni_range, 0.0), light.omni_attenuation)
+
+## 灯罩在**屏幕**上的包围盒（近似：把它当成一个"底口半径 × 罩高"的盒子，八个角过 3D 相机
+## 的真投影再取包围）。灯罩本身是斜的 —— 取的是**旋转后的盒子**的角，够给"有没有被画面裁掉"用。
+func _shade_screen_bbox(t3, shade: MeshInstance3D) -> Rect2:
+	var cm := shade.mesh as CylinderMesh
+	var r: float = maxf(cm.top_radius, cm.bottom_radius) if cm != null else 0.4
+	var hh: float = cm.height * 0.5 if cm != null else 0.25
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	for sx in [-r, r]:
+		for sy in [-hh, hh]:
+			for sz in [-r, r]:
+				var p: Vector2 = t3.camera.unproject_position(
+					shade.global_transform * Vector3(sx, sy, sz))
+				mn = mn.min(p)
+				mx = mx.max(p)
+	return Rect2(mn, mx - mn)
+
 func _run() -> void:
 	# 无头下根窗口是退化的 64×64，内容缩放 0.05 —— push_input 进去的鼠标坐标会被
 	# 放大 20 倍（640,640 → 12800,12800），事件投递类断言永远不成立。
@@ -92,6 +114,15 @@ func _run() -> void:
 				boxes.append(mi)
 		# 至少：三面墙 + 书架（几块板）+ 床架（几块板）
 		_check(boxes.size() >= 8, "房间剪影都用 BoxMesh 拼（实得 %d 块）" % boxes.size())
+		# **三面墙各查一遍**（批次 6 Task 3 补回）：上面那条只钉"块数 ≥ 8"而实际 13
+		# ⇒ 少一面墙照样过（删后墙那条断言时把 `WallBack != null` 也一起删掉了）。
+		# 三面墙是房间的骨架，缺一面就"漏"到背景色外面去了，这里逐面点名。
+		var walls_ok := true
+		for wn in ["WallBack", "WallLeft", "WallRight"]:
+			var wmi := room.get_node_or_null(wn) as MeshInstance3D
+			if wmi == null or not (wmi.mesh is BoxMesh):
+				walls_ok = false
+		_check(walls_ok, "三面墙都在（WallBack / WallLeft / WallRight —— 块数断言盖不住少一面）")
 		var dark := true
 		var matte := true
 		var opaque := true
@@ -185,9 +216,14 @@ func _run() -> void:
 				or absf(shade.global_position.z) + sm.bottom_radius > half_d_wood):
 			in_table = false
 		_check(in_table, "整座灯（含底座 / 灯罩的半径）都站在木桌里")
-		_check(half_w_wood - (absf(base_mi.global_position.x) + base_r) >= 0.05,
-			"底座外缘离木桌外沿有余量（%.2f ≥ 0.05 —— 零余量时底座就悬在桌沿上）"
-				% (half_w_wood - (absf(base_mi.global_position.x) + base_r)))
+		# **判空再用**（批次 6 Task 3）：`Base` 缺失时上面那条 `parts_ok` 已经红过，
+		# 这里若再空访问一次，`_run()` 会**因脚本错误中止**、静默掉其后所有断言
+		#（本文件 `:135-137` 正写着这个坑）。缺失时给 -INF ⇒ 这一条也红（不留假绿）。
+		var base_gap := -INF
+		if base_mi != null:
+			base_gap = half_w_wood - (absf(base_mi.global_position.x) + base_r)
+		_check(base_gap >= 0.05,
+			"底座外缘离木桌外沿有余量（%.2f ≥ 0.05 —— 零余量时底座就悬在桌沿上）" % base_gap)
 		# 全场唯一的 Light3D：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
 		var lights: Array = []
 		for n in t3.find_children("*", "Light3D", true, false):
@@ -201,7 +237,7 @@ func _run() -> void:
 		_check(lp.y > t3.table_mesh.global_position.y + 1.0,
 			"主光源吊在桌面上方（实得 y=%.2f）" % lp.y)
 		# 光池要够到棋盘（远端那半块不能是死黑、读不出字），但**不许漫到整间屋子**。
-		# 尺子用**桌垫四角**（不是木桌四角 —— 木桌四角是 4.1 与 11.1，别把两者混起来）。
+		# 尺子用**桌垫四角**（不是木桌四角 —— 当前杆高下木桌四角是 4.4 与 11.2，别把两者混起来）。
 		#
 		# **固定波 B：原来那两条不可判别，已换掉。** 原话是"四角都在射程内 ⇒ 不落死黑"，
 		# 但远端角在 12.5 射程的 9.6 处只剩近端约两成强度 —— 出图量到远端那两列只有
@@ -212,6 +248,11 @@ func _run() -> void:
 		#   ③ **衰减**：指数不许比 1.0 更陡 —— 1.15 → 0.72 那一次实测：能量只 +11%，远端列却从
 		#      0.017 涨到 0.074（左列只涨 1.34 倍）⇒ 指数越大掉得越快，1.15 正是上面那次实测的成因。
 		#      量测表见 `.superpowers/sdd/v0.5.0-批次6-实施计划/fix-wave-report.md`。
+		#   ④ **亮度 × 形状耦合**（批次 6 Task 3 补）：上面 ①②③ 全是**形状 / 相对关系**，
+		#      没有任何一条管"够不够亮" ⇒ 把 `LAMP_ENERGY` 单独退回 2.6（衰减仍是 0.72）时
+		#      三条一条都不红，而那次实测的桌面均值只有 0.0566（批次 5 的一半，观感是"把桌子调暗了"）。
+		#      ④ 把能量与衰减合起来估一个**远端角的相对照度**并钉下限 —— 它同时管亮度与形状，
+		#      是"能量退回 2.6 / 衰减回到 1.15"两种回归都能红的那一条。
 		var corners: Array = []
 		for sx in [-t3.TABLE_SIZE.x * 0.5, t3.TABLE_SIZE.x * 0.5]:
 			for sz in [-t3.TABLE_SIZE.y * 0.5, t3.TABLE_SIZE.y * 0.5]:
@@ -230,6 +271,20 @@ func _run() -> void:
 		_check(lamp_l.omni_attenuation <= 1.0,
 			"衰减不比线性更陡（attenuation %.2f ≤ 1.0 —— 更陡时远端角只剩近端约两成、字读不出）"
 				% lamp_l.omni_attenuation)
+		# ④ 亮度 × 形状耦合（见上面那段注释）。**代理式**：把 Godot 的 omni 衰减近似成
+		# `pow(clamp(1 - d/range, 0, 1), attenuation)`，再乘能量 —— 它不必与渲染器逐位一致
+		#（判的是"能量与衰减合起来够不够把远端托起来"，不是复现某一张图的像素）。
+		# 下限 1.1 的来历是**实测**：能量 3.9 / 衰减 0.72 时远端角 1.355（出图桌垫均值 0.1202），
+		# 而能量退回 2.6 时只有 0.903（均值 0.0566 = 判红的那一档）；照抄审查者建议的
+		# 3.5 / 0.85 恰好在 1.00（那一组实测 0.0988、两条目标都在界外）⇒ 取 1.1 把它也挡在外面。
+		var i_far: float = _corner_irradiance(lamp_l, d_far)
+		var i_near: float = _corner_irradiance(lamp_l, d_near)
+		_check(i_far >= 1.1,
+			"远端角吃到的相对照度够亮（能量 %.2f × 衰减 %.2f ⇒ %.3f ≥ 1.1 —— 只把能量退回 2.6 时 0.90）"
+				% [lamp_l.light_energy, lamp_l.omni_attenuation, i_far])
+		_check(i_far >= i_near * 0.25,
+			"远端角没塌成近端的零头（远端照度 %.3f ≥ 近端 %.3f × 0.25 —— 与②同源、按亮度加权）"
+				% [i_far, i_near])
 		# 【删掉的那条】原来这里断言「`omni_range` < 到后墙的距离」，错在两处：
 		#   ① **量错了地方**：拿的是墙的**中心**（距灯 13.15），而不是**包围盒最近面**（~11.8）——
 		#      墙其实**本来就在射程内**，那条断言在管一件不存在的事；
@@ -258,7 +313,21 @@ func _run() -> void:
 		if shade != null:
 			var vpr: Rect2 = t3.get_viewport().get_visible_rect()
 			var sp_shade: Vector2 = t3.camera.unproject_position(shade.global_position)
-			_check(vpr.has_point(sp_shade), "3D 端看得见台灯（灯罩的屏幕投影 %s 在画面内）" % sp_shade)
+			# **查包围盒、不查中心**（批次 6 Task 3）：抬杆到 2.8 之后灯罩中心离画面左沿只剩
+			# **17px**，而灯罩的屏幕包围盒**左沿已被裁掉一大块**（实测相交占比 0.55 ——
+			# 灯罩横向 214px 里有约 97px 在画外）—— 只查中心的话它照样"在画面内"，
+			# 而注释承诺的是"掉出画外就等于没有"。改量**包围盒与视口的相交占比**：
+			# **掉出画外的部分超过一半就红**（那时它已经看不出是盏灯了）。
+			# 阈值 0.5 与实测 0.55 之间只留一成余量是**如实记的**：灯罩左沿出画是"灯座不许站上
+			# 桌垫"这条硬约束（`LAMP_BASE` 那段）的既定代价，批次 6 Task1 修复波已如实留痕
+			#（`fix-wave-report.md` §八 顾虑 2），本任务不为此挪灯（挪了会连 `LAMP_ENERGY` /
+			# `LAMP_ATTEN` 那套实测一起作废）。这条断言管的是**别更糟**：再抬杆 / 再往左挪，它就红。
+			var sbb := _shade_screen_bbox(t3, shade)
+			var inter: Rect2 = sbb.intersection(vpr)
+			var cov: float = (inter.size.x * inter.size.y) / maxf(sbb.size.x * sbb.size.y, 0.0001)
+			_check(cov >= 0.5,
+				"3D 端看得见台灯（灯罩屏幕包围盒 %s 与画面 %s 的相交占比 %.2f ≥ 0.5；中心 %s）"
+					% [sbb, vpr, cov, sp_shade])
 			# 桌垫的屏幕四边形 = 桌垫四角（`TABLE_SIZE`）投影出来的凸四边形（按环序取角）。
 			# 点在凸多边形内用"同侧"判据；灯罩的屏幕中心一旦落在里面就是"压在棋盘上"。
 			var hw_q: float = t3.TABLE_SIZE.x * 0.5
@@ -1577,8 +1646,10 @@ func _run() -> void:
 	# ---- 批次 6 Task 2：机会 / 命运两摞实体牌堆 ----
 	# 桌垫上最后两处"贴片"（画布上印着的那两摞卡背）实体化。钉四件事：
 	#   ① 两摞都在、都**有厚度**（叠层 > 1 —— 一块等厚方砖不算"一摞牌"）；
-	#   ② 落点与印在桌垫上的那摞卡背**重合**（`deck_center` 过 `board._view_from_world` 折成画布像素，
-	#      与轮缘 / 筹码 / 立牌同一条 chain；这里也是 layout_test 后面那段"牌堆在窗口内"用的口径）；
+	#   ② 落点与印在桌垫上的那摞卡背**重合**（走 `board.deck_screen_pos()` —— 与轮缘 / 筹码 / 立牌
+	#      同一条 chain：`global_position + _view_from_world(...)`；这里也是 layout_test 后面那段
+	#      "牌堆在窗口内"用的口径。**别再自己拼 `_view_from_world`** —— 它是私有方法、且容易漏
+	#      `global_position` 那一项，批次 6 Task 3 把这条链收进了公开入口）；
 	#   ③ 材质是**不透明档**（批次 4 的教训：ALPHA 混合进透明队列、不写深度、投影就废了）；
 	#   ④ 幂等（状态广播每次都调，节点池只建一次）。
 	# 身份（哪摞是机会、哪摞是命运）走摞顶面平贴的 Label3D：文字 + 配色两重信号。
@@ -1591,7 +1662,7 @@ func _run() -> void:
 		var deck_names := ["机会", "命运"]
 		var deck_px := {}
 		for dn in deck_names:
-			deck_px[dn] = t3.board._view_from_world(t3.board.deck_center(dn))
+			deck_px[dn] = t3.board.deck_screen_pos(dn)
 		tpD.build_decks(deck_px)
 		var dr: Node = tpD.get_node_or_null("Decks")
 		_check(dr != null, "牌堆父节点在（build_decks 时建）")
@@ -1634,16 +1705,33 @@ func _run() -> void:
 				var back: Vector2 = t3.world_to_canvas_px(droot.global_position)
 				_check(back.distance_to(deck_px[dn]) < 1.0,
 					"「%s」落在画布牌堆中心上（实得 %s，期望 %s）" % [dn, back, deck_px[dn]])
-				_check(droot.global_position.y > t3.table_mesh.global_position.y,
-					"「%s」坐在桌垫之上（y=%.3f）" % [dn, droot.global_position.y])
+				# 底**就落在桌面上**（批次 6 Task 3 起：不再加 `PROPS_Y` —— 一摞牌是"躺在桌上的"，
+				# 抬起来只会让它在屏幕上相对印刷图案往远端漂，见 table_props.DECK_SIZE 那段）。
+				# 局部原点 = 这摞在地面的落点，而层 0 抬半层高 ⇒ root.y == 桌面 即"最下层躺在桌上"。
+				_check(absf(droot.global_position.y - t3.table_mesh.global_position.y) < 0.001,
+					"「%s」的底落在桌面上、不浮空（y=%.3f，桌面 %.3f）"
+						% [dn, droot.global_position.y, t3.table_mesh.global_position.y])
+				_check(lo >= t3.table_mesh.global_position.y - 0.001,
+					"「%s」最下一层的底面不低于桌面（%.3f ≥ %.3f）"
+						% [dn, lo, t3.table_mesh.global_position.y])
 				# 身份：摞顶面平贴的 Label3D 写着牌名
 				var lab := droot.get_node_or_null("Name") as Label3D
 				_check(lab != null and String(lab.text) == dn,
 					"「%s」摞上写着牌名（实得「%s」）" % [dn, String(lab.text) if lab != null else "无"])
 				tops[dn] = tpD.deck_top_px(dn)
-			_check(bodies.get("机会") != null and bodies.get("机会") != bodies.get("命运"),
-				"两摞的配色分得开（机会 %s / 命运 %s）"
-					% [bodies.get("机会").albedo_color, bodies.get("命运").albedo_color])
+			# 配色分得开 = 比 **albedo_color 真的不同**（批次 6 Task 3 改）：原来比的是**材质实例
+			# 身份**，而代码每摞新建一份 `StandardMaterial3D` ⇒ 即便两个 albedo 完全相同也恒不等，
+			# 这条断言**不可能因它声称的原因失败**。再进一步：各自等于预期那一份配色条目
+			#（改错映射、两摞对调都会红）。
+			var got_jh: Color = (bodies.get("机会") as StandardMaterial3D).albedo_color \
+				if bodies.get("机会") != null else Color.BLACK
+			var got_my: Color = (bodies.get("命运") as StandardMaterial3D).albedo_color \
+				if bodies.get("命运") != null else Color.BLACK
+			var want_jh: Color = tpD.DECK_BODY_COLORS["机会"]
+			var want_my: Color = tpD.DECK_BODY_COLORS["命运"]
+			_check(got_jh != got_my, "两摞的配色分得开（机会 %s / 命运 %s）" % [got_jh, got_my])
+			_check(got_jh == want_jh and got_my == want_my,
+				"两摞各用自己那一份配色（机会 %s / 命运 %s）" % [want_jh, want_my])
 			# ③ 抽卡「抽出」的起点 = 这一摞的**顶面**：
 			#    顶面比桌面高 ⇒ 屏幕投影往远端挪一截 ⇒ 画布 y 应该比落点**小**（更远）。
 			var top_c: Vector2 = tops["机会"]

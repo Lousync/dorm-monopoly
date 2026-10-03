@@ -280,7 +280,12 @@ func _ready() -> void:
 	if dev.menu_probe:
 		dev.menu_probe_run()
 	for a3 in OS.get_cmdline_user_args():
-		if a3 == "--card-gallery":
+		if a3.begins_with("--fps="):
+			dev.fps_probe = float(a3.substr(6))   # 帧率实测（批次 6 Task 3，见 dev_tools.fps_probe_run）
+	if dev.fps_probe > 0.0:
+		dev.fps_probe_run()
+	for a4 in OS.get_cmdline_user_args():
+		if a4 == "--card-gallery":
 			card_gallery_flag = true
 	if card_gallery_flag:
 		dev.enabled = true
@@ -1312,33 +1317,48 @@ func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 
 # ================= 界面刷新 =================
 
-## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（筹码堆 / 体力件 / 手牌也在这里）。
+## 「跟印刷图案走」的两件实体（转盘轮缘 / 两摞牌堆）此刻能不能算：3D 物件层在、
+## board 也已取景（布局还没跑时 `wheel_screen_pos` / `deck_screen_pos` 全是错的 ——
+## 判据与 fit_overview 的触发条件同源）。
+func _board_follow_ready() -> bool:
+	return table3d != null and table3d.table_props != null and board != null \
+		and board.size.x > 10.0
+
+## 把**跟着桌垫印刷图案走**的两件实体重摆一遍：转盘轮缘 + 两摞牌堆。
 ##
-## 为什么**每次状态广播**都要刷、而不是建一次就完：**转盘轮缘**的位置与半径都是 BoardView 的
-## **画布像素**口径（`wheel_screen_pos` / `wheel_screen_radius`），而半径 = `200 × 2D 镜头倍率`，
-## 倍率会被 `focus_grid` / `focus_point_zoom` / `fit_overview` / 人数变化改动 —— 只建一次，
-## 轮缘就会与桌垫上画出来的那个轮盘脱开。build_wheel 是幂等的，只改 transform 与
-## mesh 尺寸，**不重建节点**，所以每次状态都调它没有代价。
+## 为什么是这两件、为什么位置每次都要重算：它们是「压在画着**同一个物体**的印刷图案上」那一类
+##（轮缘压着桌垫上画出来的轮盘、牌堆压着桌垫上画出来的卡背）—— 图案随 2D 取景（`_zoom` /
+## `_center`）走，实体不跟就会脱开。位置一律走 `board.*_screen_pos()` 那几个公开入口
+##（内部就是 `global_position + _view_from_world(...)`，见 `deck_screen_pos` 那段）。
+##
+## 幂等（只改 transform / mesh 尺寸，不重建节点）⇒ **每条路都能调**：
+##   * 状态广播（`_refresh_table_props`）—— 常态刷新；
+##   * **抽卡演出期间逐帧**（`_process` 里那条，批次 6 Task 3）—— 抽卡会做一次 ≥2× 的推近
+##     且**不伴随任何状态广播**，只靠广播刷新的话，图案在演出中滑动而实体纹丝不动，
+##     两者会分开几百画布像素（"牌从实体摞上抽出"于是只在全景取景下成立）。
+##     逐帧重推把轮缘那条同款待办（`table_props.gd` 文件头一直挂着的"不伴随 s_state 的镜头
+##     变化会短暂脱开"）一并结清 —— 两条是同一处升级的两半。
+##     只在**抽卡显示期间**跑（很短，`is_showing_deck_card`），不做成常态每帧。
 ##
 ## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
 ## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
-## 桌垫图案与轮缘一起原样不动。「谁跟相机、谁不跟」见 table_props.gd
-## 文件头的摆放约定：只有轮缘跟 2D 相机，筹码 / 体力件 / 手牌是画布常量的实物、不跟。
-func _refresh_table_props() -> void:
-	if table3d == null or table3d.table_props == null or board == null:
-		return
-	# 布局还没跑（首个 _process 之前）时取景没做，wheel_screen_pos/radius 都是错的 ——
-	# 这一轮先跳过，等下一次状态广播（那时早有尺寸了）。判据与 fit_overview 的触发条件同源。
-	if board.size.x <= 10.0:
-		return
+## 桌垫图案与实物一起原样不动（3D 端点变化不改变画布像素口径）。「谁跟相机、谁不跟」见
+## table_props.gd 文件头的摆放约定：只有这两件跟 2D 相机，筹码 / 体力件 / 手牌是画布常量的实物、不跟。
+func _refresh_board_followers() -> void:
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
-	# 两摞实体牌堆（批次 6 Task 2）：中心 = **印在桌垫上那摞卡背**的画布位置（`deck_center`
-	# 过 `board._view_from_world` 折成画布像素 —— 就是 `wheel_screen_pos` 里那一步）。
-	# 与轮缘同一个理由：它要接住的正是那块印刷图案，所以跟着 2D 取景走，每次广播都重算。
-	# 幂等（只改 root 的位置，不重建节点），所以每次广播都刷没有代价。
 	table3d.table_props.build_decks({
-		"机会": board._view_from_world(board.deck_center("机会")),
-		"命运": board._view_from_world(board.deck_center("命运"))})
+		"机会": board.deck_screen_pos("机会"),
+		"命运": board.deck_screen_pos("命运")})
+
+## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（筹码堆 / 体力件 / 手牌也在这里）。
+##
+## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那两件（轮缘 / 牌堆）见
+## `_refresh_board_followers`；其余物件（筹码 / 体力件 / 手牌 / 立牌）也一律幂等，
+## 每次广播重贴一遍没有代价。它们读的都是**已同步**的状态（客户端也能算）。
+func _refresh_table_props() -> void:
+	if not _board_follow_ready():
+		return
+	_refresh_board_followers()
 	# 四块立牌（批次 5 Task 1）：名字 / 身家 / 公开背包。放在 `mine.is_empty()` 那道早退**之前**
 	# —— 立牌的数据全来自 st.players（客户端也准），观战者（自己不在名册里）照样该看见四家。
 	_refresh_standees()
@@ -3521,6 +3541,12 @@ func _spawn_money_fly(peer: int, diff: int) -> void:
 
 func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
+	# 抽卡演出期间**逐帧**重推「跟印刷图案走」的实体（转盘轮缘 / 两摞牌堆）：
+	# 推近（`focus_point_zoom`）不伴随任何状态广播，只靠广播刷新的话图案会在演出中滑走
+	# 而实体原地不动 —— 牌堆的「抽出」起点也跟着错（理由全文见 `_refresh_board_followers`）。
+	# 只在抽卡显示期间跑（很短），不做成常态每帧。
+	if board != null and board.is_showing_deck_card() and _board_follow_ready():
+		_refresh_board_followers()
 	# 屏幕底部原来还有一条固定操作坞（牌垫阶段条 + 操作条 + 底板）。批次 3 Task 6 把它
 	# 整条拆了：掷轮改点桌面转盘、出牌改点手中牌（选中后点牌垫「使用道具」确认）、
 	# 现金与体力在桌上。**注意这里不能留 `if <坞成员> == null: return` 之类的提前返回** ——
@@ -3606,13 +3632,20 @@ func _refresh_corner_timer() -> void:
 			continue
 		if kind_l.text != kind_text:
 			kind_l.text = kind_text
-		kind_l.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.ACCENT)
+		# 颜色**只在真的变了**才写 override（同本函数下面「秒数只在文本变化时写」的先例）：
+		# 这两个 `add_theme_color_override` 原先每帧都写一次 —— 本函数由 `_process` 逐帧调、
+		# 而 override 会触发一次主题重算与重绘（行动者那一条每帧白跑两遍）。
+		var want_kind_col: Color = UIKit.DANGER if warn else UIKit.ACCENT
+		if kind_l.get_theme_color("font_color") != want_kind_col:
+			kind_l.add_theme_color_override("font_color", want_kind_col)
 		if not timed:
 			continue
 		var txt := "%d 秒" % ceili(maxf(_op_left, 0.0))
 		if left_l.text != txt:
 			left_l.text = txt
-		left_l.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.TEXT)
+		var want_left_col: Color = UIKit.DANGER if warn else UIKit.TEXT
+		if left_l.get_theme_color("font_color") != want_left_col:
+			left_l.add_theme_color_override("font_color", want_left_col)
 		# 进度条：左端固定、长度按剩余比例缩（底轨常驻、填充显式设宽度 —— 同小卖部那条）
 		var fill: ColorRect = bar.timer_fill
 		fill.size.x = maxf(track.size.x, 1.0) * clampf(_op_left / _op_total, 0.0, 1.0)
