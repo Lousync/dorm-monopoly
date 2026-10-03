@@ -216,8 +216,8 @@ func _ready() -> void:
 
 	_build_ui()
 
-	# 赌桌小游戏独立成子节点（board 已就绪；两端都在这里建同名节点，
-	# 保证 s_casino_* 的 RPC 路径一致）
+	# 赌桌小游戏独立成子节点：两端都在这里建同名节点，保证 s_casino_* 的 RPC 路径一致
+	# （它自带全屏演出层，触发时自己挂到 g 上，与 board / HUD 没有先后依赖）
 	casino = preload("res://scripts/casino.gd").new()
 	casino.name = "CasinoTable"
 	casino.g = self

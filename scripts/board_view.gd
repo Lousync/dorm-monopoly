@@ -948,7 +948,7 @@ func _occupied_rect() -> Rect2:
 	var r := Rect2(Vector2.ZERO, WORLD).grow(30.0)
 	for e in _seats:
 		r = r.merge(_seat_bar(e))
-	# 顶部空区（数据轨 + 小卖部/赌场设施）：没有上家座位时也要整体入画
+	# 顶部空区（棋盘上缘到上家操作栏之间的空白带）：没有上家座位时也要整体入画
 	var zone_top := TABLE.position.y + BAND_TB
 	r = r.merge(Rect2(Vector2(-HOLE_MX, zone_top),
 		Vector2(WORLD.x + 2.0 * HOLE_MX, BOARD_OFFSET.y - 26.0 - zone_top)))
