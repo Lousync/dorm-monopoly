@@ -229,6 +229,25 @@ func _run() -> void:
 	g.board.focus_point_zoom(Vector2(1008.0, 600.0), 2.0)
 	_check(g.board._zoom > z0 * 1.5, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
 
+	print("== 抽卡推近：比全景明显更近，展示完还原（DECK_PUSH_FACTOR 链，triage #3）==")
+	# 这条链在批次 2 里静默坏过一次：推近值写成了绝对 0.78（屏幕时代的字面量），
+	# 在 2048² 画布下比全景的 0.97 还小 → 完全不推近，且当时没有任何测试能红。
+	# 现在钉住「抽出阶段确实推近到 ≥ DECK_PUSH_FACTOR × 全景」+「演完能还原」。
+	g.board.cam_locked = false
+	g.board.fit_overview(true)
+	await process_frame
+	var fit_zoom: float = g.board._fit_zoom
+	g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+	_check(g.board.is_showing_deck_card(), "抽卡演出已开始")
+	_check(g.board._zoom >= g.board.DECK_PUSH_FACTOR * fit_zoom - 0.001,
+		"抽卡把镜头推近到 ≥ %.1f × 全景（实得 %.2f / 门槛 %.2f）" % [
+			g.board.DECK_PUSH_FACTOR, g.board._zoom, g.board.DECK_PUSH_FACTOR * fit_zoom])
+	# 把相位计时一次推到底（走演出自己的收尾分支），缩放应还原到抽卡前的全景
+	g.board._tick_deck_card(g.board.DECK_CARD_TIME + 0.1)
+	_check(not g.board.is_showing_deck_card(), "演出结束卡片已收回")
+	_check(absf(g.board._zoom - fit_zoom) < 0.001,
+		"展示完还原到抽卡前的缩放（实得 %.3f / 期望 %.3f）" % [g.board._zoom, fit_zoom])
+
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
 	var hs: Dictionary = _state(2, false)
 	hs.players.append({"peer": -1, "name": "机器人A", "color": 0, "bot": true,

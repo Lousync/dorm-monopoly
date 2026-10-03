@@ -102,7 +102,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 - **文件名同时决定摆拍内容**（`dev_tools.take_shot` 里按 `path.contains(...)` 分支）：
   `plain` → 不弹赌场、不翻卡；`table` → 停在围桌全景（默认会拉近到 27 号格并弹出格详情卡）；
   `rules` → 展开规则说明；`pause` → 打开暂停菜单；`card` → 跳过赌局；
-  `tilt` → 把 **3D 相机**拉到 30° 俯角（默认 50°）出图对比构图，配 `table` 用
+  `tilt` → 把 **3D 相机**改到更平的 30° 俯角（默认 50°、距离不变）出图对比构图，配 `table` 用
   （如 `xx_tilt_table_plain.png`）；
   `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）。
   常拼的几个：**干净全景 `xx_table_plain.png`**、**近景＋格详情卡 `xx_plain.png`**、

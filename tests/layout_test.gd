@@ -84,9 +84,12 @@ func _run() -> void:
 		"贴图窗口落在画布内（窗口 %s）" % win)
 	_check(win == Rect2(Vector2.ZERO, Vector2(t3.VP_SIZE)),
 		"贴图窗口 = 整张画布（%s，交互优先于比例）" % win)
-	_check(absf(t3.TABLE_D / t3.TABLE_W - win.size.y / win.size.x) < 0.002,
-		"桌面宽:进深 与 窗口宽:高 同比例（贴图不被拉伸：%.3f vs %.3f）"
-			% [t3.TABLE_D / t3.TABLE_W, win.size.y / win.size.x])
+	# 这条曾写成 `TABLE_D / TABLE_W ≈ win.size.y / win.size.x` —— 而 TABLE_D 就是这么
+	# 定义的（`TABLE_W * win.size.y / win.size.x`），同义反复、永远不会红。改成钉具体数值：
+	# 桌面为 8×8 正方形（窗口 = 整张方画布 ⇒ 进深 == 宽）。真正的贴图拉伸守卫是下面那条
+	# 「材质取样窗口 == 映射窗口」。
+	_check(t3.TABLE_W == 8.0 and t3.TABLE_D == 8.0,
+		"桌面为 8×8 正方形（宽 %.2f / 进深 %.2f）" % [t3.TABLE_W, t3.TABLE_D])
 	# 材质取样窗口必须与输入映射同源：只改几何不改材质 → 看到的是整张桌子、点到的却是窗口那块。
 	# （本任务实现时真踩过这个坑：出图「变好」了、点击却整体错位。）
 	var canvas := Vector2(t3.VP_SIZE)
@@ -111,6 +114,11 @@ func _run() -> void:
 		"暗角不吃鼠标（否则整屏点不动）")
 	_check(t3.vignette.color.a > 0.0, "暗角有可见的暗度")
 	_check(t3.vignette.get_parent() == vig_parent, "暗角挂在调用方给的屏幕层上")
+	# 光钉 null / mouse_filter / alpha 不够：一个默认尺寸（0×0、右上角在原点）的 ColorRect
+	# 也能全过，而那样等于整屏没有暗角。必须钉住它真的铺满屏。
+	_check(t3.vignette.anchor_right == 1.0 and t3.vignette.anchor_bottom == 1.0,
+		"暗角铺满整屏（anchor 右下 = 1.0，实得 %.2f / %.2f）"
+			% [t3.vignette.anchor_right, t3.vignette.anchor_bottom])
 	_check(t3.vignette.material is ShaderMaterial and (t3.vignette.material as ShaderMaterial).shader != null,
 		"暗角是 shader 画的四周压暗（不是一块死黑）")
 
@@ -272,6 +280,29 @@ func _run() -> void:
 			out_win += 1
 			print("    [窗口外] 边 %d 的座位栏（画布）%s 不在窗口 %s 内" % [e, cbar, win4])
 	_check(out_win == 0, "四条座位栏都在纹理窗口内（窗口外 %d 条）" % out_win)
+
+	# ---- T-a：座位栏还得落在**可见屏幕**内（triage #10） ----
+	# 「画布内」+「窗口内」都不等于「玩家看得见」：窗口是贴在 3D 桌面上的贴图，还要过相机投影。
+	# `CAM_DIST` 从 4.4 提到 5.8 就是因为近端（自己那侧）的座位栏被顶出屏幕底部，
+	# 而当时没有任何断言能红 —— 只有出图能抓。这条把整条「画布 → 屏幕」链路钉进测试：
+	# 座位栏的四个角经 `_view_from_world → viewport_to_screen` 换算后必须落在窗口可见矩形内。
+	print("== 四条座位栏都落在可见屏幕内 ==")
+	var screen4: Rect2 = t4.get_viewport().get_visible_rect()
+	var out_scr := 0
+	for e in 4:
+		var bar_e: Rect2 = t4.board._seat_bar(e)
+		# 四个角的世界坐标；Rect2.end 是右下角
+		var corners: Array = [bar_e.position, Vector2(bar_e.end.x, bar_e.position.y),
+			bar_e.end, Vector2(bar_e.position.x, bar_e.end.y)]
+		for c in corners:
+			var sp = t4.viewport_to_screen(t4.board._view_from_world(c))
+			# 用含边界的比较（Rect2.has_point 会排除右/下缘），免得刚好贴边时假红
+			var ok: bool = sp != null and (sp as Vector2).x >= 0.0 and (sp as Vector2).y >= 0.0 \
+				and (sp as Vector2).x <= screen4.size.x and (sp as Vector2).y <= screen4.size.y
+			if not ok:
+				out_scr += 1
+				print("    [屏外] 边 %d 角 %s → 屏幕 %s（屏幕 %s）" % [e, c, sp, screen4])
+	_check(out_scr == 0, "四条座位栏的四个角都在可见屏幕内（屏外角 %d 个）" % out_scr)
 	t4.queue_free()
 
 	if fails == 0:
