@@ -717,10 +717,12 @@ func _run() -> void:
 
 	print("== 待确认丢弃不再永不解除（终审 Minor）==")
 	# 背景：`_discard_pending` 原先 armed 之后**永不解除**，而 `_refresh_table_props` 每次广播
-	# 会**无条件重放**它，于是 ① 阶段一结束红标整轮挂着，下一次右键**一下**就把牌丢了（本该两步）；
-	# ② armed 期间背包重排（交换生换牌 / 蛋蛋节发牌），下标指到**另一张**牌 ⇒ 红标落到玩家
-	# 从未 arm 过的那张上，一次右键就丢错东西。修法：重放前按 **id** 核对这把待确认还作不作数
-	#（判据与理由见 game.gd 的 `_discard_pending_id`）。这里两条各钉一次。
+	# 会**无条件重放**它，于是 ① 道具阶段结束（跳过 / 超时 / 回合推进）红标整轮挂着，下一次右键
+	# **一下**就把牌丢了（本该两步）；② armed 期间背包重排（交换生换牌 / 蛋蛋节发牌），下标指到
+	# **另一张**牌 ⇒ 红标落到玩家从未 arm 过的那张上，一次右键就丢错东西。
+	# 修法：重放前按两条判据核对这把待确认还作不作数 —— **arm 时的 (turn, await) 窗口**
+	#（理由见 game.gd 的 `_discard_arm_turn`；`phase` 判据是恒假的，别退回去）+ **按 id 认牌**
+	#（理由见 game.gd 的 `_discard_pending_id`）。这里三条各钉一次。
 	g.my_peer = 2
 	var s_re: Dictionary = _state(2, false)
 	s_re.await = "item"
@@ -760,7 +762,11 @@ func _run() -> void:
 		"解除后再右键：**没有**真丢（背包仍 %d 件）——两步确认回来了" % n_re)
 	g._cancel_target()
 
-	# ② armed 之后阶段结束（非 playing）：同样解除，红标不跨阶段挂着
+	# ② armed 之后**道具阶段结束**（「跳过」/ 超时 ⇒ `await` 变），而**背包一件没动**：
+	#    待确认必须解除、红标不跨阶段挂着。守卫原先那条 `phase != "playing"` 是**恒假**的
+	#   （`phase` 整局只有 "playing" / 整局结束才 "ended"，见 game.gd 的 `_discard_arm_turn`），
+	#    所以这条路一直漏着：arm 一张牌 → 跳过 → 背包没变 → 红标整轮挂着 → 下一次右键**一下**
+	#    就把牌丢了。现在按 **arm 时的 (turn, await) 窗口**核对（判据与理由见 `_discard_arm_turn`）。
 	var s_re3: Dictionary = _state(2, false)
 	s_re3.await = "item"
 	s_re3.await_peer = 2
@@ -775,12 +781,27 @@ func _run() -> void:
 	_check(g._discard_pending == 0 and tph._hand_disc == 0,
 		"（前置）待确认槽位 = 0、红标已贴（实得 %d / %d）" % [g._discard_pending, tph._hand_disc])
 	var s_re4: Dictionary = s_re3.duplicate(true)
-	s_re4.phase = "ended"                      # 阶段结束（任何非 playing 的值）
+	s_re4.await = "roll"                       # 道具阶段结束（跳过 / 超时后环节变了；背包不动）
 	g.s_state(s_re4)
 	await process_frame
 	g._process(0.0)
-	_check(g._discard_pending == -1, "阶段结束时待确认解除（实得 %d）" % g._discard_pending)
-	_check(tph._hand_disc == -1, "阶段结束后红标收掉（实得 _hand_disc=%d）" % tph._hand_disc)
+	_check(g._discard_pending == -1, "道具阶段结束（await 变）时待确认解除（实得 %d）" % g._discard_pending)
+	_check(tph._hand_disc == -1, "道具阶段结束后红标收掉（实得 _hand_disc=%d）" % tph._hand_disc)
+	# 关键：解除之后下一次右键只**进入待确认**，不会一下就把牌丢出去（背包故意一件没动）
+	var n_aw: int = int(g._player_by_peer(2).items.size())
+	_check(g._on_table_click(tph.hand_rect(0).get_center(), MOUSE_BUTTON_RIGHT), "解除后再右键：仍被手牌消费")
+	_check(g._discard_pending == 0, "解除后再右键：只进入待确认（实得 %d）" % g._discard_pending)
+	_check(int(g._player_by_peer(2).items.size()) == n_aw and n_aw == 3,
+		"解除后再右键：**没有**真丢（背包仍 %d 件）——两步确认回来了" % n_aw)
+
+	# ③ 另一半解除路径：**回合推进**（`turn` 变、`await` 不变）。窗口判据对两者一视同仁。
+	var s_re5: Dictionary = s_re4.duplicate(true)
+	s_re5.turn = 3
+	g.s_state(s_re5)
+	await process_frame
+	g._process(0.0)
+	_check(g._discard_pending == -1, "回合推进（turn 变）时待确认解除（实得 %d）" % g._discard_pending)
+	_check(tph._hand_disc == -1, "回合推进后红标收掉（实得 _hand_disc=%d）" % tph._hand_disc)
 
 	print("== 选目标期间：手牌让位给格子（终审 R2）==")
 	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子，而牌底那 3~5 格

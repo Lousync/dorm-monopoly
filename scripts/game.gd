@@ -63,6 +63,20 @@ var _discard_pending := -1     # 丢弃的二次确认槽位（手牌右键第�
 ## **从未 arm 过**的那张牌上，下一次右键**一下就把它丢了**（本该两步）。所以 arm 时记下 id，
 ## 每次重放红标之前先核对：id 对不上 = 这把待确认已经不作数，就地解除（见 `_refresh_table_props`）。
 var _discard_pending_id := ""
+## 待确认丢弃**arm 时的那个 (回合, 等待) 窗口**（与 `_discard_pending` 同生共死）。
+##
+## 规则：**待确认只在「arming 时的那个 (turn, await) 窗口」内有效**。为什么按窗口而不是按 `phase`：
+## `phase` 只有 `"playing" if (running or lab_mode) else "ended"` 两种取值，`running` 只在开局 /
+## 整局结束时翻转 ⇒ 「phase != playing」这条判据**在整局进行中恒假**，等于没有。而
+## 「arm 一张牌 → 用『跳过』或超时结束道具阶段 → 背包没变 → 红标整轮挂着 → 下一次右键**一下**
+## 就把它丢了」这条路正是从那儿漏过去的（本该两步确认）。换成窗口判据后两种自然解除都覆盖：
+## **跳过 / 超时结束道具阶段**让 `await` 变、**回合推进**让 `turn` 变，任一变即失效；而**两次右键
+## 之间不会有状态变化**，所以确认步骤仍然成立。
+##
+## 注意**不要**退化成 `await != "item"` 一刀切：arm 路径**刻意允许在非道具阶段 arm**
+##（丢弃任何时候可用，见 `_on_table_click` 的右键分支），一刀切会把合法的一次 arm 直接抹掉。
+var _discard_arm_turn := -9999
+var _discard_arm_await := ""
 var cheat_picker: Control
 var cheat_slot := -1
 var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1=无）
@@ -1310,14 +1324,16 @@ func _refresh_table_props() -> void:
 	# 所以每次广播都按玩法侧的 selected_slot 重设一遍（单一来源始终是 selected_slot）。
 	table3d.table_props.set_hand_selected(selected_slot)
 	# 待确认丢弃的红标同理：单一来源是 _discard_pending，每次广播重放一遍，广播后不丢。
-	# 但**重放前先核对这把待确认还作不作数**：armed 之后它原本永不解除 ⇒ ①阶段一结束，
-	# 红标整轮挂着，下一次右键**一下**就把牌丢了（本该两步确认）；②背包在此期间重排，
-	# 下标指到了另一张牌，红标落到玩家从未 arm 过的牌上、一次右键就丢错东西。
-	# 判据按 **id** 认牌而不是按下标（下标会在重排时指向另一张，理由见 _discard_pending_id）。
+	# 但**重放前先核对这把待确认还作不作数**：armed 之后它原本永不解除 ⇒ ①道具阶段结束
+	#（跳过 / 超时 / 回合推进），红标整轮挂着，下一次右键**一下**就把牌丢了（本该两步确认）；
+	# ②背包在此期间重排，下标指到了另一张牌，红标落到玩家从未 arm 过的牌上、一次右键就丢错东西。
+	# 判据两条：窗口（arm 时的 turn/await，理由见 _discard_arm_turn）+ 按 **id** 认牌而不是按下标
+	#（下标会在重排时指向另一张，理由见 _discard_pending_id）。
 	# 注意它只是**表现层**的本地状态：不进 s_state、不改玩法，清掉之后照旧把 -1 重放下去。
 	if _discard_pending >= 0:
 		var hand_items: Array = mine.get("items", [])
-		var stale: bool = String(st.get("phase", "")) != "playing" \
+		var stale: bool = int(st.get("turn", -1)) != _discard_arm_turn \
+			or String(st.get("await", "")) != _discard_arm_await \
 			or _discard_pending >= hand_items.size() \
 			or String(hand_items[_discard_pending].id) != _discard_pending_id
 		if stale:
@@ -3134,21 +3150,28 @@ func _on_discard_clicked(peer: int, slot: int) -> void:
 	else:
 		# 除了下标，还要记下这件的 **id**：背包重排后下标会指向另一张牌，只有 id 认得出来
 		# 「我 arm 的到底是哪一件」（理由与判据见 _discard_pending_id）。
+		# 以及这一把的 **(turn, await) 窗口**：跳过 / 超时结束道具阶段、或回合推进之后，
+		# 这把待确认就该失效（理由见 _discard_arm_turn）。
 		var items: Array = _state_player(my_peer).get("items", [])
 		_discard_pending = slot
 		_discard_pending_id = String(items[slot].id) if slot < items.size() else ""
+		_discard_arm_turn = int(st.get("turn", -1))
+		_discard_arm_await = String(st.get("await", ""))
 		if board != null:
 			board.mark_discard_pending(my_peer, slot)
 	# 可见反馈：待确认那张手牌染红。设 / 清待确认时**不广播**，所以这里立即贴一次，
 	# 不然要等下一次状态到达才变色（_refresh_table_props 里另有重放，保证广播后不丢）。
 	_sync_hand_discard_pending()
 
-## 解除「待确认丢弃」（槽位与记住的 id 一起清）。**单一入口** —— 三处解除点（选中别的牌 /
-## 第二下右键真丢 / 重放前发现这把待确认已失效）都该走它，别单独写 `_discard_pending = -1`
-## 把 id 漏在原地（漏掉的后果见 _discard_pending_id 的注释）。调用方各自负责补表现侧同步。
+## 解除「待确认丢弃」（槽位、记住的 id 与 arm 时的 (turn, await) 窗口一起清）。**单一入口** ——
+## 三处解除点（选中别的牌 / 第二下右键真丢 / 重放前发现这把待确认已失效）都该走它，
+## 别单独写 `_discard_pending = -1` 把 id / 窗口漏在原地（漏掉的后果见 _discard_pending_id 与
+## _discard_arm_turn 的注释）。调用方各自负责补表现侧同步。
 func _clear_discard_pending() -> void:
 	_discard_pending = -1
 	_discard_pending_id = ""
+	_discard_arm_turn = -9999
+	_discard_arm_await = ""
 
 ## 把「待确认丢弃」的可见反馈贴到桌上手牌：单一来源是 _discard_pending，与 _refresh_table_props
 ## 里的重放同源。任何写 _discard_pending 的地方都该在写完调它一次。
