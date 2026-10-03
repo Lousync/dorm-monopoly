@@ -1,13 +1,29 @@
 extends Node
 ## 赌场小游戏「投骰子」的回合主干与演出（从 game.gd 搬出，见审查结论）。
 ##
-## 房主权威：下注、掷骰、判定都在房主侧；客户端只渲染（相机聚焦、抽游戏、骰子）。
-## 表现交给 `board`（相机聚焦 + 赌场区域场景）；本节点只管流程与 RPC。
+## 房主权威：下注、掷骰、判定都在房主侧；客户端只渲染（抽游戏、骰子）。
+## 表现自带：触发时拉起独占整屏的全屏演出层（挂到 `g` 上），不再借用 board 的世界层。
 ## 作为 game 的子节点存在，好让 s_casino_* 的 RPC 路径在各端一致。
 
 var g                       # 宿主：对局场景（game.gd）
 
-var _casino_table_pot := 0        # 桌面赌场设施显示中的奖池
+var _casino_table_pot := 0        # 演出层显示中的奖池
+
+# ---------------- 全屏演出层（触发时独占整屏，照小卖部/暂停菜单那套：压暗底 + 居中面板） ----------------
+const REEL_SIZE := Vector2(880, 236)
+const CARD_W := 200.0
+const DRAW_HIT_IDX := 23
+const DRAW_COUNT := 28
+
+var _ui_layer: Control
+var _reel: Panel
+var _track: Control
+var _dice_row: HBoxContainer
+var _hint_l: Label
+var _pot_l: Label
+var _dice := {}                 # peer -> Label
+var _order: Array = []
+var _names := {}                # peer -> 名字
 
 # ---------------- 纯规则（可单测） ----------------
 ## 点数并列最大者（按 order 顺序返回 peer 数组）
@@ -99,43 +115,200 @@ func run(p: Dictionary) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_casino_start(game_name: String, stake: int, pot: int, order: Array, names: Dictionary) -> void:
 	_casino_table_pot = pot
-	if g.board != null:
-		g.board.update_casino(pot, "开局中 · %s" % game_name)
-		g.board.casino_enter(order, pot, names)
-		g.board.focus_casino()
-		g.board.casino_play_draw(game_name)
+	_show()
+	_pot_l.text = "奖池 %s" % GameData.fmt_money(pot)
+	_enter(order, names)
+	_play_draw(game_name)
 
 @rpc("authority", "call_local", "reliable")
 func s_casino_roll(vals: Dictionary) -> void:
-	if g.board != null:
-		g.board.casino_show_rolls(vals)
-		g.board.update_casino(_casino_table_pot, "掷骰中…")
+	_show_rolls(vals)
 
 @rpc("authority", "call_local", "reliable")
 func s_casino_end(winners: Array, pot: int) -> void:
 	_casino_table_pot = 0
-	if g.board != null:
-		g.board.casino_mark_winners(winners)
-		g.board.update_casino(0, "歇业中")
-		var txt := ""
-		if winners.size() == 1 and int(winners[0]) == g.my_peer:
-			txt = "你赢下了 %s 奖池，通吃全场！" % GameData.fmt_money(pot)
-			Fx.play("cash", 0.0)
-		elif winners.size() == 1:
-			txt = "%s 掷出最高点，独吞奖池 %s！" % [_name_by_peer(int(winners[0])), GameData.fmt_money(pot)]
-		else:
-			txt = "%d 人并列最高点，平分奖池 %s" % [winners.size(), GameData.fmt_money(pot)]
-		g.board.casino_set_hint(txt)
+	_mark_winners(winners)
+	var txt := ""
+	if winners.size() == 1 and int(winners[0]) == g.my_peer:
+		txt = "你赢下了 %s 奖池，通吃全场！" % GameData.fmt_money(pot)
+		Fx.play("cash", 0.0)
+	elif winners.size() == 1:
+		txt = "%s 掷出最高点，独吞奖池 %s！" % [_name_by_peer(int(winners[0])), GameData.fmt_money(pot)]
+	else:
+		txt = "%d 人并列最高点，平分奖池 %s" % [winners.size(), GameData.fmt_money(pot)]
+	if _hint_l != null and is_instance_valid(_hint_l):
+		_hint_l.text = txt
 	var t := create_tween()
 	t.tween_interval(2.8)
 	t.tween_callback(_finish)
 
 func _finish() -> void:
-	if g.board != null:
-		g.board.casino_leave()
+	_hide()
 
 ## 对局结束 / 重置时清理（保留旧接口名，game.gd: _show_game_over 会调用）
 func close() -> void:
 	_casino_table_pot = 0
-	if g != null and g.board != null:
-		g.board.casino_leave()
+	_hide()
+
+# ---------------- 全屏演出层：构建 / 显隐 ----------------
+
+func _build_ui() -> void:
+	if _ui_layer != null and is_instance_valid(_ui_layer):
+		return
+	_ui_layer = Control.new()
+	_ui_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ui_layer.visible = false
+	g.add_child(_ui_layer)
+
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.02, 0.05, 0.035, 0.94)      # 比暂停菜单更暗：赌场独占整屏
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP    # 模态，吞掉面板外的点击
+	_ui_layer.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui_layer.add_child(center)
+
+	var panel := UIKit.panel_container(Color(0.062, 0.155, 0.105, 0.98), 18,
+		Color(UIKit.ACCENT_DEEP.r, UIKit.ACCENT_DEEP.g, UIKit.ACCENT_DEEP.b), 2, 18)
+	panel.custom_minimum_size = Vector2(960, 0)
+	center.add_child(panel)
+	var pm := UIKit.margins(28, 28, 22, 22)
+	panel.add_child(pm)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 16)
+	pm.add_child(v)
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
+	v.add_child(head)
+	var ic := TextureRect.new()
+	ic.texture = UIKit.icon("casino")
+	ic.custom_minimum_size = Vector2(34, 34)
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(ic)
+	head.add_child(UIKit.label("宿舍赌场 · 抽游戏", 26, UIKit.ACCENT_HI))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	_pot_l = UIKit.label("奖池 ¥0", 22, UIKit.ACCENT)
+	head.add_child(_pot_l)
+
+	_reel = Panel.new()
+	_reel.custom_minimum_size = REEL_SIZE
+	_reel.clip_contents = true
+	_reel.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+		Color(0.03, 0.08, 0.05, 0.7), 10,
+		Color(UIKit.ACCENT_HI.r, UIKit.ACCENT_HI.g, UIKit.ACCENT_HI.b, 0.4), 1, 8))
+	v.add_child(_reel)
+	_track = Control.new()
+	_reel.add_child(_track)
+	var mark := Panel.new()
+	mark.position = Vector2(REEL_SIZE.x * 0.5 - 2.0, 0.0)
+	mark.size = Vector2(4, REEL_SIZE.y)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.add_theme_stylebox_override("panel", UIKit.stylebox(UIKit.ACCENT, 0, Color(0, 0, 0, 0), 0))
+	_reel.add_child(mark)
+
+	_dice_row = HBoxContainer.new()
+	_dice_row.add_theme_constant_override("separation", 48)
+	_dice_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_dice_row.custom_minimum_size = Vector2(0, 110)
+	v.add_child(_dice_row)
+
+	_hint_l = UIKit.label("", 20, UIKit.ACCENT)
+	_hint_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hint_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_hint_l)
+
+func _show() -> void:
+	_build_ui()
+	_ui_layer.visible = true
+	g.move_child(_ui_layer, g.get_child_count() - 1)   # 压住底栏与两侧栏
+
+func _hide() -> void:
+	if _ui_layer != null and is_instance_valid(_ui_layer):
+		_ui_layer.visible = false
+
+# ---------------- 全屏演出层：场景 / 抽游戏 / 掷骰 ----------------
+
+## 铺好本局场景（骰子行清空、记录本局名单）
+func _enter(order: Array, names: Dictionary) -> void:
+	_order = order
+	_names = names
+	_dice = {}
+	for c in _dice_row.get_children():
+		c.queue_free()
+
+## 抽游戏：CSGO 式横向卷轴，定格在命中的游戏
+func _play_draw(hit: String) -> void:
+	for c in _track.get_children():
+		c.queue_free()
+	var names := [hit, "❓ 敬请期待", "❓ 敬请期待", "❓ 敬请期待"]
+	for i in DRAW_COUNT:
+		var nm: String = names[0] if i == DRAW_HIT_IDX else names[(i % 3) + 1]
+		var card := Panel.new()
+		card.position = Vector2(i * CARD_W, 0)
+		card.size = Vector2(CARD_W - 12.0, REEL_SIZE.y)
+		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+			Color(0.13, 0.19, 0.29), 10, Color(0.28, 0.38, 0.55), 2, 8))
+		var lab := UIKit.label(nm, 22, UIKit.ACCENT_HI if i == DRAW_HIT_IDX else UIKit.TEXT_DIM)
+		lab.set_anchors_preset(Control.PRESET_FULL_RECT)
+		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		card.add_child(lab)
+		_track.add_child(card)
+	_track.position = Vector2(0, 0)
+	var target := -(DRAW_HIT_IDX * CARD_W + CARD_W * 0.5 - REEL_SIZE.x * 0.5)
+	var tw := create_tween()
+	tw.tween_property(_track, "position:x", target - 28.0, 2.6)\
+		.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_track, "position:x", target, 0.25)
+	Fx.play("card", -2.0)
+
+## 掷骰：为每位玩家起一颗骰子，先滚后定
+func _show_rolls(vals: Dictionary) -> void:
+	if _dice_row == null or not is_instance_valid(_dice_row):
+		return
+	for c in _dice_row.get_children():
+		c.queue_free()
+	_dice = {}
+	var faces := ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+	for peer in _order:
+		var col := VBoxContainer.new()
+		col.alignment = BoxContainer.ALIGNMENT_CENTER
+		var dl := UIKit.label("⚀", 44, UIKit.TEXT)
+		dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(dl)
+		var nm := UIKit.label(String(_names.get(int(peer), str(peer))), 15, UIKit.TEXT_DIM)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(nm)
+		_dice_row.add_child(col)
+		_dice[int(peer)] = dl
+	var tw := create_tween()
+	for i in 8:
+		tw.tween_callback(func() -> void:
+			for k in _dice:
+				var l: Label = _dice[k]
+				if is_instance_valid(l):
+					l.text = faces[randi_range(0, 5)]).set_delay(0.08)
+	tw.tween_callback(func() -> void:
+		for k in _dice:
+			var l: Label = _dice[k]
+			if is_instance_valid(l):
+				l.text = faces[clampi(int(vals.get(k, 1)) - 1, 0, 5)])
+	Fx.play("card", -2.0)
+
+## 高亮赢家（平分时多人高亮）
+func _mark_winners(winners: Array) -> void:
+	for k in _dice:
+		var l: Label = _dice[k]
+		if not is_instance_valid(l):
+			continue
+		l.add_theme_color_override("font_color",
+			UIKit.ACCENT if winners.has(int(k)) else UIKit.TEXT)

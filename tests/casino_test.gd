@@ -108,5 +108,11 @@ func _test_round() -> void:
 	_check(g.casino._casino_table_pot == 0,
 		"结算后桌面奖池显示归零（实得 %d）" % g.casino._casino_table_pot)
 
+	# 赌场已改为自带全屏演出层（触发时独占整屏），不再是 board 的世界层区域
+	_check(g.casino._ui_layer != null, "赌场自带全屏演出层（已建立）")
+	_check(not g.casino._ui_layer.visible, "一局结束后全屏层已收场")
+	for m in ["casino_enter", "casino_leave", "focus_casino", "update_casino", "_build_casino_scene"]:
+		_check(not g.board.has_method(m), "board.%s 已删除" % m)
+
 	g.running = false
 	g.free()
