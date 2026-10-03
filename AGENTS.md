@@ -17,7 +17,7 @@
 |---|---|
 | 新加入的开发者 | `doc/development/上手指南.md` → `架构总览.md` → `联机协议.md` |
 | 要改某个玩法 | `doc/game-design/` 下找对应系统（清单见下一节） |
-| 要接美术/表现 | `doc/game-design/道具系统.md` §12（卡面规格）、`设计决策留痕.md` §二/§三 |
+| 要接美术/表现 | `doc/game-design/道具系统.md` §12（卡面规格）、`设计决策留痕.md` §一/§二 |
 | 要排期/分工 | `doc/development/开发台账.md` |
 | 要手动验证某件道具效果 | `doc/development/道具试验场.md`（原型 `doc/game-design/道具试验场-原型.html`） |
 | 想知道这版改了什么 | `CHANGELOG.md` |
