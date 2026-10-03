@@ -114,7 +114,9 @@ func _build_table() -> void:
 ## 与统一的世界原点（= 桌面中心）。坐标换算见 canvas_px_to_world。
 func _build_props() -> void:
 	props = Node3D.new()
-	props.name = "TableProps"
+	# 叫 PropLayer 而不是 TableProps：那个名字被**类类型子节点**占着（TableProps.new()
+	# 自动取脚本的 class_name），两者同名的话调试时的路径是 `TableProps/TableProps`。
+	props.name = "PropLayer"
 	add_child(props)
 
 ## 实体物件的家（TableProps）。这里只**建**不摆：转盘要等 BoardView 落座、镜头取景之后

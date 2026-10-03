@@ -358,9 +358,14 @@ func _run() -> void:
 	else:
 		var wheel_px: Vector2 = t3.board.wheel_screen_pos()
 		var wheel_r: float = t3.board.wheel_screen_radius()
-		# 半径必须是**画布**口径：_wheel.size.x × 0.5 × 镜头倍率。写死一个常数就会随取景漂。
-		_check(absf(wheel_r - 200.0 * t3.board._zoom) < 0.01,
-			"画面半径 = 200 × 镜头倍率（实得 %.1f 画布像素，_zoom=%.3f）" % [wheel_r, t3.board._zoom])
+		# 画面半径要对得上**画出来的那个轮子**：拿轮心与轮子外沿（`_world` 局部 +200）
+		# 各自过一遍镜头变换，两点距离就是它落在画布上的半径。不能拿 `200 × _zoom` 去比 ——
+		# 那是把 wheel_screen_radius 的实现重述一遍，写成什么样都过。
+		var wheel_center_w: Vector2 = t3.board.wheel_center()
+		var drawn_r: float = t3.board._view_from_world(wheel_center_w + Vector2(200.0, 0.0)) \
+			.distance_to(t3.board._view_from_world(wheel_center_w))
+		_check(absf(drawn_r - wheel_r) < 0.5,
+			"画面半径 == 画出来的轮子外沿到轮心的距离（%.1f vs %.1f 画布像素）" % [drawn_r, wheel_r])
 		t3.table_props.build_wheel(wheel_px, wheel_r)
 		_check(t3.table_props.wheel_hit(wheel_px), "转盘圆心算命中")
 		_check(t3.table_props.wheel_hit(wheel_px + Vector2(wheel_r * 0.5, 0.0)), "半径内算命中")
@@ -382,23 +387,30 @@ func _run() -> void:
 				tmesh = (wbody as MeshInstance3D).mesh as TorusMesh
 			_check(tmesh != null, "转盘实体是圆环（不是圆盘 / 实心圆柱）")
 			if tmesh != null:
-				# 换算回画布像素比：桌面 TABLE_SIZE.x 世界单位铺满 VP_SIZE.x 画布像素。
+				# 轮缘的径向范围**折回画布像素**再比 —— 走真反变换 world_to_canvas_px，
+				# 而不是"世界半径 × 某个换算常数"。那样写等于把实现的常数反解回来
+				#（out_r / wheel_r == RIM_OUTER_R 恒成立），比例因子错成什么值都照样过。
+				# 这一条才是"表面对齐"的验证：换算错了就红。
 				# 注意 TorusMesh 的两个半径是**环的径向范围**（孔洞边缘 / 外沿），不是管子半径。
-				var px_per_world: float = float(t3.VP_SIZE.x) / t3.TABLE_SIZE.x
-				var hole_r: float = tmesh.inner_radius * px_per_world
-				var out_r: float = tmesh.outer_radius * px_per_world
+				var rim_ax: Vector3 = wbody.global_transform.basis.x   # 无旋转时 = (1,0,0)
+				var rim_o: Vector3 = wbody.global_position
+				var out_px: float = t3.world_to_canvas_px(rim_o + rim_ax * tmesh.outer_radius) \
+					.distance_to(wheel_px)
+				var in_px: float = t3.world_to_canvas_px(rim_o + rim_ax * tmesh.inner_radius) \
+					.distance_to(wheel_px)
+				# 1.02 / 0.82 写字面量而不是读 RIM_OUTER_R / RIM_INNER_R：那同样是自指。
+				# 这两条同时钉住"轮缘尺寸"这个决定（改动它就得改这里，是故意的）。
+				_check(absf(out_px - wheel_r * 1.02) < 2.0,
+					"轮缘外沿 == 画出来的轮子外沿 × 1.02（%.1f vs %.1f 画布像素）"
+						% [out_px, wheel_r * 1.02])
 				# WheelView：数字在 0.63R、扇区外沿 0.93R、金属外圈 0.91~1.0R（相对轮子半径）
-				_check(hole_r >= 0.63 * wheel_r,
-					"中间透空到数字之外（孔半径 %.0f ≥ 数字半径 %.0f 画布像素）"
-						% [hole_r, 0.63 * wheel_r])
-				_check(out_r >= wheel_r * 0.98 and out_r <= wheel_r * 1.15,
-					"轮缘外沿包住画出来的轮子、且不过度外扩（%.0f 画布像素 vs 轮子 %.0f）"
-						% [out_r, wheel_r])
-				# 管子半径 = 半环宽（TorusMesh 的两个半径是径向范围，不是管子半径）
-				var tube_r: float = (tmesh.outer_radius - tmesh.inner_radius) * 0.5 * px_per_world
-				_check(tube_r >= 0.05 * wheel_r,
+				_check(in_px >= wheel_r * 0.63,
+					"中间透空到数字之外（孔边缘 %.1f ≥ 数字半径 %.1f 画布像素）"
+						% [in_px, wheel_r * 0.63])
+				# 管子半径 = 半环宽（两个半径是径向范围，相减即环宽）
+				_check((out_px - in_px) * 0.5 >= wheel_r * 0.05,
 					"轮缘有可见的厚度、不是一根线（管子半径 %.0f ≥ %.0f 画布像素）"
-						% [tube_r, 0.05 * wheel_r])
+						% [(out_px - in_px) * 0.5, wheel_r * 0.05])
 			# 跟住画面半径：滚轮推拉 / 取景 / 抽卡推近都会改 _zoom，实体必须跟着变。
 			# 只改 transform 与 mesh 尺寸，**不重建节点**（状态广播很频繁）。
 			var first_node: Node = t3.table_props.get_child(0)

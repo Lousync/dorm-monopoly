@@ -43,10 +43,12 @@ func build_wheel(center_px: Vector2, radius_px: float) -> void:
 		return
 	_wheel_px = center_px
 	_hit_r = radius_px * HIT_SLACK
-	# 画布像素 → 世界单位。与 TableView3D.canvas_px_to_world 同一条换算：
-	# 桌面 TABLE_SIZE.x 个世界单位铺满 VP_SIZE.x 个画布像素。
-	var px_to_world: float = _t3.TABLE_SIZE.x / float(_t3.VP_SIZE.x)
-	var r: float = radius_px * px_to_world     # 画出来的轮子在桌面平面上的半径（世界单位）
+	# 画出来的轮子在桌面平面上的半径（世界单位）：**直接量真变换**，量出来的就是摆位用的那条映射。
+	# 不要另写一份"画布像素 ÷ 某个尺寸"的推导 —— canvas_px_to_world 走的是 TEX_WINDOW_PX
+	#（贴图窗口），不是 VP_SIZE；今天二者数值相同（窗口 = 整张画布），但它们是两个独立的旋钮，
+	# 窗口一旦被裁，位置仍走真变换（对的）、半径却会静默失配（不报错、只是轮缘与盘面对不上）。
+	var r: float = (_t3.canvas_px_to_world(center_px + Vector2(radius_px, 0.0))
+		- _t3.canvas_px_to_world(center_px)).length()
 	if _rim == null:
 		_rim = MeshInstance3D.new()
 		_rim.name = "WheelRim"
