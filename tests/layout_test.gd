@@ -73,6 +73,170 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
+	# ---- 批次 6 Task 1：房间剪影 + 台灯（唯一主光源） ----
+	# 观感的主角是**光**：近黑的屋子里只有一盏台灯亮着，四周落进剪影。可执行的判据只有四条：
+	#   ① 剪影**近黑、高粗糙、不透明**（不吃灯就走不进画面）；② 全场**只有一盏灯**（台灯）；
+	#   ③ 环境光压到很低、背景近黑；④ 灯杆 / 灯罩**不在桌垫窗口内**（它不该挡棋盘）。
+	# 位置 / 范围 / 衰减是对着出图调的估值，测试只钉「关系」不钉「数值」
+	# （否则每次对图微调都要改测试）。
+	print("== 批次 6：房间剪影（近黑、不吃灯就走不进画面） ==")
+	var room: Node = t3.get_node_or_null("Room")
+	_check(room != null, "容器带房间层 Room")
+	if room == null:
+		_check(false, "房间层缺了，房间 / 台灯断言整段跳过")
+	else:
+		var boxes: Array = []
+		for ch in room.get_children():
+			var mi := ch as MeshInstance3D
+			if mi != null and mi.mesh is BoxMesh:
+				boxes.append(mi)
+		# 至少：三面墙 + 书架（几块板）+ 床架（几块板）
+		_check(boxes.size() >= 8, "房间剪影都用 BoxMesh 拼（实得 %d 块）" % boxes.size())
+		var dark := true
+		var matte := true
+		var opaque := true
+		var one_mat: StandardMaterial3D = null
+		var shared := true
+		var off_table := 0
+		var casting := 0
+		var half_w_r: float = t3.TABLE_SIZE.x * 0.5 + t3.WOOD_FRAME
+		var half_d_r: float = t3.TABLE_SIZE.y * 0.5 + t3.WOOD_FRAME
+		for b in boxes:
+			var mi2 := b as MeshInstance3D
+			var bm2 := mi2.mesh as BoxMesh
+			var m2 := mi2.material_override as StandardMaterial3D
+			if m2 == null or m2.albedo_color.get_luminance() > 0.12:
+				dark = false
+			if m2 == null or m2.roughness < 0.8:
+				matte = false
+			if m2 == null or m2.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				opaque = false
+			if one_mat == null:
+				one_mat = m2
+			elif m2 != one_mat:
+				shared = false
+			# 剪影一律落在木桌之外（不许压在桌面上 / 遮棋盘）
+			var bp2: Vector3 = mi2.global_position
+			if absf(bp2.x) - bm2.size.x * 0.5 < half_w_r \
+					and absf(bp2.z) - bm2.size.z * 0.5 < half_d_r:
+				off_table += 1
+			# 剪影不投影：它们又大又远，投影纯是每帧白跑一张阴影图（性能是本批次点名的）
+			if mi2.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				casting += 1
+		_check(dark, "剪影材质近黑（亮度 ≤ 0.12 —— 自身不发光，只被台灯擦到才看得见）")
+		_check(matte, "剪影材质高粗糙（roughness ≥ 0.8，不吃镜面高光）")
+		_check(opaque, "剪影是不透明档（写深度、能彼此遮挡，不是透明队列）")
+		_check(shared, "所有剪影共用一份材质（不为每件单建 —— 本批次点名要避免的浪费）")
+		_check(off_table == 0, "房间剪影都落在木桌之外（压到桌子上的 %d 块）" % off_table)
+		_check(casting == 0, "剪影都不投影（开着投影的 %d 块 —— 白跑阴影图）" % casting)
+
+	print("== 批次 6：台灯 = 唯一主光源 ==")
+	var lamp_n: Node = t3.get_node_or_null("Lamp")
+	# 用 get("lamp_light") 而不是 t3.lamp_light：**红跑**（还没实现）时前者给 null、
+	# 后者是 "Invalid access to property" 的脚本错误，会把 _run() 打断在半路、
+	# 后面的断言一条都跑不到（红跑还会挂住不退）。
+	var lamp_l = t3.get("lamp_light")
+	_check(lamp_n != null and lamp_l != null, "容器带台灯（Lamp 节点 + lamp_light）")
+	if lamp_n == null or lamp_l == null:
+		_check(false, "台灯缺了，台灯断言整段跳过")
+	else:
+		var pole := lamp_n.get_node_or_null("Pole") as MeshInstance3D
+		var shade := lamp_n.get_node_or_null("Shade") as MeshInstance3D
+		_check(pole != null and pole.mesh is CylinderMesh, "灯杆是细柱（CylinderMesh）")
+		var sm: CylinderMesh = null
+		if shade != null and shade.mesh is CylinderMesh:
+			sm = shade.mesh as CylinderMesh
+		_check(sm != null and sm.top_radius < sm.bottom_radius,
+			"灯罩是上小下大的锥（top %.3f < bottom %.3f）"
+				% [sm.top_radius if sm != null else -1.0, sm.bottom_radius if sm != null else -1.0])
+		# 全场唯一的 Light3D：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
+		var lights: Array = []
+		for n in t3.find_children("*", "Light3D", true, false):
+			lights.append(n)
+		_check(lights.size() == 1 and lights[0] == lamp_l,
+			"全场只有台灯这一盏灯（实得 %d 盏）" % lights.size())
+		_check(lamp_l.shadow_enabled, "台灯开着阴影（筹码 / 手牌 / 立牌才投得出影子）")
+		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
+		_check(lamp_l.light_energy > 0.5, "台灯有能量（实得 %.2f）" % lamp_l.light_energy)
+		var lp: Vector3 = lamp_l.global_position
+		_check(lp.y > t3.table_mesh.global_position.y + 1.0,
+			"主光源吊在桌面上方（实得 y=%.2f）" % lp.y)
+		# 光池要够到棋盘（否则远端那半块是死黑、读不出字），但**不许漫到整间屋子**
+		#（那样四周就不"近黑"了）—— 拿**木桌四角**当尺子：都在射程内，后墙不在。
+		var corners_ok := true
+		for sx in [-t3.TABLE_W * 0.5, t3.TABLE_W * 0.5]:
+			for sz in [-t3.TABLE_D * 0.5, t3.TABLE_D * 0.5]:
+				if lp.distance_to(Vector3(sx, t3.table_mesh.global_position.y, sz)) >= lamp_l.omni_range:
+					corners_ok = false
+		_check(corners_ok, "木桌四角都在台灯射程内（range %.1f —— 棋盘四角不落死黑）" % lamp_l.omni_range)
+		# 「够不到后墙」不写死数字：后墙的位置从房间里那块板自己读（改房间布局不用改测试）
+		var back_wall := room.get_node_or_null("WallBack") as MeshInstance3D
+		_check(back_wall != null, "后墙在（Room/WallBack）")
+		if back_wall != null:
+			var far_wall_d: float = back_wall.global_position.distance_to(lp)
+			_check(lamp_l.omni_range < far_wall_d,
+				"射程收在桌子这一圈里（range %.1f < 到后墙 %.1f —— 屋子四周自然落黑）"
+					% [lamp_l.omni_range, far_wall_d])
+		_check(lamp_l.omni_attenuation > 0.0, "台灯带衰减（attenuation %.2f）" % lamp_l.omni_attenuation)
+		# 台灯是**桌上的实物**，但它不该挡棋盘：灯杆 / 灯罩落在**桌垫窗口之外**
+		#（窗口 = 棋盘 + 一圈留白；压在窗口里就是"站在棋盘上"）。
+		var on_board := 0
+		for nd in [pole, shade, lamp_l]:
+			if nd == null:
+				continue
+			if t3.TEX_WINDOW_PX.has_point(t3.world_to_canvas_px((nd as Node3D).global_position)):
+				on_board += 1
+		_check(on_board == 0, "灯杆 / 灯罩 / 光源都不在桌垫窗口内（压在棋盘上的 %d 个）" % on_board)
+		# 台灯站在木桌上（真实的桌上物），不是浮空
+		_check(absf(lamp_n.global_position.y - t3.table_mesh.global_position.y) < 0.05,
+			"台灯坐在桌面上（y=%.3f）" % lamp_n.global_position.y)
+		# 台灯要**看得见**（掉出画外就等于没有），而且**不许压在棋盘上**。
+		# 这两条只能在**屏幕**上量：50° 俯角下，"在桌垫窗口之外"（上面那条）并不自动等于
+		# "不在棋盘上" —— 灯是高处的实物，抬高会把它的屏幕投影顶进棋盘的范围里。
+		# （本任务实测过：底座挪到近端桌角那个位置时，灯罩的投影正好盖住棋盘左下角。）
+		t3.snap_view(0.0)
+		await process_frame
+		if shade != null:
+			var vpr: Rect2 = t3.get_viewport().get_visible_rect()
+			var sp_shade: Vector2 = t3.camera.unproject_position(shade.global_position)
+			_check(vpr.has_point(sp_shade), "3D 端看得见台灯（灯罩的屏幕投影 %s 在画面内）" % sp_shade)
+			# 棋盘的屏幕四边形 = 桌垫四角投影出来的凸四边形（按环序取角）。
+			# 点在凸多边形内用"同侧"判据；灯罩的屏幕中心一旦落在里面就是"压在棋盘上"。
+			var hw_q: float = t3.TABLE_SIZE.x * 0.5
+			var hd_q: float = t3.TABLE_SIZE.y * 0.5
+			var quad: Array = []
+			for cn in [Vector2(-hw_q, -hd_q), Vector2(hw_q, -hd_q), Vector2(hw_q, hd_q),
+					Vector2(-hw_q, hd_q)]:
+				quad.append(t3.camera.unproject_position(Vector3(cn.x, 0.0, cn.y)))
+			var sgn := 0
+			var outside := false
+			for i in 4:
+				var a2: Vector2 = quad[i]
+				var b2: Vector2 = quad[(i + 1) % 4]
+				var cr := (b2.x - a2.x) * (sp_shade.y - a2.y) - (b2.y - a2.y) * (sp_shade.x - a2.x)
+				if absf(cr) < 0.0001:
+					continue
+				var s2 := 1 if cr > 0.0 else -1
+				if sgn == 0:
+					sgn = s2
+				elif sgn != s2:
+					outside = true         # 跨到了另一侧 ⇒ 在四边形之外
+			_check(outside, "灯罩的投影不压在棋盘上（屏幕 %s / 棋盘四角 %s）" % [sp_shade, quad])
+
+	print("== 批次 6：环境光与背景压到近黑 ==")
+	var wenv: WorldEnvironment = null
+	for c in t3.get_children():
+		if c is WorldEnvironment:
+			wenv = c
+	_check(wenv != null, "容器带 WorldEnvironment")
+	if wenv != null:
+		var en := wenv.environment
+		_check(en.ambient_light_energy < 0.25,
+			"环境光压到很低（energy %.2f < 0.25 —— 四周近不近黑就看它）"
+				% en.ambient_light_energy)
+		_check(en.background_color.get_luminance() < 0.03,
+			"背景色近黑（亮度 %.3f）" % en.background_color.get_luminance())
+
 	print("== 贴图窗口 = 桌垫（棋盘 + 一圈留白），不再铺满整张画布 ==")
 	# 批次 5 Task 2：座位栏换成了桌上立牌，画布不再需要为它们预留 —— 窗口从"整张画布"
 	# 收到"桌垫"（`BoardView.MAT_RECT`）。批次 2 的 T4c 之所以把窗口恢复成整张画布，

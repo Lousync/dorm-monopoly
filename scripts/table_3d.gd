@@ -73,6 +73,63 @@ const TABLE_SIZE := Vector2(TABLE_W, TABLE_D)
 ## 见 _build_table 里"第二个平面"的做法与理由。
 const WOOD_FRAME := 1.2
 
+# ---------------- 批次 6：房间剪影 + 台灯（见设计稿 §五 / §九 补记 1） ----------------
+#
+# 观感的主角是**光**：近黑的屋子里只亮着一盏**台灯**，四周落进剪影（设计稿 §五）。
+# 屋子**只做剪影** —— 几个 `BoxMesh` 拼出三面墙 / 书架 / 床架，材质**近黑 + 高粗糙**、
+# 自身不发光 ⇒ **不吃那盏灯的光就走不进画面**。网格全程序化、**新增素材为零**
+#（拿不到外部素材，见设计稿 §九 补记 1）⇒ `LICENSE` 的第三方登记不动。
+#
+# 所有剪影**共用一份材质**（`room_mat`）：它们本就该是一块黑，每件单建一份是纯浪费
+#（本批次点名要避免的那种），同材质还能少几次状态切换。
+const ROOM_FAR_Z := -11.0                      # 后墙（远端）的 z
+const ROOM_SIDE_X := 11.5                      # 左右墙的 |x|
+const ROOM_SIDE_Z1 := 2.0                      # 左右墙的近端 z（近端不造墙：相机在那一侧）
+const ROOM_WALL_H := 11.0                      # 墙高
+const ROOM_WALL_T := 0.4                       # 墙厚
+const ROOM_COLOR := Color(0.07, 0.066, 0.076)  # 近黑：台灯只擦出一层微光，擦不到就是黑
+const ROOM_ROUGHNESS := 0.95                   # 高粗糙：剪影不该有镜面高光
+
+## 台灯 = **唯一的主光源**。底座坐在木纹带上（桌垫之外）、灯臂伸到近端桌沿上方，
+## 灯罩悬在那里、光池从近端压向桌心，屋子四周自然落黑（设计稿 §五「单点暖光 + 四周近黑」）。
+##
+## **为什么底座在木纹带上、不在桌垫上**：灯是"看得见的实物"，压在桌垫上就是**站在棋盘上**
+##（遮住格子与字、也压住立牌与手牌）。木纹带是桌垫之外的"桌子本身"，台灯站那里既真实
+## 又不挡棋盘 —— layout_test 里那条「灯杆 / 灯罩 / 光源都不在桌垫窗口内」钉的就是它。
+## 灯罩的落点（`LAMP_BASE + (LAMP_ARM_LEN, 0, 0)`）同样**必须在窗口之外**：它悬在近端桌沿
+## 上方（画布 z 超出窗口下沿），于是光池从近端压向桌心，而灯罩本身落不进棋盘。
+## **位置的取值是对着出图夹出来的**（50° 俯角 + 相机在近端 ⇒ 桌边这条"可见、又压不到棋盘"
+## 的缝很窄）。三条尺子同时卡住它：
+##   ① **在桌垫之外**（|x| > 4.0）—— 否则灯就站在棋盘上（layout_test 那条窗口断言）；
+##   ② **在画面之内** —— 台灯是"看见的东西"，掉出画外就等于没有。50° 俯角下，屏幕左侧的
+##      点越往近端（z 越大）越贴边：z 一到 2.6 上下，|x|=4.2 就出了左沿；z≈1.0 时同样
+##      高度还稳稳在画面里（实测 z=1.0 时左边界的 |x| 上界 ≈4.7）；
+##   ③ **不是一团黑影** —— 灯罩的投影不能压在棋盘上（`tests/layout_test.gd` 另有断言钉它）。
+## ⇒ 底座落在**左侧木纹带上、偏近端那半张桌子**（x=-4.9 / z=1.0），灯杆立起来、灯罩从杆顶
+##   朝桌心探过去一点（`LAMP_ARM_LEN`），整盏灯（连底座）都在画面内。
+const LAMP_BASE := Vector3(-4.9, 0.0, 1.0)     # 底座落点（桌心为原点；木纹带上）
+const LAMP_POLE_H := 2.3                       # 灯杆高（灯罩挂在杆顶）
+const LAMP_ARM_LEN := 0.60                     # 灯臂长：从杆顶朝桌心（+x）探出去一点
+const LAMP_SHADE_H := 0.50                     # 灯罩高
+const LAMP_SHADE_R_TOP := 0.14                 # 灯罩上口半径
+const LAMP_SHADE_R_BOT := 0.40                 # 灯罩下口半径（**上小下大**）
+const LAMP_SHADE_TILT := 18.0                  # 灯罩倾角（口朝下、略朝桌心）
+const LAMP_COLOR := Color(1.0, 0.86, 0.66)     # 暖光（白炽灯那种偏橙）
+## 台灯的能量：**环境光压到 0.10 之后靠它把桌面重新照亮**（批次 3 那盏顶灯是 energy 2.4 +
+## 环境光 0.55；环境光那 0.55 一撤，桌面会整体暗掉一大截，补偿全在这一项上）。
+## 上界不是"想多亮"，是**别把棋盘左沿烤白**：灯离桌垫左沿只有 2.2 世界单位，能量再高
+##（≥3）那一列格子的底与字会被一起推到 1.0、白字就看不见了。
+const LAMP_ENERGY := 2.6
+## 射程：**够到木桌四角、够不到后墙**。收得再小（≤8）远端那半块棋盘就落进死黑、字读不出；
+## 放得再大（≥14）连后墙都在射程里，四周就不是"近黑"了。10~12 这一段两头都满足
+##（木桌四角到灯 9.4、后墙 14.6）—— 12.5 取在靠上那头：桌面明暗差小一点、棋盘更均匀。
+const LAMP_RANGE := 12.5
+## 衰减指数（越大越快掉进黑）。1.15 略陡于线性：把灯下那一小片"过曝圈"压回去一点，
+## 又不至于在桌面上留出"一圈明显的硬边"。
+const LAMP_ATTEN := 1.15
+const LAMP_METAL := Color(0.09, 0.085, 0.08)   # 灯杆 / 底座：暗金属（近黑的屋子里不该亮）
+const LAMP_SHADE_COLOR := Color(0.16, 0.13, 0.10)  # 灯罩内壁：比灯杆暖一点，罩住那点光
+
 var board: BoardView
 var viewport: SubViewport
 var camera: Camera3D
@@ -81,6 +138,13 @@ var wood_mesh: MeshInstance3D       # 木纹外框（桌垫之外那一圈木桌
 var vignette: ColorRect        # 屏幕层暗角贴片（build_vignette 造，挂在调用方给的屏幕上）
 
 var table_mat: StandardMaterial3D   # 桌面材质（取样窗口与 TEX_WINDOW_PX 同源）
+
+## 房间剪影层（批次 6：三面墙 + 书架 + 床架）与它那份**共用**的近黑材质。
+var room: Node3D
+var room_mat: StandardMaterial3D
+## 台灯（批次 6）：底座 / 灯杆 / 灯臂 / 灯罩挂在 `lamp` 下，`lamp_light` 是**全场唯一**的灯。
+var lamp: Node3D
+var lamp_light: OmniLight3D
 
 ## 实体物件层：与桌垫共用同一套 UV 坐标系，物件都挂这里（见设计稿 §五）。
 ## 桌垫（table_mesh）只是"印在桌上的画"；转盘 / 筹码 / 体力件 / 手牌这些有厚度、
@@ -128,7 +192,9 @@ var view_target := 0.0
 
 func _init() -> void:
 	_build_environment()
+	_build_room()           # 房间剪影要在桌子之前落位（桌子是"屋子里的一张桌子"）
 	_build_table()
+	_build_lamp()           # 台灯坐在木纹带上 ⇒ 要等桌子（木桌平面）就绪
 	_build_props()          # 实体物件层要在桌垫坐标系就绪之后建
 	_build_table_props()    # 实体物件本身（转盘等）挂在 props 下
 	_build_camera()
@@ -138,12 +204,189 @@ func _build_environment() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
-	e.background_color = Color(0.055, 0.06, 0.085)   # 桌面之外的暗色房间
+	# 批次 6：0.055/0.06/0.085 偏亮（四周不是"近黑"）⇒ 压到近黑的一点点冷灰。
+	# 屋子里台灯光池之外的地方就是它，加上一层屏幕层暗角（build_vignette）。
+	e.background_color = Color(0.012, 0.014, 0.02)
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	e.ambient_light_color = Color(0.55, 0.5, 0.45)
-	e.ambient_light_energy = 0.55
+	e.ambient_light_color = Color(0.45, 0.42, 0.40)
+	# 批次 6：0.55 → 0.10。**环境光是"四周够不够黑"的总闸**：它一高，剪影与木桌被均匀托起来，
+	# 台灯那点明暗对比就淹没了，"光池"也就没有形状。压到 0.10 之后暗部只由台灯决定。
+	#（代价：桌面整体比批次 3 暗一大截，由 LAMP_ENERGY 补回来 —— 两处是一笔账。）
+	e.ambient_light_energy = 0.10
 	env.environment = e
 	add_child(env)
+
+# ---------------- 批次 6：房间剪影 ----------------
+
+## 房间：三面墙 + 书架 + 床架，全部 `BoxMesh`、**共用一份近黑材质**（见 ROOM_COLOR 那段）。
+## 只造**三面**墙 —— 近端那一面在相机之后，造了也看不见，还白占一次绘制。
+##
+## 落位原则（对着出图调过）：一律在**木桌之外**，且离台灯够远 —— 近处的剪影被灯一擦就亮，
+## 那就不是剪影了。后墙最远（z = ROOM_FAR_Z），书架在左后方、床架在右后方。
+func _build_room() -> void:
+	room = Node3D.new()
+	room.name = "Room"
+	add_child(room)
+	room_mat = StandardMaterial3D.new()
+	room_mat.albedo_color = ROOM_COLOR
+	room_mat.roughness = ROOM_ROUGHNESS
+	room_mat.metallic = 0.0
+	# 显式写死不透明档：剪影要写深度、要能彼此遮挡 —— 批次 4 那条教训（ALPHA 会进透明队列、
+	# 不写深度、排序也乱）在这里同样成立，别手滑改成透明。
+	room_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	# 后墙（远端）
+	_room_box("WallBack", Vector3(ROOM_SIDE_X * 2.0, ROOM_WALL_H, ROOM_WALL_T),
+		Vector3(0.0, ROOM_WALL_H * 0.5, ROOM_FAR_Z))
+	# 左右墙：从后墙一直铺到近端（近端那头不再有墙）
+	var side_len: float = ROOM_SIDE_Z1 - ROOM_FAR_Z
+	var side_cz: float = (ROOM_FAR_Z + ROOM_SIDE_Z1) * 0.5
+	_room_box("WallLeft", Vector3(ROOM_WALL_T, ROOM_WALL_H, side_len),
+		Vector3(-ROOM_SIDE_X, ROOM_WALL_H * 0.5, side_cz))
+	_room_box("WallRight", Vector3(ROOM_WALL_T, ROOM_WALL_H, side_len),
+		Vector3(ROOM_SIDE_X, ROOM_WALL_H * 0.5, side_cz))
+	# 书架（左后方）与床架（右后方）。
+	# **位置是对着出图夹出来的**：50° 俯角下，桌面之后**看得见的那条带子很薄** ——
+	# 画面顶沿那条射线（水平线以下 22.5°）打在地面上是 z ≈ -9.8，也就是"桌子后面"这段里
+	# 只有越靠近桌子才越有高度可用：z=-5 处只看得见 0..2 世界单位高，z=-8 处只剩 0.7。
+	# 上一版把书架 / 床架摆在 z=-6.6/-5.8 那种"像房间里该有的位置"，结果**整件都在画外**，
+	# 台灯也照不到（14 世界单位 > 射程）—— 出图里那一片是纯黑的。
+	# ⇒ 两件都收到**紧贴桌子后方**（z ≈ -4.6/-5.6，仍**不与木桌相交**：木桌 z 到 -4.28），
+	#   并且压到 2 世界单位高以内（书架 1.8 / 床架 1.25）。这样才既在画面里、又在台灯射程内：
+	#   书架离灯 6.0、床架 9.1（射程 12.5）⇒ 它们**只被灯擦到一层微光**，正是要的那种剪影。
+	_build_bookshelf(Vector3(-4.6, 0.0, -4.85))
+	_build_bedframe(Vector3(4.2, 0.0, -5.6))
+
+## 往房间里加一块剪影：`BoxMesh` + 共用材质 + **不投影**。
+## 为什么剪影不投影：它们又大又远，影子只会落在屋子外面没人看得见的地方，而每帧要多跑一张
+## 阴影图 —— 本批次点名要避免的浪费（性能）。
+func _room_box(node_name: String, size: Vector3, pos: Vector3) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.name = node_name
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	mi.material_override = room_mat
+	mi.position = pos
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	room.add_child(mi)
+	return mi
+
+## 书架剪影：两侧立板 + 顶板 / 底板 + 三层隔板 —— 六块板拼出"一层层的书架"那个轮廓。
+## 拼轮廓而不是一整块实心盒子：实心的在剪影里只是一坨黑，看不出是书架。
+## 尺寸（2.4 × 1.8 × 0.8）是**画面顶沿**给的：桌子后面那条可见带只有 ~2 世界单位高
+##（见 _build_room 里那段），再高就顶出画外、只剩半截。
+func _build_bookshelf(base: Vector3) -> void:
+	var w := 2.4      # 宽
+	var h := 1.8      # 高
+	var d := 0.8      # 进深
+	var t := 0.08     # 板厚
+	# 侧板
+	_room_box("ShelfSideL", Vector3(t, h, d), base + Vector3(-(w - t) * 0.5, h * 0.5, 0.0))
+	_room_box("ShelfSideR", Vector3(t, h, d), base + Vector3((w - t) * 0.5, h * 0.5, 0.0))
+	# 顶板 / 底板
+	_room_box("ShelfTop", Vector3(w, t, d), base + Vector3(0.0, h - t * 0.5, 0.0))
+	_room_box("ShelfBottom", Vector3(w, t, d), base + Vector3(0.0, t * 0.5, 0.0))
+	# 三层隔板（把架子分成四格）
+	for i in 3:
+		_room_box("ShelfBoard%d" % i, Vector3(w, t, d),
+			base + Vector3(0.0, h * (float(i) + 1.0) / 4.0, 0.0))
+
+## 床架剪影：床板 + 床头板 + 一只枕头。高度同样压在画面顶沿之内（见 _build_bookshelf）。
+## 床头板摆在**远端（-z）**那头：镜头在近端，这样看到的是"床头挡在床板后方"的侧面轮廓。
+func _build_bedframe(base: Vector3) -> void:
+	var w := 2.8      # 宽
+	var d := 2.2      # 长（沿 z）
+	_room_box("BedBase", Vector3(w, 0.5, d), base + Vector3(0.0, 0.25, 0.0))
+	_room_box("BedHead", Vector3(w, 1.25, 0.2), base + Vector3(0.0, 0.625, -d * 0.5))
+	_room_box("BedPillow", Vector3(w * 0.6, 0.2, 0.5),
+		base + Vector3(0.0, 0.6, -d * 0.5 + 0.6))
+
+# ---------------- 批次 6：台灯（唯一主光源） ----------------
+
+## 台灯：底座 + 灯杆 + 灯臂 + 灯罩，以及**全场唯一**的光源 `lamp_light`（挂在灯罩里）。
+##
+## 为什么光源是灯罩的子节点、而不是挂在容器上：灯罩是**斜的**（`LAMP_SHADE_TILT`），
+## 光源要跟着灯罩的口一起斜下去（光池才会从近端压向桌心）。父节点一分家，改倾角就得手动
+## 再算一遍光源位置 —— 那是两处会悄悄漂开的数。
+##
+## 底座 / 灯杆 / 灯臂**共用一份暗金属材质**、四件都**不投影**（理由同 `_room_box`：
+## 光源就在灯罩里，灯自己挡不住自己的光；开着只是白跑阴影图）。
+func _build_lamp() -> void:
+	lamp = Node3D.new()
+	lamp.name = "Lamp"
+	lamp.position = LAMP_BASE
+	add_child(lamp)
+	var mmat := StandardMaterial3D.new()
+	mmat.albedo_color = LAMP_METAL
+	mmat.roughness = 0.55
+	mmat.metallic = 0.6
+	mmat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	# 底座：矮圆柱（略外扩，坐得稳）
+	var base_mesh := CylinderMesh.new()
+	base_mesh.top_radius = 0.24
+	base_mesh.bottom_radius = 0.30
+	base_mesh.height = 0.06
+	_lamp_part("Base", base_mesh, Vector3(0.0, 0.03, 0.0), mmat)
+	# 灯杆：细柱
+	var pole_mesh := CylinderMesh.new()
+	pole_mesh.top_radius = 0.032
+	pole_mesh.bottom_radius = 0.038
+	pole_mesh.height = LAMP_POLE_H
+	_lamp_part("Pole", pole_mesh, Vector3(0.0, LAMP_POLE_H * 0.5, 0.0), mmat)
+	# 灯臂：一根横杆，从杆顶朝桌心（+x）伸出去（圆柱轴默认沿 Y ⇒ 绕 Z 转 90° 让它躺平）
+	var arm_mesh := CylinderMesh.new()
+	arm_mesh.top_radius = 0.028
+	arm_mesh.bottom_radius = 0.028
+	arm_mesh.height = LAMP_ARM_LEN
+	var arm := _lamp_part("Arm", arm_mesh, Vector3(LAMP_ARM_LEN * 0.5, LAMP_POLE_H, 0.0), mmat)
+	arm.rotation = Vector3(0.0, 0.0, deg_to_rad(90.0))
+	# 灯罩：上小下大的锥，口朝下、略朝桌心（绕 Z 正角 = 口朝 +x 那侧倾）
+	var shade_mesh := CylinderMesh.new()
+	shade_mesh.top_radius = LAMP_SHADE_R_TOP
+	shade_mesh.bottom_radius = LAMP_SHADE_R_BOT
+	shade_mesh.height = LAMP_SHADE_H
+	shade_mesh.cap_bottom = false     # 下口敞开：光从口里出来（封着的话罩内一片死黑）
+	# 灯罩单独一份材质：内壁比灯杆暖、也比灯杆糙一点（罩住那点光，不至于黑成一个洞）。
+	# **两面都画（cull_disabled）+ 自发光**：出图核出来的两条 ——
+	#   ① 相机从斜上方看这盏灯，看到的是灯罩的外壁；罩壁是"背光面"，不给自发光的话
+	#      灯罩就是黑屋子里的**一团黑**（第一版出图实测：连灯在哪都看不出来）。
+	#   ② 罩口朝下、相机俯角 50° 正好能看进去一点 ⇒ 双面画之后能看见**内壁被自己那盏灯照亮的
+	#      那一圈暖色**，这才是"一盏亮着的台灯"该有的样子（gl_compatibility 有 emission）。
+	var smat := StandardMaterial3D.new()
+	smat.albedo_color = LAMP_SHADE_COLOR
+	smat.roughness = 0.7
+	smat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	smat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	smat.emission_enabled = true
+	smat.emission = Color(1.0, 0.62, 0.28)
+	smat.emission_energy_multiplier = 0.45
+	var shade := _lamp_part("Shade", shade_mesh,
+		Vector3(LAMP_ARM_LEN, LAMP_POLE_H, 0.0), smat)
+	shade.rotation = Vector3(0.0, 0.0, deg_to_rad(LAMP_SHADE_TILT))
+	# 光源：挂在灯罩里、口沿之上一点点（露在口外的话灯光会"漏"到罩子上方）
+	lamp_light = OmniLight3D.new()
+	lamp_light.name = "LampLight"
+	lamp_light.position = Vector3(0.0, -LAMP_SHADE_H * 0.15, 0.0)
+	lamp_light.light_color = LAMP_COLOR
+	lamp_light.light_energy = LAMP_ENERGY
+	lamp_light.omni_range = LAMP_RANGE
+	lamp_light.omni_attenuation = LAMP_ATTEN
+	# 批次 3 为"筹码 / 手牌能投影"重开的阴影，本批跟着换成这一盏：**全场唯一投影的光源**。
+	# 影子方向从此由台灯决定（从近端一侧斜着拉出来），不再是顶灯那种正下方的短影。
+	lamp_light.shadow_enabled = true
+	shade.add_child(lamp_light)
+
+## 台灯的一件（底座 / 灯杆 / 灯臂 / 灯罩）：建节点、挂进 `lamp`、**不投影**。
+func _lamp_part(node_name: String, mesh: Mesh, pos: Vector3,
+		part_mat: StandardMaterial3D) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.name = node_name
+	mi.mesh = mesh
+	mi.position = pos
+	mi.material_override = part_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lamp.add_child(mi)
+	return mi
 
 func _build_table() -> void:
 	table_mesh = MeshInstance3D.new()
@@ -193,23 +436,12 @@ func _build_table() -> void:
 	wood_mesh.material_override = wmat
 	add_child(wood_mesh)
 
-	# 一盏暖色顶灯（设计稿 §二：OmniLight3D 带阴影）。用点光而不是平行光：平行光在桌面上
-	# 是均匀的，给不出纵深；点光吊在中心上方，桌面外圈自然压暗 —— Compatibility 没有 SSAO，
-	# 氛围全靠它 + 屏幕层暗角（设计稿 §6.4 的七成目标）。
-	# 灯压得比相机低、range 收紧：吊太高 / range 太宽 = 桌面上几乎均匀，纵深感出不来
-	# （实测 y=3.4 / range=12 时中心与远端只差 14%）。y=2.4 / range=8.5 时中心 0.70、
-	# 远端 0.48、四角 0.33 —— 中心亮、四周压暗。
-	var light := OmniLight3D.new()
-	light.position = Vector3(0.0, 2.4, 0.4)
-	light.light_color = Color(1.0, 0.90, 0.78)    # 暖顶光
-	light.light_energy = 2.4
-	light.omni_range = 8.5
-	light.omni_attenuation = 1.0
-	# 批次 3：桌上已经有实体物件了（转盘 / 筹码 / 手牌，挂在 TableView3D.props），阴影重新打开
-	# —— 物件才投得出影子。批次 2 曾因"场景里只有桌面板本身、没有任何投影物"而关掉：
-	# 那时开了等于每帧白跑一张（双抛物面 = 2 个 pass）阴影图，画面一点不变。
-	light.shadow_enabled = true
-	add_child(light)
+	# 批次 6：**原来那盏吊在桌心正上方的暖色顶灯整个搬走了** —— 位置 / 颜色 / 能量 / 射程 /
+	# 阴影开关一并挪进 `_build_lamp()`，成为台灯的光源（`lamp_light`）。
+	# 为什么不留在这里"改成台灯"：灯的位置现在由**台灯这件实物**决定（光源在灯罩里、跟着灯罩
+	# 走），留在这里就成了无主的第二盏灯 —— 两盏灯 = 氛围被拆成两半，还多一张每帧要渲染的
+	# 阴影图（双抛物面 2 个 pass）。它的参数也整套重定过（旧那套是按"桌心正上方、
+	# 屋子里没有别的东西"调的）：见 LAMP_ENERGY / LAMP_RANGE / LAMP_ATTEN 那几段。
 
 ## 实体物件层：一个空的 Node3D 容器，本身不占地、只提供"物件都挂这儿"的父节点
 ## 与统一的世界原点（= 桌面中心）。坐标换算见 canvas_px_to_world。
