@@ -3312,7 +3312,9 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_stage = "peer"
 	_tgt_peer = -1
 	_tgt_tiles = []
-	_show_target_hint("点棋盘上的玩家卡选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
+	# 入口是**桌上那块立牌**（座位卡已随批次 5 Task 2 退场）—— 与规则说明同源口径，
+	# 别再说"玩家卡"（玩家会照着找一张已经不存在的东西）。
+	_show_target_hint("点桌上对手的立牌选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
 	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）

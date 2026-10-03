@@ -90,6 +90,20 @@ func _run() -> void:
 		"基础操作页的滚轮说明改写为「视角推移」（不再教已删除的「滚轮缩放」）")
 	_check(not basic_page.contains("滚轮缩放"),
 		"基础操作页不再出现已被取代的「滚轮缩放」")
+	# 选目标的入口（修复波 C）：座位卡已随批次 5 退场，入口是**桌上的立牌**。
+	# 正向钉新措辞 + **反向**钉住旧措辞不回来（只删断言等于放行），与上面「滚轮缩放」同款。
+	var all_text := ""
+	for p in pages:
+		all_text += String(p.body)
+	_check(basic_page.contains("立牌") and basic_page.contains("选中"),
+		"基础操作页把选目标的入口说成「点桌上的对手立牌」（不再是已删除的座位卡）")
+	_check(not all_text.contains("座位卡"),
+		"全部页都不再出现已删除的「座位卡」（任何一页都不许教它）")
+	# 手牌右键丢弃（M7）：批次 3 起这条入口就存在，规则说明里却从没写过。
+	_check(basic_page.contains("右键") and basic_page.contains("丢弃"),
+		"基础操作页写了「手牌右键丢弃」这条入口")
+	_check(basic_page.contains("使用道具"),
+		"基础操作页写了「选中后点桌垫使用道具确认」这条出牌入口")
 
 	print("== 控件与初始状态 ==")
 	_check(g.rules_btn != null and g.rules_panel != null and g.rules_body != null,
