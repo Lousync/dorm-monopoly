@@ -102,11 +102,18 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 - **文件名同时决定摆拍内容**（`dev_tools.take_shot` 里按 `path.contains(...)` 分支）：
   `plain` → 不弹赌场、不翻卡；`table` → 停在围桌全景（默认会拉近到 27 号格并弹出格详情卡）；
   `rules` → 展开规则说明；`pause` → 打开暂停菜单；`card` → 跳过赌局；
-  `tilt` → 把 **3D 相机**改到更平的 30° 俯角（默认 50°、距离不变）出图对比构图，配 `table` 用
-  （如 `xx_tilt_table_plain.png`）；
+  `tilt` → 走**真接口** `table3d.snap_view(0.5)` 把视角推到轨道中点（俯角 50°→**69°**、
+  距离一并插值），配 `table` 用出纯视角对比图（如 `xx_tilt_table_plain.png`）；
+  `view2d` → 走 `table3d.snap_view(1.0)` 推到 **2D 端**（近正俯视、只看桌上地图）出图，
+  用来拍 2D 那张（如 `xx_view2d_table_plain.png`）；
+  `freecam` → **不锁自动镜头**（默认摆拍会锁住，避免对局推进拽走视角）；解锁后随后的
+  `focus_grid` 拉近才生效，用来复现「玩家自己看到的近景」；
+  `hand` → 给房主**发几张不同品质的道具**（只在房主侧注入状态，不动玩法代码），
+  用来拍「手里握着牌」——开局背包是空的；
   `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）。
+  注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
   常拼的几个：**干净全景 `xx_table_plain.png`**、**近景＋格详情卡 `xx_plain.png`**、
-  **看房子 `xx_level_plain.png`**。
+  **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**。
 - **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
 
 配套：`--shot-game=1 --shot=<路径>` 单人直达对局；`--shot-lobby=<路径>` 直达大厅；
