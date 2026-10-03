@@ -14,6 +14,28 @@ const CAM_DIST := 5.8            # 相机到注视点的水平距离。窗口恢
                                  # 内容整体向近端挪了 0.68 个世界单位（新并入的顶部死区在远端），
                                  # 原来 4.4 会把近端的下家座位栏顶出屏幕底部 —— 必须拉远。
 
+# ---- 批次 4：双视角。滚轮沿一条轨道在 3D 第一人称 ↔ 2D 桌面之间连续推移
+#（`dolly` 推拉整个删除，见设计稿 §四）。view_t ∈ [0,1] 是这条轨道上的位置。
+const CAM_TILT_2D_DEG := 88.0    # 2D 端俯角：接近正俯视（只看桌上地图；手牌在这一端淡出，
+                                 # 看不见也就点不到，见批次 4 Task 2）
+const VIEW_DIST_2D := 8.6        # 2D 端「相机到注视点的 3D 距离」。**不是随手取的估值**，
+                                 # 是拿两条断言、对着出图把值夹出来的：
+                                 #   ① 整张桌面（±4 世界单位的方桌）在整条轨道上**四个角都不许
+                                 #      出画面**。俯角越大，桌面在屏幕竖直方向上的投影越长
+                                 #（8 格：sin50°≈6.1 → sin88°≈8.0），相机得同时跟着往前挪
+                                 #（d3d 与俯角一起插值），否则近端那条边先顶出屏幕下沿。
+                                 #      沿轨道扫 21 档实测：**最紧的一档在 wt≈0.45–0.55**（不在两端），
+                                 #      8.2 时那里只剩 0.0~0.3 像素（近边正好贴在屏幕下沿上，
+                                 #      浮点一抖就红）；8.6 时同一档余量 10.9px、两端 35px 上下。
+                                 #   ② R42：两端桌面投影包围盒的**面积比**要落在 [0.6,1.6]
+                                 #（只钉「四角在画面内」是可以骗过去的 —— 把距离调大让桌面整体变小，
+                                 #      四角照样在画面内，而 2D 端就成了张缩水的小图）。
+                                 #      8.6 实测面积比 0.96：两端大小接近，2D 端仍是"整屏桌面"。
+                                 # 取值就是把①的下界（≈8.2，再小就贴边）往上抬到有余量的 8.6；
+                                 # 抬得再多（如 9.2）②会单边下滑、2D 端明显缩水，与"2D 桌面"的观感相悖。
+const VIEW_STEP := 0.25          # 滚轮每格改多少（4 格从 3D 走到 2D）
+const VIEW_SNAP := 6.0           # 平滑逼近速率：每秒把剩余差距衰减 e^-6（帧率无关的指数逼近）
+
 # 纹理窗口 = 整张画布。取景会把内容（含四条座位栏）铺满画布，裁掉任一边都可能
 # 让某条座位栏既看不见也点不到（见 T4b/T4c）。比例目标推迟到批次 3（座位栏将换成桌上立牌）。
 #
@@ -53,6 +75,12 @@ var on_table_click: Callable = Callable()
 ## 状态当成这次松开在收尾（见 _unhandled_input 里的反例）。按 button_index 认，
 ## 这样吞掉的必定是同一次点击的松开，不会误伤别的键。
 var _consumed_press_btn: int = MOUSE_BUTTON_NONE
+
+## 视角量：0 = 3D 第一人称（50°、手里有牌、能出牌），1 = 2D 桌面（88°、只看地图）。
+## `view_target` 是滚轮改的**目标**，`view_t` 是每帧向它逼近的**当前值**（见 _process）。
+## 纯本地表现：不进 s_state、不同步 —— 每个人自己滚自己的。
+var view_t := 0.0
+var view_target := 0.0
 
 func _init() -> void:
 	_build_environment()
@@ -143,13 +171,62 @@ func world_to_canvas_px(w: Vector3) -> Vector2:
 func _build_camera() -> void:
 	camera = Camera3D.new()
 	camera.fov = CAM_FOV
-	# 按俯角求相机位置：水平距离 d，高度 d*tan(俯角)，看向桌面中心
-	var d := CAM_DIST
-	var rad := deg_to_rad(CAM_TILT_DEG)
-	# _init 阶段节点尚未入树，look_at 会报错 —— 必须用 look_at_from_position
-	camera.look_at_from_position(Vector3(0.0, d * tan(rad), d), Vector3.ZERO, Vector3.UP)
 	add_child(camera)
 	camera.current = true
+	# 摆位统一走 _apply_camera（全文件唯一摆相机的地方）：这里只负责把相机造出来并挂进本子树。
+	# 此时本节点还在 `_init` 里、尚未入树，`_apply_camera` 自己会分辨那条路径（见那里的注释）。
+	_apply_camera()
+
+## 设视角目标（滚轮走这里）。夹到 [0,1]。
+func set_view(t: float) -> void:
+	view_target = clampf(t, 0.0, 1.0)
+
+## 设目标**并立即到位**：摆拍与测试用。玩法里别用 —— 那会丢掉平滑（滚轮要的是推移感）。
+func snap_view(t: float) -> void:
+	view_target = clampf(t, 0.0, 1.0)
+	view_t = view_target
+	_apply_camera()
+
+## 按 view_t 摆相机 —— 全文件唯一摆相机的地方（相机的位置与朝向只有这一个来源）。
+##
+## 俯角与「到注视点的 3D 距离」**一起**插值：只插角度的话，俯角越陡桌面在屏幕竖直方向上的
+## 投影越长（8 格 sin50°≈6.1 → sin88°≈8.0），近端那条边会先顶出屏幕下沿。
+##
+## 位置 = 方位 × 距离。**方位是"相机在桌心的哪个方位"，不是"相机指向桌心的方向"** ——
+## 两者差一个负号，把后者当位置赋回去，相机就绕原点镜像到桌子的另一侧（y<0），而 basis
+## 不变 ⇒ 射线仍朝下、与桌面交于 t<0，被 Plane.intersects_ray 拒绝 ⇒ screen_to_uv 对所有
+## 屏幕点返回 null ⇒ 点击与悬停整体失效（批次 2 的 `dolly` 踩过这个坑，那个函数已删，
+## 教训留在这里：**方向 ≠ 位置**）。
+##
+## 相机在树内用 `global_position` + `look_at`（本节点恒挂在原点，两条路等价，但这是"真·全局"
+## 那条）；`_build_camera` 里刚 `add_child` 完就调这里时本节点还在 `_init` 里**没入树**，
+## 相机自然也还没入树 —— 那时 `look_at` 会 ERR_FAIL（"Node not inside tree"）、
+## `global_position` 的 setter 也会因父节点取不到全局变换而报错，于是退回批次 2 验证过的
+## `look_at_from_position`（它按局部变换算，树外安全）。入树之后的每一次调用（滚轮 / snap_view /
+## _process）都走真·全局那条。
+func _apply_camera() -> void:
+	var rad := deg_to_rad(lerpf(CAM_TILT_DEG, CAM_TILT_2D_DEG, view_t))
+	var d3d := lerpf(CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)), VIEW_DIST_2D, view_t)
+	var pos := Vector3(0.0, d3d * sin(rad), d3d * cos(rad))
+	if camera.is_inside_tree():
+		camera.global_position = pos
+		camera.look_at(Vector3.ZERO, Vector3.UP)
+	else:
+		camera.look_at_from_position(pos, Vector3.ZERO, Vector3.UP)
+
+## 逐帧把 view_t 平滑逼近 view_target。指数逼近：每帧把剩余差距乘 e^(-VIEW_SNAP*delta)，
+## 与帧率无关（60fps 与 144fps 走同样的时间曲线），且**永不过冲**（单调逼近）。
+##
+## 相等时直接早退：省掉每帧的 look_at（相机不动就没必要重摆）。
+## 注意：这里早退掉的只是"摆相机"这一件事；Task 2 要把 view_t 推给桌上实体（手牌淡出），
+## 加的时候得想清楚"相等也得推"（set_hand 重建节点后透明度要重新贴），别跟着一起早退。
+func _process(delta: float) -> void:
+	if is_equal_approx(view_t, view_target):
+		return
+	view_t = lerpf(view_target, view_t, exp(-VIEW_SNAP * delta))
+	if absf(view_t - view_target) < 0.001:
+		view_t = view_target
+	_apply_camera()
 
 func _build_viewport() -> void:
 	viewport = SubViewport.new()
@@ -222,19 +299,6 @@ func viewport_to_screen(pos: Vector2) -> Variant:
 	var world: Vector3 = table_mesh.global_transform * TableGeometry.uv_to_world(uv, TABLE_SIZE)
 	return camera.unproject_position(world)
 
-## 沿视线推拉（滚轮缩放）。factor > 1 拉近。
-## 只改「相机到桌面中心的距离」、方向不变 —— 于是俯角恒定，推拉不会把桌子翻成平视。
-## 夹取上下限，免得太近钻进桌面、太远让桌子退到屏幕一角。
-func dolly(factor: float) -> void:
-	# 位置 = 方位 * 距离，方位必须原样保留。若把「相机指向桌面中心的方向」
-	# （-camera.global_position）当位置赋回去，相机就绕原点镜像到桌子的另一侧（y<0），
-	# 而 basis 不变 ⇒ 射线仍朝下、与桌面交于 t<0，被 Plane.intersects_ray 拒绝
-	# ⇒ screen_to_uv 对所有屏幕点返回 null ⇒ 点击与悬停整体失效。
-	var dir := camera.global_position.normalized()   # 相机在桌面中心的哪个方位
-	var dist := camera.global_position.length()
-	var nd := clampf(dist / factor, 2.0, 14.0)
-	camera.global_position = dir * nd
-
 ## 鼠标事件映射进 SubViewport。键盘等其它事件原样放行。
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton or event is InputEventMouseMotion:
@@ -246,14 +310,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		# 滚轮分支不吃旗标：旗标认的是某个具体按键的"按下还没被松开"，而滚轮既不是那个按键、
-		# 也不代表它松开了（滚轮事件照旧推拉，与左/右键的配对互不相干）。这里若顺手清掉，
+		# 也不代表它松开了（滚轮事件照旧改视角，与左/右键的配对互不相干）。这里若顺手清掉，
 		# 一个被消费的按下在"滚一格再松开"之后就又漏进 2D 了。
+		# 滚轮改的是**目标值**，不是当前值：相机由 _process 平滑推移过去（推移感，不是硬切）。
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			dolly(1.12)
+			set_view(view_target + VIEW_STEP)     # 向前滚 = 推向 2D 桌面
 			get_viewport().set_input_as_handled()
 			return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			dolly(1.0 / 1.12)
+			set_view(view_target - VIEW_STEP)     # 向后滚 = 拉回 3D 第一人称
 			get_viewport().set_input_as_handled()
 			return
 		# 旗标的生命期恰好是「被消费的按下 → 它的松开」。所以同一个键**又按下**时先清掉：

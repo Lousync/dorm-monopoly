@@ -164,33 +164,82 @@ func _run() -> void:
 	_check(t3.viewport_to_screen(Vector2(-50.0, -50.0)) == null,
 		"画布外的坐标返回 null（不是无限平面上的任意点）")
 
-	print("== 滚轮推拉：factor > 1 拉近，且只改距离、不改方位 ==")
-	var d0: float = t3.camera.global_position.length()
-	var dir0: Vector3 = t3.camera.global_position.normalized()
-	t3.dolly(1.12)
-	var d1: float = t3.camera.global_position.length()
-	_check(d1 < d0, "滚轮上滚（factor 1.12）把相机拉近（%.2f → %.2f）" % [d0, d1])
-	# 只验距离是不够的：把「指向中心的方向」当位置赋回去会把相机绕原点镜像到桌子另一侧，
-	# 距离照样变小、两次 dolly 照样抵消（互为逆操作），于是 bug 被完全掩盖。必须钉住方位。
-	_check(t3.camera.global_position.normalized().distance_to(dir0) < 0.0001,
-		"推拉只改距离、方位不变（实得 %s，期望 %s）" % [t3.camera.global_position.normalized(), dir0])
-	_check(t3.camera.global_position.y > 0.0,
-		"推拉后相机仍在桌面之上（实得 y=%.2f）" % t3.camera.global_position.y)
-	t3.dolly(1.0 / 1.12)
-	_check(absf(t3.camera.global_position.length() - d0) < 0.01, "反向推拉回到原距离")
-	_check(t3.camera.global_position.normalized().distance_to(dir0) < 0.0001, "反向推拉后方位同样不变")
-	t3.dolly(1000.0)
-	_check(absf(t3.camera.global_position.length() - 2.0) < 0.01,
-		"拉到极限夹在下限 2.0（实得 %.2f）" % t3.camera.global_position.length())
-	t3.dolly(0.001)
-	_check(absf(t3.camera.global_position.length() - 14.0) < 0.01,
-		"推远夹在上限 14.0（实得 %.2f）" % t3.camera.global_position.length())
+	print("== 视角推移：端点、夹取与单调平滑 ==")
+	# 0 = 3D 第一人称（50°、手里有牌），1 = 2D 桌面（88°、只看地图）。取代批次 2 的滚轮推拉
+	#（`dolly` 已整个删除，见设计稿 §四）—— 滚轮现在改的是**目标值**，相机沿一条轨道连续推移。
+	t3.snap_view(0.0)
+	_check(is_equal_approx(t3.view_t, 0.0), "3D 端 view_t = 0")
+	# 俯角 = 相机位置矢量（相对注视点）与竖直方向的夹角余角，口径同上面容器结构那条。
+	var tilt3d := 90.0 - rad_to_deg(t3.camera.global_position.angle_to(Vector3.UP))
+	_check(absf(tilt3d - t3.CAM_TILT_DEG) < 1.0,
+		"3D 端俯角 = %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt3d])
+	t3.snap_view(1.0)
+	_check(is_equal_approx(t3.view_t, 1.0), "2D 端 view_t = 1")
+	var tilt2d := 90.0 - rad_to_deg(t3.camera.global_position.angle_to(Vector3.UP))
+	_check(absf(tilt2d - t3.CAM_TILT_2D_DEG) < 1.0,
+		"2D 端俯角 = %.0f°（实得 %.1f°）" % [t3.CAM_TILT_2D_DEG, tilt2d])
+	# 两端（连中段）桌面都要留在画面里：把桌子的四个角投影到屏幕，全部落在视口内。
+	# 屏幕尺取**真实可见矩形**（同下面 T-a），不写死 1280×800 —— 视口尺寸一旦与假设不符，
+	# 写死的数字就变成"拿错了尺子"，量出来的结论没有意义。
+	for wt in [0.0, 0.5, 1.0]:
+		t3.snap_view(wt)
+		var inside := true
+		for sx in [-4.0, 4.0]:
+			for sz in [-4.0, 4.0]:
+				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
+				if sp.x < 0.0 or sp.x > vr.size.x or sp.y < 0.0 or sp.y > vr.size.y:
+					inside = false
+					print("    [屏外] view_t=%.2f 桌面角 (%.0f, %.0f) → 屏幕 %s（视口 %s）"
+						% [wt, sx, sz, sp, vr.size])
+		_check(inside, "view_t=%.1f 时整张桌面仍在画面内" % wt)
+	# 【R42】只钉「四个角都在画面内」是能被骗过去的：把 VIEW_DIST_2D 调大让桌面整体变小，
+	# 四角照样落在画面内，而 2D 端就成了一张小图 —— 验收要求是「始终在画面内**且大小接近**」。
+	# 所以再钉一条：两端桌面投影**包围盒的面积比**必须落在 [0.6, 1.6]（用 unproject_position
+	# 把四角投影出来算包围盒）。少了这条，"把桌面缩小"这种退化会全绿通过。
+	var boxes: Array = []
+	for wt in [0.0, 1.0]:
+		t3.snap_view(wt)
+		var mn := Vector2(INF, INF)
+		var mx := Vector2(-INF, -INF)
+		for sx in [-4.0, 4.0]:
+			for sz in [-4.0, 4.0]:
+				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
+				mn = mn.min(sp)
+				mx = mx.max(sp)
+		boxes.append(Rect2(mn, mx - mn))
+	var area_ratio: float = (boxes[1] as Rect2).get_area() / (boxes[0] as Rect2).get_area()
+	_check(area_ratio > 0.6 and area_ratio < 1.6,
+		"两端桌面投影大小接近（面积比 %.2f，须在 [0.6,1.6]；3D 端 %s / 2D 端 %s）"
+			% [area_ratio, boxes[0], boxes[1]])
+	# 滚轮改的是目标值，不是硬切
+	t3.snap_view(0.0)
+	t3.set_view(1.0)
+	_check(is_equal_approx(t3.view_t, 0.0) and is_equal_approx(t3.view_target, 1.0),
+		"set_view 只改目标、当前值不动（不是硬切）")
+	# 逐帧平滑：单调逼近且不发散（每帧采一次样）
+	var prev: float = t3.view_t      # t3 是运行期 load 出来的（Variant），这里得写明类型
+	var all_monotone := true
+	for i in 60:
+		await process_frame
+		if t3.view_t < prev - 0.0001:
+			all_monotone = false
+		prev = t3.view_t
+	_check(all_monotone, "60 帧内 view_t 单调不回头")
+	# 「基本到位」按**真实时间**判，不按帧数：VIEW_SNAP 是帧率无关的指数逼近（e^-6 每秒），
+	# 而无头下 60 帧只走了 0.4 秒上下（一帧跑多快由机器决定）—— 按帧数等会随机器快慢假红。
+	# e^-6 ≈ 0.25%，1 秒足够到位；上限 3 秒兜底，免得万一不动时把测试挂死。
+	var t0 := Time.get_ticks_msec()
+	while absf(t3.view_t - 1.0) > 0.005 and Time.get_ticks_msec() - t0 < 3000:
+		await process_frame
+	_check(absf(t3.view_t - 1.0) < 0.05,
+		"约 1 秒内基本到位（实得 %.3f，用时 %d ms）" % [t3.view_t, Time.get_ticks_msec() - t0])
+	t3.snap_view(0.0)
 
 	print("== 事件注入端到端：屏幕点 → 3D 映射 → SubViewport 内的 2D 控件 ==")
-	# 先真的滚一格再点（review 指出的结构缺口：两次 dolly 互为逆操作、且只验距离，
-	# 镜像 bug 会被完全掩盖）。相机一旦被镜像到 y<0，射线与桌面交于 t<0 被拒
-	# ⇒ screen_to_viewport 对所有屏幕点返回 null ⇒ 下面这几条必红。
-	t3.dolly(1.12)
+	# 先用**真接口**把视角推离默认档再点（review 指出的结构缺口：只验"默认视角下点得中"
+	# 是不够的 —— 相机一旦被摆到桌面之下（y<0），射线与桌面交于 t<0 被 Plane.intersects_ray
+	# 拒绝 ⇒ screen_to_viewport 对所有屏幕点返回 null ⇒ 下面这几条必红）。
+	t3.snap_view(0.4)
 	# 在 SubViewport 里挂一个铺满的探针控件（后加 = 盖在 BoardView 之上），
 	# 验证整条链：屏幕点 push 进根视口 → 3D 容器算出 SubViewport 坐标 → push_input 送达 2D 控件。
 	var probe := Control.new()
@@ -561,6 +610,10 @@ func _run() -> void:
 	# 验收一律走**可观察量**：牌的几何取自节点自己的 mesh + 变换，命中判据走**真实的点击链路**
 	#（相机 unproject → t3.screen_to_viewport，与 table_3d._unhandled_input 同一条），
 	# 而不是把实现里的 hand_rect 推导再写一遍（那样写成什么样都过）。
+	# 显式回 3D 端：本段的量（尤其「命中盒按抬起算」那段 ≥4 画布像素的余量）是在
+	# 3D 端取景下量的 —— 前面事件注入那几段把视角推到了中段，不回来的话量的是另一套几何
+	#（视角越陡，抬起来那段在屏幕上的错位越小，是几何使然、不是命中盒坏了）。
+	t3.snap_view(0.0)
 	print("== 手中牌：数量、厚度、品质色 ==")
 	var tp4 = t3.table_props
 	if tp4 == null:
@@ -646,28 +699,26 @@ func _run() -> void:
 			_check(tp4.hand_rect(0).get_center().x < tp4.hand_rect(2).get_center().x,
 				"命中盒的左右顺序与牌一致（左→右）")
 			# 相机一变，实物的**世界位置不动**、可看到的画面全变了 —— 命中盒必须跟着重算，
-			# 否则玩家在新视角下照着卡片点却点不中。这里换俯角（50° → 30°，正是批次 4 的视角推移
-			# 与 `--shot` 的 tilt 摆拍会做的事）来钉这条：**命中盒不是写死的常数**。
+			# 否则玩家在新视角下照着卡片点却点不中。这里走**真接口**把视角推到中段
+			#（50° → 69°，正是滚轮推移与 `--shot` 的 tilt 摆拍会做的事；手搓相机的话，
+			# 这段量到的是夹具自己摆的相机数学，而不是 `_apply_camera` 的那一版）来钉这条：
+			# **命中盒不是写死的常数**。
 			var wpos_before: Vector3 = (hr.get_child(1) as Node3D).global_position
-			var d_cam: float = t3.CAM_DIST
-			var rad30 := deg_to_rad(30.0)
-			t3.camera.look_at_from_position(Vector3(0.0, d_cam * tan(rad30), d_cam), Vector3.ZERO, Vector3.UP)
+			t3.snap_view(0.5)
 			await process_frame
-			_check(tp4.hand_hit(seen4.call(1)) == 1, "换俯角（50°→30°）后点同一张看得见的那面仍命中它")
+			_check(tp4.hand_hit(seen4.call(1)) == 1, "视角推到中段（50°→69°）后点同一张看得见的那面仍命中它")
 			# 而且盒子要跟着**挪**到位（不只是"够宽容"）：缓存住旧视角的盒子会在这里露馅
 			_check(tp4.hand_rect(1).get_center().distance_to(seen4.call(1)) < 8.0,
 				"换俯角后命中盒重新对准看得见的那张牌（偏差 %.1f 画布像素）"
 					% tp4.hand_rect(1).get_center().distance_to(seen4.call(1)))
 			_check((hr.get_child(1) as Node3D).global_position.is_equal_approx(wpos_before),
 				"换视角不改实物的世界位置（牌钉在固定桌位上）")
-			# 滚轮推拉（只改距离，方向不变）：同样"点看得见的那面"必须照样命中
-			t3.dolly(1.12)
+			# 再往 2D 端推一段（滚轮推移的同一件事，只是推得更远）：同样"点看得见的那面"必须照样命中
+			t3.snap_view(0.7)
 			await process_frame
-			_check(tp4.hand_hit(seen4.call(1)) == 1, "滚轮推近后点同一张牌仍命中它")
-			t3.dolly(1.0 / 1.12)
-			# 取景回默认俯角：下面的位置断言必须在 game.gd 里真实的那一版取景下做
-			t3.camera.look_at_from_position(
-				Vector3(0.0, d_cam * tan(deg_to_rad(t3.CAM_TILT_DEG)), d_cam), Vector3.ZERO, Vector3.UP)
+			_check(tp4.hand_hit(seen4.call(1)) == 1, "视角推向 2D 端后点同一张牌仍命中它")
+			# 取景回 3D 端：下面的位置断言必须在 game.gd 里真实的那一版取景下做
+			t3.snap_view(0.0)
 			await process_frame
 			# 负路径：离得远的点不算命中（-1 是 hand_hit 自己的约定）
 			_check(tp4.hand_hit(Vector2(50.0, 50.0)) == -1, "角落不算命中")

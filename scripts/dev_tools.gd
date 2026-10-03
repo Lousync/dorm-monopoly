@@ -376,15 +376,17 @@ func take_shot(path: String) -> void:
 	# 这样后面的 focus_grid 拉近才生效 —— 用来复现「玩家自己看到的近景」
 	g.board.cam_locked = not path.contains("freecam")
 	# （原 _shot_rot 分支已随转视角一起删除，见 v0.5.0 批次 1）
-	# 文件名带 tilt：把 **3D 相机**拉到另一个俯角（30°）出图，用来和默认 50° 对比构图。
-	# 只动俯角这一个变量，距离取默认值 —— 别顺手改距离，否则近端座位栏会被顶出屏幕底，
-	# 出来的图就不再是「纯俯角对比」而是「俯角 + 距离」两处都变了。
-	# 只动 3D 相机；SubViewport 内的 2D 相机（focus_grid 那一套）不受影响。
-	# 建议配 table 用（如 xx_tilt_table_plain.png），停在围桌全景做纯俯角对比。
+	# 文件名带 tilt：把 **3D 视角**推到中段（view_t=0.5）出图，用来和 3D / 2D 两端对比构图。
+	# 走**真接口**（table3d.snap_view），不手搓相机 —— 手搓的那份数学会和 _apply_camera 漂开，
+	# 摆出来的图就不再是玩家真能滚到的那一档（视角推移后尤其：俯角与距离是一起插值的）。
+	# 只动 3D 视角；SubViewport 内的 2D 相机（focus_grid 那一套）不受影响。
+	# 建议配 table 用（如 xx_tilt_table_plain.png），停在围桌全景做纯视角对比。
 	if path.contains("tilt") and g.table3d != null:
-		var d: float = g.table3d.CAM_DIST       # 距离与默认一致
-		var rad := deg_to_rad(30.0)             # 出图对比用：更平的俯角（距离不变）
-		g.table3d.camera.look_at_from_position(Vector3(0.0, d * tan(rad), d), Vector3.ZERO, Vector3.UP)
+		g.table3d.snap_view(0.5)
+	# 文件名带 view2d：推到 2D 端（view_t=1，接近正俯视、只看桌上地图）出图。与 tilt 同形：
+	# 没有这个分支就拍不出 2D 端那张图（default 只能拍到 3D 端）。
+	if path.contains("view2d") and g.table3d != null:
+		g.table3d.snap_view(1.0)
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
 		# 倍率是「全景的倍数」：2.0 ≈ 屏幕时代那个 0.8（0.8/0.40，见 board_view 顶部常量）
