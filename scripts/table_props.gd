@@ -109,7 +109,8 @@ static func chip_count(money: int) -> int:
 ##
 ## 幂等：节点只在第一次建，之后每次调用只**重算 transform 与 mesh 尺寸**。
 ## 为什么每次都要重算：半径是 `200 × _zoom`（BoardView.wheel_screen_radius），
-## 而 `_zoom` 会被取景 / 滚轮推拉 / 抽卡推近 / 人数变化改动 —— 只建一次的话，
+## 而 `_zoom` 会被取景 / 抽卡推近 / 人数变化改动（**滚轮不碰它**：滚轮改的是 3D 视角 `view_t`，
+## 与 2D 的 `_zoom` 无关）—— 只建一次的话，
 ## 实体就会跟桌垫上画出来的轮子脱开。game.gd 在每次状态广播时重调这里。
 func build_wheel(center_px: Vector2, radius_px: float) -> void:
 	if radius_px <= 0.0:
@@ -412,16 +413,28 @@ func _apply_hand_alpha() -> void:
 		_hand_root.visible = shown
 	if not shown:
 		return
+	# 3D 端（a = 1.0）用**不透明**模式，只有淡出中（a < 1.0）才切到 ALPHA 混合：
+	# 让实物无条件进 alpha 混合队列会改掉**深度写入与投影**行为 —— 批次 3 重开阴影正是为了让
+	# 实物能投影，批次 6 还要重做光照，所以 3D 端必须走不透明。ALPHA 混合下 albedo_color.a 才
+	# 真正起作用，淡出中必须切过去（不切就淡不动）。
+	var body_mode: BaseMaterial3D.Transparency = BaseMaterial3D.TRANSPARENCY_DISABLED \
+		if a >= 1.0 else BaseMaterial3D.TRANSPARENCY_ALPHA
+	# 牌面**不能**跟着用 DISABLED：图标 PNG 带透明边，透明区在 DISABLED 下会渲染成一整块
+	# 不透明方块，把图标糊在方块里（出图核对过，见 fix-wave-report 的对比图）。改用
+	# **ALPHA_SCISSOR**（alpha 裁剪）：透明区照样被裁掉、图标不被糊住，而它仍在**不透明队列**
+	# 里写深度、能投影 —— 正是"3D 端不进透明队列"想要的那一档。淡出中（要半透明）scissor
+	# 做不到，只能切回 ALPHA 混合。
+	var face_mode: BaseMaterial3D.Transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR \
+		if a >= 1.0 else BaseMaterial3D.TRANSPARENCY_ALPHA
 	for i in _hand_body_mats.size():
 		var m: StandardMaterial3D = _hand_body_mats[i]
-		# 牌身原本是不透明的（默认 TRANSPARENCY_DISABLED），不改成 ALPHA 的话 albedo_color.a 不起作用
-		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.transparency = body_mode
 		var bc := m.albedo_color
 		bc.a = a
 		m.albedo_color = bc
 		if i < _hand_face_mats.size():
 			var fm: StandardMaterial3D = _hand_face_mats[i]
-			fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA   # 牌面本来就是 ALPHA（图标 PNG 有透明边）
+			fm.transparency = face_mode
 			var fc := fm.albedo_color
 			fc.a = a
 			fm.albedo_color = fc

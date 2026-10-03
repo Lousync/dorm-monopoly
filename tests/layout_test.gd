@@ -521,7 +521,7 @@ func _run() -> void:
 				_check((out_px - in_px) * 0.5 >= wheel_r * 0.05,
 					"轮缘有可见的厚度、不是一根线（管子半径 %.0f ≥ %.0f 画布像素）"
 						% [(out_px - in_px) * 0.5, wheel_r * 0.05])
-			# 跟住画面半径：滚轮推拉 / 取景 / 抽卡推近都会改 _zoom，实体必须跟着变。
+			# 跟住画面半径：取景 / 抽卡推近都会改 _zoom（滚轮不改 _zoom，它推的是 3D 视角），实体必须跟着变。
 			# 只改 transform 与 mesh 尺寸，**不重建节点**（状态广播很频繁）。
 			var first_node: Node = t3.table_props.get_child(0)
 			var first_mesh: TorusMesh = (first_node as MeshInstance3D).mesh as TorusMesh
@@ -877,6 +877,17 @@ func _run() -> void:
 			_check(tp4.hand_alpha() > 0.99, "3D 端手牌全不透明（实得 %.2f）" % tp4.hand_alpha())
 			_check((hr as Node3D).visible and body5.albedo_color.a > 0.99,
 				"3D 端整排可见、牌身材质也是不透明的（实得 %.2f）" % body5.albedo_color.a)
+			# E（终审修复）：3D 端（a = 1.0）必须走**不透明模式**，不进透明队列 ——
+			# 透明队列会改掉深度写入与投影，而批次 3 重开阴影、批次 6 重做光照都指望实物按不透明走。
+			_check(body5.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+				"3D 端牌身材质是不透明模式（不进透明队列，深度写入 / 投影正常）")
+			# 牌面单独一档：图标 PNG 带透明边，**不能**跟牌身一样用 DISABLED（透明区会渲染成
+			# 一整块不透明方块、把图标糊住 —— 出图核对过）。3D 端用 ALPHA_SCISSOR：透明区照样
+			# 裁掉、图标不被糊住，而它仍在**不透明队列**里写深度、能投影。
+			var face5 := (hr.get_child(0) as Node3D).get_node_or_null("Face") as MeshInstance3D
+			var face_mat5 := face5.material_override as StandardMaterial3D if face5 != null else null
+			_check(face_mat5 != null and face_mat5.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
+				"3D 端牌面走 alpha 裁剪（透明区裁掉、仍写深度，不是 alpha 混合）")
 			_check(tp4.hand_hit(tp4.hand_rect(0).get_center()) == 0, "3D 端点得到第一张")
 			tp4.set_view_t(1.0)
 			_check(tp4.hand_alpha() < 0.02, "2D 端手牌基本看不见（实得 %.3f）" % tp4.hand_alpha())
@@ -890,8 +901,14 @@ func _run() -> void:
 			_check(absf(body5.albedo_color.a - mid5) < 0.01,
 				"半透明度真贴到了牌身材质上（材质 %.2f / hand_alpha %.2f）"
 					% [body5.albedo_color.a, mid5])
+			# 淡出中（0 < a < 1）才切到 ALPHA 混合 —— 否则 albedo.a 不起作用，淡不动。
+			# 整排隐藏（a ≤ 0.02）时 _apply_hand_alpha 会早退、材质保持上一档，所以"透明模式"
+			# 这一半在**淡出中段**钉（2D 端那半由"整排隐藏 + hand_hit=-1"那几条守着）。
 			_check(body5.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA,
-				"牌身材质开了 alpha 混合（否则 albedo.a 不起作用）")
+				"淡出中牌身材质切到 alpha 混合（否则 albedo.a 不起作用；3D 端那半见上条不透明模式）")
+			if face_mat5 != null:
+				_check(face_mat5.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA,
+					"淡出中牌面也切到 alpha 混合（scissor 做不出半透明）")
 			# 重摆会把牌身颜色**整份重写**（品质色 / 选中提亮 / 待确认丢弃都是这一笔）——
 			# 那一笔若顺带把 alpha 写回 1.0，半透明的牌就会在视角不动时"弹"回不透明
 			# （视角不再变化 ⇒ set_view_t 早退 ⇒ 再也没人来修）。选中 / 取消各走一遍这条路径。
@@ -925,6 +942,33 @@ func _run() -> void:
 			t3.snap_view(0.0)
 			await process_frame
 			_check(tp4.hand_alpha() > 0.99, "回 3D 端手牌恢复不透明（实得 %.2f）" % tp4.hand_alpha())
+
+			# ---- 批次 4 验收的另一半：2D 端「转盘仍可掷轮、手牌点不到」 ----
+			# 此前没有任何地方在 view_t = 1.0 走一遍 screen_to_viewport → wheel_hit（滚轮 / 取景那几段
+			# 只到 0.4，21 档扫描只投影四角）。这两条语义成对钉在这里：2D 端能掷轮、出不了牌。
+			print("== 2D 端：转盘仍可掷轮、手牌点不到 ==")
+			t3.snap_view(1.0)
+			await process_frame
+			var wheel_px2: Vector2 = t3.board.wheel_screen_pos()
+			var wheel_r2: float = t3.board.wheel_screen_radius()
+			tp4.build_wheel(wheel_px2, wheel_r2)   # 按当前口径重摆，命中半径回到 1.0×
+			var rim2: Node3D = tp4.get_node_or_null("WheelRim") as Node3D
+			_check(rim2 != null, "2D 端找得到转盘实体（WheelRim）")
+			if rim2 != null:
+				# 整条真链：实体世界坐标 → 3D 相机投影 → 屏幕点 → screen_to_viewport → 画布点 → wheel_hit
+				var center_px2 = t3.screen_to_viewport(t3.camera.unproject_position(rim2.global_position))
+				_check(center_px2 != null, "2D 端转盘中心仍落在桌面上（screen_to_viewport 不是 null）")
+				if center_px2 != null:
+					_check(tp4.wheel_hit(center_px2),
+						"2D 端点转盘中心仍算命中（画布 %s，轮心 %s）" % [center_px2, wheel_px2])
+			# 反向：同一档下，手牌在任何点都不命中 —— 「2D 端能掷轮、出不了牌」是一对语义。
+			var miss2 := true
+			for p2 in [wheel_px2, tp4.hand_rect(0).get_center(), Vector2(1024.0, 1024.0)]:
+				if tp4.hand_hit(p2) != -1:
+					miss2 = false
+			_check(miss2, "2D 端任何点都点不到手牌（hand_hit 全是 -1）")
+			t3.snap_view(0.0)
+			await process_frame
 
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
