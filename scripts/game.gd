@@ -1298,8 +1298,9 @@ func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 ## 轮缘就会与桌垫上画出来的那个轮盘脱开。build_wheel 是幂等的，只改 transform 与
 ## mesh 尺寸，**不重建节点**，所以每次状态都调它没有代价。
 ##
-## 注意**滚轮推拉不算在内** —— 那是 TableView3D 的 3D 相机 `dolly`，只改相机到桌心的距离，
-## 不碰 2D 的 `_zoom`，桌垫图案与轮缘一起原样不动。「谁跟相机、谁不跟」见 table_props.gd
+## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
+## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
+## 桌垫图案与轮缘一起原样不动。「谁跟相机、谁不跟」见 table_props.gd
 ## 文件头的摆放约定：只有轮缘跟 2D 相机，筹码 / 体力件 / 手牌是画布常量的实物、不跟。
 func _refresh_table_props() -> void:
 	if table3d == null or table3d.table_props == null or board == null:

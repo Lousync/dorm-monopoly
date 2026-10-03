@@ -178,20 +178,33 @@ func _run() -> void:
 	var tilt2d := 90.0 - rad_to_deg(t3.camera.global_position.angle_to(Vector3.UP))
 	_check(absf(tilt2d - t3.CAM_TILT_2D_DEG) < 1.0,
 		"2D 端俯角 = %.0f°（实得 %.1f°）" % [t3.CAM_TILT_2D_DEG, tilt2d])
-	# 两端（连中段）桌面都要留在画面里：把桌子的四个角投影到屏幕，全部落在视口内。
+	# 整条轨道桌面都要留在画面里：把桌子的四个角投影到屏幕，全部落在视口内、且**留有余量**。
 	# 屏幕尺取**真实可见矩形**（同下面 T-a），不写死 1280×800 —— 视口尺寸一旦与假设不符，
 	# 写死的数字就变成"拿错了尺子"，量出来的结论没有意义。
-	for wt in [0.0, 0.5, 1.0]:
+	#
+	# **采样加密到 21 档**（view_t 从 0 到 1 每 0.05 一档），不是只取 0 / 0.5 / 1 三点：
+	# 实测最紧的一档在中段（wt≈0.45，余量 10.9px，与 `VIEW_DIST_2D` 的推导一致），
+	# 3 点采样距真实最差点只差 0.2px —— 那是运气好，不是被钉住了（常数改回 8.2 也能过）。
+	# 加密 + 断言「每一档的最小余量 > 5 屏幕像素」才真正把最紧的一档钉住：
+	# 一旦把 VIEW_DIST_2D 调小到贴边，这里必红。余量 = 四角到视口四边距离的最小值。
+	var min_margin := INF
+	var min_margin_wt := -1.0
+	var margin_log := ""
+	for i in 21:
+		var wt := i * 0.05
 		t3.snap_view(wt)
-		var inside := true
+		var m := INF
 		for sx in [-4.0, 4.0]:
 			for sz in [-4.0, 4.0]:
 				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
-				if sp.x < 0.0 or sp.x > vr.size.x or sp.y < 0.0 or sp.y > vr.size.y:
-					inside = false
-					print("    [屏外] view_t=%.2f 桌面角 (%.0f, %.0f) → 屏幕 %s（视口 %s）"
-						% [wt, sx, sz, sp, vr.size])
-		_check(inside, "view_t=%.1f 时整张桌面仍在画面内" % wt)
+				m = minf(m, minf(minf(sp.x, vr.size.x - sp.x), minf(sp.y, vr.size.y - sp.y)))
+		margin_log += "%.0f " % m
+		if m < min_margin:
+			min_margin = m
+			min_margin_wt = wt
+	_check(min_margin > 5.0,
+		"整条轨道 21 档都留有余量（最小 %.1f px @ view_t=%.2f，须 > 5px；每档余量 %s）"
+			% [min_margin, min_margin_wt, margin_log])
 	# 【R42】只钉「四个角都在画面内」是能被骗过去的：把 VIEW_DIST_2D 调大让桌面整体变小，
 	# 四角照样落在画面内，而 2D 端就成了一张小图 —— 验收要求是「始终在画面内**且大小接近**」。
 	# 所以再钉一条：两端桌面投影**包围盒的面积比**必须落在 [0.6, 1.6]（用 unproject_position
@@ -233,6 +246,48 @@ func _run() -> void:
 		await process_frame
 	_check(absf(t3.view_t - 1.0) < 0.05,
 		"约 1 秒内基本到位（实得 %.3f，用时 %d ms）" % [t3.view_t, Time.get_ticks_msec() - t0])
+	t3.snap_view(0.0)
+
+	print("== 滚轮 → 视角推移（事件注入端到端）==")
+	# 本批次头号特性是「滚轮驱动视角推移」，但全 tests 里此前**没有任何一处注入过滚轮事件**
+	# （只有 LEFT / RIGHT）—— 方向接反、或滚轮分支漏掉 `set_input_as_handled`，都会静默通过。
+	# 夹具与下面事件注入块同源：`root.push_input` 一个真实 `InputEventMouseButton`。
+	# **不 await 就断言**：滚轮走的是 `set_view`（改目标），若它错走成"当场改 view_t"，
+	# 这条会红 —— 这正是「是推移不是硬切」在真输入链路上的那半。
+	t3.snap_view(0.0)
+	var step: float = t3.VIEW_STEP
+	var wheel_up := InputEventMouseButton.new()
+	wheel_up.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel_up.pressed = true
+	root.push_input(wheel_up)
+	_check(is_equal_approx(t3.view_target, step) and is_equal_approx(t3.view_t, 0.0),
+		"滚轮向前一格 ⇒ 目标 +VIEW_STEP（实得 %.2f），当前值仍 0（推移不是硬切）" % t3.view_target)
+	await process_frame
+	_check(t3.view_t > 0.0 and t3.view_t <= step + 0.0001,
+		"注入后当前值朝目标走且不过冲（实得 %.3f，目标 %.2f）" % [t3.view_t, t3.view_target])
+	var wheel_down := InputEventMouseButton.new()
+	wheel_down.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	wheel_down.pressed = true
+	root.push_input(wheel_down)
+	_check(is_equal_approx(t3.view_target, 0.0),
+		"滚轮向后一格 ⇒ 目标减回 3D 端（实得 %.2f）" % t3.view_target)
+	await process_frame
+	# 连推到端点：4 格到 1.0，再补 6 格 —— 目标必须**夹在 [0,1]**，不会累积出"过冲"
+	# （VIEW_STEP=0.25 ⇒ 10 格名义上是 2.5；少了 clampf 这里就是 2.5）。
+	t3.snap_view(0.5)
+	for i in 10:
+		root.push_input(wheel_up)
+		await process_frame
+	_check(is_equal_approx(t3.view_target, 1.0) and t3.view_t <= 1.0 + 0.0001,
+		"连推 10 格到 2D 端 ⇒ 目标夹在 1.0 不过冲（实得目标 %.2f / 当前 %.3f）"
+			% [t3.view_target, t3.view_t])
+	t3.snap_view(0.5)
+	for i in 10:
+		root.push_input(wheel_down)
+		await process_frame
+	_check(is_equal_approx(t3.view_target, 0.0) and t3.view_t >= -0.0001,
+		"连推 10 格到 3D 端 ⇒ 目标夹在 0.0 不过冲（实得目标 %.2f / 当前 %.3f）"
+			% [t3.view_target, t3.view_t])
 	t3.snap_view(0.0)
 
 	print("== 事件注入端到端：屏幕点 → 3D 映射 → SubViewport 内的 2D 控件 ==")

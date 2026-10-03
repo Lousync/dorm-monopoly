@@ -6,7 +6,8 @@ class_name BoardView
 ## 当前行动者脉冲光环、传送淡入淡出。
 ##
 ## 注意：本组件住在 `TableView3D` 的 `SubViewport`（2048²）内，滚轮缩放与拖拽平移
-## **都不归它管**——滚轮 = 推拉 3D 相机（`TableView3D.dolly`），平移已删除（见批次 1）。
+## **都不归它管**——滚轮 = 3D/2D 视角连续推移（`TableView3D.set_view`，批次 4 起取消推拉），
+## 平移已删除（见批次 1）。
 
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
@@ -890,7 +891,8 @@ func _zoom_at(factor: float, anchor: Vector2) -> void:
 func _gui_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton:
 		var mb := ev as InputEventMouseButton
-		# 滚轮不再自己缩放：方向盘已交给 3D 相机（Table3D._unhandled_input → dolly）。
+		# 滚轮不再自己缩放：方向已交给 3D 相机（Table3D._unhandled_input → set_view，
+		# 改的是**视角推移的目标值**，不是推拉）。
 		# 2D 相机的 _zoom 仍由掷轮/抽卡的推近演出（focus_point_zoom / focus_grid）驱动；
 		# _zoom_at 现在没有调用者，按计划保留（备 2D 缩放用）。
 		if mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
