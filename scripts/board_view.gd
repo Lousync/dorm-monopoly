@@ -5,7 +5,7 @@ class_name BoardView
 ## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修房子弹跳、悬停高亮、
 ## 当前行动者脉冲光环、传送淡入淡出。
 ##
-## 注意：本组件住在 `TableView3D` 的 `SubViewport`（2048²）内，滚轮缩放与拖拽平移
+## 注意：本组件住在 `TableView3D` 的 `SubViewport`（2048²）内，滚轮与拖拽平移
 ## **都不归它管**——滚轮 = 3D/2D 视角连续推移（`TableView3D.set_view`，批次 4 起取消推拉），
 ## 平移已删除（见批次 1）。
 
@@ -535,7 +535,8 @@ func wheel_screen_pos() -> Vector2:
 ## 转盘在画布上的**半径**（画布像素，与 wheel_screen_pos 同口径）。
 ## 转盘的尺寸是 `_world` 的局部值（_build_wheel 里 size = 400），而 `_world` 带**镜头倍率**
 ##（_apply_cam: `_world.scale = _zoom`），所以它落到画布上只有 `200 × _zoom` —— 取景、
-## 滚轮推拉、抽卡推近、人数变化都会改它。3D 实体（TableProps 的轮缘）得按这个半径换算成
+## 抽卡推近、人数变化都会改它（**滚轮不改**：滚轮只推 3D 视角，不碰这个 `_zoom`）。
+## 3D 实体（TableProps 的轮缘）得按这个半径换算成
 ## 世界单位，才能一直跟住桌垫上画出来的那个轮子。
 ## 只读查询，不碰镜头与玩法（与 Task 4 要加的手牌锚点同类）。
 func wheel_screen_radius() -> float:
@@ -1201,7 +1202,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 
 # ---------------- 相机缩放上限 + 开发者叠层 ----------------
 
-var _zoom_clamp_max := MAX_ZOOM_FACTOR   # 滚轮缩放的倍率上限（× 基准倍率）
+var _zoom_clamp_max := MAX_ZOOM_FACTOR   # 缩放倍率上限（× 基准倍率；滚轮已不碰缩放，改由取景/抽卡推近读它）
 var _tile_idx_labels: Array = []    # 开发者模式：格子编号叠层
 var dev_tile_index := false:
 	set(v):
