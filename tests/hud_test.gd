@@ -422,6 +422,194 @@ func _run() -> void:
 	_check(rolls[0] == 2, "不是我的回合：不掷轮（实得 %d 次）" % rolls[0])
 	g.roll_received.disconnect(on_roll)
 
+	print("== 点手中牌：选中 / 取消（批次 3 Task 5）==")
+	# 走**真实**的 `_on_table_click`（table_3d 命中实体那条链路），命中点取 `hand_rect` 的中心。
+	# 证据一律挑 Task 6 之后还活着的可观察量：`selected_slot`（玩法侧的选中态，单一来源）、
+	# `hand_rect`（桌上手牌自己的命中盒）、`info_panel`（格详情卡）——底栏按钮与座位卡牌位都不碰。
+	g.my_peer = 2
+	var s_hand: Dictionary = _state(2, false)
+	s_hand.await = "item"          # 轮到我、道具阶段
+	s_hand.await_peer = 2
+	for p in s_hand.players:
+		if int(p.peer) == 2:
+			# 三件刚好盖住既有三分支：不带目标（直接出牌）/ 选玩家 / 选格子
+			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+	g.s_state(s_hand)
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	var tph = g.table3d.table_props
+	_check(tph.hand_count() == 3, "我的三件道具摆成三张手牌（实得 %d）" % tph.hand_count())
+	_check(g.selected_slot == -1, "初始未选中")
+
+	var c0: Vector2 = tph.hand_rect(0).get_center()
+	var y_before: float = c0.y
+	_check(g._on_table_click(c0), "点第一张牌：这次点击被手牌消费")
+	_check(g.selected_slot == 0, "点第一张 → 选中下标 0（实得 %d）" % g.selected_slot)
+	# 选中反馈在**3D**上（Task 6 拆掉座位卡牌位后 set_item_selected 会空转，选中反馈不能挂在它上面）：
+	# 牌抬起来 → 屏幕上看更高 → 射线打到桌面的点更远 → 画布 y 变小。
+	_check(tph.hand_rect(0).get_center().y < y_before - 3.0,
+		"选中的牌抬起来了（命中盒中心 %.0f → %.0f）" % [y_before, tph.hand_rect(0).get_center().y])
+	_check(absf(tph.hand_rect(1).get_center().y - tph.hand_rect(2).get_center().y) < 60.0,
+		"没选中的两张不受影响（仍在原位附近）")
+	_check(g._on_table_click(c0), "再点同一张：仍被手牌消费")
+	_check(g.selected_slot == -1, "再点同一张 → 取消选中（实得 %d）" % g.selected_slot)
+	_check(absf(tph.hand_rect(0).get_center().y - y_before) < 3.0, "取消后牌落回原位")
+
+	# 选中之后走**既有**出牌路径：牌垫上的「使用道具」（_on_use_pressed），本任务一行不改它
+	g._on_table_click(tph.hand_rect(1).get_center())
+	_check(g.selected_slot == 1, "点第二张（跑腿券）→ 选中下标 1（实得 %d）" % g.selected_slot)
+	g._on_use_pressed()
+	_check(g._tgt_stage == "peer", "需要选玩家的道具：转进既有的两段式选目标态（实得「%s」）" % g._tgt_stage)
+	_check(g.selected_slot == -1, "出牌路径把选中态清掉（既有行为不变）")
+	g._cancel_target()
+	_check(g._tgt_stage == "", "取消目标后回到无事态")
+	g._on_table_click(tph.hand_rect(2).get_center())
+	_check(g.selected_slot == 2, "点第三张（快递直达）→ 选中下标 2（实得 %d）" % g.selected_slot)
+	g._on_use_pressed()
+	_check(g._tgt_stage == "tile", "选格子类道具：进既有的选地块态（实得「%s」）" % g._tgt_stage)
+	g._cancel_target()
+
+	# 取消（Esc / 右键走的是同一个 _cancel_target）也要把手牌选中态收回
+	g._on_table_click(tph.hand_rect(0).get_center())
+	_check(g.selected_slot == 0, "重新选中第一张（实得 %d）" % g.selected_slot)
+	g._cancel_target()
+	_check(g.selected_slot == -1, "取消把选中态一并清掉（实得 %d）" % g.selected_slot)
+	_check(absf(tph.hand_rect(0).get_center().y - y_before) < 3.0, "取消后抬起反馈收回")
+
+	print("== 手牌不吃格子的点击（近排格子不能有点不动的死区）==")
+	# 近排（grid 最后一行，离镜头最近）= 手牌所在的那条带。命中的判定顺序必须让
+	# 「牌只在道具阶段吃点击」+「被吃掉的点屏幕上真的画着那张牌」，否则近排格子的下缘会变成死区。
+	var cell_of := func(i: int) -> Rect2:
+		var p: Vector2 = g.board._view_from_world(g.board.tile_pos(i))
+		var s: float = g.board.TILE * g.board._zoom
+		return Rect2(p, Vector2(s, s))
+	var near_row: Array = []
+	for i in GameData.TILES.size():
+		if g.board.tile_grid(i).y == GameData.BOARD_ROWS - 1:
+			near_row.append(i)
+	_check(near_row.size() == GameData.BOARD_COLS, "近排 %d 格都在（实得 %d）" % [GameData.BOARD_COLS, near_row.size()])
+
+	# ① 手牌只在道具阶段吃点击：牌是常驻显示的（每次广播都摆一遍），但别的阶段点它没有意义，
+	#    吃下点击就等于把本该落到格子上的一次点击吞成「什么都没发生」——那才是真正的死区。
+	var s_roll: Dictionary = s_hand.duplicate(true)
+	s_roll.await = "roll"          # 掷轮阶段（仍是我的回合），手牌照样摆在桌上
+	g.s_state(s_roll)
+	await process_frame
+	var c0b: Vector2 = tph.hand_rect(0).get_center()
+	_check(tph.hand_hit(c0b) == 0, "（对照）这个点确实落在第一张牌的命中盒里")
+	_check(not g._on_table_click(c0b), "不是道具阶段：点手牌不消费点击（漏给桌垫）")
+	_check(g.selected_slot == -1, "不是道具阶段：点了也不会选中")
+
+	# ② 近排每格的**上沿**都不被手牌吞（牌落在格子条带的下半段），逐格验，不留死区
+	g.s_state(s_hand)
+	await process_frame
+	g._process(0.0)
+	var top_eaten := 0
+	var idx_bad := 0
+	for i in near_row:
+		var cell: Rect2 = cell_of.call(i)
+		var top_pt := Vector2(cell.get_center().x, cell.position.y + 4.0)
+		if g._on_table_click(top_pt):
+			top_eaten += 1
+		if g.board._index_at(top_pt) != i:
+			idx_bad += 1
+	_check(top_eaten == 0, "近排 %d 格的上沿没被手牌吞掉 → 没有一格整块点不动（被吞 %d 格）"
+		% [near_row.size(), top_eaten])
+	_check(idx_bad == 0, "近排每格的上沿点都解算到它自己（解错 %d 格）" % idx_bad)
+	g._cancel_target()
+
+	# ③ 下沿：取一个没被手牌盖住的近排格子，点它的下沿必须**不被消费**，并走既有的
+	#    tile_clicked 链路（_index_at → _on_tile_clicked）打开该格详情。
+	var free_tile := -1
+	for i in near_row:
+		var cell: Rect2 = cell_of.call(i)
+		var low_pt := Vector2(cell.get_center().x, cell.end.y - 3.0)
+		var covered := false
+		for k in tph.hand_count():
+			if tph.hand_rect(k).has_point(low_pt):
+				covered = true
+		if not covered and g.board._index_at(low_pt) == i:
+			free_tile = i
+			break
+	_check(free_tile >= 0, "找到一个没被手牌盖住的近排格子（实得 #%d）" % free_tile)
+	if free_tile >= 0:
+		var cell_f: Rect2 = cell_of.call(free_tile)
+		var low_f := Vector2(cell_f.get_center().x, cell_f.end.y - 3.0)
+		_check(not g._on_table_click(low_f), "点它（#%d）的下沿：手牌不消费这次点击" % free_tile)
+		g.info_panel.visible = false
+		g._on_tile_clicked(free_tile)          # 既有 tile_clicked 链路消费的那一端
+		await process_frame
+		_check(g.info_panel.visible, "该格详情卡打开（走既有 tile_clicked 链路）")
+
+	# ④ 手牌吃掉的那些点，屏幕上必须真的画着那张牌（两条独立链路互证：画布命中盒 vs
+	#    牌角点的屏幕投影）。实测：手牌命中盒与近排格子条带确实重叠（见 task-5-report），
+	#    所以这条是「重叠不等于死区」的判据 —— 被吞的地方玩家看见的就是牌。
+	var screen_box := func(k: int) -> Rect2:
+		var mi := tph.get_node("Hand").get_child(k) as MeshInstance3D
+		var bm: BoxMesh = mi.mesh as BoxMesh
+		var mn := Vector2(INF, INF)
+		var mx := Vector2(-INF, -INF)
+		for sx in [-0.5, 0.5]:
+			for sy in [-0.5, 0.5]:
+				for sz in [-0.5, 0.5]:
+					var sp: Vector2 = g.table3d.camera.unproject_position(mi.global_transform * Vector3(
+						bm.size.x * float(sx), bm.size.y * float(sy), bm.size.z * float(sz)))
+					mn = mn.min(sp)
+					mx = mx.max(sp)
+		return Rect2(mn, mx - mn)
+	var boxes: Array = []
+	var eaten := 0
+	var eaten_visible := 0
+	var overlapped := 0
+	for i in near_row:
+		# 每次点之前先清空选中态：这样「点之前的手牌摆位」在 18 次里是同一个状态，
+		# 屏幕包围盒才能在点之前算准（点下去会把选中的牌抬起来，摆位就变了）。
+		g._cancel_target()
+		var cell: Rect2 = cell_of.call(i)
+		var low := Vector2(cell.get_center().x, cell.end.y - 3.0)
+		boxes = []
+		for k in tph.hand_count():
+			boxes.append(screen_box.call(k))
+		var hit_k := -1
+		for k in tph.hand_count():
+			if tph.hand_rect(k).has_point(low):
+				hit_k = k
+				break
+		if hit_k >= 0:
+			overlapped += 1
+		if g._on_table_click(low):
+			eaten += 1
+			var sp2 = g.table3d.viewport_to_screen(low)
+			if sp2 != null:
+				for b in boxes:
+					if (b as Rect2).has_point(sp2 as Vector2):
+						eaten_visible += 1
+						break
+	g._cancel_target()
+	print("    [实测] 近排 %d 格：命中盒与手牌相交 %d 格，被手牌消费 %d 格，其中屏幕上真画着牌 %d 格"
+		% [near_row.size(), overlapped, eaten, eaten_visible])
+	_check(overlapped > 0, "手牌命中盒确实与近排格子条带重叠（%d 格）——这条重叠是实测事实" % overlapped)
+	_check(eaten == overlapped, "重叠即被消费：牌画在那儿的格子确实归牌（%d / %d）" % [eaten, overlapped])
+	_check(eaten == eaten_visible, "被手牌吞掉的点，屏幕上确实画着那张牌（%d / %d）" % [eaten_visible, eaten])
+
+	print("== 手牌重排：选中态不漂（每次广播都重摆一遍手牌）==")
+	g.s_state(s_hand)
+	await process_frame
+	var y1_plain: float = tph.hand_rect(1).get_center().y      # 选中前的第二张
+	g._on_table_click(tph.hand_rect(1).get_center())
+	_check(g.selected_slot == 1, "选中第二张（实得 %d）" % g.selected_slot)
+	g.s_state(s_hand)                    # 再来一次广播：手牌被重摆
+	await process_frame
+	_check(g.selected_slot == 1, "广播重摆手牌后选中态不漂（实得 %d）" % g.selected_slot)
+	_check(tph.hand_rect(1).get_center().y < y1_plain - 4.0,
+		"重摆后抬起反馈还在（选中的第二张 %.0f，未选中时是 %.0f）"
+			% [tph.hand_rect(1).get_center().y, y1_plain])
+	g._cancel_target()
+	g._on_table_click(tph.hand_rect(1).get_center())
+	g._cancel_target()
+	_check(g.selected_slot == -1, "收尾：选中态清空（实得 %d）" % g.selected_slot)
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

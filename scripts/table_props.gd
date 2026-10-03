@@ -237,7 +237,8 @@ func _make_pip() -> MeshInstance3D:
 # ---------------- 自己的手牌（道具） ----------------
 #
 # 一排**有厚度的实体卡**：近端、微微朝自己倾斜 —— 取代原来座位卡上那 5 个道具牌位。
-# 本步只做显示：点选/出牌是 Task 5（那里直接用这里的 hand_hit / hand_rect）。
+# 命中判定（hand_hit / hand_rect）与选中反馈（set_hand_selected）都在这儿；
+# 「点中之后选中谁、什么时候能出牌」是 game.gd 的事（_on_table_click → _on_hand_clicked）。
 # 与筹码 / 体力件同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），
 # 尺寸是世界常数（见 PROPS_Y 下面那段），刷新幂等（节点池只建一次）。
 
@@ -270,6 +271,12 @@ const HAND_BASE_PX := Vector2(1024.0, 1729.0)
 const HAND_TILT_DEG := 20.0
 ## 扇形：每远离中心一张，绕 Y 轴向外岔开一点。8° 配合 HAND_STEP_PX 时相邻两张刚好相接。
 const HAND_FAN_DEG := 8.0
+## 选中的那张**抬起来**的高度（世界单位）。选中的反馈必须在**桌上这张牌自己**身上
+##（Task 6 会拆掉座位卡那排牌位，board.set_item_selected 届时空转）——抬起 + 提亮是它的反馈。
+## 0.10 世界单位 ≈ 12 画布像素 ≈ 10 屏幕像素。**这条只能对着"屏幕位移"定，别按世界尺寸推**：
+## 抬高是竖直方向的位移，相机俯角 50° 把它压成 cos(50°) 倍，屏幕上只挪了约 10 像素
+##（0.05 那版实测只挪 6 画布像素，选中的牌与邻牌几乎分不出来）。
+const HAND_SEL_LIFT := 0.10
 
 var _hand_root: Node3D
 var _hand: Array[MeshInstance3D] = []
@@ -278,6 +285,8 @@ var _hand_face_mats: Array[StandardMaterial3D] = []   # 牌面图标：逐张一
 var _hand_mesh: BoxMesh
 var _hand_face_mesh: PlaneMesh
 var _hand_n := 0
+var _hand_items: Array = []      # 最近一次 set_hand 的背包（重摆位置时要用，见 set_hand_selected）
+var _hand_sel := -1              # 选中的那张（-1 = 都不选）；由 game.gd 同步过来
 
 ## 按背包摆手牌；items 每项形如 {"id": "招财猫", "charges": 3, "cd": 0}。
 ## 读的是**已同步**的状态（game.gd 用 _state_player(my_peer)），客户端同样可用。
@@ -285,7 +294,10 @@ var _hand_n := 0
 ## **幂等**：节点池只建一次，刷新只改 visible / 品质色 / 图标贴图 / transform。
 func set_hand(items: Array) -> void:
 	var n: int = clampi(items.size(), 0, HAND_MAX)
+	_hand_items = items
 	_hand_n = n
+	if _hand_sel >= n:
+		_hand_sel = -1               # 牌变少了：原先选中的那张已经不在了
 	if n <= 0 and _hand.is_empty():
 		return                                  # 一直空手：连池子都不必建
 	if _hand_root == null:
@@ -294,16 +306,30 @@ func set_hand(items: Array) -> void:
 		add_child(_hand_root)
 	while _hand.size() < n:
 		_hand.append(_make_card())
+	_apply_hand_layout()
+
+## 选中的那张牌：抬起 + 提亮；i = -1 都不选。越界（含牌不够 5 张）当作不选。
+##
+## **不是**玩法状态：单一来源是 game.gd 的 selected_slot，这里只跟着画（_refresh_table_props
+## 每次广播都按它重设一遍）—— 所以重摆手牌（set_hand）不会把选中态弄丢。
+func set_hand_selected(i: int) -> void:
+	_hand_sel = i if (i >= 0 and i < _hand_n) else -1
+	_apply_hand_layout()
+
+## 按当前的 _hand_items / _hand_n / _hand_sel 把所有牌重摆一遍：
+## 位置（扇形 + 弧 + 朝自己倾斜 + 选中抬起）、品质色（选中的提亮）、牌面图标。
+func _apply_hand_layout() -> void:
 	for i in _hand.size():
 		var card := _hand[i]
-		card.visible = i < n
+		card.visible = i < _hand_n
 		if not card.visible:
 			continue
-		var id := String((items[i] as Dictionary).get("id", ""))
+		var id := String((_hand_items[i] as Dictionary).get("id", ""))
 		var d := ItemData.def(id)
 		# 品质色是**数据契约**：键就是 "白"/"绿"/"蓝"/"紫"/"橙"（item_data.gd）。
-		_hand_body_mats[i].albedo_color = ItemData.QUALITY_COLORS.get(
-			String(d.get("quality", "白")), Color.WHITE)
+		# 选中的那张提亮（不改品质色本身的语义，只是加亮一档）。
+		var q: Color = ItemData.QUALITY_COLORS.get(String(d.get("quality", "白")), Color.WHITE)
+		_hand_body_mats[i].albedo_color = q.lightened(0.35) if i == _hand_sel else q
 		# 牌面：有图标素材就贴上（近端那点尺寸下，图标是"这是哪件道具"的唯一线索）；没有就只剩品质色
 		var face := card.get_node_or_null("Face") as MeshInstance3D
 		if face != null:
@@ -312,13 +338,14 @@ func set_hand(items: Array) -> void:
 			if tex != null:
 				_hand_face_mats[i].albedo_texture = tex
 		# 摆位：扇形（外侧岔开）+ 弧（外侧靠后）+ 朝自己倾斜
-		var k := float(i) - float(n - 1) * 0.5
+		var k := float(i) - float(_hand_n - 1) * 0.5
 		var px := HAND_BASE_PX + Vector2(HAND_STEP_PX * k, -HAND_ARC_PX * absf(k))
 		var w: Vector3 = _t3.canvas_px_to_world(px)
 		# 卡心抬到"近边正好坐在桌垫上"的高度：抬不够的话，倾斜后近边会切进桌子
-		# （方块沉一半就只剩薄片 —— 同体力件那条注释）。
+		# （方块沉一半就只剩薄片 —— 同体力件那条注释）。选中的再额外抬 HAND_SEL_LIFT。
 		w.y = _t3.table_mesh.global_position.y + PROPS_Y + HAND_CARD_T * 0.5 \
-			+ (HAND_CARD_D * 0.5) * sin(deg_to_rad(HAND_TILT_DEG))
+			+ (HAND_CARD_D * 0.5) * sin(deg_to_rad(HAND_TILT_DEG)) \
+			+ (HAND_SEL_LIFT if i == _hand_sel else 0.0)
 		card.global_position = w
 		# 欧拉序是默认的 YXZ：先绕自己的 X 倾斜、再绕世界 Y 岔开，正是"摊成扇形还都朝着我"
 		card.rotation = Vector3(deg_to_rad(HAND_TILT_DEG), deg_to_rad(-k * HAND_FAN_DEG), 0.0)

@@ -871,16 +871,59 @@ func _end_game(wpeer: int, line: String) -> void:
 
 # ================= 房主：交互 =================
 
-## 桌面实体被点中（画布像素）：命中转盘就掷轮，返回 true 表示这次点击已被实体消费。
-## 掷轮沿用**既有的** _on_roll_pressed 路径（房主本地 / 客户端 c_roll），不新增 RPC；
-## 未命中返回 false，点击照旧送进桌垫（点格子、点座位那些不受影响）。
+## 桌面实体被点中（画布像素）：命中手牌就选中 / 取消，命中转盘就掷轮；
+## 返回 true 表示这次点击已被实体消费。未命中返回 false，点击照旧送进桌垫
+##（点格子、点座位那些不受影响）。两条后果都沿用**既有的**路径，不新增 RPC、不新写一套。
 func _on_table_click(canvas_px: Vector2) -> bool:
 	if table3d == null or table3d.table_props == null:
 		return false
-	if table3d.table_props.wheel_hit(canvas_px):
+	var tp = table3d.table_props
+	# 1) 手牌优先：命中一张牌 = 选中，再点同一张 = 取消。**只在道具阶段吃点击** ——
+	#    牌是常驻显示的（每次广播都摆一遍），别的阶段点它没有意义，吃下点击就等于把本该
+	#    落到格子上的一次点击吞成「什么都没发生」。这条闸是必须的：手牌的命中盒与**近排
+	#    格子**的条带必然重叠（牌就落在自己面前那排格子的下沿上，实测见 task-5-report），
+	#    没有闸的话非道具阶段点那三格的下缘会变成点不动的死区。
+	#    出牌不在这里：选中之后由牌垫上的「使用道具」按钮走既有的 _on_use_pressed（两段式
+	#    选目标 / 直接发 _send_use_item）——玩法路径一行没改。
+	var hi: int = tp.hand_hit(canvas_px)
+	if hi >= 0 and _hand_clickable(hi):
+		_on_hand_clicked(hi)
+		return true
+	# 2) 转盘
+	if tp.wheel_hit(canvas_px):
 		_on_roll_pressed()
 		return true
 	return false
+
+## 这张手牌此刻点得动吗：轮到我、正在道具阶段，且这一张是已实装的道具。
+## 判据与 _on_item_slot_clicked 的守卫**同源** —— 只有它真会做事的那一次点击才该被手牌消费。
+func _hand_clickable(hi: int) -> bool:
+	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
+		return false
+	var items: Array = _state_player(my_peer).get("items", [])
+	if hi < 0 or hi >= items.size():
+		return false
+	return bool(ItemData.def(String(items[hi].id)).get("implemented", false))
+
+## 点手中的牌：选中 / 再点同一张取消。选中即调用**既有的** _on_item_slot_clicked
+##（牌位时代的入口，玩法侧一个字没改）；出牌仍由牌垫上的「使用道具」走 _on_use_pressed。
+func _on_hand_clicked(hi: int) -> void:
+	if selected_slot == hi:
+		_clear_item_selection()
+		_refresh_actions()
+		return
+	_on_item_slot_clicked(my_peer, hi)
+	if selected_slot == hi and table3d != null and table3d.table_props != null:
+		table3d.table_props.set_hand_selected(hi)
+
+## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 两处表现侧（牌垫牌位 / 桌上手牌）。
+## 三处必须一起动 —— 只清 selected_slot，牌垫上会留一块绿光、桌上一张牌还抬着。
+func _clear_item_selection() -> void:
+	selected_slot = -1
+	if board != null:
+		board.set_item_selected(-1, -1)
+	if table3d != null and table3d.table_props != null:
+		table3d.table_props.set_hand_selected(-1)
 
 ## 掷骰：房主本地发信号；客户端走 RPC（此前按钮只查房主变量，客户端点了没反应）
 func _on_roll_pressed() -> void:
@@ -1242,8 +1285,11 @@ func _refresh_table_props() -> void:
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
 	table3d.table_props.set_chips(int(mine.get("money", 0)))
 	table3d.table_props.set_stamina(int(mine.get("stamina", 0)), _stamina_cap(mine))
-	# 自己的道具 = 桌上一排「手中牌」（Task 4；只做显示，点选在 Task 5）
+	# 自己的道具 = 桌上一排「手中牌」（Task 4 显示 / Task 5 点选）
 	table3d.table_props.set_hand(mine.get("items", []))
+	# 选中反馈（抬起 + 提亮）画在桌上那张牌身上：set_hand 重摆位置时不会带上它，
+	# 所以每次广播都按玩法侧的 selected_slot 重设一遍（单一来源始终是 selected_slot）。
+	table3d.table_props.set_hand_selected(selected_slot)
 
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
@@ -1487,8 +1533,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		var k := event as InputEventKey
 		if k.keycode == KEY_F1:
 			dev.toggle()
-		elif k.keycode == KEY_ESCAPE and _tgt_stage != "":
-			_cancel_target()
+		elif k.keycode == KEY_ESCAPE and (_tgt_stage != "" or selected_slot >= 0):
+			_cancel_target()   # 选目标态或「选中了一张牌」都算可取消的状态
 
 func _toggle_log() -> void:
 	log_panel.visible = not log_panel.visible
@@ -2982,8 +3028,7 @@ func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
 	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
 	# 非道具阶段 → 清掉选中（绿光收掉）与未完成的选目标态
 	if not using and selected_slot >= 0:
-		selected_slot = -1
-		board.set_item_selected(-1, -1)
+		_clear_item_selection()
 	if not using and _tgt_stage != "":
 		_cancel_target()
 	# 「使用道具」按钮三态：未选=跳过 / 选中可用=绿 / 选中不可用（含被动）=灰
@@ -3044,9 +3089,7 @@ func _on_use_pressed() -> void:
 	var tgt := String(ItemData.def(iid).get("target", ""))
 	var then := String(ItemData.def(iid).get("then", ""))
 	var slot := selected_slot
-	selected_slot = -1
-	if board != null:
-		board.set_item_selected(-1, -1)
+	_clear_item_selection()
 	if iid == "作弊器":
 		_open_cheat_picker(slot)
 	elif tgt == "player":
@@ -3219,6 +3262,10 @@ func _show_target_hint(text: String) -> void:
 		target_hint_l.text = text
 
 func _cancel_target() -> void:
+	# 选中态与「选目标态」是两件事：点手中的牌只**选中**，再点「使用道具」才可能进选目标态。
+	# 取消（Esc / 右键 / 出牌前收尾）要把两者一起收回 —— 只清 _tgt_stage 的话，
+	# 桌上一张牌会永远抬着、牌垫上留一块绿光。
+	_clear_item_selection()
 	if _tgt_stage == "":
 		return
 	_tgt_slot = -1

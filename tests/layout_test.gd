@@ -669,6 +669,33 @@ func _run() -> void:
 			_check(tp4.hand_rect(-1).size == Vector2.ZERO and tp4.hand_rect(9).size == Vector2.ZERO,
 				"越界下标给空矩形（不是崩掉）")
 
+			# Task 5 的选中反馈：选中的那张**抬起来**（命中盒整体往远端挪），其它张不动；
+			# -1 / 越界 = 都不选。反馈必须落在**桌上这张牌自己**身上 —— Task 6 拆掉座位卡牌位后
+			# board.set_item_selected 会空转，选中就只剩屏幕上这一点可见反馈了。
+			print("== 手中牌：选中反馈（抬起）==")
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
+			await process_frame
+			var plain4: Array = []
+			for i in 3:
+				plain4.append(tp4.hand_rect(i).get_center())
+			tp4.set_hand_selected(1)
+			_check(tp4.hand_rect(1).get_center().y < plain4[1].y - 4.0,
+				"选中的那张抬起来了（画布 y %.0f → %.0f）" % [plain4[1].y, tp4.hand_rect(1).get_center().y])
+			_check(tp4.hand_rect(0).get_center().is_equal_approx(plain4[0])
+				and tp4.hand_rect(2).get_center().is_equal_approx(plain4[2]),
+				"没选中的两张一动不动（只抬被选的那张）")
+			tp4.set_hand_selected(-1)
+			_check(tp4.hand_rect(1).get_center().is_equal_approx(plain4[1]), "取消选中后落回原位")
+			tp4.set_hand_selected(9)
+			_check(tp4.hand_rect(1).get_center().is_equal_approx(plain4[1]),
+				"越界下标当作「都不选」（不是崩掉、也不是抬错一张）")
+			tp4.set_hand_selected(1)
+			# 重摆手牌（每次状态广播都会调）不能把选中态弄丢 —— 位置是重摆的，选中是另外贴上去的
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
+			_check(tp4.hand_rect(1).get_center().y < plain4[1].y - 4.0,
+				"重摆手牌后选中的那张仍抬着（画布 y %.0f）" % tp4.hand_rect(1).get_center().y)
+			tp4.set_hand_selected(-1)
+
 			# 位置：整排落在**自己面前的近端空桌垫**上 —— 不压座位栏 / 不压自己那排格子 /
 			# 不与筹码堆和体力件重叠。筹码与体力件的位置**从它们自己的节点读**（不是抄常量）。
 			print("== 手中牌：落在近端空桌垫上、不与筹码 / 体力件打架 ==")
