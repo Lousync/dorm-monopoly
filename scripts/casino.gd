@@ -158,6 +158,9 @@ func _build_ui() -> void:
 	_ui_layer = Control.new()
 	_ui_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ui_layer.visible = false
+	# 高于 board 里带 z_index 的元素（棋子 20 / 光环 15 / 牌堆卡 30 / 悬停提示 60），
+	# 否则棋子和光环会浮在压暗底之上（见 doc/development/架构总览.md §五）。
+	_ui_layer.z_index = 70
 	g.add_child(_ui_layer)
 
 	var dim := ColorRect.new()

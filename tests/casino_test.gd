@@ -109,6 +109,14 @@ func _test_round() -> void:
 		"结算后桌面奖池显示归零（实得 %d）" % g.casino._casino_table_pot)
 
 	# 赌场已改为自带全屏演出层（触发时独占整屏），不再是 board 的世界层区域
+	# 先拦 null：下面是直接解引用，_ui_layer 为 null 时表达式会硬报错、协程中止而
+	# fails 不增，汇总行照样打印 ALL PASS —— 假 PASS 等于这两条覆盖不存在
+	# （同款先例见 tests/regression_test.gd 的「场景未正确加载」拦截）。
+	if g.casino._ui_layer == null:
+		_check(false, "赌场全屏层未建立")
+		g.running = false
+		g.free()
+		return
 	_check(g.casino._ui_layer != null, "赌场自带全屏演出层（已建立）")
 	_check(not g.casino._ui_layer.visible, "一局结束后全屏层已收场")
 	for m in ["casino_enter", "casino_leave", "focus_casino", "update_casino", "_build_casino_scene"]:

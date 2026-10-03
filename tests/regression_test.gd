@@ -208,6 +208,23 @@ func _test_shop_buttons(g) -> void:
 	_check(g.shop_layer.visible, "轮到自己逛小卖部时全屏界面显示")
 	_check(g.shop_btns.size() == 3 and g.shop_btns[0].visible, "有货的货架显示「买」按钮")
 	_check(g.shop_btns.size() == 3 and not g.shop_btns[1].visible, "空货架不显示「买」按钮")
+	# 全屏层层级（终审 I2）：z_index 要压过 board 内元素（15/20/30/60），且显示时置顶
+	_check(g.shop_layer.z_index > 60, "小卖部全屏层 z_index 高于 board 内元素")
+	_check(g.shop_layer.get_index() == g.get_child_count() - 1, "小卖部全屏层显示时置顶")
+	_check(g.shop_money_l != null and g.shop_money_l.text.contains("9,000"),
+		"面板显示自己的现金（买按钮置灰时看得出理由）")
+	# 倒计时（终审 I1）：与座位卡共用同一份 _op_*，不是另起一套计时
+	g._op_kind = "shop"
+	g._op_left = 12.0
+	g._op_total = 20.0
+	g._process(0.0)
+	_check(g.shop_timer_row.visible and g.shop_timer_left.text == "12 秒",
+		"小卖部面板显示倒计时（与座位卡同一数据源）")
+	g._op_kind = ""
+	g._op_left = 0.0
+	g._op_total = 0.0
+	g._process(0.0)
+	_check(not g.shop_timer_row.visible, "窗口关闭后面板倒计时收起")
 
 func _test_authority_guards(g) -> void:
 	print("== 客户端→房主 RPC 的发送者校验 ==")

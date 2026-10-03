@@ -128,6 +128,9 @@ static func build_play_ui(g: Node) -> void:
 	g.shop_layer = Control.new()
 	g.shop_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	g.shop_layer.visible = false
+	# 高于 board 里带 z_index 的元素（棋子 20 / 光环 15 / 牌堆卡 30 / 悬停提示 60），
+	# 否则棋子和光环会浮在压暗底之上（见 doc/development/架构总览.md §五）。
+	g.shop_layer.z_index = 70
 	g.add_child(g.shop_layer)
 
 	var sdim := ColorRect.new()
@@ -162,6 +165,9 @@ static func build_play_ui(g: Node) -> void:
 	sh_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	shead.add_child(sh_icon)
 	shead.add_child(UIKit.label("小卖部", 26, Color(0.93, 0.88, 0.75)))
+	# 现金读数：买按钮置灰时看得出理由（钱不够 / 背包满），不必回头看座位卡
+	g.shop_money_l = UIKit.label("", 17, Color(0.95, 0.86, 0.55))
+	shead.add_child(g.shop_money_l)
 	var sh_sp := Control.new()
 	sh_sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shead.add_child(sh_sp)
@@ -231,6 +237,32 @@ static func build_play_ui(g: Node) -> void:
 			g.c_shop_leave.rpc()
 	)
 	sfoot.add_child(g.shop_leave_btn)
+
+	# 倒计时行（D 方案那条，与座位卡共用同一份状态）：进店后整块棋盘被压暗底盖住，
+	# 座位卡上的倒计时也一并看不见——店里的人会看不到自己的时限、到点被静默请出。
+	# 数据来源与座位卡完全同一份（game._refresh_op_timer 推送的 _op_*），不另起计时。
+	g.shop_timer_row = HBoxContainer.new()
+	g.shop_timer_row.add_theme_constant_override("separation", 8)
+	g.shop_timer_row.visible = false
+	g.shop_timer_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spv.add_child(g.shop_timer_row)
+	g.shop_timer_kind = UIKit.label("", 15, UIKit.ACCENT)
+	g.shop_timer_row.add_child(g.shop_timer_kind)
+	g.shop_timer_track = ColorRect.new()
+	g.shop_timer_track.color = Color(1, 1, 1, 0.13)
+	g.shop_timer_track.custom_minimum_size = Vector2(180, 8)
+	g.shop_timer_track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	g.shop_timer_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.shop_timer_row.add_child(g.shop_timer_track)
+	g.shop_timer_fill = ColorRect.new()
+	g.shop_timer_fill.color = UIKit.ACCENT
+	g.shop_timer_fill.size = Vector2(180, 8)
+	g.shop_timer_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.shop_timer_track.add_child(g.shop_timer_fill)
+	g.shop_timer_left = UIKit.label("", 15, UIKit.TEXT)
+	g.shop_timer_left.custom_minimum_size = Vector2(56, 0)
+	g.shop_timer_left.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	g.shop_timer_row.add_child(g.shop_timer_left)
 
 	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
 	g.black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,

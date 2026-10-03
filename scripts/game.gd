@@ -81,6 +81,12 @@ var shop_btns: Array = []
 var shop_refresh_btn: Button
 var shop_leave_btn: Button
 var shop_tile_l: Label
+var shop_money_l: Label           # 面板里的现金读数（买按钮置灰时看得出理由）
+var shop_timer_row: HBoxContainer # 面板里的倒计时行：与座位卡同一份 _op_* 数据
+var shop_timer_kind: Label
+var shop_timer_track: ColorRect
+var shop_timer_fill: ColorRect
+var shop_timer_left: Label
 var _shop_btn_sig := ""          # 小卖部界面刷新签名（避免每帧重建）
 var card_gallery: Control
 var card_gallery_flag := false
@@ -1526,6 +1532,8 @@ func _show_game_over() -> void:
 	_over_shown = true
 	_close_prompt()
 	casino.close()
+	# 小卖部面板同属模态：结算层不该被它压着（它的 z_index 高于结算层）
+	shop_layer.visible = false
 	over_layer = Control.new()
 	over_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	over_layer.z_index = 50
@@ -3291,6 +3299,11 @@ func _process(_delta: float) -> void:
 		and int(st.get("shop_open", -1)) >= 0
 	shop_layer.visible = shop_mine
 	if shop_mine:
+		# 置顶（照 _menu_show）：build_play_ui 里后建的屏幕层控件（暂停按钮 / 格详情卡 /
+		# 战报开关与战报栏）默认按树序画在压暗底之上——亮着、看着能点，点击却被
+		# dim 的 MOUSE_FILTER_STOP 吃掉。已置顶时不重复搬。
+		if shop_layer.get_index() != get_child_count() - 1:
+			move_child(shop_layer, -1)
 		_refresh_shop_ui()
 	var black_mine: bool = phase == "playing" and int(st.get("black_peer", 0)) == my_peer
 	black_bar.visible = black_mine
@@ -3358,7 +3371,36 @@ func _refresh_op_timer(delta: float) -> void:
 	if show or _op_shown:
 		var kind_text := String(OP_KIND_LABELS.get(_op_kind, _op_kind)) if show else ""
 		board.set_op_timer(_op_owner, kind_text, _op_left, _op_total)
+		# 小卖部全屏界面盖住整块棋盘，座位卡上的倒计时在里面看不见：同一份数据再推一份到面板
+		if shop_layer != null and shop_layer.visible:
+			_refresh_shop_timer(kind_text)
 	_op_shown = show
+
+## 小卖部面板底部的倒计时：呈现口径与 board_view.set_op_timer（座位卡那条）逐条对齐。
+## 数据全部来自 _op_*（由 s_op_timer 广播 + 本机逐帧扣 delta），不另起一套计时，
+## 否则会与房主窗口漂移。kind_text="" 表示窗口已关，整行收起。
+func _refresh_shop_timer(kind_text: String) -> void:
+	if shop_timer_row == null or not is_instance_valid(shop_timer_row):
+		return
+	shop_timer_row.visible = kind_text != ""
+	if kind_text == "":
+		return
+	if shop_timer_kind.text != kind_text:
+		shop_timer_kind.text = kind_text
+	if _op_total > 0.0:
+		shop_timer_track.visible = true
+		shop_timer_fill.size.x = shop_timer_track.size.x * clampf(_op_left / _op_total, 0.0, 1.0)
+		var warn := _op_left <= 5.0
+		shop_timer_fill.color = UIKit.DANGER if warn else UIKit.ACCENT
+		var txt := "%d 秒" % ceili(_op_left)
+		if shop_timer_left.text != txt:
+			shop_timer_left.text = txt
+			shop_timer_left.add_theme_color_override("font_color", UIKit.DANGER if warn else UIKit.TEXT)
+	else:
+		shop_timer_track.visible = false
+		if shop_timer_left.text != "不限时":
+			shop_timer_left.text = "不限时"
+			shop_timer_left.add_theme_color_override("font_color", UIKit.TEXT_DIM)
 
 ## 底栏可用的横向带（左起 / 右止）。底栏原本只按座位卡居中，一旦左下角展开
 ## 规则说明面板、或右上角战报栏展开，它就会被压住（状态文字被切掉）。
@@ -3426,6 +3468,9 @@ func _refresh_shop_ui() -> void:
 		b.disabled = bag.size() >= 5 or (not free_buy and money < price)
 	if shop_tile_l != null:
 		shop_tile_l.text = "第 %d 号店 · 刷新费随全场次数递增" % open
+	if shop_money_l != null:
+		# 现金变了签名就变（sig 里含 money），所以在这里刷就够了
+		shop_money_l.text = "现金 %s" % GameData.fmt_money(money)
 	if shop_refresh_btn != null:
 		shop_refresh_btn.text = "刷新 · %s" % GameData.fmt_money(refresh)
 		shop_refresh_btn.disabled = money < refresh
