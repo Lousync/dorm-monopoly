@@ -149,6 +149,45 @@ func _run() -> void:
 		_check(sm != null and sm.top_radius < sm.bottom_radius,
 			"灯罩是上小下大的锥（top %.3f < bottom %.3f）"
 				% [sm.top_radius if sm != null else -1.0, sm.bottom_radius if sm != null else -1.0])
+		# 台灯四件也一律**不透明档**（**固定波 C**：上面剪影那条只覆盖房间材质，管不到灯自身）。
+		# 这条比剪影那边更要紧：透明件进透明队列、不写深度之外，**还吃不到自己的逐像素光照** ——
+		# 手滑写成 ALPHA，画面上是"灯还在、光没了"，归因比剪影那个坑更难。
+		var lamp_parts: Array = []
+		var lamp_opaque := true
+		for nm in ["Base", "Pole", "Arm", "Shade"]:
+			var pnd := lamp_n.get_node_or_null(nm) as MeshInstance3D
+			lamp_parts.append(pnd)
+			var pmat: StandardMaterial3D = null
+			if pnd != null:
+				pmat = pnd.material_override as StandardMaterial3D
+			if pmat == null or pmat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				lamp_opaque = false
+		var parts_ok := true
+		for pnd2 in lamp_parts:
+			if pnd2 == null:
+				parts_ok = false
+		_check(parts_ok, "台灯四件都在（Base / Pole / Arm / Shade）")
+		_check(lamp_opaque, "台灯四件都是不透明档（进透明队列会静默杀死光照）")
+		# **半径**也要钉（**固定波 C**）：原来只查了各件的**中心位置**，半径写多大没人管 ——
+		# 底座半径 0.30 时外缘 = -5.20，**正好压在木桌外沿上**（`TABLE_W*0.5 + WOOD_FRAME`），
+		# 零余量。两条：① 整座灯连半径一起**站在木桌里**；② 底座外缘离木桌外沿有 ≥ 0.05 余量。
+		var half_w_wood: float = t3.TABLE_W * 0.5 + t3.WOOD_FRAME
+		var half_d_wood: float = t3.TABLE_D * 0.5 + t3.WOOD_FRAME
+		var base_mi := lamp_parts[0] as MeshInstance3D
+		var base_r := 0.0
+		if base_mi != null and base_mi.mesh is CylinderMesh:
+			base_r = (base_mi.mesh as CylinderMesh).bottom_radius
+		var in_table := true
+		if base_mi != null and (absf(base_mi.global_position.x) + base_r > half_w_wood
+				or absf(base_mi.global_position.z) + base_r > half_d_wood):
+			in_table = false
+		if shade != null and sm != null and (absf(shade.global_position.x) + sm.bottom_radius > half_w_wood
+				or absf(shade.global_position.z) + sm.bottom_radius > half_d_wood):
+			in_table = false
+		_check(in_table, "整座灯（含底座 / 灯罩的半径）都站在木桌里")
+		_check(half_w_wood - (absf(base_mi.global_position.x) + base_r) >= 0.05,
+			"底座外缘离木桌外沿有余量（%.2f ≥ 0.05 —— 零余量时底座就悬在桌沿上）"
+				% (half_w_wood - (absf(base_mi.global_position.x) + base_r)))
 		# 全场唯一的 Light3D：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
 		var lights: Array = []
 		for n in t3.find_children("*", "Light3D", true, false):
@@ -161,23 +200,43 @@ func _run() -> void:
 		var lp: Vector3 = lamp_l.global_position
 		_check(lp.y > t3.table_mesh.global_position.y + 1.0,
 			"主光源吊在桌面上方（实得 y=%.2f）" % lp.y)
-		# 光池要够到棋盘（否则远端那半块是死黑、读不出字），但**不许漫到整间屋子**
-		#（那样四周就不"近黑"了）—— 拿**木桌四角**当尺子：都在射程内，后墙不在。
-		var corners_ok := true
-		for sx in [-t3.TABLE_W * 0.5, t3.TABLE_W * 0.5]:
-			for sz in [-t3.TABLE_D * 0.5, t3.TABLE_D * 0.5]:
-				if lp.distance_to(Vector3(sx, t3.table_mesh.global_position.y, sz)) >= lamp_l.omni_range:
-					corners_ok = false
-		_check(corners_ok, "木桌四角都在台灯射程内（range %.1f —— 棋盘四角不落死黑）" % lamp_l.omni_range)
-		# 「够不到后墙」不写死数字：后墙的位置从房间里那块板自己读（改房间布局不用改测试）
-		var back_wall := room.get_node_or_null("WallBack") as MeshInstance3D
-		_check(back_wall != null, "后墙在（Room/WallBack）")
-		if back_wall != null:
-			var far_wall_d: float = back_wall.global_position.distance_to(lp)
-			_check(lamp_l.omni_range < far_wall_d,
-				"射程收在桌子这一圈里（range %.1f < 到后墙 %.1f —— 屋子四周自然落黑）"
-					% [lamp_l.omni_range, far_wall_d])
-		_check(lamp_l.omni_attenuation > 0.0, "台灯带衰减（attenuation %.2f）" % lamp_l.omni_attenuation)
+		# 光池要够到棋盘（远端那半块不能是死黑、读不出字），但**不许漫到整间屋子**。
+		# 尺子用**桌垫四角**（不是木桌四角 —— 木桌四角是 4.1 与 11.1，别把两者混起来）。
+		#
+		# **固定波 B：原来那两条不可判别，已换掉。** 原话是"四角都在射程内 ⇒ 不落死黑"，
+		# 但远端角在 12.5 射程的 9.6 处只剩近端约两成强度 —— 出图量到远端那两列只有
+		# **0.008（3D）/ 0.012（2D）**，字读不出来，「在射程内」**必要而不充分**，单独拿它当
+		# "不是死黑"的证据等于没测（本批次审查用像素采样打掉了这条结论）。换成三条**真管用**的：
+		#   ① **余量**：远端角要落在 0.9×射程 以内（只判"在射程内"时，射程被收到 10 也照过）；
+		#   ② **形状**：远端角到灯 ≤ 近端角 × 4（灯偏在桌子一侧、池子拉成长条时这条红）；
+		#   ③ **衰减**：指数不许比 1.0 更陡 —— 1.15 → 0.72 那一次实测：能量只 +11%，远端列却从
+		#      0.017 涨到 0.074（左列只涨 1.34 倍）⇒ 指数越大掉得越快，1.15 正是上面那次实测的成因。
+		#      量测表见 `.superpowers/sdd/v0.5.0-批次6-实施计划/fix-wave-report.md`。
+		var corners: Array = []
+		for sx in [-t3.TABLE_SIZE.x * 0.5, t3.TABLE_SIZE.x * 0.5]:
+			for sz in [-t3.TABLE_SIZE.y * 0.5, t3.TABLE_SIZE.y * 0.5]:
+				corners.append(Vector3(sx, t3.table_mesh.global_position.y, sz))
+		var d_near := INF
+		var d_far := 0.0
+		for cw in corners:
+			var dd: float = lp.distance_to(cw)
+			d_near = minf(d_near, dd)
+			d_far = maxf(d_far, dd)
+		_check(d_far <= lamp_l.omni_range * 0.9,
+			"远端角落在射程的 0.9 以内（远端 %.2f ≤ %.2f，射程 %.1f）"
+				% [d_far, lamp_l.omni_range * 0.9, lamp_l.omni_range])
+		_check(d_far <= d_near * 4.0,
+			"光池不拉成长条（远端 %.2f ≤ 近端 %.2f × 4）" % [d_far, d_near])
+		_check(lamp_l.omni_attenuation <= 1.0,
+			"衰减不比线性更陡（attenuation %.2f ≤ 1.0 —— 更陡时远端角只剩近端约两成、字读不出）"
+				% lamp_l.omni_attenuation)
+		# 【删掉的那条】原来这里断言「`omni_range` < 到后墙的距离」，错在两处：
+		#   ① **量错了地方**：拿的是墙的**中心**（距灯 13.15），而不是**包围盒最近面**（~11.8）——
+		#      墙其实**本来就在射程内**，那条断言在管一件不存在的事；
+		#   ② 就算收紧到最近面，"射程止于墙"也**不是**房间明暗的成因：三面墙在这两个摆拍视角里
+		#      **都出画**，房间里看到的是**背景色**（`background_color` 直出、不过光照）。
+		# ⇒ **别用 `LAMP_RANGE` 去调房间明暗**（调不动，只会连桌子一起改）。房间的黑由本文件
+		#   「背景色近黑」那条断言 + 剪影材质近黑那条钉住，这里不再留一条假判据。
 		# 台灯是**桌上的实物**，但它不该挡棋盘：灯杆 / 灯罩落在**桌垫窗口之外**
 		#（窗口 = 棋盘 + 一圈留白；压在窗口里就是"站在棋盘上"）。
 		var on_board := 0
@@ -192,15 +251,15 @@ func _run() -> void:
 			"台灯坐在桌面上（y=%.3f）" % lamp_n.global_position.y)
 		# 台灯要**看得见**（掉出画外就等于没有），而且**不许压在棋盘上**。
 		# 这两条只能在**屏幕**上量：50° 俯角下，"在桌垫窗口之外"（上面那条）并不自动等于
-		# "不在棋盘上" —— 灯是高处的实物，抬高会把它的屏幕投影顶进棋盘的范围里。
-		# （本任务实测过：底座挪到近端桌角那个位置时，灯罩的投影正好盖住棋盘左下角。）
+		# "不在棋盘上" —— 灯是高处的实物，抬高 / 挪位会把它在屏幕上的落点顶进棋盘范围里。
+		# （本任务实测过：底座挪到近端桌角那个位置时，灯罩在屏幕上正好盖住棋盘左下角。）
 		t3.snap_view(0.0)
 		await process_frame
 		if shade != null:
 			var vpr: Rect2 = t3.get_viewport().get_visible_rect()
 			var sp_shade: Vector2 = t3.camera.unproject_position(shade.global_position)
 			_check(vpr.has_point(sp_shade), "3D 端看得见台灯（灯罩的屏幕投影 %s 在画面内）" % sp_shade)
-			# 棋盘的屏幕四边形 = 桌垫四角投影出来的凸四边形（按环序取角）。
+			# 桌垫的屏幕四边形 = 桌垫四角（`TABLE_SIZE`）投影出来的凸四边形（按环序取角）。
 			# 点在凸多边形内用"同侧"判据；灯罩的屏幕中心一旦落在里面就是"压在棋盘上"。
 			var hw_q: float = t3.TABLE_SIZE.x * 0.5
 			var hd_q: float = t3.TABLE_SIZE.y * 0.5
@@ -221,7 +280,14 @@ func _run() -> void:
 					sgn = s2
 				elif sgn != s2:
 					outside = true         # 跨到了另一侧 ⇒ 在四边形之外
-			_check(outside, "灯罩的投影不压在棋盘上（屏幕 %s / 棋盘四角 %s）" % [sp_shade, quad])
+			# **固定波 C：这条的名字原来叫"灯罩的投影不压在棋盘上"，名不副实** —— 灯罩
+			# `cast_shadow = OFF`，**根本没有投影**；下面查的是"灯罩的**屏幕位置**落在棋盘
+			# 屏幕四边形之外"，即**屏幕重叠**（检查本身有效，只是名字会把人带偏）。
+			# 顺带记下这个设计后果：灯罩不投影 ⇒ 光池**没有锥形边界**，池子的形状全靠
+			# `LAMP_ATTEN` 衰减铺出来（射程内是均匀外溢，不是"被罩子挡出的一个圆"）——
+			# 想改池子的软硬，改衰减，不要指望灯罩去切边。
+			_check(outside, "灯罩的屏幕位置不落在桌垫上（屏幕 %s / 桌垫四角 %s；灯罩不投影，这里查的是屏幕重叠）"
+				% [sp_shade, quad])
 
 	print("== 批次 6：环境光与背景压到近黑 ==")
 	var wenv: WorldEnvironment = null
