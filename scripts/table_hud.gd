@@ -31,15 +31,15 @@ static func make_log_toast(line: String) -> Control:
 
 ## 建整个对局界面（原 _build_ui）
 static func build_play_ui(g: Node) -> void:
-	# 纯渐变氛围底（棋盘外露出的部分），不撒尘埃保持棋盘清晰
-	g.add_child(UIKit.decor_bg(false))
+	# 原来这里铺一张全屏不透明的渐变氛围底（UIKit.decor_bg）。2.5D 之后必须去掉：
+	# Godot 里 2D 画布一律合成在 3D 之上，一层铺满屏幕的不透明 Control 会把整张 3D 桌面
+	# 整个盖掉（实测：出图只剩渐变，桌子完全看不见）。桌面之外的暗色房间现在由容器里的
+	# WorldEnvironment 背景色承担（见 table_3d.gd:_build_environment）。
 
-	# 棋盘视口：整屏（四座在桌面世界四周，镜头避开顶栏与底部行动条）
-	g.board = BoardView.new()
-	g.board.set_anchors_preset(Control.PRESET_FULL_RECT)
-	g.board.overlay_top = 46
-	g.board.overlay_bottom = 70
-	g.add_child(g.board)
+	# 棋盘视口：2.5D 桌面容器 —— BoardView 住在容器的 SubViewport 里，贴到 3D 桌面上
+	g.table3d = TableView3D.new()
+	g.add_child(g.table3d)
+	g.board = g.table3d.board
 	g.board.tile_clicked.connect(g._on_tile_clicked)
 	g.board.seat_clicked.connect(g._on_seat_clicked)
 

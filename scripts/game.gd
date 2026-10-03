@@ -11,6 +11,7 @@ const STEP_TIME := 0.15   # 每格跳子时长
 
 # ---------------- UI 引用 ----------------
 var board: BoardView
+var table3d: TableView3D      # 2.5D 桌面容器（scripts/table_3d.gd）
 var status_label: Label
 var roll_btn: Button
 var mat_bar: PanelContainer
