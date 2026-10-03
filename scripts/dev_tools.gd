@@ -412,6 +412,15 @@ func take_shot(path: String) -> void:
 				break
 		g._broadcast_state()
 		await get_tree().create_timer(0.35).timeout
+	if path.contains("hand") and g.multiplayer.is_server():
+		# 摆拍：给自己发几张**不同品质**的道具。开局背包是空的，「手里握着牌」拍不出来；
+		# 与 level 分支同类（只在对局里注入状态，不动玩法代码）。
+		var me: Dictionary = g._player_by_peer(g.my_peer)
+		if not me.is_empty():
+			for hid_v in ["招财猫", "作弊器", "包租婆", "黑卡", "共享单车"]:
+				g._grant_item(me, String(hid_v))
+		g._broadcast_state()
+		await get_tree().create_timer(0.35).timeout
 	if not path.contains("plain") and not path.contains("card"):
 		# 赌局界面预览（单行假数据，验证布局用）。路径带 card 时跳过赌局，
 		# 否则弹层会盖住正在翻的抽卡

@@ -22,6 +22,16 @@ const HIT_SLACK := 1.20
 ## 露出来的只是一道矮棱。抬得越低越好 —— 相机会把「离桌面的高度」投影成屏幕上的一段位移，
 ## 抬得越高，实体相对桌垫图案就越"漂"（实测抬 0.08 世界单位时，默认取景下屏幕上移约 17px）。
 const PROPS_Y := 0.02
+## 尺寸口径：**实物是世界常数，图案才跟 `_zoom`** —— 这条区别是故意的，不是漏改。
+##
+## 唯一的例外是转盘轮缘（`build_wheel` 里量真变换、随 `_zoom` 变）：它必须与
+## **印在桌垫上的**那个轮子重合，而桌垫图案随 2D 镜头缩放，不跟就会脱开。
+## 筹码 / 体力件 / 手牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
+## 不是"桌子变大了"，实物不该跟着长 —— 所以它们的尺寸写死在世界单位里。
+##
+## 手牌还多一层：它的**命中矩形**必须跟玩家看到的位置一致，那要过相机
+##（`hand_rect` 是量真投影，不是常数）—— 尺寸是世界常数与命中盒跟相机，
+## 这两件事互不矛盾：一个说"牌多大"，一个说"你在屏幕上点哪儿算点到它"。
 
 ## 每 ¥5,000 一枚筹码。对着出图定：开局 ¥20,000 → 4 枚（正好半摞，一眼看出起始身家几何）；
 ## 常见的租金 / 罚款多在几百到几千，一档 5,000 意味着零星收支不动筹码堆、攒够一大笔才长一枚
@@ -223,3 +233,211 @@ func _make_pip() -> MeshInstance3D:
 	_pips_root.add_child(pip)
 	_pip_mats.append(mat)
 	return pip
+
+# ---------------- 自己的手牌（道具） ----------------
+#
+# 一排**有厚度的实体卡**：近端、微微朝自己倾斜 —— 取代原来座位卡上那 5 个道具牌位。
+# 本步只做显示：点选/出牌是 Task 5（那里直接用这里的 hand_hit / hand_rect）。
+# 与筹码 / 体力件同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），
+# 尺寸是世界常数（见 PROPS_Y 下面那段），刷新幂等（节点池只建一次）。
+
+## 手牌上限 = 背包格数上限（与座位卡那排牌位一样是最多 5 个）。
+const HAND_MAX := 5
+## 卡的尺寸（世界单位）。**是照着出图定的、不是拍的**：出图实测卡进深每 0.10 世界单位
+## ≈ 12 屏幕像素高（近端透视把它放大了），而手牌能落的那条空档只有 ~34 像素高
+##（见 HAND_BASE_PX）—— 再大就得压住格子价格或座位卡。0.40 与 0.50 两版都出图比过。
+const HAND_CARD_W := 0.30        # 卡宽（世界单位；≈ 一块地皮宽，出图看着不喧宾夺主）
+const HAND_CARD_D := 0.34        # 卡进深
+const HAND_CARD_T := 0.022       # 卡厚：有厚度才投得出影子、看得出是"卡"而不是贴纸
+## 相邻两张牌中心的画布间距。略大于卡宽（0.30 × 256 ≈ 77 画布像素）+ 扇形岔开的投影增量：
+## 相邻两张几乎相接但不叠压 —— 叠压会让命中盒互相压住（点一张选到另一张）。
+const HAND_STEP_PX := 96.0
+## 扇形是**弧**不是直线：每远离中心一张，牌位往远端挪一点（外侧靠后，像摊开的一叠）。
+## 只挪 3 画布像素：挪多了最外那两张的远边会顶上格子行。
+const HAND_ARC_PX := 3.0
+## 整排中心（画布像素）：自己面前的近端空桌垫上。
+##
+## 出图 + 探针实测（围桌全景、窗口 1280×800）：近端那排格子屏幕 y∈[567,606]（价格行到 ~596）、
+## 自己那张座位卡面板屏幕 y∈[640,715]、筹码 / 体力件屏幕 y∈[505,555]。
+## 于是"自己面前的空桌垫"只剩中间那条约 34 像素高的缝。牌位就取在这条缝里：y=1729 时
+## 整排的可见范围屏幕 y≈[596,638] —— 只擦到自己那排格子的**下边框**（价格行 596 之上都不挡），
+## 离座位卡面板还差约 2 像素，更不碰筹码 / 体力件。**别按"平面距离"挪它**：牌是抬起来又
+## 倾斜的实物，投影会把它整体推高（与 PROPS_Y 那条坑同源），只能对着出图定。
+const HAND_BASE_PX := Vector2(1024.0, 1729.0)
+## 每张牌朝自己倾斜的角度（绕 X 轴）：远边抬起、牌面转向镜头（相机在 +z 上方 50°）。
+## 20° 是"一眼看得出是斜的、但没立起来"的位置：倾角越大牌在屏幕上越靠上、也越占高度 ——
+## 它和牌尺寸一起被上面那条缝反过来钉住。
+const HAND_TILT_DEG := 20.0
+## 扇形：每远离中心一张，绕 Y 轴向外岔开一点。8° 配合 HAND_STEP_PX 时相邻两张刚好相接。
+const HAND_FAN_DEG := 8.0
+
+var _hand_root: Node3D
+var _hand: Array[MeshInstance3D] = []
+var _hand_body_mats: Array[StandardMaterial3D] = []   # 牌身品质色：逐张一份
+var _hand_face_mats: Array[StandardMaterial3D] = []   # 牌面图标：逐张一份（贴图不同）
+var _hand_mesh: BoxMesh
+var _hand_face_mesh: PlaneMesh
+var _hand_n := 0
+
+## 按背包摆手牌；items 每项形如 {"id": "招财猫", "charges": 3, "cd": 0}。
+## 读的是**已同步**的状态（game.gd 用 _state_player(my_peer)），客户端同样可用。
+##
+## **幂等**：节点池只建一次，刷新只改 visible / 品质色 / 图标贴图 / transform。
+func set_hand(items: Array) -> void:
+	var n: int = clampi(items.size(), 0, HAND_MAX)
+	_hand_n = n
+	if n <= 0 and _hand.is_empty():
+		return                                  # 一直空手：连池子都不必建
+	if _hand_root == null:
+		_hand_root = Node3D.new()
+		_hand_root.name = "Hand"
+		add_child(_hand_root)
+	while _hand.size() < n:
+		_hand.append(_make_card())
+	for i in _hand.size():
+		var card := _hand[i]
+		card.visible = i < n
+		if not card.visible:
+			continue
+		var id := String((items[i] as Dictionary).get("id", ""))
+		var d := ItemData.def(id)
+		# 品质色是**数据契约**：键就是 "白"/"绿"/"蓝"/"紫"/"橙"（item_data.gd）。
+		_hand_body_mats[i].albedo_color = ItemData.QUALITY_COLORS.get(
+			String(d.get("quality", "白")), Color.WHITE)
+		# 牌面：有图标素材就贴上（近端那点尺寸下，图标是"这是哪件道具"的唯一线索）；没有就只剩品质色
+		var face := card.get_node_or_null("Face") as MeshInstance3D
+		if face != null:
+			var tex := _item_icon(String(d.get("icon", "")))
+			face.visible = tex != null
+			if tex != null:
+				_hand_face_mats[i].albedo_texture = tex
+		# 摆位：扇形（外侧岔开）+ 弧（外侧靠后）+ 朝自己倾斜
+		var k := float(i) - float(n - 1) * 0.5
+		var px := HAND_BASE_PX + Vector2(HAND_STEP_PX * k, -HAND_ARC_PX * absf(k))
+		var w: Vector3 = _t3.canvas_px_to_world(px)
+		# 卡心抬到"近边正好坐在桌垫上"的高度：抬不够的话，倾斜后近边会切进桌子
+		# （方块沉一半就只剩薄片 —— 同体力件那条注释）。
+		w.y = _t3.table_mesh.global_position.y + PROPS_Y + HAND_CARD_T * 0.5 \
+			+ (HAND_CARD_D * 0.5) * sin(deg_to_rad(HAND_TILT_DEG))
+		card.global_position = w
+		# 欧拉序是默认的 YXZ：先绕自己的 X 倾斜、再绕世界 Y 岔开，正是"摊成扇形还都朝着我"
+		card.rotation = Vector3(deg_to_rad(HAND_TILT_DEG), deg_to_rad(-k * HAND_FAN_DEG), 0.0)
+
+func _item_icon(icon: String) -> Texture2D:
+	if icon == "":
+		return null
+	var path := "res://assets/icons/%s.png" % icon
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
+
+func _make_card() -> MeshInstance3D:
+	if _hand_mesh == null:
+		_hand_mesh = BoxMesh.new()
+		_hand_mesh.size = Vector3(HAND_CARD_W, HAND_CARD_T, HAND_CARD_D)
+	var card := MeshInstance3D.new()
+	card.name = "HandCard%d" % _hand.size()
+	card.mesh = _hand_mesh
+	# 牌身一件一份材质：品质色逐张不同，共用一份会把整排染成同色
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color.WHITE
+	mat.roughness = 0.62
+	card.material_override = mat
+	_hand_body_mats.append(mat)
+	# 牌面图标：贴在顶面上的薄片。与牌身**分成两个材质** —— 图标要原色，
+	# 而 albedo_color 是乘到 albedo_texture 上的，同一份材质会把图标也染成品质色。
+	var face := MeshInstance3D.new()
+	face.name = "Face"
+	if _hand_face_mesh == null:
+		_hand_face_mesh = PlaneMesh.new()
+		# PlaneMesh 躺在 XZ 平面（法线 +Y），正是一张平放在牌顶上的贴片
+		_hand_face_mesh.size = Vector2(HAND_CARD_W, HAND_CARD_D) * 0.78
+	face.mesh = _hand_face_mesh
+	# 抬 0.8mm：与牌顶面不共面（否则 z-fighting 闪）
+	face.position = Vector3(0.0, HAND_CARD_T * 0.5 + 0.0008, 0.0)
+	# 朝向不用动：PlaneMesh 自己的 UV 就是对的 —— 探针实测（get_mesh_arrays 逐顶点）：
+	# 局部 (x, z) = (+0.5, -0.5) → uv=(1, 0)，即 z 为 **-0.5（远端）** 那条边是 v=0。
+	# 远端在屏幕上就是"上"，贴图第一行也在上 ⇒ 图标正着；u 同样 +x → +u，不镜像。
+	# （别凭印象给它转 180°：那样图标才是倒的。）
+	var fmat := StandardMaterial3D.new()
+	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	fmat.roughness = 0.75
+	face.material_override = fmat
+	_hand_face_mats.append(fmat)
+	card.add_child(face)
+	_hand_root.add_child(card)      # 摆位在 set_hand 里统一做（世界坐标，挂哪儿都行）
+	return card
+
+## 手上有几张牌（= 背包件数，封顶 HAND_MAX）。
+func hand_count() -> int:
+	return _hand_n
+
+## 第 i 张牌在**画布像素**下的命中矩形（Task 5 点击判定用）。越界给空矩形。
+##
+## 为什么不是"以牌位为心的一块扁矩形"：牌是**抬起来、朝自己倾斜的实物**，而玩家的点击是
+## 「屏幕点 → 3D 射线 → 打在**桌面平面**上 → 折成画布像素」（table_3d._unhandled_input）。
+## 于是"看得见的那张牌"对应的画布区间被整体推到更远端（抬高 = 屏幕上更靠上 = 射线打得更远），
+## 尺寸也略微被压。这里把牌的**八个角**（顶面 / 底面各四角）过一遍**同一条链路**
+##（unproject_position → screen_to_viewport）取包围盒：长方体轮廓的极点必在这八个顶点里，
+## 所以这个盒子盖得住整块看得见的牌。玩家点在任何看得见的位置，落的画布点都落在盒子里
+## —— 不会"看着卡点下去却没选中"。
+##
+## 出图核对（把命中盒折回屏幕叠在截图上，逐像素数）：可见卡面 4358 个像素里 4339 个在盒内，
+## 剩下 19 个是**座位卡那排槽位里的同名道具图标**（在盒子下方、不属于手牌）。
+## 八角逐角 vs 只取顶面四角只差 0.1 画布像素（卡只有 0.022 厚）—— 真正拉开差距的是
+## **抬高 + 倾斜**那一段：整个盒子比"把扁矩形画在牌位落点上"往远端挪了约 13 画布像素
+##（测试里 `命中盒按抬起算` 那条钉的就是它）。
+##
+## 不缓存：相机推拉（滚轮）会改"你看到它的位置"，而实物的世界位置不动。
+func hand_rect(i: int) -> Rect2:
+	if i < 0 or i >= _hand_n:
+		return Rect2()
+	var card := _hand[i]
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	var n := 0
+	for sx_v in [-0.5, 0.5]:
+		for sy_v in [-0.5, 0.5]:
+			for sz_v in [-0.5, 0.5]:
+				# 局部角点 → 世界：牌自己的倾斜 / 扇形都在 global_transform 里
+				var corner: Vector3 = card.global_transform * Vector3(
+					HAND_CARD_W * float(sx_v), HAND_CARD_T * float(sy_v), HAND_CARD_D * float(sz_v))
+				var px = _t3.screen_to_viewport(_t3.camera.unproject_position(corner))
+				if px == null:
+					continue
+				var p: Vector2 = px
+				mn = mn.min(p)
+				mx = mx.max(p)
+				n += 1
+	if n < 4:
+		return _hand_mat_rect(i)          # 相机 / 视口不可用（理论上不会）：退回桌面落点
+	return Rect2(mn, mx - mn)
+
+## 退化口径：牌位在**桌面平面**上的落点包围盒（不算抬高与倾斜）。
+func _hand_mat_rect(i: int) -> Rect2:
+	var card := _hand[i]
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	for sx_v in [-0.5, 0.5]:
+		for sz_v in [-0.5, 0.5]:
+			var p: Vector2 = _t3.world_to_canvas_px(card.global_transform * Vector3(
+				HAND_CARD_W * float(sx_v), -HAND_CARD_T * 0.5, HAND_CARD_D * float(sz_v)))
+			mn = mn.min(p)
+			mx = mx.max(p)
+	return Rect2(mn, mx - mn)
+
+## 画布像素命中第几张牌；**-1 = 没命中**（本函数自己的约定，与 GameData 的哨兵值无关）。
+## 扇形里相邻两张的命中盒可能压住一两个像素：取**离相机最近**的那张 —— 不透明物件里
+## 它才是画在上面的那张，免得"看着是这张、点下去选中另一张"。
+func hand_hit(canvas_px: Vector2) -> int:
+	var best := -1
+	var best_z := -INF
+	for i in _hand_n:
+		if not hand_rect(i).has_point(canvas_px):
+			continue
+		var z: float = _hand[i].global_position.z    # 相机在 +z：z 越大越近
+		if z > best_z:
+			best_z = z
+			best = i
+	return best

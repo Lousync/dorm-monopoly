@@ -550,6 +550,173 @@ func _run() -> void:
 			_check(over_row_s == 0, "体力件没压在自己那排格子上（越界 %d 件）" % over_row_s)
 			_check(sunk_s == 0, "体力件都坐在桌垫之上（陷进去 %d 件）" % sunk_s)
 
+	# ---- 批次 3 Task 4：手中牌（显示） ----
+	# 本步**只做显示**（点击是 Task 5），但 hand_count / hand_rect / hand_hit 是这一步的交付物。
+	# 验收一律走**可观察量**：牌的几何取自节点自己的 mesh + 变换，命中判据走**真实的点击链路**
+	#（相机 unproject → t3.screen_to_viewport，与 table_3d._unhandled_input 同一条），
+	# 而不是把实现里的 hand_rect 推导再写一遍（那样写成什么样都过）。
+	print("== 手中牌：数量、厚度、品质色 ==")
+	var tp4 = t3.table_props
+	if tp4 == null:
+		_check(false, "TableProps 未就绪，手牌断言整段跳过")
+	else:
+		var ID4 = load("res://scripts/item_data.gd")
+		var vis4 := func(root: Node) -> int:
+			var c := 0
+			for ch in root.get_children():
+				if (ch as Node3D).visible:
+					c += 1
+			return c
+		tp4.set_hand([{"id": "招财猫", "cd": 0}, {"id": "黑卡", "cd": 0}])
+		_check(tp4.hand_count() == 2, "两个道具 → 两张手牌（实得 %d）" % tp4.hand_count())
+		var hr: Node = tp4.get_node_or_null("Hand")
+		_check(hr != null, "手牌父节点在（set_hand 时建）")
+		var many4 := []
+		if hr != null:      # 父节点缺了（将来被改名 / 删）时只红这一段，别把整个测试带崩
+			for i in 7:
+				many4.append({"id": "共享单车", "cd": 0})
+			tp4.set_hand(many4)
+			_check(tp4.hand_count() == 5 and vis4.call(hr) == 5,
+				"7 件道具 → 最多摆 5 张（实得 %d 张）" % tp4.hand_count())
+			tp4.set_hand([])
+			_check(tp4.hand_count() == 0 and vis4.call(hr) == 0, "清空 → 一张都不露")
+			# 幂等：池子只建一次，重复 set_hand 不重建节点（每次状态广播都会调它）
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
+			var pool4: int = hr.get_child_count()
+			var first4: Node = hr.get_child(0)
+			tp4.set_hand([{"id": "饭卡"}, {"id": "雨伞"}, {"id": "包租婆"}])
+			_check(hr.get_child_count() == pool4 and hr.get_child(0) == first4,
+				"重复调用不重建手牌节点（%d → %d 张）" % [pool4, hr.get_child_count()])
+			# 有厚度（能投影）与品质色：厚度取**节点自己的 mesh**（不比实现常量），
+			# 品质色是数据契约（招财猫=白 / 黑卡=橙，取自 ItemData.QUALITY_COLORS）。
+			tp4.set_hand([{"id": "招财猫"}, {"id": "黑卡"}])
+			var thick4 := true
+			var color4 := true
+			var want_q := ["白", "橙"]
+			for i in 2:
+				var mi4 := hr.get_child(i) as MeshInstance3D
+				var bm4: BoxMesh = null
+				if mi4 != null and mi4.mesh is BoxMesh:
+					bm4 = mi4.mesh as BoxMesh
+				if bm4 == null or bm4.size.y < 0.01:
+					thick4 = false
+				var mat4 := mi4.material_override as StandardMaterial3D if mi4 != null else null
+				if mat4 == null or not mat4.albedo_color.is_equal_approx(ID4.QUALITY_COLORS[want_q[i]]):
+					color4 = false
+			_check(thick4, "每张牌都是有厚度的盒子（BoxMesh，厚度 ≥ 0.01 世界单位）")
+			_check(color4, "牌身用品质色（招财猫=白 / 黑卡=橙）")
+
+			print("== 手中牌：命中盒盖住看得见的那张牌 ==")
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
+			# 「看得见的那张牌」= 牌**顶面中心**经真实点击链路折回的画布像素：
+			# 射线先打到桌面平面、再换算成画布 —— 牌是抬起来、朝自己倾斜的实物，
+			# 这个点与牌位在桌面上的落点**不是同一个点**（抬高 = 屏幕上更靠上）。
+			var seen4 := func(i: int) -> Vector2:
+				var mi := hr.get_child(i) as MeshInstance3D
+				var bm: BoxMesh = mi.mesh as BoxMesh
+				var top_c: Vector3 = mi.global_transform * Vector3(0.0, bm.size.y * 0.5, 0.0)
+				var got = t3.screen_to_viewport(t3.camera.unproject_position(top_c))
+				return got if got != null else Vector2(-9999.0, -9999.0)
+			var hit_self := true
+			var inside := true
+			var spread_ok := true
+			var centered := true
+			for i in 3:
+				var px: Vector2 = seen4.call(i)
+				hit_self = hit_self and tp4.hand_hit(px) == i
+				inside = inside and tp4.hand_rect(i).has_point(px)
+				# 命中盒必须按「抬起来」算：整盒比牌位的桌面落点更靠远端。
+				#（把矩形直接画在牌位上就会丢掉这一段 —— 玩家看着卡点下去就选不中。）
+				var base_px: Vector2 = t3.world_to_canvas_px((hr.get_child(i) as Node3D).global_position)
+				spread_ok = spread_ok and (base_px.y - tp4.hand_rect(i).get_center().y) > 4.0
+				# 而且盒子得**正好套在**看得见的那张牌上（中心对中心），不是"够大就行" ——
+				# 太大就会压住邻牌 / 压住自己那排格子（点过去选错东西）。
+				centered = centered and tp4.hand_rect(i).get_center().distance_to(px) < 8.0
+			_check(hit_self, "点每张牌看得见的那一面都命中它自己（三张各一次）")
+			_check(inside, "牌顶面中心落在自己的命中盒里")
+			_check(spread_ok, "命中盒按抬起算：整盒比牌位的桌面落点更靠远端")
+			_check(centered, "命中盒的中心就是看得见的那张牌的中心（偏差 < 8 画布像素）")
+			# 扇形里左右顺序不能翻：第 0 张在左、第 2 张在右（命中映射跟着牌走）
+			_check(tp4.hand_rect(0).get_center().x < tp4.hand_rect(2).get_center().x,
+				"命中盒的左右顺序与牌一致（左→右）")
+			# 相机一变，实物的**世界位置不动**、可看到的画面全变了 —— 命中盒必须跟着重算，
+			# 否则玩家在新视角下照着卡片点却点不中。这里换俯角（50° → 30°，正是批次 4 的视角推移
+			# 与 `--shot` 的 tilt 摆拍会做的事）来钉这条：**命中盒不是写死的常数**。
+			var wpos_before: Vector3 = (hr.get_child(1) as Node3D).global_position
+			var d_cam: float = t3.CAM_DIST
+			var rad30 := deg_to_rad(30.0)
+			t3.camera.look_at_from_position(Vector3(0.0, d_cam * tan(rad30), d_cam), Vector3.ZERO, Vector3.UP)
+			await process_frame
+			_check(tp4.hand_hit(seen4.call(1)) == 1, "换俯角（50°→30°）后点同一张看得见的那面仍命中它")
+			# 而且盒子要跟着**挪**到位（不只是"够宽容"）：缓存住旧视角的盒子会在这里露馅
+			_check(tp4.hand_rect(1).get_center().distance_to(seen4.call(1)) < 8.0,
+				"换俯角后命中盒重新对准看得见的那张牌（偏差 %.1f 画布像素）"
+					% tp4.hand_rect(1).get_center().distance_to(seen4.call(1)))
+			_check((hr.get_child(1) as Node3D).global_position.is_equal_approx(wpos_before),
+				"换视角不改实物的世界位置（牌钉在固定桌位上）")
+			# 滚轮推拉（只改距离，方向不变）：同样"点看得见的那面"必须照样命中
+			t3.dolly(1.12)
+			await process_frame
+			_check(tp4.hand_hit(seen4.call(1)) == 1, "滚轮推近后点同一张牌仍命中它")
+			t3.dolly(1.0 / 1.12)
+			# 取景回默认俯角：下面的位置断言必须在 game.gd 里真实的那一版取景下做
+			t3.camera.look_at_from_position(
+				Vector3(0.0, d_cam * tan(deg_to_rad(t3.CAM_TILT_DEG)), d_cam), Vector3.ZERO, Vector3.UP)
+			await process_frame
+			# 负路径：离得远的点不算命中（-1 是 hand_hit 自己的约定）
+			_check(tp4.hand_hit(Vector2(50.0, 50.0)) == -1, "角落不算命中")
+			_check(tp4.hand_hit(t3.board.wheel_screen_pos()) == -1, "转盘中心不算命中（那是掷轮的地盘）")
+			_check(tp4.hand_rect(-1).size == Vector2.ZERO and tp4.hand_rect(9).size == Vector2.ZERO,
+				"越界下标给空矩形（不是崩掉）")
+
+			# 位置：整排落在**自己面前的近端空桌垫**上 —— 不压座位栏 / 不压自己那排格子 /
+			# 不与筹码堆和体力件重叠。筹码与体力件的位置**从它们自己的节点读**（不是抄常量）。
+			print("== 手中牌：落在近端空桌垫上、不与筹码 / 体力件打架 ==")
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
+			await process_frame
+			var bar_top4: float = t3.board._view_from_world(t3.board._seat_bar(0).position).y
+			var over_ui4 := 0
+			var over_rect4 := 0
+			var sunk4 := 0
+			var nearest4 := 0.0
+			for i in 3:
+				var mi := hr.get_child(i) as MeshInstance3D
+				var bp: Vector2 = t3.world_to_canvas_px(mi.global_position)
+				if bp.y >= bar_top4:
+					over_ui4 += 1
+				if tp4.hand_rect(i).end.y >= bar_top4:
+					over_rect4 += 1
+				if mi.global_position.y <= t3.table_mesh.global_position.y:
+					sunk4 += 1
+				nearest4 = maxf(nearest4, bp.y)
+			_check(over_ui4 == 0, "手牌没压在自己座位栏上（越界 %d 张，栏上沿画布 y=%.0f）" % [over_ui4, bar_top4])
+			_check(over_rect4 == 0, "连看得见的那块也没伸到座位栏里（越界 %d 张）" % over_rect4)
+			_check(sunk4 == 0, "手牌都浮在桌垫之上（陷进去 %d 张）" % sunk4)
+			_check(nearest4 > 1024.0, "手牌在自己这半张桌子（近端，最靠里一张画布 y=%.0f）" % nearest4)
+			# 不与筹码堆 / 体力件重叠：把它们的**实际落点**读出来，命中盒里不许有它们。
+			var others4: Array = []
+			var chip_root4: Node = tp4.get_node_or_null("Chips")
+			var pip_root4: Node = tp4.get_node_or_null("Stamina")
+			var deepest4 := 0.0
+			for r in [chip_root4, pip_root4]:
+				if r == null:
+					continue
+				for ch in r.get_children():
+					if not (ch as Node3D).visible:
+						continue
+					var op: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
+					others4.append(op)
+					deepest4 = maxf(deepest4, op.y)
+			var clash4 := 0
+			for i in 3:
+				for op in others4:
+					if tp4.hand_rect(i).has_point(op):
+						clash4 += 1
+			_check(others4.size() > 0, "筹码 / 体力件的落点读到了（%d 个）" % others4.size())
+			_check(clash4 == 0, "手牌命中盒里没有筹码 / 体力件（重叠 %d 处）" % clash4)
+			_check(nearest4 > deepest4, "手牌整排比筹码 / 体力件更靠自己（%.0f > %.0f 画布 y）"
+				% [nearest4, deepest4])
+
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
 	# 注意：**单靠这条抓不到「贴图与 UV 约定整体镜像」**，那要对着出图核（见 task-3-report 的镜像核对）。

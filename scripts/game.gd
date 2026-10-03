@@ -1242,6 +1242,8 @@ func _refresh_table_props() -> void:
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
 	table3d.table_props.set_chips(int(mine.get("money", 0)))
 	table3d.table_props.set_stamina(int(mine.get("stamina", 0)), _stamina_cap(mine))
+	# 自己的道具 = 桌上一排「手中牌」（Task 4；只做显示，点选在 Task 5）
+	table3d.table_props.set_hand(mine.get("items", []))
 
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
