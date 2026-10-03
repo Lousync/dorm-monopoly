@@ -377,11 +377,13 @@ func take_shot(path: String) -> void:
 	g.board.cam_locked = not path.contains("freecam")
 	# （原 _shot_rot 分支已随转视角一起删除，见 v0.5.0 批次 1）
 	# 文件名带 tilt：把 **3D 相机**拉到另一个俯角（30°）出图，用来和默认 50° 对比构图。
+	# 只动俯角这一个变量，距离取默认值 —— 别顺手改距离，否则近端座位栏会被顶出屏幕底，
+	# 出来的图就不再是「纯俯角对比」而是「俯角 + 距离」两处都变了。
 	# 只动 3D 相机；SubViewport 内的 2D 相机（focus_grid 那一套）不受影响。
 	# 建议配 table 用（如 xx_tilt_table_plain.png），停在围桌全景做纯俯角对比。
 	if path.contains("tilt") and g.table3d != null:
-		var d := 4.0
-		var rad := deg_to_rad(30.0)     # 出图对比用：更平的俯角
+		var d: float = g.table3d.CAM_DIST       # 距离与默认一致
+		var rad := deg_to_rad(30.0)             # 出图对比用：更平的俯角（距离不变）
 		g.table3d.camera.look_at_from_position(Vector3(0.0, d * tan(rad), d), Vector3.ZERO, Vector3.UP)
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）

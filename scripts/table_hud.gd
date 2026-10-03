@@ -132,8 +132,9 @@ static func build_play_ui(g: Node) -> void:
 	g.shop_layer = Control.new()
 	g.shop_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	g.shop_layer.visible = false
-	# 高于 board 里带 z_index 的元素（棋子 20 / 光环 15 / 牌堆卡 30 / 悬停提示 60），
-	# 否则棋子和光环会浮在压暗底之上（见 doc/development/架构总览.md §五）。
+	# 高于其它**屏幕层**控件（弹问 60 / 结算 50），否则会被它们压在压暗底之下。
+	# 注意：不必再「盖住 board 内部元素」——棋盘住在 SubViewport 里，棋子 20 / 光环 15
+	# 那份 z_index 不再跨层穿帮（见 doc/development/架构总览.md §五）。70 这个值保持不变。
 	g.shop_layer.z_index = 70
 	g.add_child(g.shop_layer)
 

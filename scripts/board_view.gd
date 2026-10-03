@@ -1,8 +1,12 @@
 extends Control
 class_name BoardView
-## 56 格（18×12 外圈）棋盘：世界坐标渲染，滚轮缩放 / 拖拽平移 / 自动跟随行动棋子。
+## 56 格（18×12 外圈）棋盘：世界坐标渲染，自研 2D 相机（注视点 / 缩放，驱动推近演出）、
+## 自动跟随行动棋子。
 ## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修房子弹跳、悬停高亮、
 ## 当前行动者脉冲光环、传送淡入淡出。
+##
+## 注意：本组件住在 `TableView3D` 的 `SubViewport`（2048²）内，滚轮缩放与拖拽平移
+## **都不归它管**——滚轮 = 推拉 3D 相机（`TableView3D.dolly`），平移已删除（见批次 1）。
 
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
@@ -91,7 +95,10 @@ var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟�
 var _tile_hl: Array = []       # 每格「可选中」高亮叠层（选地块/两段式时显示）
 var _tile_tw := {}             # 每格进行中的补间
 var _tokens := {}              # peer -> 棋子 Panel
-var _token_tip: PanelContainer # 悬停棋子时浮出的信息条（屏幕空间，不随镜头旋转）
+## 悬停棋子时浮出的信息条。挂在 BoardView 下、用 `_view_from_world` 定位，所以它是
+## **棋盘画布（桌面）空间**的 —— 随桌面一起倾斜、并被透视缩小，字偏小。
+## 计划在「文字上屏幕层」收尾时改到屏幕层（见 doc/development/开发台账.md §三）。
+var _token_tip: PanelContainer
 var _token_tip_name: Label
 var _token_tip_sub: Label
 var _tip_peer := GameData.NO_PEER   # 当前悬停到谁（哨兵不能用 -1：机器人 peer 是负数）
@@ -806,7 +813,7 @@ func fit_overview(hard := false) -> void:
 		_center = _center_target
 	_apply_cam()
 
-## 镜头对准某格 / 某棋子；hard=true 立即居中（显式对焦会打断进行中的转视角动画）。
+## 镜头对准某格 / 某棋子；hard=true 立即居中。
 ## zoom 是「基准倍率（全景）的倍数」：1.0 = 全景，2.0 = 比全景近一倍。
 func focus_grid(idx: int, zoom: float, hard := true) -> void:
 	if cam_locked:
@@ -899,8 +906,8 @@ func _gui_input(ev: InputEvent) -> void:
 		var mm := ev as InputEventMouseMotion
 		var mask := mm.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)
 		if _dragging and mask != 0:
-			# 只判定「位移超过阈值 = 拖拽」，用于抑制拖拽结束时的误点击；
-			# 相机平移本身留到批次 2 随 3D 相机一起处理
+			# 只判定「位移超过阈值 = 拖拽」，用于抑制拖拽结束时的误点击。
+			# 相机平移本身不再需要：取景已由 3D 相机（TableView3D）接管，2D 相机不响应拖拽。
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
 				_set_seat_hover(-1)
@@ -1415,11 +1422,6 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 ## 镜头调试信息（开发者面板）
 func cam_info() -> String:
 	return "缩放 %.2f · 旋转 %.1f° · 注视 (%d, %d)" % [_zoom, rad_to_deg(_rot), int(_center.x), int(_center.y)]
-
-## 自己座位卡（边 0）的屏幕矩形（自己视角下无旋转，用于锚定屏幕层牌垫条）
-func home_card_screen_rect() -> Rect2:
-	var wpos := _seat_bar(0).get_center() - SEAT_SIZE * 0.5
-	return Rect2(_view_from_world(wpos), SEAT_SIZE * _zoom)
 
 # ---------------- 渲染状态快照 ----------------
 
