@@ -222,6 +222,20 @@ func _run() -> void:
 	_check(got_events.size() == 1 and (got_events[0] as InputEventMouseMotion) != null,
 		"悬停（MouseMotion）同样送到 2D 控件（实得 %d）" % got_events.size())
 
+	# ---- 批次 3 Task 1：3D 物件层地基 ----
+	# props 是实体物件（转盘 / 筹码 / 体力件 / 手牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
+	# 物件摆位一律走 canvas_px_to_world（画布像素 → 桌面世界），而不是另立一套坐标。
+	# 这条往返就是"共用坐标系"的可执行定义 —— 两套坐标系一旦漂移，往返立刻对不上。
+	# 同时钉住 y：画布中心落在桌面上、与桌垫齐平，物件才不会浮空或陷进桌子。
+	print("== 物件层：画布像素 ↔ 桌面世界 往返 ==")
+	_check(t3.props != null, "容器带 props 物件层")
+	for px in [Vector2(200, 200), Vector2(1024, 1024), Vector2(1800, 1500)]:
+		var w: Vector3 = t3.canvas_px_to_world(px)
+		var back: Vector2 = t3.world_to_canvas_px(w)
+		_check(back.distance_to(px) < 0.5, "往返一致 %s → %s → %s" % [px, w, back])
+	_check(absf(t3.canvas_px_to_world(Vector2(1024, 1024)).y - t3.table_mesh.global_position.y) < 0.01,
+		"画布中心落在桌面上（y 与桌垫齐平）")
+
 	t3.queue_free()
 
 	# ---- Task 4b：座位栏是否落在画布外（先取证） ----

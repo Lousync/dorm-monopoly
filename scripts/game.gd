@@ -12,6 +12,10 @@ const STEP_TIME := 0.15   # 每格跳子时长
 # ---------------- UI 引用 ----------------
 var board: BoardView
 var table3d: TableView3D      # 2.5D 桌面容器（scripts/table_3d.gd）
+# 桌面实体物件（scripts/table_props.gd 的 TableProps）。这里先按 Node3D 声明：TableProps 这个
+# class_name 要等本批次的后续任务才建出来，现在就写 `: TableProps` 会让整个 game.gd 解析失败
+#（`Identifier "TableProps" not declared`，实测 load_all 直接 1 FAILURES）。等类落地后再收窄类型。
+var table_props: Node3D
 var status_label: Label
 var roll_btn: Button
 var mat_bar: PanelContainer

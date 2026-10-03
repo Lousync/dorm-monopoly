@@ -33,9 +33,19 @@ var vignette: ColorRect        # 屏幕层暗角贴片（build_vignette 造，�
 
 var table_mat: StandardMaterial3D   # 桌面材质（取样窗口与 TEX_WINDOW_PX 同源）
 
+## 实体物件层：与桌垫共用同一套 UV 坐标系，物件都挂这里（见设计稿 §五）。
+## 桌垫（table_mesh）只是"印在桌上的画"；转盘 / 筹码 / 体力件 / 手牌这些有厚度、
+## 能投影的实体一律挂 props，摆位走 canvas_px_to_world。
+var props: Node3D
+
+## 桌面上的实体被点中时先问这里；返回 true 表示已消费（不再送进 SubViewport）。
+## 默认无效（Callable()），即不拦截任何点击 —— 只有 game.gd 接上后才有实体可点。
+var on_table_click: Callable = Callable()
+
 func _init() -> void:
 	_build_environment()
 	_build_table()
+	_build_props()          # 实体物件层要在桌垫坐标系就绪之后建
 	_build_camera()
 	_build_viewport()
 
@@ -83,10 +93,30 @@ func _build_table() -> void:
 	light.light_energy = 2.4
 	light.omni_range = 8.5
 	light.omni_attenuation = 1.0
-	# 阴影先关：场景里目前只有桌面板本身，没有任何投影物（立牌还没做），开了等于每帧白跑
-	# 一张（双抛物面 = 2 个 pass）阴影图，画面一点不变。等立牌落地再打开。
-	light.shadow_enabled = false
+	# 批次 3：桌上已经有实体物件了（转盘 / 筹码 / 手牌，挂在 TableView3D.props），阴影重新打开
+	# —— 物件才投得出影子。批次 2 曾因"场景里只有桌面板本身、没有任何投影物"而关掉：
+	# 那时开了等于每帧白跑一张（双抛物面 = 2 个 pass）阴影图，画面一点不变。
+	light.shadow_enabled = true
 	add_child(light)
+
+## 实体物件层：一个空的 Node3D 容器，本身不占地、只提供"物件都挂这儿"的父节点
+## 与统一的世界原点（= 桌面中心）。坐标换算见 canvas_px_to_world。
+func _build_props() -> void:
+	props = Node3D.new()
+	props.name = "TableProps"
+	add_child(props)
+
+## 棋盘画布像素 → 桌面世界坐标（桌垫坐标系，物件摆位一律走这里）。
+## 链：画布像素 →（贴图窗口）→ UV →（桌面尺寸）→ 桌垫局部坐标 → 世界坐标。
+## 桌垫有旋转/缩放时这里也跟着走 —— 与 screen_to_uv 用的是同一条逆变换。
+func canvas_px_to_world(px: Vector2) -> Vector3:
+	var uv := TableGeometry.viewport_to_uv(px, TEX_WINDOW_PX)
+	return table_mesh.global_transform * TableGeometry.uv_to_world(uv, TABLE_SIZE)
+
+## 反向：桌面世界坐标 → 棋盘画布像素（测试与命中反算用）。
+func world_to_canvas_px(w: Vector3) -> Vector2:
+	var local: Vector3 = table_mesh.global_transform.affine_inverse() * w
+	return TableGeometry.uv_to_viewport(TableGeometry.world_to_uv(local, TABLE_SIZE), TEX_WINDOW_PX)
 
 func _build_camera() -> void:
 	camera = Camera3D.new()
@@ -203,6 +233,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		var pos = screen_to_viewport(mb.position)
 		if pos == null:
+			return
+		# 实体物件优先：命中转盘 / 手牌等实体则消费掉，不再送进 SubViewport。
+		# 只判按下：点击语义全在按下（2D 侧的 BoardView 也只在 pressed 分支处理，
+		# 见 board_view.gd:885 / :1176），于是消费一次即够 —— 同一次点击的松开照旧放行，
+		# 2D 侧对它无动作，不会留下"松开了但没人按过"的怪状态。
+		if mb.pressed and on_table_click.is_valid() and bool(on_table_click.call(pos as Vector2)):
+			get_viewport().set_input_as_handled()
 			return
 		var fwd := InputEventMouseButton.new()
 		fwd.button_index = mb.button_index
