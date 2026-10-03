@@ -228,8 +228,10 @@ func _run() -> void:
 	# 进根视口 → 3D 映射 → SubViewport 内的探针控件）。
 	print("== 实体物件先消费点击（on_table_click）==")
 	var seen_px: Array = []
-	var at_center := func(_px: Vector2) -> bool:
+	var seen_btn: Array = []
+	var at_center := func(_px: Vector2, _btn: int) -> bool:
 		seen_px.append(_px)
+		seen_btn.append(_btn)
 		return true
 	t3.on_table_click = at_center
 	var pc := InputEventMouseButton.new()
@@ -244,6 +246,10 @@ func _run() -> void:
 	# 这里给错了坐标系，命中就会整体错位 —— 而这在"收到没收到事件"上完全看不出来。
 	_check(seen_px.size() == 1 and (seen_px[0] as Vector2).distance_to(win.get_center()) < 2.0,
 		"回调收到的是画布像素坐标（实得 %s，期望 ≈%s）" % [seen_px, win.get_center()])
+	# 按键也要原样带过去：实体层靠它分辨语义（手牌左键选中 / 右键丢弃、转盘只吃左键）。
+	# 少传这个参数会让回调签名对不上（Invalid call）—— 这条钉住「传了、且传对了」。
+	_check(seen_btn.size() == 1 and int(seen_btn[0]) == MOUSE_BUTTON_LEFT,
+		"回调收到的是按键（实得 %s，期望 LEFT=%d）" % [str(seen_btn), MOUSE_BUTTON_LEFT])
 
 	# 配对的松开也要吞掉。反例（review 实测过的那条）：先在桌垫上左键按下（转发，2D 侧
 	# `_dragging = true`）→ 再在转盘上右键按下（被实体消费，不转发）→ 右键松开：此时左键还
@@ -259,7 +265,7 @@ func _run() -> void:
 	_check(got_events.is_empty(), "被消费按下的配对松开也被吞掉（实得 %d）" % got_events.size())
 
 	# 放行：返回 false = 没落在实体上，照旧送进 SubViewport。
-	t3.on_table_click = func(_px: Vector2) -> bool: return false
+	t3.on_table_click = func(_px: Vector2, _btn: int) -> bool: return false
 	got_events.clear()
 	var pc2 := InputEventMouseButton.new()
 	pc2.button_index = MOUSE_BUTTON_LEFT
@@ -283,14 +289,14 @@ func _run() -> void:
 	# 旗标的生命期：只该覆盖「被消费的按下 → 它的松开」这一段。两条边界分别钉住：
 	# （a）同一个键又按下 = 上一次配对早就断了（松开的事件没送到），旗标必须让位给新的一次，
 	#     否则新按下的**松开**会被误吞 —— 而新按下的按下是转发过的，2D 侧正等着那个松开。
-	t3.on_table_click = func(_px: Vector2) -> bool: return true
+	t3.on_table_click = func(_px: Vector2, _btn: int) -> bool: return true
 	var pa := InputEventMouseButton.new()
 	pa.button_index = MOUSE_BUTTON_LEFT
 	pa.pressed = true
 	pa.position = click.position
 	root.push_input(pa)                       # 被消费 → 旗标 = 左键
 	await process_frame
-	t3.on_table_click = func(_px: Vector2) -> bool: return false
+	t3.on_table_click = func(_px: Vector2, _btn: int) -> bool: return false
 	var pa2 := InputEventMouseButton.new()
 	pa2.button_index = MOUSE_BUTTON_LEFT
 	pa2.pressed = true
@@ -311,7 +317,7 @@ func _run() -> void:
 
 	# （b）别的键打不到桌面（射线翻过水平线）时**不能**清旗标：旗标按键记，只可能被同一个键
 	#     的松开消费，顺手清掉就会让那个配对的松开漏进 2D。
-	t3.on_table_click = func(_px: Vector2) -> bool: return true
+	t3.on_table_click = func(_px: Vector2, _btn: int) -> bool: return true
 	var pb := InputEventMouseButton.new()
 	pb.button_index = MOUSE_BUTTON_LEFT
 	pb.pressed = true
