@@ -345,6 +345,32 @@ func _run() -> void:
 	_check(absf(t3.canvas_px_to_world(Vector2(1024, 1024)).y - t3.table_mesh.global_position.y) < 0.01,
 		"画布中心落在桌面上（y 与桌垫齐平）")
 
+	# ---- 批次 3 Task 2：可点转盘（桌面实体） ----
+	# 这里是**裸 TableView3D**：game.gd 的接线（首个状态后 build_wheel）根本没跑过，所以测试
+	# 自己先建一次，断言的才是「建好之后命中判定对不对」。中心一律取 wheel_screen_pos() ——
+	# 它才是 2048² 画布像素（game.gd:1525 的注释 / table_3d.gd:200 都这么用）；
+	# wheel_center() 是 _world 局部坐标，中间还要过 _view_from_world 那一跳，
+	# 照它建会把转盘摆到错的位置（下面那条 world_to_canvas_px 回算就是钉这个的）。
+	print("== 可点转盘：命中判定 ==")
+	var wheel_px: Vector2 = t3.board.wheel_screen_pos()
+	t3.table_props.build_wheel(wheel_px)
+	_check(t3.table_props != null, "容器挂了 TableProps")
+	_check(t3.table_props.wheel_hit(wheel_px), "转盘圆心算命中")
+	_check(t3.table_props.wheel_hit(wheel_px + Vector2(30, 0)), "半径内算命中")
+	_check(not t3.table_props.wheel_hit(wheel_px + Vector2(900, 0)), "远处不算命中")
+	# 实体真的立在那个画布位置上、且有厚度：位置算错（照 wheel_center 建）时回算对不上。
+	_check(t3.table_props.get_child_count() == 1, "转盘实体已挂进 TableProps（实得 %d 个）"
+		% t3.table_props.get_child_count())
+	if t3.table_props.get_child_count() == 1:
+		var wbody: Node3D = t3.table_props.get_child(0)
+		var back_px: Vector2 = t3.world_to_canvas_px(wbody.global_position)
+		_check(back_px.distance_to(wheel_px) < 1.0,
+			"圆柱立在转盘画布位置上（实得 %s，期望 %s）" % [back_px, wheel_px])
+		_check(wbody.global_position.y > t3.table_mesh.global_position.y,
+			"圆柱在桌垫之上（实得 y=%.3f）" % wbody.global_position.y)
+		_check(wbody is MeshInstance3D and (wbody as MeshInstance3D).mesh is CylinderMesh,
+			"转盘实体是有厚度的圆柱（不是一块平面）")
+
 	t3.queue_free()
 
 	# ---- Task 4b：座位栏是否落在画布外（先取证） ----

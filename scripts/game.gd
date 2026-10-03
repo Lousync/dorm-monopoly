@@ -12,10 +12,6 @@ const STEP_TIME := 0.15   # 每格跳子时长
 # ---------------- UI 引用 ----------------
 var board: BoardView
 var table3d: TableView3D      # 2.5D 桌面容器（scripts/table_3d.gd）
-# 桌面实体物件（scripts/table_props.gd 的 TableProps）。这里先按 Node3D 声明：TableProps 这个
-# class_name 要等本批次的后续任务才建出来，现在就写 `: TableProps` 会让整个 game.gd 解析失败
-#（`Identifier "TableProps" not declared`，实测 load_all 直接 1 FAILURES）。等类落地后再收窄类型。
-var table_props: Node3D
 var status_label: Label
 var roll_btn: Button
 var mat_bar: PanelContainer
@@ -171,6 +167,7 @@ var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/
 
 # ---------------- 表现层状态 ----------------
 var _player_rows := {}      # peer -> {root,sb,chip,name_l,money_l,shown,tw}
+var _wheel_built := false   # 桌面实体转盘是否已建：只在首个状态（落座 + 取景之后）建一次
 var _chat_shown := 0
 var _prompt_dlg: Control
 var _prompt_tw: Tween
@@ -250,6 +247,7 @@ func _ready() -> void:
 	board.phase_spin_clicked.connect(_on_roll_pressed)
 	board.phase_use_clicked.connect(_on_use_pressed)
 	board.cancel_clicked.connect(_cancel_target)
+	table3d.on_table_click = _on_table_click   # 桌面实体（转盘等）先于桌垫内容消费点击
 	if use_phase_btn != null:
 		use_phase_btn.pressed.connect(_on_use_pressed)
 	Net.chat_received.connect(_refresh_chat)
@@ -874,6 +872,17 @@ func _end_game(wpeer: int, line: String) -> void:
 
 # ================= 房主：交互 =================
 
+## 桌面实体被点中（画布像素）：命中转盘就掷轮，返回 true 表示这次点击已被实体消费。
+## 掷轮沿用**既有的** _on_roll_pressed 路径（房主本地 / 客户端 c_roll），不新增 RPC；
+## 未命中返回 false，点击照旧送进桌垫（点格子、点座位那些不受影响）。
+func _on_table_click(canvas_px: Vector2) -> bool:
+	if table3d == null or table3d.table_props == null:
+		return false
+	if table3d.table_props.wheel_hit(canvas_px):
+		_on_roll_pressed()
+		return true
+	return false
+
 ## 掷骰：房主本地发信号；客户端走 RPC（此前按钮只查房主变量，客户端点了没反应）
 func _on_roll_pressed() -> void:
 	if String(st.get("await", "")) != "roll" or int(st.get("turn", -1)) != my_peer:
@@ -1224,6 +1233,14 @@ func _refresh_players() -> void:
 		var pls: Array = st.get("players", [])
 		if not pls.is_empty():
 			board.build_seats(pls, my_peer)
+	# 桌面实体转盘：只在**首次收到状态、且座位已落位之后**建一次（每次 s_state 都建 = 重复堆叠 + 泄漏）。
+	# 时机有讲究：位置取自 board.wheel_screen_pos()（2048² 画布像素，与桌垫同一套坐标），
+	# 而这个值要过镜头变换 —— 座位落位时 BoardView 才会硬取景（build_seats 里 fit_overview），
+	# 取景之前算出来的位置是错的。`size.x > 10` 与 build_seats 内部那条判据同源：布局没跑时
+	# 取景还没做，这次就先不建、等下一次状态广播（那时早就有尺寸了）。
+	if not _wheel_built and board.seat_count() > 0 and board.size.x > 10.0:
+		_wheel_built = true
+		table3d.table_props.build_wheel(board.wheel_screen_pos())
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
 	var est_map := {}

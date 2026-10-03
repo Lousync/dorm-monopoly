@@ -38,6 +38,10 @@ var table_mat: StandardMaterial3D   # 桌面材质（取样窗口与 TEX_WINDOW_
 ## 能投影的实体一律挂 props，摆位走 canvas_px_to_world。
 var props: Node3D
 
+## 实体物件的构建与刷新（转盘 / 筹码堆 / 体力件 / 手牌，见 scripts/table_props.gd）。
+## 挂在 props 下、与桌垫共用同一套坐标；由 game.gd 在收到首个状态后驱动 build_wheel。
+var table_props: TableProps
+
 ## 桌面上的实体被点中时先问这里；返回 true 表示已消费（不再送进 SubViewport）。
 ## 默认无效（Callable()），即不拦截任何点击 —— 只有 game.gd 接上后才有实体可点。
 var on_table_click: Callable = Callable()
@@ -52,6 +56,7 @@ func _init() -> void:
 	_build_environment()
 	_build_table()
 	_build_props()          # 实体物件层要在桌垫坐标系就绪之后建
+	_build_table_props()    # 实体物件本身（转盘等）挂在 props 下
 	_build_camera()
 	_build_viewport()
 
@@ -111,6 +116,13 @@ func _build_props() -> void:
 	props = Node3D.new()
 	props.name = "TableProps"
 	add_child(props)
+
+## 实体物件的家（TableProps）。这里只**建**不摆：转盘要等 BoardView 落座、镜头取景之后
+## 才知道自己该在画布哪个位置（game.gd 在首个状态后调 build_wheel）。
+func _build_table_props() -> void:
+	table_props = TableProps.new()
+	table_props.setup(self)
+	props.add_child(table_props)
 
 ## 棋盘画布像素 → 桌面世界坐标（桌垫坐标系，物件摆位一律走这里）。
 ## 链：画布像素 →（贴图窗口）→ UV →（桌面尺寸）→ 桌垫局部坐标 → 世界坐标。
