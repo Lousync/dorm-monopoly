@@ -66,7 +66,7 @@
 | `README.md` | 项目门面：玩法规则、界面说明、项目结构、测试、构建打包 |
 | `AGENTS.md` | **本文件**：文档导航、工程约定、提交规范的单一来源 |
 | `CHANGELOG.md` | 版本变更（Keep a Changelog 风格 + 语义化版本） |
-| `assets/CREDITS.md` | 开源素材来源与授权；**分发时必须一并保留** |
+| `LICENSE` | MIT 授权 + 第三方素材来源与授权（原 `assets/CREDITS.md` 已并入本节）；**分发时必须一并保留** |
 
 ## 三、常用命令（PowerShell）
 

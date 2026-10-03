@@ -602,7 +602,7 @@ func is_showing_deck_card() -> bool:
 ## 抽卡用的卡牌尺寸：竖版 2:3，与素材（assets/cards/ 的 Atlas 牌卡背，360×540）同比例
 const CARD_SIZE := Vector2(260, 390)
 
-## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见 assets/CREDITS.md）
+## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）
 func _deck_back_tex(deck: String) -> Texture2D:
 	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
 		else "res://assets/cards/atlas_back_blue_brown.svg")
