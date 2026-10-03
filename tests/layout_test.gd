@@ -424,6 +424,138 @@ func _run() -> void:
 			_check(t3.table_props.wheel_hit(wheel_px + Vector2(wheel_r * 1.4, 0.0)),
 				"命中半径也跟着放大（%.0f 画布像素处仍算命中）" % (wheel_r * 1.4))
 
+	# ---- 批次 3 Task 3：桌上的筹码堆 / 体力件 ----
+	# 静态函数一律**经 load() / 实例取**，不写 `TableProps.chip_count(...)`：原因同文件顶部那段
+	# （--script 入口脚本的静态依赖链先于 autoload 全局标识符注册编译，静态写类名会以
+	# 「Identifier not found: Fx」整链失败，报错与改动无关）。
+	print("== 筹码堆与体力件：按数值分档（纯函数） ==")
+	var tp3 = t3.table_props
+	if tp3 == null:
+		_check(false, "TableProps 未就绪，筹码 / 体力件断言整段跳过")
+	else:
+		var S3 = load("res://scripts/table_props.gd")
+		# 先把这台容器取景到「四人围桌」那一版（game.gd 里跑的就是它）：上面那些断言跑在
+		# **没有座位**的裸容器上，取景是退化的（四条座位栏都被推出画布之外，自己那条栏的上沿
+		# 画布 y≈2104 > 2048）。拿退化取景当基准的话，「实体没压在自己座位栏上」这条会变成
+		# 空洞（把筹码摆到画布 y=2000 也照样过）。重取景不影响已经跑完的那些断言。
+		var pls3 := []
+		for i in 4:
+			pls3.append({"peer": i + 1, "name": "P%d" % (i + 1), "color": i, "bot": false,
+				"money": 20000, "pos": 0, "alive": true, "skip": 0,
+				"stamina": 3, "items": [], "item_used": false})
+		t3.board.build_seats(pls3, 1)
+		# 自己那条座位栏（画布近端画出来的 UI）的上沿。筹码与体力件都必须落在它之外。
+		var bar_top: float = t3.board._view_from_world(t3.board._seat_bar(0).position).y
+		# 再往上一条线：自己那一排格子的**外沿**（棋盘格区的近端边）—— 实体越过它
+		# 就是压在自己那排格子的图案上了（属性名 / 价格）。这条比座位栏更贴近「不压 UI」。
+		var row_top: float = t3.board._view_from_world(t3.board.BOARD_OFFSET + t3.board.WORLD).y
+		_check(bar_top < 2048.0, "取景已进到围桌那一版（座位栏在画布内，上沿画布 y=%.0f）" % bar_top)
+		_check(S3.chip_count(0) == 0, "0 元 → 0 枚")
+		_check(S3.chip_count(-100) == 0, "欠债（负数）→ 0 枚")
+		_check(S3.chip_count(4999) == 0, "不足一档 → 0 枚")
+		_check(S3.chip_count(5000) == 1, "满一档 → 1 枚")
+		_check(S3.chip_count(39999) == 7, "七档半 → 7 枚（取整不四舍五入）")
+		_check(S3.chip_count(40000) == 8, "八档 → 8 枚")
+		_check(S3.chip_count(123456) == 8, "再多也不超上限（封顶）")
+
+		# 可见件数：池子里的节点是**藏起来**而不是拆掉的（幂等要求），所以数 visible。
+		var vis3 := func(root: Node) -> int:
+			var c := 0
+			for ch in root.get_children():
+				if (ch as Node3D).visible:
+					c += 1
+			return c
+		print("== 筹码堆：按金额长出实体、落在自己面前的空桌垫上 ==")
+		tp3.set_chips(5000)
+		var cr: Node = tp3.get_node_or_null("Chips")
+		_check(cr != null, "筹码堆的父节点在（set_chips 时建）")
+		if cr != null:
+			tp3.set_chips(0)
+			_check(vis3.call(cr) == 0, "0 元：一枚都不露（实得 %d）" % vis3.call(cr))
+			tp3.set_chips(5000)
+			_check(vis3.call(cr) == 1, "1 档：露 1 枚（实得 %d）" % vis3.call(cr))
+			tp3.set_chips(100000)
+			_check(vis3.call(cr) == 8, "封顶：露 8 枚（实得 %d）" % vis3.call(cr))
+			# 幂等：节点池只建一次，刷新只改 visible 与 transform（每次状态广播都会调这里）
+			var pool3: int = cr.get_child_count()
+			var first3: Node = cr.get_child(0)
+			tp3.set_chips(100000)
+			_check(cr.get_child_count() == pool3 and cr.get_child(0) == first3,
+				"重复调用不重建节点（%d → %d 个）" % [pool3, cr.get_child_count()])
+			# 位置：整摞都得落在**空桌垫**上 —— 全在自己那条座位栏的上沿之外。
+			# 近端画布上画着座位卡 UI（Task 6 才拆），实体压上去就是压在画出来的 UI 上。
+			var over_ui := 0
+			var over_row := 0
+			var sunk := 0
+			var nearest := 0.0
+			for ch in cr.get_children():
+				if not (ch as Node3D).visible:
+					continue
+				var cpx: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
+				if cpx.y >= bar_top:
+					over_ui += 1
+				if cpx.y >= row_top:
+					over_row += 1
+				if (ch as Node3D).global_position.y <= t3.table_mesh.global_position.y:
+					sunk += 1
+				nearest = maxf(nearest, cpx.y)
+			_check(over_ui == 0, "筹码没压在自己座位栏上（越界 %d 枚，栏上沿画布 y=%.0f）" % [over_ui, bar_top])
+			_check(over_row == 0, "筹码没压在自己那排格子上（越界 %d 枚，格区近端画布 y=%.0f）" % [over_row, row_top])
+			_check(sunk == 0, "筹码都浮在桌垫之上（陷进去 %d 枚）" % sunk)
+			_check(nearest > 1024.0, "筹码在自己这半张桌子（近端，最靠里一枚画布 y=%.0f > 1024）" % nearest)
+
+		print("== 体力件：一排小件、用掉的熄灭 ==")
+		tp3.set_stamina(3, 5)
+		var sr: Node = tp3.get_node_or_null("Stamina")
+		_check(sr != null, "体力件的父节点在（set_stamina 时建）")
+		if sr != null:
+			# 亮 / 灭按**亮度**分：拿 PIP_LIT 常量比是自指，改配色时两边一起改就永远绿。
+			var lit3 := func(root: Node) -> int:
+				var c := 0
+				for ch in root.get_children():
+					var mi := ch as MeshInstance3D
+					if mi == null or not mi.visible:
+						continue
+					var mat := mi.material_override as StandardMaterial3D
+					if mat != null and mat.albedo_color.get_luminance() > 0.5:
+						c += 1
+				return c
+			_check(vis3.call(sr) == 5, "上限 5 → 摆 5 件（实得 %d）" % vis3.call(sr))
+			_check(lit3.call(sr) == 3, "3 点体力 → 3 件亮的（实得 %d）" % lit3.call(sr))
+			tp3.set_stamina(0, 5)
+			_check(vis3.call(sr) == 5 and lit3.call(sr) == 0,
+				"用光了：5 件全灭（实得 亮 %d 件）" % lit3.call(sr))
+			tp3.set_stamina(9, 6)     # 上限 6（充电宝）时多出来的点数不该溢到别处
+			_check(vis3.call(sr) == 6 and lit3.call(sr) == 6,
+				"上限 6 / 满体力 → 6 件全亮（实得 亮 %d 件）" % lit3.call(sr))
+			var pool_s: int = sr.get_child_count()
+			var first_s: Node = sr.get_child(0)
+			tp3.set_stamina(2, 6)
+			_check(sr.get_child_count() == pool_s and sr.get_child(0) == first_s,
+				"重复调用不重建体力件节点（%d → %d 个）" % [pool_s, sr.get_child_count()])
+			var over_ui_s := 0
+			var over_row_s := 0
+			var sunk_s := 0
+			for ch in sr.get_children():
+				if not (ch as Node3D).visible:
+					continue
+				var spx: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
+				if spx.y >= bar_top:
+					over_ui_s += 1
+				if spx.y >= row_top:
+					over_row_s += 1
+				if (ch as Node3D).global_position.y <= t3.table_mesh.global_position.y:
+					sunk_s += 1
+			_check(over_ui_s == 0, "体力件没压在自己座位栏上（越界 %d 件）" % over_ui_s)
+			_check(over_row_s == 0, "体力件没压在自己那排格子上（越界 %d 件）" % over_row_s)
+			_check(sunk_s == 0, "体力件都坐在桌垫之上（陷进去 %d 件）" % sunk_s)
+
+	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
+	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
+	# 注意：**单靠这条抓不到「贴图与 UV 约定整体镜像」**，那要对着出图核（见 task-3-report 的镜像核对）。
+	_check(t3.canvas_px_to_world(Vector2(1024.0, 2048.0)).z > t3.canvas_px_to_world(Vector2(1024.0, 0.0)).z,
+		"画布下方 = 近端（y 大 → z 大）")
+
 	t3.queue_free()
 
 	# ---- Task 4b：座位栏是否落在画布外（先取证） ----

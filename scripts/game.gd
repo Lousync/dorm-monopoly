@@ -1233,6 +1233,15 @@ func _refresh_table_props() -> void:
 	if board.size.x <= 10.0:
 		return
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
+	# 自己的现金 / 体力也搬到桌上（Task 3）：筹码堆按金额分档、体力件用掉的熄灭。
+	# 输入只要**画布像素**那点信息 —— _state_player 读的是已同步的 st.players（客户端也有）。
+	# 两者与 build_wheel 一样幂等（只改 transform / visible / 材质色，不重建节点），
+	# 所以每次状态广播都调它们没有代价。
+	var mine := _state_player(my_peer)
+	if mine.is_empty():
+		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
+	table3d.table_props.set_chips(int(mine.get("money", 0)))
+	table3d.table_props.set_stamina(int(mine.get("stamina", 0)), _stamina_cap(mine))
 
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
