@@ -72,15 +72,17 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
-	print("== 棋盘 / 桌面比例：贴图只取画布的一块（棋盘铺满桌面）==")
-	# 画布 = 整张方桌（棋盘 + 四条座位栏 + 上下死区），棋盘只占其中一小块。
-	# 直接铺满画布就会读成「棋盘摆在桌上」；贴图窗口把棋盘外那一小圈木边之外的都裁掉。
+	print("== 贴图窗口 = 整张画布（交互优先于比例，见 T4c）==")
+	# 画布 = 整张方桌（棋盘 + 四条座位栏 + 上下死区）。T4 曾把窗口裁到 y∈[348,2048] 让
+	# 「棋盘铺满桌面」，但上家座位栏在画布 y∈[16,211] —— 它在画布内、却在窗口外，
+	# 桌面上既看不见也点不到（指向性道具选不中上家）。裁定：窗口必须覆盖整张画布，
+	# 比例目标推迟到批次 3（座位栏将换成桌上立牌）。窗口是否够大由下面 T4c 那段钉住。
 	var win: Rect2 = t3.TEX_WINDOW_PX
 	_check(win.position.x >= 0.0 and win.position.y >= 0.0
 			and win.position.x + win.size.x <= 2048.0 and win.position.y + win.size.y <= 2048.0,
 		"贴图窗口落在画布内（窗口 %s）" % win)
-	_check(win.size.y < 2048.0 or win.size.x < 2048.0,
-		"贴图窗口比整张画布小（%s < 2048²，即真的裁掉了桌面外的死区）" % win.size)
+	_check(win == Rect2(Vector2.ZERO, Vector2(t3.VP_SIZE)),
+		"贴图窗口 = 整张画布（%s，交互优先于比例）" % win)
 	_check(absf(t3.TABLE_D / t3.TABLE_W - win.size.y / win.size.x) < 0.002,
 		"桌面宽:进深 与 窗口宽:高 同比例（贴图不被拉伸：%.3f vs %.3f）"
 			% [t3.TABLE_D / t3.TABLE_W, win.size.y / win.size.x])
@@ -229,6 +231,10 @@ func _run() -> void:
 		pls.append({"peer": i + 1, "name": "P%d" % (i + 1), "color": i, "bot": false,
 			"money": 20000, "pos": 0, "alive": true, "skip": 0, "sleep": 0,
 			"stamina": 3, "items": [], "item_used": false})
+	# 先钉住「这段复现的是客户端路径」：客户端要等 s_state 才建座，那时首次取景早已做完
+	# （_fitted=true），build_seats 才会走 fit_overview 硬取景；若容器哪天不再被上面两帧
+	# await 布局，_fitted 会是 false，这段就静默退化成房主路径（首帧取景时才建座）、变空洞。
+	_check(t4.board._fitted, "建座前已完成首次取景（复现客户端路径）")
 	t4.board.build_seats(pls, 1)
 	t4.board._process(0.0)        # 触发首帧布局/取景
 	t4.board._process(0.0)
@@ -246,6 +252,25 @@ func _run() -> void:
 			out += 1
 			print("    [越界] 边 %d 的座位栏 %s 不在画布 %s 内" % [e, bar_view, vp4])
 	_check(out == 0, "四条座位栏都在画布内（越界 %d 条）" % out)
+
+	# ---- Task 4c：座位栏还得落在**纹理窗口**内 ----
+	# 画布内 ≠ 桌面上可见可点：桌面材质只取 TEX_WINDOW_PX 那一块，输入映射由同源的窗口
+	# 换算（screen_to_viewport）。T4 为「棋盘铺满桌面」把窗口上边裁到 348，而上家（对家）
+	# 那条座位栏正落在画布 y∈[16,211] —— 它在画布内、却在窗口外，于是既看不见也点不到，
+	# 指向性道具（交换生 / 跑腿券 / 强拆令）选不中上家。窗口必须覆盖整张画布。
+	print("== 四条座位栏都在纹理窗口内（可见且可点到） ==")
+	# 同上的空间问题：_seat_bar 给世界坐标，TEX_WINDOW_PX 是画布坐标，先过镜头变换再比。
+	var win4: Rect2 = t4.TEX_WINDOW_PX
+	var out_win := 0
+	for e in 4:
+		var bar4: Rect2 = t4.board._seat_bar(e)
+		var w0: Vector2 = t4.board._view_from_world(bar4.position)
+		var w1: Vector2 = t4.board._view_from_world(bar4.end)
+		var cbar := Rect2(w0, w1 - w0).abs()
+		if not win4.encloses(cbar):
+			out_win += 1
+			print("    [窗口外] 边 %d 的座位栏（画布）%s 不在窗口 %s 内" % [e, cbar, win4])
+	_check(out_win == 0, "四条座位栏都在纹理窗口内（窗口外 %d 条）" % out_win)
 	t4.queue_free()
 
 	if fails == 0:
