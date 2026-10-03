@@ -541,14 +541,18 @@ func _run() -> void:
 	s_hand.await_peer = 2
 	for p in s_hand.players:
 		if int(p.peer) == 2:
-			# 三件刚好盖住既有三分支：不带目标（直接出牌）/ 选玩家 / 选格子
-			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
+			# **满手 5 张**：前三张刚好盖住既有三分支（不带目标 / 选玩家 / 选格子），后两张凑满手。
+			# 不是"顺手多放两件"：下面的「牌底可点条带」（2c）要量**最坏档** —— 扇形外侧那张
+			# 离中心最远、画布 y 最高，也最难不压格子；3 张手牌量到的根本不是那个数（批次 5
+			# Task 4 就是来钉这一条的）。
+			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0},
+				{"id": "快递直达", "cd": 0}, {"id": "作弊器", "cd": 0}, {"id": "兼职中介", "cd": 0}]
 	g.s_state(s_hand)
 	await process_frame
 	await process_frame
 	g._process(0.0)
 	var tph = g.table3d.table_props
-	_check(tph.hand_count() == 3, "我的三件道具摆成三张手牌（实得 %d）" % tph.hand_count())
+	_check(tph.hand_count() == 5, "我的五件道具摆成五张手牌（满手，实得 %d）" % tph.hand_count())
 	_check(g.selected_slot == -1, "初始未选中")
 
 	var c0: Vector2 = tph.hand_rect(0).get_center()
@@ -713,12 +717,18 @@ func _run() -> void:
 
 	# 2c 实测取证：**牌底那几格还剩多少可点条带**（批次 5 Task 3 的验收点）。
 	#    批次 3 的答案是"未选中 11~19、选中后外侧两张归零"；今天牌整排下移到木纹留白，
-	#    答案是**没有格子被盖住**：近排每格的整条高都能点。选中态只会把牌**抬得更高**
-	#    （离格子更远），所以这个结论对未选中 / 选中两档都成立。
+	#    答案是**没有格子被盖住**：近排每格的整条高都能点。
+	#    **量的是最坏档**（批次 5 Task 4 改）：**满手 5 张、选中扇形最外侧那张** —— 外侧那张
+	#    画布 y 最高（离格子最近），选中又把它整体抬高，正是当年"归零"的那一档；
+	#    3 张手牌选中间那张量到的是另一个数（201.5 / 188.8），钉不住最坏情况。
+	#    这两个数**钉进断言**（不只写在注释里）：改手牌尺寸 / 摆位就得回来重取，改不动就红。
 	g._cancel_target()
 	var gap_plain: float = hand_top - lowest_cell
-	var sel_card := 2 if tph.hand_count() > 2 else 0
+	var sel_card := 0                 # 0 = 扇形最外侧（外侧两张对称，取哪张都一样）
 	g._on_table_click(tph.hand_rect(sel_card).get_center())
+	# 先钉「选中真的发生了」：不然点击没生效时 gap_sel == gap_plain 也照样过，这条就白测了。
+	_check(g.selected_slot == sel_card,
+		"点在牌上**真的选中了**那张（selected_slot 期望 %d，实得 %d）" % [sel_card, g.selected_slot])
 	var sel_top := INF
 	for k in tph.hand_count():
 		sel_top = minf(sel_top, tph.hand_rect(k).position.y)
@@ -728,6 +738,9 @@ func _run() -> void:
 	g._cancel_target()
 	_check(gap_plain > 0.0 and gap_sel > 0.0,
 		"选中 / 未选中两档下，近排格子都还有可点的条带（%.1f / %.1f 画布像素）" % [gap_plain, gap_sel])
+	_check(absf(gap_plain - 190.0) <= 1.0 and absf(gap_sel - 177.0) <= 1.0,
+		"满手 5 张 + 选中外侧那张，实测值就是注释里那两个数（%.1f / %.1f，期望 190.0 / 177.0）"
+			% [gap_plain, gap_sel])
 
 	# ③ 下沿：近排**每一格**（不再需要"找没被盖住的那一格"—— 今天一格都没被盖住）的下沿都必须
 	#    **不被消费**，并解算到它自己。这里验的是**下游那一半**（board._index_at 把它解算成这格

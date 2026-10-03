@@ -886,33 +886,36 @@ func _run() -> void:
 			var off_wood4 := 0        # 飞出木桌沿的张数（应当为 0）
 			var sunk4 := 0
 			var nearest4 := 0.0
-			# 木桌 = 桌垫再往外 WOOD_FRAME。画布 px / 世界单位在 x、y 上都是
-			# `窗口边长 / 桌面边长`（窗口与桌面同比例 ⇒ 两轴同值），按各自的边长折算。
-			var px_per_w: Vector2 = Vector2(t3.TEX_WINDOW_PX.size.x / t3.TABLE_W,
-				t3.TEX_WINDOW_PX.size.y / t3.TABLE_D) * float(t3.WOOD_FRAME)
-			var wood_px: Rect2 = Rect2(mat_px4.position - px_per_w, mat_px4.size + px_per_w * 2.0)
+			# 「还在木桌之内」一律用**世界坐标**量，**不能**拿画布像素折算：木纹边界在画布像素里
+			# 四边**都落在画布之外**（窗口裁到桌垫区之后每个方向都外扩 ≈303 像素，而画布才 2048²）
+			# ⇒ 那样的矩形把任何画布内的点都包含进去，断言恒真、什么都证明不了
+			#（正是本文件反复警告的那类）。世界口径下木桌 = 桌垫半幅 + WOOD_FRAME，
+			# 这条**真会失败**（把整排再往下挪一截就越界了）。
+			var wood_half: Vector2 = t3.TABLE_SIZE * 0.5 + Vector2(t3.WOOD_FRAME, t3.WOOD_FRAME)
 			for i in 3:
 				var mi := hr.get_child(i) as MeshInstance3D
 				var bp: Vector2 = t3.world_to_canvas_px(mi.global_position)
 				if mat_px4.has_point(bp):
 					on_mat4 += 1
-				if not wood_px.has_point(bp):
+				if absf(mi.global_position.x) > wood_half.x or absf(mi.global_position.z) > wood_half.y:
 					off_wood4 += 1
 				if mi.global_position.y <= t3.table_mesh.global_position.y:
 					sunk4 += 1
 				nearest4 = maxf(nearest4, bp.y)
 			_check(on_mat4 == 0, "手牌整排落在**桌垫之外**那条木纹留白上（落在桌垫内的 %d 张）" % on_mat4)
-			_check(off_wood4 == 0, "手牌都还在木桌之内（飞出桌沿 %d 张；木桌 %s）" % [off_wood4, wood_px])
+			_check(off_wood4 == 0, "手牌都还在木桌之内（飞出桌沿 %d 张；木桌半宽 %.2f / 半深 %.2f）"
+				% [off_wood4, wood_half.x, wood_half.y])
 			_check(sunk4 == 0, "手牌都浮在桌面上（陷进去 %d 张）" % sunk4)
-			# 看得见的那块（投影盒）也必须在木桌之内 —— 牌是抬起来 + 倾斜的实物，
-			# 它的屏幕包围盒比桌面落点更靠外（近端），出图核过它在桌沿之内。
+			# 看得见的那块（投影盒）同样不许被**画布边缘**裁掉 —— 牌是抬起来 + 倾斜的实物，
+			# 它的屏幕包围盒比桌面落点更靠外（近端）。这里也换掉了原来的木纹边界：木桌比画布大一圈
+			# ⇒「在画布内」严格强于「在木桌内」，是一条真会失败的断言。
+			var canvas_rect4 := Rect2(Vector2.ZERO, Vector2(t3.VP_SIZE))
 			var box_out4 := 0
 			for i in 3:
-				var rq: Rect2 = tp4.hand_rect(i)
-				if rq.position.y < wood_px.position.y or rq.end.y > wood_px.end.y \
-						or rq.position.x < wood_px.position.x or rq.end.x > wood_px.end.x:
+				if not canvas_rect4.encloses(tp4.hand_rect(i)):
 					box_out4 += 1
-			_check(box_out4 == 0, "连看得见的那块也没伸出木桌沿（出界 %d 张）" % box_out4)
+			_check(box_out4 == 0, "连看得见的那块也没被画布边缘裁掉（出界 %d 张；画布 %s）"
+				% [box_out4, canvas_rect4])
 			_check(nearest4 > mat_px4.get_center().y, "手牌在自己这半张桌子（近端，最靠里一张画布 y=%.0f）" % nearest4)
 			# 不与筹码堆 / 体力件重叠：把它们的**实际落点**读出来，命中盒里不许有它们。
 			var others4: Array = []
@@ -1228,6 +1231,23 @@ func _run() -> void:
 			# 自己的那面：3D 端看不见 ⇒ 点不到
 			_check(not (sr.get_child(0) as Node3D).visible, "3D 端自己的立牌藏起来了（第一人称看不见自己）")
 			_check(tpS.standee_hit(seen_s.call(0)) == -1, "3D 端点自己的立牌不命中（-1）")
+			# **两者永不同框**（批次 5 Task 4）：手牌坐在近端木纹留白、自己那块立牌立在近端桌沿，
+			# 投影压在同一片屏幕区域上。**0.5 是两个滚轮格的稳定停驻位**（不是"过渡里的几帧"），
+			# 所以分界线 `STANDEE_SELF_HIDE_T` 提到**手牌最后可见的档之上**：
+			# 手牌还看得见时自己那面就是藏着，等手牌淡完了它才现身。
+			tpS.set_hand([{"id": "招财猫"}, {"id": "黑卡"}])
+			t3.snap_view(0.5)
+			await process_frame
+			_check(tpS.hand_alpha() > 0.02,
+				"停驻位 view_t = 0.5：手牌还看得见（实得 alpha %.2f）" % tpS.hand_alpha())
+			_check(not (sr.get_child(0) as Node3D).visible,
+				"停驻位 view_t = 0.5：自己那块立牌仍藏着 —— 两者不同框")
+			t3.snap_view(0.7)
+			await process_frame
+			_check(tpS.hand_alpha() < 0.02,
+				"view_t = 0.7：手牌已淡完（实得 alpha %.2f）" % tpS.hand_alpha())
+			_check((sr.get_child(0) as Node3D).visible,
+				"手牌消失之后自己那块立牌才露出来（分界线在手牌最后可见的档之上）")
 			# 2D 端：四块都在、自己那面也点得到
 			t3.snap_view(1.0)
 			await process_frame
