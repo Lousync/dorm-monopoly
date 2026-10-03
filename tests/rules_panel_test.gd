@@ -81,7 +81,15 @@ func _run() -> void:
 	for p in pages:
 		if String(p.key) == "basic":
 			basic_page = String(p.body)
-	_check(basic_page.contains("滚轮缩放"), "基础操作页保留了原「操作提示」内容")
+	# 批次 4 起滚轮做的是「3D↔2D 视角推移」，不再说「滚轮缩放」（那是批次 2 的旧操作）。
+	# 这条断言存在的意义就是「规则说明不能教已删除的操作」：钉新措辞、并**反过来**钉死旧措辞
+	# 不回来 —— 只删掉断言等于放行。
+	# 钉的子串要**真能区分新旧**：旧的「滚轮缩放」那句里也有「滚轮」「视角」（「视角恒定」），
+	# 只钉这两个词的话正断言对旧文案照样绿。改钉「推移」—— 旧文案里没有。
+	_check(basic_page.contains("滚轮") and basic_page.contains("推移"),
+		"基础操作页的滚轮说明改写为「视角推移」（不再教已删除的「滚轮缩放」）")
+	_check(not basic_page.contains("滚轮缩放"),
+		"基础操作页不再出现已被取代的「滚轮缩放」")
 
 	print("== 控件与初始状态 ==")
 	_check(g.rules_btn != null and g.rules_panel != null and g.rules_body != null,
