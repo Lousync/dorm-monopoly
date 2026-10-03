@@ -378,7 +378,8 @@ func take_shot(path: String) -> void:
 	# （原 _shot_rot 分支已随转视角一起删除，见 v0.5.0 批次 1）
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
-		g.board.focus_grid(27, 0.8, true)
+		# 倍率是「全景的倍数」：2.0 ≈ 屏幕时代那个 0.8（0.8/0.40，见 board_view 顶部常量）
+		g.board.focus_grid(27, 2.0, true)
 		await get_tree().create_timer(0.15).timeout
 		_on_tile_clicked(27)  # 顺便展示格子详情卡
 	if path.contains("rules"):
@@ -443,6 +444,6 @@ func _dev_jump(kind: String) -> void:
 		return
 	p.pos = idx
 	_broadcast_state()
-	g.board.focus_grid(idx, 0.9, true)
+	g.board.focus_grid(idx, 2.3, true)   # 2.3 倍全景 ≈ 屏幕时代的 0.9
 	_log("[dev] %s 传送到「%s」（格 %d），触发落点结算" % [String(p.name), kind, idx], "#7fd88f")
 	await g._resolve_tile(p)

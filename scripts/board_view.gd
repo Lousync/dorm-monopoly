@@ -15,8 +15,13 @@ signal cancel_clicked()              # 右键单击（未拖拽平移）：取�
 const TILE := 112.0
 static var WORLD := Vector2(GameData.BOARD_COLS, GameData.BOARD_ROWS) * TILE  # 18×12 → (2016, 1344)
 const GAP := 5.0
-const MIN_ZOOM := 0.22
-const MAX_ZOOM := 1.25
+## 倍率区间 —— 是「基准倍率 _fit_zoom 的倍数」，不是绝对像素倍率（1.0 = 全景）。
+## 棋盘在 2.5D 之后住进 2048² 的 SubViewport，画布尺度从屏幕（1280×800）变了，
+## 同一个绝对倍率的含义会差约 3 倍（全景从 0.40 变成 0.97）——所以一律相对基准表达。
+## 数值按「屏幕时代 ÷ 当时的全景 0.40」折回来的：原 0.22 / 1.25 / 抽卡 0.78。
+const MIN_ZOOM_FACTOR := 0.55   # 下限（全景附近）
+const MAX_ZOOM_FACTOR := 3.1    # 上限（明显更近）
+const DECK_PUSH_FACTOR := 2.0   # 抽卡推近：比全景明显更近，牌面文字才看得清
 const SELECT_COLOR := Color(1.0, 0.86, 0.35)   # 指向性道具「可选中」高亮（金）
 ## 抽卡展示的四个相位：抽出 → 翻面 → 停留 → 收回
 const DECK_OUT := 0.34
@@ -59,6 +64,9 @@ var overlay_bottom := 0.0
 var _world: Control
 var _table: Node2D
 var _zoom := 0.5
+## 基准倍率：全景适配算出来的那个倍率（= 1.0 倍）。所有对外的倍率参数、上限下限、
+## 抽卡推近都以它为参照 —— 它随画布尺寸自动变，调用方不必知道画布有多大。
+var _fit_zoom := 0.5
 var _need_fit := true
 var _fitted := false         # 是否已做过首次全景取景（之后的 resized 只重算变换）
 var _dragging := false
@@ -575,7 +583,7 @@ func _tick_deck_card(delta: float) -> void:
 		_deck_card = null
 		_deck_back = null
 		_deck_front = null
-		_zoom = clampf(_deck_prev_zoom, MIN_ZOOM, MAX_ZOOM)   # 还原抽卡前的缩放
+		_zoom = _zoom_from_factor(_deck_prev_zoom / _fit_zoom)   # 还原抽卡前的缩放
 		_apply_cam()
 		if restore != GameData.NO_PEER:
 			focus_peer(restore)
@@ -708,7 +716,9 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := Ga
 	card.modulate = Color(1, 1, 1, 0.0)
 	card.scale = Vector2(0.55, 0.55)
 	_deck_prev_zoom = _zoom
-	focus_point_zoom(center + Vector2(0, -110), maxf(_zoom, 0.78))
+	# 推近到「至少 DECK_PUSH_FACTOR 倍全景」：用倍数而不是绝对倍率，画布尺度变了也不会失效
+	# （原来写死 0.78，那是屏幕时代的值；2048² 画布下它比全景 0.97 还小，等于完全不推近）。
+	focus_point_zoom(center + Vector2(0, -110), maxf(_zoom / _fit_zoom, DECK_PUSH_FACTOR))
 
 	_deck_card = card
 	_deck_t = 0.0
@@ -776,6 +786,11 @@ func _pan_toward(world_center: Vector2, delta: float) -> void:
 func _visible_rect() -> Rect2:
 	return Rect2(overlay_left, overlay_top, size.x - overlay_left - overlay_right, size.y - overlay_top - overlay_bottom)
 
+## 「基准倍率的倍数」→ 绝对倍率，并夹到允许区间（1.0 = 全景）。
+## 所有设置倍率的地方都走这里：调用点一律写倍数，别写绝对字面量（画布尺度一变换算就废）。
+func _zoom_from_factor(factor: float) -> float:
+	return clampf(factor, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR) * _fit_zoom
+
 ## 全桌概览（把整张围桌塞进可视区域）；hard=true 立即到位
 func fit_overview(hard := false) -> void:
 	auto_follow = false
@@ -783,13 +798,16 @@ func fit_overview(hard := false) -> void:
 	_has_follow_pt = false
 	var vr := _visible_rect()
 	var occ := _occupied_rect()
-	_zoom = clampf(minf(vr.size.x / (occ.size.x + 40.0), vr.size.y / (occ.size.y + 40.0)), MIN_ZOOM, 1.0)
+	# 基准倍率 = 整张围桌正好塞进可视区。全景就是它本身（1.0 倍），别的倍率都以它换算。
+	_fit_zoom = minf(vr.size.x / (occ.size.x + 40.0), vr.size.y / (occ.size.y + 40.0))
+	_zoom = _zoom_from_factor(1.0)
 	_center_target = occ.get_center()
 	if hard:
 		_center = _center_target
 	_apply_cam()
 
-## 镜头对准某格 / 某棋子；hard=true 立即居中（显式对焦会打断进行中的转视角动画）
+## 镜头对准某格 / 某棋子；hard=true 立即居中（显式对焦会打断进行中的转视角动画）。
+## zoom 是「基准倍率（全景）的倍数」：1.0 = 全景，2.0 = 比全景近一倍。
 func focus_grid(idx: int, zoom: float, hard := true) -> void:
 	if cam_locked:
 		return
@@ -797,7 +815,7 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 	_follow_peer = -1
 	_has_follow_pt = false
 	_rotating = false
-	_zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
+	_zoom = _zoom_from_factor(zoom)
 	if hard:
 		_center = _clamp_center(tile_pos(idx) + Vector2(TILE, TILE) * 0.5)
 		_center_target = _center
@@ -805,6 +823,7 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 
 ## 镜头对准某个世界坐标点并拉近：抽卡时用，牌面文字要看得清
 ## （全景倍率下整张牌只有七八十像素宽，字是糊的）。
+## zoom 同 focus_grid：是「基准倍率（全景）的倍数」。
 func focus_point_zoom(world_pt: Vector2, zoom: float) -> void:
 	if cam_locked:
 		return  # 摆拍锁定；视角已固定在自己座位（v0.5.0 批次 1 删转视角）
@@ -813,7 +832,7 @@ func focus_point_zoom(world_pt: Vector2, zoom: float) -> void:
 	_has_follow_pt = true
 	_follow_pt = world_pt
 	_rotating = false
-	_zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
+	_zoom = _zoom_from_factor(zoom)
 	_apply_cam()
 
 ## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
@@ -845,7 +864,7 @@ func focus_peer(peer: int, hard := false) -> void:
 
 func _zoom_at(factor: float, anchor: Vector2) -> void:
 	var before := _world_from_view(anchor)
-	_zoom = clampf(_zoom * factor, MIN_ZOOM, _zoom_clamp_max)
+	_zoom = clampf(_zoom * factor, MIN_ZOOM_FACTOR * _fit_zoom, _zoom_clamp_max * _fit_zoom)
 	_center = _clamp_center(before - (anchor - _visible_center()).rotated(-_rot) / _zoom)
 	_apply_cam()
 
@@ -1169,7 +1188,7 @@ func _make_seat(p: Dictionary, e: int) -> Dictionary:
 
 # ---------------- 相机缩放上限 + 开发者叠层 ----------------
 
-var _zoom_clamp_max := MAX_ZOOM
+var _zoom_clamp_max := MAX_ZOOM_FACTOR   # 滚轮缩放的倍率上限（× 基准倍率）
 var _tile_idx_labels: Array = []    # 开发者模式：格子编号叠层
 var dev_tile_index := false:
 	set(v):

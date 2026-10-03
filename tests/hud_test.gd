@@ -223,8 +223,11 @@ func _run() -> void:
 	# 全景倍率下整张牌只有七八十像素宽，字是糊的 —— 抽卡时要临时拉近
 	g.board.cam_locked = false
 	var z0: float = g.board._zoom
-	g.board.focus_point_zoom(Vector2(1008.0, 600.0), 0.78)
-	_check(g.board._zoom > z0 + 0.05, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
+	# 第三个参数现在是「基准倍率（全景）的倍数」，不再是屏幕时代的绝对倍率：
+	# 画布从 1280×800 换成 2048² 的 SubViewport 后，绝对字面量的含义差了约 3 倍
+	#（全景从 0.40 变成 0.97）。2.0 对应原来那个 0.78（0.78/0.40 ≈ 1.96）。
+	g.board.focus_point_zoom(Vector2(1008.0, 600.0), 2.0)
+	_check(g.board._zoom > z0 * 1.5, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
 
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
 	var hs: Dictionary = _state(2, false)
