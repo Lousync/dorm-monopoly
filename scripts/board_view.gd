@@ -871,11 +871,9 @@ func _zoom_at(factor: float, anchor: Vector2) -> void:
 func _gui_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton:
 		var mb := ev as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_zoom_at(1.12, mb.position)
-		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_zoom_at(1.0 / 1.12, mb.position)
-		elif mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
+		# 滚轮不再自己缩放：方向盘已交给 3D 相机（Table3D._unhandled_input → dolly），
+		# 2D 相机的 _zoom 只留给掷轮/抽卡的推近演出（_zoom_at 因此仍被演出路径使用）。
+		if mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
 			if mb.pressed:
 				_dragging = true
 				_panning = false

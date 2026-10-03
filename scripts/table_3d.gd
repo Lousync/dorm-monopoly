@@ -79,10 +79,69 @@ func _build_viewport() -> void:
 	board.overlay_right = 0.0
 	viewport.add_child(board)
 
-## 沿视线推拉相机（Task 3 的滚轮缩放用）。factor > 1 拉远、< 1 拉近。
-## 只改「相机到桌面中心的距离」，方向不变 —— 于是俯角恒定，缩放不会把桌子翻成平视。
-## 上下限留出余量：太近会钻进桌面，太远则桌子退到屏幕一隅。
+# ---------------- 输入映射（见设计稿 §6.2） ----------------
+
+## 屏幕点 → SubViewport 像素坐标；射线打不到桌面则返回 null。
+func screen_to_viewport(screen_pt: Vector2) -> Variant:
+	var uv = screen_to_uv(screen_pt)
+	if uv == null:
+		return null
+	return TableGeometry.uv_to_viewport(uv as Vector2, viewport.size)
+
+## 屏幕点 → 桌面 UV；打不到返回 null。
+func screen_to_uv(screen_pt: Vector2) -> Variant:
+	var origin := camera.project_ray_origin(screen_pt)
+	var dir := camera.project_ray_normal(screen_pt)
+	var hit = TableGeometry.hit_floor(origin, dir, global_position.y)
+	if hit == null:
+		return null
+	var local: Vector3 = table_mesh.global_transform.affine_inverse() * (hit as Vector3)
+	return TableGeometry.world_to_uv(local, TABLE_SIDE)
+
+## 沿视线推拉（滚轮缩放）。factor > 1 拉近。
+## 只改「相机到桌面中心的距离」、方向不变 —— 于是俯角恒定，推拉不会把桌子翻成平视。
+## 夹取上下限，免得太近钻进桌面、太远让桌子退到屏幕一角。
 func dolly(factor: float) -> void:
-	var dir := camera.global_position.normalized()
-	var dist := clampf(camera.global_position.length() * factor, 2.5, 22.0)
-	camera.global_position = dir * dist
+	var to_center := -camera.global_position      # 相机看向原点
+	var dist := camera.global_position.length()
+	var nd := clampf(dist / factor, 2.0, 14.0)
+	camera.global_position = to_center.normalized() * nd
+
+## 鼠标事件映射进 SubViewport。键盘等其它事件原样放行。
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton or event is InputEventMouseMotion:
+		# 复刻 SubViewportContainer 的职责：输入映射由本节点自己接管后，就没人告诉
+		# SubViewport「鼠标进来了」，而 Godot 会丢掉没进过视口的 MouseMotion —— 悬停
+		# 高亮与棋子 tooltip 会全哑（实测：直到该视口里发生过一次按键事件才恢复）。
+		# 通知是幂等的，直接随每个鼠标事件补发。
+		viewport.notification(Viewport.NOTIFICATION_VP_MOUSE_ENTER)
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+			dolly(1.12)
+			get_viewport().set_input_as_handled()
+			return
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			dolly(1.0 / 1.12)
+			get_viewport().set_input_as_handled()
+			return
+		var pos = screen_to_viewport(mb.position)
+		if pos == null:
+			return
+		var fwd := InputEventMouseButton.new()
+		fwd.button_index = mb.button_index
+		fwd.pressed = mb.pressed
+		fwd.position = pos
+		fwd.button_mask = mb.button_mask
+		viewport.push_input(fwd)
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseMotion:
+		var mm := event as InputEventMouseMotion
+		var pos = screen_to_viewport(mm.position)
+		if pos == null:
+			return
+		var fwd := InputEventMouseMotion.new()
+		fwd.position = pos
+		fwd.relative = Vector2.ZERO      # SubViewport 内不靠相对位移做平移
+		fwd.button_mask = mm.button_mask
+		viewport.push_input(fwd)

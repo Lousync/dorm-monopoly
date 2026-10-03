@@ -320,6 +320,12 @@ func lab_reset() -> void:
 # ================= 界面构建 =================
 
 func _build_ui() -> void:
+	# 根 Control 默认 mouse_filter=STOP，会把落在它上面的鼠标事件整个吃掉。2.5D 之后棋盘
+	# 住在 TableView3D 的 SubViewport 里（另一个 Viewport，不参与根视口的 GUI 拾取），
+	# 于是「点棋盘」根本走不到 TableView3D._unhandled_input，3D 层永远收不到鼠标。
+	# 根节点改为不吃鼠标：屏幕层各控件（暂停/战报/底栏/弹层）自己按需 STOP，
+	# 落在桌面上的事件则放行给 3D 层做射线映射。
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# 控件构建已搬到 TableHud（原先 500 行都在这里）；控件直接写回本类同名成员
 	TableHud.build_play_ui(self)
 	# 左下角「📖 规则说明」：收起是按钮、点开原位向上展开分页规则（文案见 RulesText）

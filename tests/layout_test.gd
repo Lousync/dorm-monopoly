@@ -15,6 +15,10 @@ func _check(cond: bool, what: String) -> void:
 		printerr("  FAIL - ", what)
 
 func _run() -> void:
+	# 无头下根窗口是退化的 64×64，内容缩放 0.05 —— push_input 进去的鼠标坐标会被
+	# 放大 20 倍（640,640 → 12800,12800），事件投递类断言永远不成立。
+	# 同 hud_test.gd：先给根窗口一个真实尺寸，坐标链路才是真实的那条。
+	root.size = Vector2i(1280, 800)
 	print("== 射线与水平地面求交 ==")
 	var hit = TableGeometry.hit_floor(Vector3(0, 5, 0), Vector3(0, -1, 0))
 	_check(hit != null and (hit as Vector3).is_equal_approx(Vector3.ZERO), "垂直下射打中地面原点")
@@ -57,6 +61,71 @@ func _run() -> void:
 	var tilt := 90.0 - rad_to_deg(t3.camera.global_position.angle_to(Vector3.UP))
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
+
+	# ---- 输入映射（Task 3）：相机与视口要真的入树、布局过一帧 ----
+	await process_frame
+	await process_frame
+	print("== 屏幕点 → 桌面 → SubViewport 往返 ==")
+	var vp_size: Vector2i = t3.viewport.size
+	for uv in [Vector2(0.25, 0.25), Vector2(0.75, 0.25), Vector2(0.25, 0.75), Vector2(0.75, 0.75)]:
+		var world: Vector3 = t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIDE)
+		var screen_pt: Vector2 = t3.camera.unproject_position(world)
+		var got = t3.screen_to_viewport(screen_pt)
+		var want := TableGeometry.uv_to_viewport(uv, vp_size)
+		_check(got != null and (got as Vector2).distance_to(want) < 2.0,
+			"UV %s：屏幕 %s → SubViewport %s（期望 %s）" % [uv, screen_pt, got, want])
+	# 「打不到桌面」在视口内不可达：俯角 50° − 垂直半 FOV 27.5° = 22.5° > 0，
+	# 于是屏幕内每条射线都朝下、必与无限大的水平桌面相交（只是可能落在桌面之外）。
+	# 所以用视口正上方足够高的点（射线翻过水平线）来钉住 hit_floor 的 null 路径。
+	var vr: Rect2 = t3.get_viewport().get_visible_rect()
+	_check(t3.screen_to_viewport(Vector2(vr.size.x * 0.5, -vr.size.y * 2.0)) == null,
+		"射向天空的点（视口上方两屏高）返回 null")
+	# 反之：桌面之外的屏幕点仍给坐标，只是落在 SubViewport 矩形之外（设计稿 §6.2 的
+	# 平面是无界的），SubViewport 内的 2D 控件自己会忽略越界点。
+	var off = t3.screen_to_viewport(Vector2(2.0, 2.0))
+	_check(off != null and not Rect2(Vector2.ZERO, Vector2(vp_size)).has_point(off as Vector2),
+		"桌面之外的屏幕点返回桌面外坐标（实得 %s）" % off)
+
+	print("== 滚轮推拉：factor > 1 拉近 ==")
+	var d0: float = t3.camera.global_position.length()
+	t3.dolly(1.12)
+	var d1: float = t3.camera.global_position.length()
+	_check(d1 < d0, "滚轮上滚（factor 1.12）把相机拉近（%.2f → %.2f）" % [d0, d1])
+	t3.dolly(1.0 / 1.12)
+	_check(absf(t3.camera.global_position.length() - d0) < 0.01, "反向推拉回到原距离")
+
+	print("== 事件注入端到端：屏幕点 → 3D 映射 → SubViewport 内的 2D 控件 ==")
+	# 在 SubViewport 里挂一个铺满的探针控件（后加 = 盖在 BoardView 之上），
+	# 验证整条链：屏幕点 push 进根视口 → 3D 容器算出 SubViewport 坐标 → push_input 送达 2D 控件。
+	var probe := Control.new()
+	probe.set_anchors_preset(Control.PRESET_FULL_RECT)
+	probe.mouse_filter = Control.MOUSE_FILTER_STOP
+	t3.viewport.add_child(probe)
+	var got_events: Array = []
+	probe.gui_input.connect(func(ev: InputEvent) -> void: got_events.append(ev))
+	await process_frame
+	var mid_world: Vector3 = t3.table_mesh.global_transform * TableGeometry.uv_to_world(Vector2(0.5, 0.5), t3.TABLE_SIDE)
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	click.position = t3.camera.unproject_position(mid_world)
+	root.push_input(click)
+	await process_frame
+	_check(got_events.size() == 1, "SubViewport 内的 2D 控件收到 1 个点击（实得 %d）" % got_events.size())
+	if got_events.size() == 1:
+		var ev_mb := got_events[0] as InputEventMouseButton
+		var got_pos: Vector2 = ev_mb.position if ev_mb != null else Vector2(-9999.0, -9999.0)
+		_check(got_pos.distance_to(Vector2(1024, 1024)) < 2.0,
+			"控件收到的坐标是 SubViewport 空间的桌面中心（实得 %s）" % got_pos)
+	# 悬停同理（InputEventMouseMotion）
+	got_events.clear()
+	var mm := InputEventMouseMotion.new()
+	mm.position = click.position
+	root.push_input(mm)
+	await process_frame
+	_check(got_events.size() == 1 and (got_events[0] as InputEventMouseMotion) != null,
+		"悬停（MouseMotion）同样送到 2D 控件（实得 %d）" % got_events.size())
+
 	t3.queue_free()
 
 	if fails == 0:
