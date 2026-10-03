@@ -6,7 +6,6 @@ class_name BoardView
 
 signal tile_clicked(idx: int)
 signal seat_clicked(peer: int)
-signal shop_slot_clicked(slot: int)   # 点击桌面小卖部货架卡（行动者购买）
 signal item_slot_clicked(peer: int, slot: int)   # 牌垫道具卡点选（阶段二选道具）
 signal item_discard_clicked(peer: int, slot: int) # 卡片右上角「✕」丢弃
 signal phase_spin_clicked()          # 牌垫上的「转转盘」
@@ -1184,7 +1183,6 @@ var _casino_dice := {}          # peer -> Label
 var _casino_order_ui: Array = []
 var _casino_names := {}         # peer -> 名字
 var _zoom_clamp_max := MAX_ZOOM
-var _shop_slots: Array = []         # {card, price_l, plus_l}
 var _tile_idx_labels: Array = []    # 开发者模式：格子编号叠层
 var dev_tile_index := false:
 	set(v):
@@ -1192,13 +1190,9 @@ var dev_tile_index := false:
 		for l in _tile_idx_labels:
 			if is_instance_valid(l):
 				(l as Label).visible = v
-var _shop_refresh: Button
 
-const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部：菜绿
+const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部格名：菜绿
 const CASINO_ACCENT := Color(0.93, 0.3, 0.55)   # 赌场：与赌场格同色
-const SHOP_QUALITIES := [Color(0.93, 0.93, 0.93), Color(0.42, 0.78, 0.55),
-	Color(0.36, 0.6, 0.92), Color(0.66, 0.47, 0.92), Color(0.96, 0.62, 0.25)]  # 白绿蓝紫橙
-const SHOP_WOOD_TEXT := Color(0.78, 0.7, 0.58)     # 木柜台上的米黄字
 const CASINO_FELT_TEXT := Color(0.72, 0.8, 0.68)   # 绿呢桌上的浅绿字
 
 ## 顶部空区：上层数据轨（战况四家横排 + 最近战报），下层左右两座常驻设施
@@ -1210,7 +1204,6 @@ func _build_top_panels() -> void:
 	var left := -HOLE_MX
 	var right := WORLD.x + HOLE_MX
 	var half := (right - left - 16.0) * 0.5
-	_make_shop(Rect2(left, top, half, bot - top))
 	_make_casino(Rect2(right - half, top, half, bot - top))
 
 func _zone_panel(rect: Rect2, sb: StyleBox) -> Panel:
@@ -1238,130 +1231,6 @@ func _fixture_icon(icon_name: String) -> TextureRect:
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return t
-
-## 小卖部（左半）：木柜台 + 绿白条纹雨棚 + 货架 3 格 + 品质图例 + 刷新按钮
-## （道具系统解冻后接货架存货 / 刷新费用 / 购买操作，规格零迁移）
-func _make_shop(rect: Rect2) -> void:
-	var panel := _zone_panel(rect, UIKit.card_stylebox(Color(0.135, 0.095, 0.06, 0.97), 18,
-		Color(0.36, 0.25, 0.13), 2, 14))
-	# 雨棚：绿白竖条纹 + 圆弧垂边，压在柜台顶上
-	var band := HBoxContainer.new()
-	band.position = Vector2(14, 12)
-	band.size = Vector2(rect.size.x - 28.0, 30)
-	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(band)
-	var scal := HBoxContainer.new()
-	scal.position = Vector2(14, 42)
-	scal.size = Vector2(rect.size.x - 28.0, 20)
-	scal.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(scal)
-	for i in 24:
-		var c := SHOP_ACCENT if i % 2 == 0 else Color(0.93, 0.9, 0.8)
-		var cr := ColorRect.new()
-		cr.color = c
-		cr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		band.add_child(cr)
-		var cup := Panel.new()
-		var cup_w := (rect.size.x - 28.0) / 24.0
-		var sb := StyleBoxFlat.new()
-		sb.bg_color = c
-		sb.corner_radius_bottom_left = int(cup_w * 0.5)
-		sb.corner_radius_bottom_right = int(cup_w * 0.5)
-		sb.border_width_bottom = 1
-		sb.border_color = Color(0, 0, 0, 0.2)
-		cup.add_theme_stylebox_override("panel", sb)
-		cup.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cup.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		scal.add_child(cup)
-	var m := UIKit.margins(0, 0, 0, 0)
-	m.position = Vector2(18, 76)
-	m.size = rect.size - Vector2(36, 88)  # 上让位雨棚，下留 12 底边距
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(v)
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 10)
-	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(head)
-	var plaque := UIKit.panel_container(Color(0.1, 0.07, 0.045, 0.95), 8, Color(0.5, 0.36, 0.18), 1)
-	head.add_child(plaque)
-	var pm := UIKit.margins(12, 10, 4, 4)
-	pm.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	plaque.add_child(pm)
-	var ph := HBoxContainer.new()
-	ph.add_theme_constant_override("separation", 8)
-	ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pm.add_child(ph)
-	ph.add_child(_fixture_icon("daily"))
-	ph.add_child(UIKit.label("小卖部", 24, Color(0.93, 0.88, 0.75)))
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	head.add_child(sp)
-	head.add_child(UIKit.label("点击货架卡购买 · 刷新费递增", 14, SHOP_WOOD_TEXT))
-	var shelf := HBoxContainer.new()
-	shelf.add_theme_constant_override("separation", 28)
-	shelf.alignment = BoxContainer.ALIGNMENT_CENTER
-	shelf.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	shelf.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(shelf)
-	for i in 3:
-		var slot := VBoxContainer.new()
-		slot.add_theme_constant_override("separation", 5)
-		slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		shelf.add_child(slot)
-		var card := Panel.new()
-		card.custom_minimum_size = Vector2(150, 210)
-		card.mouse_filter = Control.MOUSE_FILTER_STOP   # 可点击购买（行动者）
-		card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		var slot_i := i
-		card.gui_input.connect(func(ev: InputEvent) -> void:
-			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-				shop_slot_clicked.emit(slot_i)
-		)
-		card.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.06, 0.045, 0.03, 0.95), 10,
-			Color(0.45, 0.32, 0.16, 0.55), 1))
-		slot.add_child(card)
-		var cc := CenterContainer.new()
-		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		card.add_child(cc)
-		var plus_l := UIKit.label("＋", 36, Color(0.93, 0.88, 0.75, 0.16))
-		cc.add_child(plus_l)
-		var price_l := UIKit.label("待上架", 13, SHOP_WOOD_TEXT)
-		price_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		price_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		slot.add_child(price_l)
-		_shop_slots.append({"card": card, "price_l": price_l, "plus_l": plus_l})
-	var foot := HBoxContainer.new()
-	foot.add_theme_constant_override("separation", 10)
-	foot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(foot)
-	var legend := HBoxContainer.new()
-	legend.add_theme_constant_override("separation", 5)
-	legend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	legend.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	legend.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	foot.add_child(legend)
-	for qi in SHOP_QUALITIES.size():
-		var dot := Panel.new()
-		dot.custom_minimum_size = Vector2(13, 13)
-		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var qc: Color = SHOP_QUALITIES[qi]
-		dot.add_theme_stylebox_override("panel", UIKit.stylebox(qc, 6, Color(0, 0, 0, 0.4), 1))
-		legend.add_child(dot)
-		legend.add_child(UIKit.label(ItemData.QUALITY_NAMES[["白", "绿", "蓝", "紫", "橙"][qi]], 13, SHOP_WOOD_TEXT))
-	_shop_refresh = UIKit.button("刷新货架 · ¥—", 14)
-	_shop_refresh.disabled = true
-	_shop_refresh.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	foot.add_child(_shop_refresh)
-
 
 ## 赌场（右半）：绿呢牌桌 + 金色滚边 + 两张卡背，奖池/状态活数据；对局玩法仍在弹层
 func _make_casino(rect: Rect2) -> void:
@@ -1825,42 +1694,6 @@ func set_seat_slot(peer: int, idx: int, item) -> void:
 		plus.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sp.add_child(plus)
-
-## 小卖部货架公开显示（桌面设施即商店）：active = 正在营业的格；歇业时展示第一家货架
-func set_shop_display(shops: Dictionary, refresh_price: int, active: int) -> void:
-	if _shop_refresh != null and is_instance_valid(_shop_refresh):
-		_shop_refresh.text = "刷新货架 · ¥%d" % refresh_price
-	var show_idx := active
-	if show_idx < 0:
-		for k in shops:
-			show_idx = int(k)
-			break
-	var entries: Array = shops.get(show_idx, {}).get("slots", [])
-	var suffix := " · 点击购买" if active >= 0 else ""
-	for i in _shop_slots.size():
-		var e: Dictionary = _shop_slots[i]
-		var card: Panel = e.card
-		var price_l: Label = e.price_l
-		var id := String(entries[i]) if i < entries.size() else ""
-		# 营业中才吃点击（购买），歇业时透明避免挡住棋盘拖拽
-		card.mouse_filter = Control.MOUSE_FILTER_STOP if active >= 0 else Control.MOUSE_FILTER_IGNORE
-		if String(card.get_meta("slot_key", "")) == id:
-			price_l.text = ("¥%d%s" % [ItemData.price(String(ItemData.def(id).quality)), suffix]) if id != "" else "空货位"
-			continue
-		card.set_meta("slot_key", id)
-		for c in card.get_children():
-			c.queue_free()
-		if id == "":
-			var plus_l := UIKit.label("＋", 36, Color(0.93, 0.88, 0.75, 0.16))
-			plus_l.set_anchors_preset(Control.PRESET_FULL_RECT)
-			plus_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			plus_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			plus_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			card.add_child(plus_l)
-			price_l.text = "空货位"
-		else:
-			card.add_child(ItemCard.make(id, ItemCard.SIZE_MEDIUM, {}))
-			price_l.text = "¥%d%s" % [ItemData.price(String(ItemData.def(id).quality)), suffix]
 
 ## 镜头调试信息（开发者面板）
 func cam_info() -> String:

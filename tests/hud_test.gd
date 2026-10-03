@@ -139,7 +139,7 @@ func _run() -> void:
 	g.s_state(_state(2, true))            # shop_peer = 我
 	g._process(0.0)
 	await process_frame
-	_check(g.shop_bar.visible, "小卖部操作条可见")
+	_check(g.shop_layer.visible, "小卖部全屏界面可见")
 	_check(not g.mat_bar.visible, "底栏让位")
 	_check(not g.dock_plate.visible, "底板一并收掉（不会留一块空底板）")
 

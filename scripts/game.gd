@@ -74,10 +74,14 @@ var _tgt_peer := -1         # 两段式：已选定的目标玩家
 var _tgt_tiles: Array = []  # 当前可选的地块 idx
 var target_hint: Control
 var target_hint_l: Label
-var shop_bar: PanelContainer
+var shop_layer: Control          # 小卖部全屏界面（触发时独占，见 table_hud.gd）
+var shop_panel: PanelContainer
+var shop_cards: Array = []       # 每格 {holder: CenterContainer, price_l: Label}
 var shop_btns: Array = []
 var shop_refresh_btn: Button
-var _shop_btn_sig := ""     # 小卖部「买」按钮刷新签名（避免每帧重建）
+var shop_leave_btn: Button
+var shop_tile_l: Label
+var _shop_btn_sig := ""          # 小卖部界面刷新签名（避免每帧重建）
 var card_gallery: Control
 var card_gallery_flag := false
 
@@ -1067,8 +1071,6 @@ func s_state(state: Dictionary) -> void:
 			_prompt_bar_arm(_prompt_token, GameSettings.turn_seconds(tier, "prompt"))
 		_refresh_tier_ui()
 	board.render(state)
-	board.set_shop_display(state.get("shops", {}), int(state.get("refresh_price", 0)),
-		int(state.get("shop_open", -1)))
 	log_head.text = "第 %d/%d 轮 · 战报" % [int(state.round), int(state.max_rounds)]
 	_refresh_players()
 	_refresh_actions()
@@ -3284,13 +3286,12 @@ func _process(_delta: float) -> void:
 		return
 	var phase := String(st.get("phase", ""))
 	var show := board.seat_count() > 0 and phase == "playing"
-	# 交易面板独立于视角：底栏居中，保证行动者一定能操作（相机可能停在棋子上而非自家座位）
+	# 交易面板独立于视角：保证行动者一定能操作（相机可能停在棋子上而非自家座位）
 	var shop_mine: bool = phase == "playing" and int(st.get("shop_peer", 0)) == my_peer \
 		and int(st.get("shop_open", -1)) >= 0
-	shop_bar.visible = shop_mine
+	shop_layer.visible = shop_mine
 	if shop_mine:
-		_place_overlay_bar(shop_bar)
-		_refresh_shop_buttons()
+		_refresh_shop_ui()
 	var black_mine: bool = phase == "playing" and int(st.get("black_peer", 0)) == my_peer
 	black_bar.visible = black_mine
 	if black_mine:
@@ -3383,10 +3384,8 @@ func _place_overlay_bar(c: Control) -> void:
 	c.position = Vector2(_clamp_dock_x(vp.x * 0.5 - c.size.x * 0.5, c.size.x, _dock_band()),
 		maxf(vp.y - c.size.y - 16.0, 8.0))
 
-## 小卖部「买」按钮：按货架逐格显隐 + 标价 + 可买判定（缓存签名，避免每帧重建）。
-## 这三个按钮创建时 visible=false，此前没有任何代码把它们打开过，
-## 于是真人踩到小卖部格只能「刷新 / 离开」、买不了任何东西（见 fix/v0.0.2）。
-func _refresh_shop_buttons() -> void:
+## 小卖部全屏界面刷新：按货架逐格换卡面 / 标价 / 可买判定（缓存签名，避免每帧重建）。
+func _refresh_shop_ui() -> void:
 	var open := int(st.get("shop_open", -1))
 	var shops_d: Dictionary = st.get("shops", {})
 	var slots: Array = []
@@ -3405,16 +3404,28 @@ func _refresh_shop_buttons() -> void:
 	if sig == _shop_btn_sig:
 		return
 	_shop_btn_sig = sig
-	for i in shop_btns.size():
-		var b: Button = shop_btns[i]
+	for i in shop_cards.size():
 		var id := String(slots[i]) if i < slots.size() else ""
+		var e: Dictionary = shop_cards[i]
+		var holder: CenterContainer = e.holder
+		var price_l: Label = e.price_l
+		var b: Button = shop_btns[i]
+		if String(holder.get_meta("item_id", "")) != id:
+			holder.set_meta("item_id", id)
+			for c in holder.get_children():
+				c.queue_free()
+			if id != "":
+				holder.add_child(ItemCard.make(id, ItemCard.SIZE_MEDIUM, {}))
 		if id == "":
+			price_l.text = "空货位"
 			b.visible = false
 			continue
 		var price := ItemData.price(String(ItemData.def(id).quality))
+		price_l.text = GameData.fmt_money(price)
 		b.visible = true
-		b.text = "买 %s %s" % [id, GameData.fmt_money(price)]
 		b.disabled = bag.size() >= 5 or (not free_buy and money < price)
+	if shop_tile_l != null:
+		shop_tile_l.text = "第 %d 号店 · 刷新费随全场次数递增" % open
 	if shop_refresh_btn != null:
 		shop_refresh_btn.text = "刷新 · %s" % GameData.fmt_money(refresh)
 		shop_refresh_btn.disabled = money < refresh

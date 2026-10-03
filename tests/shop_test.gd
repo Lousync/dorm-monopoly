@@ -55,17 +55,15 @@ func _run() -> void:
 	# 会话进行中做检查 + 购买 + 离店（信号在 await 期间触发）
 	create_timer(0.4).timeout.connect(func() -> void:
 		g._process(0.016)
-		print("  [debug] st.shop_peer=%s st.shop_open=%s bar.visible=%s" % [
-			str(g.st.get("shop_peer")), str(g.st.get("shop_open")), str(g.shop_bar.visible)])
-		print("  [debug] bar pos=%s size=%s btn0 vis=%s dis=%s text=%s" % [
-			str(g.shop_bar.position), str(g.shop_bar.size), str(g.shop_btns[0].visible),
-			str(g.shop_btns[0].disabled), g.shop_btns[0].text])
-		_check(g.shop_bar.visible, "小卖部操作条可见")
+		print("  [debug] st.shop_peer=%s st.shop_open=%s layer.visible=%s" % [
+			str(g.st.get("shop_peer")), str(g.st.get("shop_open")), str(g.shop_layer.visible)])
+		_check(g.shop_layer.visible, "小卖部全屏界面可见")
 		_check(g.shop_btns[0].visible and not g.shop_btns[0].disabled, "买按钮可用")
-		# 点桌面货架卡 = 购买（不再只靠底部按钮）
-		g.board.shop_slot_clicked.emit(0)
-		_check(p.money == 4400, "点桌面卡扣款（5000→4400）")
-		_check(p.items.size() == 1 and String(p.items[0].id) == "招财猫", "点桌面卡购入道具")
+		_check(String(g.shop_cards[0].holder.get_meta("item_id", "")) == "招财猫",
+			"第 1 格摆出招财猫卡面")
+		g.shop_btns[0].pressed.emit()   # 走真实按钮链路（不再点桌面货架卡）
+		_check(p.money == 4400, "点买按钮扣款（5000→4400）")
+		_check(p.items.size() == 1 and String(p.items[0].id) == "招财猫", "购入道具")
 		g._shop_leave(1)
 	)
 	await g._run_shop(p, idx)

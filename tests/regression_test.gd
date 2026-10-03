@@ -89,7 +89,7 @@ func _run() -> void:
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	# 场景/脚本编译失败时成员是 null，后续断言里的表达式会先报错、根本走不到
 	# _check，于是整轮「全过」——必须在这里显式拦下（见 fix/v0.0.2）
-	if g.board == null or g.item_btn_box == null or g.shop_btns.is_empty():
+	if g.board == null or g.item_btn_box == null or g.shop_layer == null:
 		printerr("  FAIL - 对局场景未正确加载（脚本编译失败？）")
 		print("REGRESSION TEST: SCENE LOAD FAILED")
 		quit(1)
@@ -205,7 +205,7 @@ func _test_shop_buttons(g) -> void:
 		"tiles": _fresh_tiles(),
 	}
 	g._process(0.0)
-	_check(g.shop_bar.visible, "轮到自己逛小卖部时操作条显示")
+	_check(g.shop_layer.visible, "轮到自己逛小卖部时全屏界面显示")
 	_check(g.shop_btns.size() == 3 and g.shop_btns[0].visible, "有货的货架显示「买」按钮")
 	_check(g.shop_btns.size() == 3 and not g.shop_btns[1].visible, "空货架不显示「买」按钮")
 
@@ -299,7 +299,7 @@ func _test_ui_widgets_applied(g) -> void:
 	# _build_ui 现在靠 set(k, w[k]) 回填，名字对不上是「静默失败」——
 	# 控件为 null 也不会报错，只会界面缺一块。这里逐个钉住。
 	var names := ["board", "mat_bar", "action_bar", "roll_btn", "item_btn_box",
-		"shop_bar", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
+		"shop_layer", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
 		"log_text", "log_head", "log_toggle", "info_panel", "info_title",
 		"info_body", "info_sb", "status_label", "chat_edit",
 		"opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",

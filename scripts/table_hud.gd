@@ -41,15 +41,6 @@ static func build_play_ui(g: Node) -> void:
 	g.board.overlay_bottom = 70
 	g.add_child(g.board)
 	g.board.tile_clicked.connect(g._on_tile_clicked)
-	# 点桌面货架卡直接买（来自 main 的「货架可点即买」，合并时这段连接随 _build_ui 搬到了这里）
-	g.board.shop_slot_clicked.connect(func(slot: int) -> void:
-		if int(g.st.get("shop_peer", 0)) != g.my_peer:
-			return
-		if g.multiplayer.is_server():
-			g._shop_buy(g.my_peer, slot)
-		else:
-			g.c_shop_buy.rpc(slot)
-	)
 	g.board.seat_clicked.connect(g._on_seat_clicked)
 
 	# 屏幕层：不随摄像机旋转的悬浮控件都挂这里
@@ -133,46 +124,113 @@ static func build_play_ui(g: Node) -> void:
 	g.item_btn_box.visible = false
 	arow.add_child(g.item_btn_box)
 
-	# 小卖部操作条（行动者的屏幕层按钮；货架公开显示在桌面设施上）
-	g.shop_bar = UIKit.panel_container(Color(0.058, 0.062, 0.098, 0.88), 12,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 1, 6)
-	g.shop_bar.custom_minimum_size = Vector2(440, 46)
-	g.shop_bar.visible = false
-	g.add_child(g.shop_bar)
-	var sbm := UIKit.margins(10, 8, 7, 7)
-	g.shop_bar.add_child(sbm)
-	var srow := HBoxContainer.new()
-	srow.add_theme_constant_override("separation", 6)
-	sbm.add_child(srow)
+	# 小卖部全屏界面（触发时独占；照 menu_layer 那套：全屏压暗底 + 居中面板，两者一起显隐）
+	g.shop_layer = Control.new()
+	g.shop_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.shop_layer.visible = false
+	g.add_child(g.shop_layer)
+
+	var sdim := ColorRect.new()
+	sdim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sdim.color = Color(0.03, 0.035, 0.062, 0.72)
+	sdim.mouse_filter = Control.MOUSE_FILTER_STOP   # 模态：吞掉落在面板外的点击
+	g.shop_layer.add_child(sdim)
+
+	var sc := CenterContainer.new()
+	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sc.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 只有面板吃点击
+	g.shop_layer.add_child(sc)
+
+	g.shop_panel = UIKit.panel_container(Color(0.135, 0.095, 0.06, 0.99), 18,
+		Color(0.5, 0.36, 0.18), 2, 16)
+	g.shop_panel.custom_minimum_size = Vector2(760, 0)
+	sc.add_child(g.shop_panel)
+	var spm := UIKit.margins(24, 24, 20, 20)
+	g.shop_panel.add_child(spm)
+	var spv := VBoxContainer.new()
+	spv.add_theme_constant_override("separation", 14)
+	spm.add_child(spv)
+
+	# 标题行：图标 + 店名 + 右端当前格位说明
+	var shead := HBoxContainer.new()
+	shead.add_theme_constant_override("separation", 12)
+	spv.add_child(shead)
+	var sh_icon := TextureRect.new()
+	sh_icon.texture = UIKit.icon("daily")
+	sh_icon.custom_minimum_size = Vector2(32, 32)
+	sh_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	sh_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	shead.add_child(sh_icon)
+	shead.add_child(UIKit.label("小卖部", 26, Color(0.93, 0.88, 0.75)))
+	var sh_sp := Control.new()
+	sh_sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shead.add_child(sh_sp)
+	g.shop_tile_l = UIKit.label("", 14, Color(0.78, 0.7, 0.58))
+	shead.add_child(g.shop_tile_l)
+
+	# 三格货架：卡面 + 价格 + 买按钮
+	var sshelf := HBoxContainer.new()
+	sshelf.add_theme_constant_override("separation", 20)
+	sshelf.alignment = BoxContainer.ALIGNMENT_CENTER
+	spv.add_child(sshelf)
+	g.shop_cards = []
 	g.shop_btns = []
 	for i in 3:
-		var b := UIKit.button("买", 12)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 6)
+		sshelf.add_child(col)
+		var holder := CenterContainer.new()          # 空/有货都占同样大，面板不跳
+		holder.custom_minimum_size = Vector2(150, 210)
+		col.add_child(holder)
+		var price_l := UIKit.label("空货位", 13, Color(0.78, 0.7, 0.58))
+		price_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(price_l)
+		var b := UIKit.button("买", 13)
 		b.visible = false
-		var si := i
+		var bi := i
 		b.pressed.connect(func() -> void:
 			if g.multiplayer.is_server():
-				g._shop_buy(g.my_peer, si)
+				g._shop_buy(g.my_peer, bi)
 			else:
-				g.c_shop_buy.rpc(si)
+				g.c_shop_buy.rpc(bi)
 		)
-		srow.add_child(b)
+		col.add_child(b)
+		g.shop_cards.append({"holder": holder, "price_l": price_l})
 		g.shop_btns.append(b)
-	g.shop_refresh_btn = UIKit.button("刷新", 12)
+
+	# 底行：品质图例 + 刷新 + 离开
+	var sfoot := HBoxContainer.new()
+	sfoot.add_theme_constant_override("separation", 10)
+	spv.add_child(sfoot)
+	var legend := HBoxContainer.new()
+	legend.add_theme_constant_override("separation", 5)
+	legend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sfoot.add_child(legend)
+	for qi in ItemData.QUALITIES.size():
+		var dot := Panel.new()
+		dot.custom_minimum_size = Vector2(13, 13)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dot.add_theme_stylebox_override("panel", UIKit.stylebox(
+			ItemData.QUALITY_COLORS[ItemData.QUALITIES[qi]], 6, Color(0, 0, 0, 0.4), 1))
+		legend.add_child(dot)
+		legend.add_child(UIKit.label(ItemData.QUALITY_NAMES[ItemData.QUALITIES[qi]], 13,
+			Color(0.78, 0.7, 0.58)))
+	g.shop_refresh_btn = UIKit.button("刷新", 14)
 	g.shop_refresh_btn.pressed.connect(func() -> void:
 		if g.multiplayer.is_server():
 			g._shop_refresh(g.my_peer)
 		else:
 			g.c_shop_refresh.rpc()
 	)
-	srow.add_child(g.shop_refresh_btn)
-	var leave_btn := UIKit.button("离开", 12)
-	leave_btn.pressed.connect(func() -> void:
+	sfoot.add_child(g.shop_refresh_btn)
+	g.shop_leave_btn = UIKit.button("离开", 14)
+	g.shop_leave_btn.pressed.connect(func() -> void:
 		if g.multiplayer.is_server():
 			g._shop_leave(g.my_peer)
 		else:
 			g.c_shop_leave.rpc()
 	)
-	srow.add_child(leave_btn)
+	sfoot.add_child(g.shop_leave_btn)
 
 	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
 	g.black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,
