@@ -121,8 +121,9 @@ func build_wheel(center_px: Vector2, radius_px: float) -> void:
 	_hit_r = radius_px * HIT_SLACK
 	# 画出来的轮子在桌面平面上的半径（世界单位）：**直接量真变换**，量出来的就是摆位用的那条映射。
 	# 不要另写一份"画布像素 ÷ 某个尺寸"的推导 —— canvas_px_to_world 走的是 TEX_WINDOW_PX
-	#（贴图窗口），不是 VP_SIZE；今天二者数值相同（窗口 = 整张画布），但它们是两个独立的旋钮，
-	# 窗口一旦被裁，位置仍走真变换（对的）、半径却会静默失配（不报错、只是轮缘与盘面对不上）。
+	#（贴图窗口），不是 VP_SIZE；**窗口是裁出来的桌垫区**（批次 5 Task 2 起，两者数值已不同：
+	# 2020×1553 vs 2048²），它们是两个独立的旋钮 —— 窗口改了，位置仍走真变换（对的）、
+	# 半径却会静默失配（不报错、只是轮缘与盘面对不上）。
 	var r: float = (_t3.canvas_px_to_world(center_px + Vector2(radius_px, 0.0))
 		- _t3.canvas_px_to_world(center_px)).length()
 	if _rim == null:
@@ -261,39 +262,46 @@ func _make_pip() -> MeshInstance3D:
 
 ## 手牌上限 = 背包格数上限（与座位卡那排牌位一样是最多 5 个）。
 const HAND_MAX := 5
-## 卡的尺寸（世界单位）。**是照着出图定的、不是拍的**：出图实测卡进深每 0.10 世界单位
-## ≈ 12 屏幕像素高（近端透视把它放大了），而手牌能落的那条空档只有 ~34 像素高
-##（见 HAND_BASE_PX）—— 再大就得压住格子价格或座位卡。0.40 与 0.50 两版都出图比过。
-const HAND_CARD_W := 0.30        # 卡宽（世界单位；≈ 一块地皮宽，出图看着不喧宾夺主）
-const HAND_CARD_D := 0.34        # 卡进深
-const HAND_CARD_T := 0.022       # 卡厚：有厚度才投得出影子、看得出是"卡"而不是贴纸
-## 相邻两张牌中心的画布间距。略大于卡宽（0.30 × 256 ≈ 77 画布像素）+ 扇形岔开的投影增量：
-## 相邻两张几乎相接但不叠压 —— 叠压会让命中盒互相压住（点一张选到另一张）。
-const HAND_STEP_PX := 96.0
+## 卡的尺寸（世界单位）。**批次 5 Task 3 放大过（0.30/0.34 → 0.46/0.54，线性约 1.5 倍）**：
+## 座位卡退场后桌垫前沿空出一条木纹留白（见 HAND_BASE_PX），批次 3 那条"再大就得压住
+## 格子价格"的约束随之解除。今天出图实测：整排的**屏幕包围盒**（5 张、画布口径）
+## y ∈ [1754, 1928] / x ∈ [646, 1371]，上沿离牌垫阶段按钮下沿还有 25.5 画布像素、
+## 下沿离画布底还有 120 画布像素 —— 两条都是**量出来的**，不是估的（改尺寸必须重取）。
+const HAND_CARD_W := 0.46        # 卡宽（世界单位；≈ 116 画布像素）
+const HAND_CARD_D := 0.54        # 卡进深
+const HAND_CARD_T := 0.030       # 卡厚：有厚度才投得出影子、看得出是"卡"而不是贴纸
+## 相邻两张牌中心的画布间距。略大于卡宽（0.46 / 8 世界 × 2020 ≈ 116 画布像素）+ 扇形岔开的
+## 投影增量：相邻两张几乎相接但不叠压 —— 叠压会让命中盒互相压住（点一张选到另一张）。
+const HAND_STEP_PX := 138.0
 ## 扇形是**弧**不是直线：每远离中心一张，牌位往远端挪一点（外侧靠后，像摊开的一叠）。
-## 只挪 3 画布像素：挪多了最外那两张的远边会顶上格子行。
-const HAND_ARC_PX := 3.0
-## 整排中心（画布像素）：自己面前那张**近端空桌垫**上。
+const HAND_ARC_PX := 5.0
+## 整排中心（画布像素）：自己面前那条**木纹留白**上（桌垫下沿之外、木桌之内）。
 ##
-## 批次 5 Task 2 **按桌垫口径重取**（同 CHIP_BASE_PX）：这一排的**桌上落点一字未动**
-## —— 仍是"自己面前、擦着自己那排格子的下边框"（`hud_test` 的 R2/R38 那几条就是拿
-## 这条重叠当实测事实的），只是画布口径随窗口一起换了。
-## 取整前由旧世界坐标 (1008, 1556) × 新倍率 0.9116 + 新平移 (90.6, 132.5) 得 (1009, 1551)。
-## **别按"画布像素"抄旧值**（旧 1729 是四人围桌那版取景下的数），也别按"平面距离"推
-## —— 牌是抬起来又倾斜的实物，投影会把它整体推低（与 PROPS_Y 那条坑同源）。
-const HAND_BASE_PX := Vector2(1009.0, 1551.0)
+## **批次 5 Task 3 整体下移过（y 1551 → 1862）**。为什么必须落到桌垫**之外**：
+## 放大到 1.5 倍之后，整排的屏幕包围盒高 174 画布像素，而桌垫下沿那条空档
+##（近排格子下沿 1563.6 → 阶段按钮上沿 1636.1）只有 72 像素、按钮之下到桌垫下沿
+##（1728.1 → 1800.6）又是 72 像素 —— **两个 72 都塞不下一张放大的牌**。
+## 于是唯一能同时满足「明显更大」与「不压棋盘内容 / 不压阶段按钮」的落点，
+## 就是按钮**之下**那条木纹留白（批次 5 Task 2 把窗口裁到桌垫之后才出现的空间）。
+## 代价（已在设计里接受）：牌**不再压住任何近排格子** —— 批次 3 那条「牌底下那几格还剩
+## 多少可点条带」的 R38/R40 实测值从 **11~19 画布像素（选中后外侧两张归零）** 变成
+## **190.0（满手 5 张、未选中）/ 177.0（选中外侧那张，最坏档）**，牌盒与近排格子的相交处数为 0
+##（`hud_test` 里那段断言已按新语义改写，实测数字也打印在那里）。这正是本条目要治的病。
+##
+## **别按"平面距离"推**：牌是抬起来又倾斜的实物，投影会把整排整体推低
+##（与 PROPS_Y 那条坑同源）；也别按画布像素抄旧值（旧 1551 是"窗口 = 整张画布"时代的数）。
+const HAND_BASE_PX := Vector2(1009.0, 1862.0)
 ## 每张牌朝自己倾斜的角度（绕 X 轴）：远边抬起、牌面转向镜头（相机在 +z 上方 50°）。
-## 20° 是"一眼看得出是斜的、但没立起来"的位置：倾角越大牌在屏幕上越靠上、也越占高度 ——
-## 它和牌尺寸一起被上面那条缝反过来钉住。
+## 20° 是"一眼看得出是斜的、但没立起来"的位置：倾角越大牌在屏幕上越靠上、也越占高度。
 const HAND_TILT_DEG := 20.0
 ## 扇形：每远离中心一张，绕 Y 轴向外岔开一点。8° 配合 HAND_STEP_PX 时相邻两张刚好相接。
 const HAND_FAN_DEG := 8.0
 ## 选中的那张**抬起来**的高度（世界单位）。选中的反馈必须在**桌上这张牌自己**身上
-##（Task 6 会拆掉座位卡那排牌位，board.set_item_selected 届时空转）——抬起 + 提亮是它的反馈。
-## 0.10 世界单位 ≈ 12 画布像素 ≈ 10 屏幕像素。**这条只能对着"屏幕位移"定，别按世界尺寸推**：
-## 抬高是竖直方向的位移，相机俯角 50° 把它压成 cos(50°) 倍，屏幕上只挪了约 10 像素
-##（0.05 那版实测只挪 6 画布像素，选中的牌与邻牌几乎分不出来）。
-const HAND_SEL_LIFT := 0.10
+##（座位卡那排牌位在批次 3 Task 6 就拆了，`board.set_item_selected` 今天空转）——抬起 + 提亮是它的反馈。
+## 0.13 世界单位 ≈ 12 画布像素（放大后按同比例调过）。**这条只能对着"屏幕位移"定，别按世界尺寸推**：
+## 抬高是竖直方向的位移，相机俯角 50° 把它压成 cos(50°) 倍，屏幕上只挪了十来像素。
+## 抬起来只会**更远离**下方按钮（往上挪），所以它不受"不压阶段按钮"那条约束。
+const HAND_SEL_LIFT := 0.13
 ## 待确认丢弃时**牌身**染成的红（只改牌身材质色，**不动牌面贴图**：图标仍要认得出来）。
 ## 红色要压得住品质色（白/绿/蓝/紫/橙都染得红），所以饱和度取高、值取中上。
 const HAND_DISCARD_COLOR := Color(0.86, 0.28, 0.26)
@@ -471,8 +479,9 @@ func _apply_hand_layout() -> void:
 		var k := float(i) - float(_hand_n - 1) * 0.5
 		var px := HAND_BASE_PX + Vector2(HAND_STEP_PX * k, -HAND_ARC_PX * absf(k))
 		var w: Vector3 = _t3.canvas_px_to_world(px)
-		# 卡心抬到"近边正好坐在桌垫上"的高度：抬不够的话，倾斜后近边会切进桌子
+		# 卡心抬到"近边正好坐在桌面上"的高度：抬不够的话，倾斜后近边会切进桌子
 		# （方块沉一半就只剩薄片 —— 同体力件那条注释）。选中的再额外抬 HAND_SEL_LIFT。
+		# （批次 5 Task 3 起这一排落在**木桌**上而不是桌垫上，但"坐在桌面上"这条一字未改。）
 		w.y = _t3.table_mesh.global_position.y + PROPS_Y + HAND_CARD_T * 0.5 \
 			+ (HAND_CARD_D * 0.5) * sin(deg_to_rad(HAND_TILT_DEG)) \
 			+ (HAND_SEL_LIFT if i == _hand_sel else 0.0)
@@ -682,6 +691,25 @@ const STANDEE_BAR_W := 0.56
 const STANDEE_SELF_HIDE_T := 0.5
 ## 牌面底色：暗蓝灰 —— 压在深色木桌上仍看得出是一块板。
 const STANDEE_PLATE_COLOR := Color(0.115, 0.125, 0.175)
+# ---- 批次 5 Task 3：可选中的立牌高亮 ----
+#
+# 座位卡时代，「哪些玩家此刻可被选中」是**座位卡上的金框**（`board.set_select_peers`）；
+# 座位卡一退场那条反馈就没落点了（Task 2 的遗留顾虑 1），玩家只剩屏幕层一行文字提示。
+# 这里把它补到**立牌**上：可选中的那几块牌面提亮 + 自发光 + 略微抬起，不能选的保持原样。
+#
+# **本文件不做任何判定**：哪些 peer 可选中由 `game._begin_peer_target` 一处算出后转发过来
+#（`game._push_peer_highlight` 同时推给 board 与这里），与「点了谁会真的有反应」
+#（`game._on_seat_clicked` 的 `_tgt_stage == "peer"`）同源 —— 判据只有一份。
+## 牌面提亮的幅度（朝白色 lerp 的比例）。**出图调过两版**：0.42 时牌面亮成一张奶白纸
+##（"亮着"一眼看出，但白字压在白底上、名字读数掉了一档）；0.34 仍与未高亮的暗蓝灰拉开
+## 一大截，白字 + 深描边在这档底色上还认得清 —— 再低（≤0.2）远处就看不出哪块亮了。
+const STANDEE_HL_LIGHTEN := 0.34
+## 自发光色（gl_compatibility 有 emission）：牌面自身发暖光，暗桌上一眼看出"这块能点"。
+## 它叠在 albedo 之上，所以取值比提亮幅度更保守 —— 太大（0.6 上下）会把牌面冲成一片死白。
+const STANDEE_HL_EMIT := Color(0.40, 0.32, 0.13)
+## 抬起的高度（世界单位）。抬起 = 屏幕上往远端挪一点点，与手牌选中那条同理
+##（只能对着"屏幕位移"定：约十来画布像素）。四块立牌本来就在桌沿最外圈，抬它不压任何东西。
+const STANDEE_HL_LIFT := 0.10
 ## 立牌文字的像素口径：pixel_size = 一个"字号像素"在世界里有多大。
 ## 0.0022 × 字号 64 ≈ 0.141 世界单位一个字（≈ 9~10 屏幕像素，围桌全景下）。
 const STANDEE_FONT_PS := 0.0022
@@ -693,6 +721,10 @@ var _standees: Array[Dictionary] = []
 ## 最近一次 set_standees 的 rows —— **数据单一来源**（节点池只管画），
 ## 命中判定 / 显隐 / 倒计时都从它取，越界的下标一律当作"没有这块"。
 var _standee_rows: Array = []
+## 当前**可被选中**的玩家（批次 5 Task 3 的立牌高亮）。空 = 全部熄灭。
+## 与 `_st_timer_*` 同款：单一来源在 game.gd，这里只跟着画；`set_standees` 每次重摆都把它
+## 重放一遍（与倒计时一样，广播不会把它弄丢）。
+var _standee_hl: Array = []
 var _standee_mesh: BoxMesh
 var _card_mesh: BoxMesh
 var _bar_mesh: BoxMesh
@@ -724,8 +756,9 @@ func set_standees(rows: Array) -> void:
 		var r: Dictionary = rows[i]
 		# 摆位：画布像素 → 桌垫世界坐标（与筹码 / 手牌同一条换算），y 抬到桌垫之上；
 		# 牌面原点在**下沿中点**，所以它"坐"在桌面上（见 _make_standee）。
+		# 可选中的那块再抬 STANDEE_HL_LIFT（批次 5 Task 3 的高亮，见 _apply_standee_highlight）。
 		var w: Vector3 = _t3.canvas_px_to_world(STANDEE_BASE_PX[i % STANDEE_BASE_PX.size()])
-		w.y = _t3.table_mesh.global_position.y + PROPS_Y
+		w.y = _t3.table_mesh.global_position.y + PROPS_Y + _standee_hl_lift(i)
 		(sd.root as Node3D).global_position = w
 		# 牌面文字：名字 / 身家（破产与座位卡同款提示：不报数字）
 		var alive := bool(r.get("alive", true))
@@ -734,12 +767,13 @@ func set_standees(rows: Array) -> void:
 		var dim := Color(0.66, 0.66, 0.70) if not alive else Color.WHITE
 		(sd.name_l as Label3D).modulate = dim
 		(sd.worth_l as Label3D).modulate = Color(0.62, 0.57, 0.44) if not alive else Color(0.93, 0.84, 0.55)
-		# 牌身底色 = 暗底混一点玩家色（与棋子 / 座位卡同一个配色来源），破产再压暗
+		# 牌身底色 = 暗底混一点玩家色（与棋子 / 座位卡同一个配色来源），破产再压暗。
+		# **只算"底色"存起来**，最终颜色由 `_apply_standee_highlight()` 贴（高亮时要提亮它）。
 		var pc: Color = GameData.PLAYER_COLORS[
 			int(r.get("color_idx", 0)) % GameData.PLAYER_COLORS.size()]
 		var base := STANDEE_PLATE_COLOR.lerp(pc, 0.18)
 		var k := 0.45 if not alive else 1.0
-		(sd.plate_mat as StandardMaterial3D).albedo_color = Color(base.r * k, base.g * k, base.b * k)
+		sd["base_color"] = Color(base.r * k, base.g * k, base.b * k)
 		# 公开背包：**一件一张小卡**（品质色），封顶 BACKPACK_MAX；件数用一行文字写明
 		var items: Array = r.get("items", [])
 		(sd.count_l as Label3D).text = "背包 %d" % items.size()
@@ -756,6 +790,9 @@ func set_standees(rows: Array) -> void:
 				ItemData.QUALITY_COLORS.get(q, Color.WHITE)
 	_apply_standee_show()
 	_apply_standee_timers()
+	# 高亮也要重放一遍：与倒计时同理 —— 广播会重摆立牌，只算一遍的话
+	# "选目标态下收到一次广播"就会把金框弄丢（单一来源仍是 game.gd 那份 peers）。
+	_apply_standee_highlight()
 
 ## 第 i 块立牌此刻露（也决定它能不能被点到）吗：行数之外的池子节点不露；
 ## **自己的那面在 3D 端不露** —— 第一人称看不见自己（设计稿 §三）。它就立在近端桌沿上，
@@ -808,6 +845,45 @@ func set_standee_timer(peer: int, kind_text: String, left: float, total: float) 
 	_st_timer_left = left
 	_st_timer_total = total
 	_apply_standee_timers()
+
+## 哪些玩家此刻**可被选中**（批次 5 Task 3 的可见反馈，见上面那组常量的说明）。
+## `peers` 为空 = 四块一起熄灭（退出选目标态的常态）。
+##
+## **不做判定、不缓存别处**：这里只记下这份 peers 并贴给材质与位置；判据的唯一来源是
+## `game._begin_peer_target` 算出的那份可选玩家表（`game._push_peer_highlight` 转发）。
+func set_standee_highlight(peers: Array) -> void:
+	_standee_hl = []
+	for p in peers:
+		_standee_hl.append(int(p))
+	_apply_standee_highlight()
+
+## 第 i 块立牌此刻"亮着"吗。判据集中在 `_standee_hot` 一处，材质与抬高的落点都用它 ——
+## 免得"亮着"与"抬着"两套判据悄悄跑偏（同 `_standee_shown` 那条）。
+func _standee_hot(i: int) -> bool:
+	var peer := standee_peer(i)
+	return peer != GameData.NO_PEER and _standee_hl.has(peer)
+
+## 该块此刻要额外抬多高（世界单位）：亮着抬、否则 0。
+func _standee_hl_lift(i: int) -> float:
+	return STANDEE_HL_LIFT if _standee_hot(i) else 0.0
+
+## 把高亮贴到四块立牌的 **牌面材质 + 高度**上（幂等，每次状态广播也重放一遍）。
+## 熄灭 = 回到 `base_color` / 关掉自发光 / 落回原高度 —— 与没高亮过完全一样。
+func _apply_standee_highlight() -> void:
+	for i in _standees.size():
+		var sd: Dictionary = _standees[i]
+		var plate = sd.get("plate")
+		if plate == null or not is_instance_valid(plate):
+			continue
+		var hot := _standee_hot(i)
+		var base: Color = sd.get("base_color", STANDEE_PLATE_COLOR)
+		var mat: StandardMaterial3D = sd.plate_mat
+		mat.albedo_color = base.lightened(STANDEE_HL_LIGHTEN) if hot else base
+		mat.emission_enabled = hot
+		if hot:
+			mat.emission = STANDEE_HL_EMIT
+		var root := sd.root as Node3D
+		root.global_position.y = _t3.table_mesh.global_position.y + PROPS_Y + _standee_hl_lift(i)
 
 ## 画布像素命中第几块立牌（**-1 = 没命中**，本函数自己的约定，与 GameData 哨兵无关）。
 ## 自己的那面 3D 端点不到：`_standee_shown` 与显示用**同一条判据**
@@ -943,7 +1019,9 @@ func _make_standee(i: int) -> Dictionary:
 		card_mats.append(cm)
 	return {"root": root, "plate": plate, "plate_mat": pmat, "name_l": name_l, "worth_l": worth_l,
 		"count_l": count_l, "timer_l": timer_l, "track": track, "fill": fill,
-		"cards": cards, "card_mats": card_mats}
+		"cards": cards, "card_mats": card_mats,
+		# 底色由 set_standees 每次重算后写这里；高亮（提亮 / 熄灭）都从它出发
+		"base_color": STANDEE_PLATE_COLOR}
 
 ## 一块立牌上的一个 Label3D。贴在牌面**前方一点点**（不与板面共面，免得 z-fighting）；
 ## 水平居中（CENTER 对齐下文字的包围盒以原点为中心）；带深色描边 ——

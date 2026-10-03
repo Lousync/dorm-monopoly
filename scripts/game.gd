@@ -130,9 +130,10 @@ var rules_body: RichTextLabel
 var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
 var rules_tab := ""
-var roster_box: VBoxContainer      # 右栏名册（固定 4 行，见 _refresh_rail）
-var roster_rows: Array = []
-var _rail_sig := ""
+## 四角身家条（批次 5 Task 3）：四条一起建、只显示有人的那几条（见 `_refresh_corner_bars`）。
+## 取代了原先的右侧名册栏（`roster_box` / `roster_rows` 已删，理由见 table_hud.gd 里那段）。
+var corner_bars: Array = []
+var _corner_sig := ""              # 四角条的刷新签名（状态没变就不重写）
 var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
 var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，簇收起）
 var _op_left := 0.0               # 本机显示用剩余秒数：广播到达时重置，_process 逐帧扣 delta
@@ -1372,11 +1373,28 @@ func _state_worth(peer: int) -> int:
 			v += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
 	return v
 
-## 四块立牌的**数据**（批次 5 Task 1）。行序 = 桌位顺序（底 / 左 / 上 / 右）：
-## 把 st.players **轮转成"自己打头、其余按行动序"** —— 于是 `STANDEE_BASE_PX[0..3]`
-## 依次对上 e0..e3（自己 / 下家 / 对家 / 上家）。这条轮转**原来与 `board.build_seats` 同源**，
-## 而那个函数已随批次 5 Task 2 删除（座位卡整体退场）——立牌现在是这条路唯一的去处，
-## 桌位顺序就由本函数 + `STANDEE_BASE_PX` 一处定义。
+## 桌位顺序（底 / 左 / 上 / 右）的 peer 列表 = 把 st.players **轮转成"自己打头、其余按行动序"**，
+## 于是 `STANDEE_BASE_PX[0..3]` / `TableHud.CORNER_SEATS[0..3]` 依次对上 e0..e3
+##（自己 / 下家 / 对家 / 上家）。
+##
+## **这是"谁坐哪个桌位"的唯一判据**（批次 5 Task 3 起）：桌上立牌与屏幕层四角身家条都读它，
+## 所以"哪个角标对着哪块立牌"永远一致。自己不在名册里（观战 / 掉线重连）时从第 0 家起轮转
+## —— 与立牌同一条退化路径（那时四块立牌都没有 `is_self`）。
+func _seat_peers() -> Array:
+	var pls: Array = st.get("players", [])
+	var out: Array = []
+	if pls.is_empty():
+		return out
+	var my_i := 0
+	for i in pls.size():
+		if int(pls[i].peer) == my_peer:
+			my_i = i
+			break
+	for k in pls.size():
+		out.append(int(pls[(my_i + k) % pls.size()].peer))
+	return out
+
+## 四块立牌的**数据**（批次 5 Task 1）。行序 = 桌位顺序（底 / 左 / 上 / 右），由 `_seat_peers` 定。
 ## 身家走 `_state_worth`（读 st.tiles）而不是 host 专有的 `_net_worth`：客户端也要显示。
 func _refresh_standees() -> void:
 	var t3 = table3d
@@ -1386,15 +1404,11 @@ func _refresh_standees() -> void:
 	if pls.is_empty():
 		t3.table_props.set_standees([])     # 还没进对局：一块都不摆（池子是空的）
 		return
-	var my_i := 0
-	for i in pls.size():
-		if int(pls[i].peer) == my_peer:
-			my_i = i
-			break
+	var seats: Array = _seat_peers()
 	var rows: Array = []
-	for k in pls.size():
-		var p: Dictionary = pls[(my_i + k) % pls.size()]
-		var peer := int(p.peer)
+	for peer_v in seats:
+		var peer := int(peer_v)
+		var p: Dictionary = _state_player(peer)
 		rows.append({
 			"peer": peer, "name": String(p.get("name", "?")), "worth": _state_worth(peer),
 			"color_idx": int(p.get("color", 0)), "alive": bool(p.get("alive", true)),
@@ -1413,7 +1427,6 @@ func _refresh_players() -> void:
 	_refresh_table_props()
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
-	var prop_map := {}   # peer -> 地产块数（右栏名册复用，避免再算一遍）
 	for p in st.get("players", []):
 		var peer := int(p.peer)
 		# 座位卡已随批次 5 Task 2 整体退场：这里**不再**给四条座位栏刷名字 / 现金 / 棋子 /
@@ -1422,16 +1435,15 @@ func _refresh_players() -> void:
 		# 公开背包也归它；画布上不再有"哪张卡"可写。
 		# 金额滚动 / 涨跌闪色也**没有落点了**，但飘字与音效仍以**棋子**为锚（下面那段），保留。
 
-		# 顶部战况面板：现金 / 地产数 / 身家（与房主 _net_worth 同一公式）
-		var prop_n := 0
+		# 身家 = 现金 + 名下地皮（地价 + 装修），与房主 `_net_worth` 同一公式。
+		# 消费方：四角身家条（`_refresh_corner_bars` 的 standing）与悬停棋子的信息条
+		#（后者在 board.render 里另算一份、同为这个公式）。
 		var worth := int(p.money)
 		for i in tiles_arr.size():
 			var td: Dictionary = tiles_arr[i]
 			if int(td.get("owner", GameData.NO_OWNER)) == peer:
-				prop_n += 1
 				worth += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
 		worth_map[peer] = worth
-		prop_map[peer] = prop_n
 		# 金额变动：数字滚动的那块控件没了，**收支反馈保留在棋子上的飘字 + 飞钞 + 音效**。
 		# 「上一次显示的金额」从行里搬到一个 peer -> int 的表（`_money_shown`），
 		# 判据与语义一字未改 —— 只有真的变了才播。
@@ -1450,11 +1462,11 @@ func _refresh_players() -> void:
 			Fx.play("cash" if diff > 0 else "pay", -5.0)
 			_spawn_money_fly(peer, diff)
 
-	# 身家排名 → 右栏名册（座位卡上的排名徽章与"地产/身家"行随座位卡一起删了）
+	# 身家排名（名次徽章的依据）
 	var order: Array = worth_map.keys()
 	order.sort_custom(func(a, b) -> bool: return int(worth_map[a]) > int(worth_map[b]))
 
-	# 右栏名册复用上面刚算出的身家/排名（公式只留这一处，避免两套算法悄悄跑偏）
+	# 四角身家条复用上面刚算出的身家/排名（公式只留这一处，避免两套算法悄悄跑偏）
 	var standing: Array = []
 	for i in order.size():
 		var rp := int(order[i])
@@ -1463,64 +1475,90 @@ func _refresh_players() -> void:
 			"peer": rp, "rank": i + 1, "worth": int(worth_map[rp]),
 			"name": String(rpl.get("name", "?")), "color": int(rpl.get("color", 0)),
 			"money": int(rpl.get("money", 0)), "alive": bool(rpl.get("alive", true)),
-			"props": int(prop_map.get(rp, 0)), "items": (rpl.get("items", []) as Array).size(),
 		})
-	_refresh_rail(standing)
+	_refresh_corner_bars(standing)
 
-## 右栏名册：按身家倒序填 4 行（名次 / 棋子色 / 名字 / 现金 / 地产·道具），
-## 轮到谁行动就把谁的左侧竖条点亮，自己那行标出来。
-## 带签名缓存：状态没变就不重建（每次广播都会走这里）。
-func _refresh_rail(standing: Array) -> void:
-	if roster_rows.is_empty():
+## 四角身家条（批次 5 Task 3）：取代右侧名册栏（理由与落位见 table_hud.gd 的 CORNER_SLOTS）。
+##
+## **角位 = 桌位**：第 i 条挂的玩家 = `_seat_peers()[i]`，与桌上第 i 块立牌是同一个人 ——
+## 于是"选目标态哪块立牌亮着"与"哪一条角标在这儿"对得上。
+##
+## 数据一律取 `_refresh_players` 顶部**同一次**算出来的 `standing`（按身家倒序、带 rank）——
+## 与 `board.render` 的悬停信息、以及房主的 `_net_worth` 同一公式，客户端也准
+##（读的是已同步的 st.tiles）。**不要在这里另算一遍身家**。
+##
+## 带签名缓存：状态没变就不重写（每次广播都会走这里）。
+func _refresh_corner_bars(standing: Array) -> void:
+	if corner_bars.is_empty():
 		return
-	var sig := "%d|" % int(st.get("turn", -1))
+	var by_peer := {}
 	for e in standing:
-		sig += "%d,%d,%d,%d,%d,%d;" % [int(e.peer), int(e.rank), int(e.money),
-			int(e.props), int(e.items), 1 if bool(e.alive) else 0]
-	sig += "|%s" % String(st.get("phase", ""))
-	if sig == _rail_sig:
-		return
-	_rail_sig = sig
-
+		by_peer[int(e.peer)] = e
+	var seats: Array = _seat_peers()
 	var turn_peer := int(st.get("turn", -1))
-	for i in roster_rows.size():
-		var row: Dictionary = roster_rows[i]
-		var root: Control = row.root
-		if i >= standing.size():
-			root.visible = false
+	var phase := String(st.get("phase", ""))
+	# 签名：角位归属（peer）+ 该条的 rank/worth/money/alive/color + 当前行动者与阶段
+	var sig := "%d|%s|" % [turn_peer, phase]
+	for i in corner_bars.size():
+		var e: Dictionary = by_peer.get(int(seats[i]), {}) if i < seats.size() else {}
+		sig += "%d,%d,%d,%d,%d,%d;" % [int(seats[i]) if i < seats.size() else GameData.NO_PEER,
+			int(e.get("rank", 0)), int(e.get("worth", 0)), int(e.get("money", 0)),
+			int(e.get("color", -1)), 1 if bool(e.get("alive", true)) else 0]
+	if sig == _corner_sig:
+		return
+	_corner_sig = sig
+
+	for i in corner_bars.size():
+		var bar: Dictionary = corner_bars[i]
+		var root: Control = bar.root
+		var e: Dictionary = by_peer.get(int(seats[i]), {}) if i < seats.size() else {}
+		if e.is_empty():
+			root.visible = false          # 人少了：多出来的那一条藏起来（不拆节点）
 			continue
-		var e: Dictionary = standing[i]
-		var peer := int(e.peer)
 		root.visible = true
-		var chip_slot: Control = row.chip_slot
-		if row.chip == null or not is_instance_valid(row.chip):
-			for c in chip_slot.get_children():
+		var peer := int(e.peer)
+		var alive := bool(e.alive)
+		bar.peer = peer
+		# 棋子色小片：与棋盘上的棋子同一个配色来源（只在真变了才重建）
+		var col := int(e.color)
+		if bar.chip == null or not is_instance_valid(bar.chip) or int(bar.chip_color) != col:
+			for c in (bar.chip_slot as Control).get_children():
 				c.queue_free()
-			row.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(int(e.color), 0, 3)], 16)
-			chip_slot.add_child(row.chip)
-		# 名次 + 名字（自己标「我」，轮到谁行动加 ▶）
-		var active: bool = String(st.get("phase", "")) == "playing" and peer == turn_peer
+			bar.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(col, 0, 3)], 18)
+			(bar.chip_slot as Control).add_child(bar.chip)
+			bar.chip_color = col
+		# 名次徽章：1 金 / 2 银 / 3 铜 / 其余石板灰（它是一棵小节点树，只在名次真变了才重建）
+		var rank := int(e.get("rank", 0))
+		if int(bar.badge_rank) != rank:
+			for c in (bar.badge_slot as Control).get_children():
+				c.queue_free()
+			bar.badge = UIKit.rank_badge(rank, 24)
+			(bar.badge_slot as Control).add_child(bar.badge)
+			bar.badge_rank = rank
+		# 名字（自己标「我」、破产标「破产」）；轮到谁行动谁的名字变金
+		var active: bool = phase == "playing" and peer == turn_peer and alive
 		var tags := ""
 		if peer == my_peer:
 			tags += "（我）"
-		if not bool(e.alive):
+		if not alive:
 			tags += "（破产）"
-		var name_l: Label = row.name_l
-		name_l.text = "%d. %s%s" % [int(e.rank), String(e.name), tags]
-		# 名字变金 = 轮到 TA 行动（左侧竖条同时点亮）；自己只靠「（我）」标
+		var name_l: Label = bar.name_l
+		name_l.text = "%s%s" % [String(e.get("name", "?")), tags]
 		name_l.add_theme_color_override("font_color",
-			UIKit.TEXT_DIM if not bool(e.alive) else (UIKit.ACCENT if active else UIKit.TEXT))
-		var sub_l: Label = row.sub_l
-		sub_l.text = "地产 ×%d · 道具 %d" % [int(e.props), int(e.items)]
-		# 右列：大字身家（名次依据）+ 小字现金
-		var money_l: Label = row.money_l
-		money_l.text = "已出局" if not bool(e.alive) else GameData.fmt_money(int(e.worth))
-		money_l.add_theme_color_override("font_color",
-			UIKit.TEXT_DIM if not bool(e.alive) else UIKit.ACCENT)
-		var cash_l: Label = row.cash_l
-		cash_l.text = "" if not bool(e.alive) else "现金 %s" % GameData.fmt_money(int(e.money))
-		var bar: ColorRect = row.bar
-		bar.color = UIKit.ACCENT if active else Color(0, 0, 0, 0)
+			UIKit.TEXT_DIM if not alive else (UIKit.ACCENT if active else UIKit.TEXT))
+		# 身家（名次的依据）；破产与立牌 / 座位卡同款提示：不报数字
+		var worth_l: Label = bar.worth_l
+		worth_l.text = "已出局" if not alive else GameData.fmt_money(int(e.worth))
+		worth_l.add_theme_color_override("font_color",
+			UIKit.TEXT_DIM if not alive else UIKit.ACCENT)
+		# 轮到谁行动：那一条描金边（与立牌上的倒计时、牌垫按钮的点亮是同一件事）。
+		# 只在真变化时换样式盒（每次换都是一次九宫格纹理查找）。
+		if bool(bar.border_active) != active:
+			bar.border_active = active
+			root.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+				Color(0.085, 0.095, 0.138, 0.82), 10,
+				Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.9) if active
+					else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4))
 
 func _refresh_actions() -> void:
 	var phase := String(st.get("phase", "playing"))
@@ -3233,6 +3271,19 @@ func _selectable_props(peer: int) -> Array:
 			out.append(i)
 	return out
 
+## 把「此刻可被选中的玩家」高亮**一次推给两处**：画布（`board.set_select_peers` —— 座位卡上的
+## 金框，座位卡随批次 5 Task 2 退场后它空转、接口保留）与**桌上的立牌**
+##（`table_props.set_standee_highlight`，批次 5 Task 3 补回的可见反馈；立牌亮着 = 能点）。
+##
+## **判据只有一份**：可选玩家由调用方（`_begin_peer_target`）算出，本函数只做转发 ——
+## 于是"哪几块牌亮着"与"点谁真的有反应"（`_on_seat_clicked` 的第一行）永远同源。
+## 传空数组 = 全部熄灭；换阶段（peer → tile）与取消都走它。
+func _push_peer_highlight(peers: Array) -> void:
+	if board != null:
+		board.set_select_peers(peers)
+	if table3d != null and table3d.table_props != null:
+		table3d.table_props.set_standee_highlight(peers)
+
 ## 进入「选玩家」阶段。only_with_items=交换生（目标须持有道具）；then_prop=两段式（目标须有地）
 func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> void:
 	var peers: Array = []
@@ -3250,8 +3301,7 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_peer = -1
 	_tgt_tiles = []
 	_show_target_hint("点棋盘上的玩家卡选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
-	if board != null:
-		board.set_select_peers(peers)
+	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）
 func _begin_tile_target(slot: int, idxs) -> void:
@@ -3265,6 +3315,8 @@ func _begin_tile_target(slot: int, idxs) -> void:
 	_tgt_peer = -1
 	_tgt_tiles = arr
 	_show_target_hint("点地图选择目标格（Esc/右键取消）")
+	# 直接进选格态（快递直达）：立牌上那份"可选玩家"高亮一并熄灭（同 board 的 set_select_tiles）
+	_push_peer_highlight([])
 	if board != null:
 		board.set_select_tiles(arr)
 
@@ -3282,6 +3334,8 @@ func _on_seat_clicked(peer: int) -> void:
 			_tgt_stage = "tile"
 			_tgt_tiles = props
 			_show_target_hint("点选 %s 名下的一块地（Esc/右键取消）" % _name_by_peer(peer))
+			# 从"选玩家"走进"选地块"：立牌那份可选玩家高亮随之熄灭（同 board 的 set_select_tiles）
+			_push_peer_highlight([])
 			if board != null:
 				board.set_select_tiles(props)
 			return
@@ -3323,6 +3377,8 @@ func _cancel_target() -> void:
 	_tgt_tiles = []
 	if target_hint != null:
 		target_hint.visible = false
+	# 立牌上的可选玩家高亮随选目标态一起熄灭（与 board.clear_select 同一处收口）
+	_push_peer_highlight([])
 	if board != null:
 		board.clear_select()
 

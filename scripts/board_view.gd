@@ -776,7 +776,7 @@ func _process(delta: float) -> void:
 		_need_fit = false
 		if not _fitted:
 			_fitted = true
-			fit_overview(true)  # 初始镜头：四人围桌全景
+			fit_overview(true)  # 初始镜头：桌垫概览（全屏那一档）
 		else:
 			_apply_cam()        # 仅重算变换：resized 不该把对局中途的视角/跟随清零
 	if auto_follow and _has_follow_pt:
@@ -1050,7 +1050,10 @@ func set_phase_buttons(spin_text: String, spin_style: String, spin_disabled: boo
 		_phase_use.disabled = use_disabled
 		UIKit.restyle_button(_phase_use, use_style)
 
-## 指向性道具：高亮可选格子（世界坐标；与"高亮可选玩家"互斥）
+## 指向性道具：高亮可选格子 / 可选玩家（两者互斥）。**座位卡退场后前者仍是画布上的金框、
+## 后者在画布里已无落点** —— "哪些玩家可被选中"改由**桌上立牌**点亮
+##（`table_props.set_standee_highlight`，批次 5 Task 3）。两处由 `game._push_peer_highlight`
+## 在同一个调用点一起推，判据只有一份。
 func set_select_peers(peers: Array) -> void:
 	_set_hl_tiles([])
 	_set_hl_peers(peers)
@@ -1067,9 +1070,10 @@ func clear_select() -> void:
 	_pulse_select(false)
 
 ## 「哪些玩家此刻可被选中」的高亮：座位卡拆掉后**画布里没有落点了**（立牌是 3D 实体，
-## 见 table_props.gd）。今天这条反馈只剩屏幕层的一句文字提示（`game._show_target_hint`）。
-## **保留接口不删**（`game._begin_peer_target` 仍在调）：立牌上的可选中高亮是**已知的遗留**，
-## 登记在 .superpowers/sdd/v0.5.0-批次5-实施计划/task-2-report.md 的遗留顾虑里。
+## 见 table_props.gd）。**保留接口不删**（`game._begin_peer_target` 仍在调）。
+## 这条反馈本身**不在画布里**：批次 5 Task 3 起由桌上立牌承担
+##（`table_props.set_standee_highlight` —— 可选中的牌面提亮 + 自发光 + 略微抬起），
+## 与屏幕层那句文字提示（`game._show_target_hint`）一起构成完整的"能点谁"。
 func _set_hl_peers(_peers: Array) -> void:
 	pass
 

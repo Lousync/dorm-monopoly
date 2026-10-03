@@ -346,64 +346,18 @@ static func build_play_ui(g: Node) -> void:
 	lv.add_theme_constant_override("separation", 8)
 	lm.add_child(lv)
 
-	# ---- 名册（布局返工：右栏原先只有战报，下半幅是一大片空的）----
-	# 固定建 4 行，由 game.gd 的 _refresh_rail 填/藏；不做动态重建，省得每帧抖。
-	lv.add_child(UIKit.label("牌位 · 按身家排序", 13, UIKit.TEXT_DIM))
-	g.roster_box = VBoxContainer.new()
-	g.roster_box.add_theme_constant_override("separation", 3)
-	lv.add_child(g.roster_box)
-	g.roster_rows = []
-	for i in GameData.MAX_PLAYERS:
-		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel",
-			UIKit.card_stylebox(Color(0.10, 0.11, 0.155, 0.55), 8, Color(0, 0, 0, 0), 0))
-		row.visible = false
-		g.roster_box.add_child(row)
-		var rm := UIKit.margins(7, 7, 4, 4)
-		row.add_child(rm)
-		var rh := HBoxContainer.new()
-		rh.add_theme_constant_override("separation", 7)
-		rm.add_child(rh)
-		# 左侧竖条：轮到谁行动就把谁的条点亮（比整行改色更省事也更好认）
-		var bar := ColorRect.new()
-		bar.color = Color(0, 0, 0, 0)
-		bar.custom_minimum_size = Vector2(3, 0)
-		bar.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rh.add_child(bar)
-		var chip_slot := Control.new()
-		chip_slot.custom_minimum_size = Vector2(16, 16)
-		chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		chip_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rh.add_child(chip_slot)
-		var col := VBoxContainer.new()
-		col.add_theme_constant_override("separation", 0)
-		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		rh.add_child(col)
-		var name_l := UIKit.label("", 13, UIKit.TEXT)
-		name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		col.add_child(name_l)
-		var sub_l := UIKit.label("", 11, UIKit.TEXT_DIM)
-		sub_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		col.add_child(sub_l)
-		# 右侧一列上下叠：身家（大字，名次的依据）/ 现金（小字）。
-		# 横着并排会跟左列的「地产·道具」抢宽度，长数字一挤就被省略号截掉。
-		var right := VBoxContainer.new()
-		right.add_theme_constant_override("separation", 0)
-		right.custom_minimum_size = Vector2(84, 0)
-		right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		rh.add_child(right)
-		var money_l := UIKit.label("", 13, UIKit.ACCENT)
-		money_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		right.add_child(money_l)
-		var cash_l := UIKit.label("", 11, UIKit.TEXT_DIM)
-		cash_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		right.add_child(cash_l)
-		g.roster_rows.append({
-			"root": row, "bar": bar, "chip_slot": chip_slot,
-			"name_l": name_l, "sub_l": sub_l, "money_l": money_l, "cash_l": cash_l,
-			"chip": null,
-		})
+	# ---- 四角身家条（批次 5 Task 3）：取代右侧名册栏 ----
+	# **为什么取代**：名册栏与四角条挂的是同一份东西（名次 + 名字 + 身家），同时留着是重复；
+	# 设计稿 §三 的"屏幕清理"与参考（骗子酒馆的四角头像角标）都指向只留四角。
+	# 代价（已在设计里接受）：名册栏那行"地产 ×n · 道具 n / 现金"一起消失 ——
+	# 地产数仍在棋盘上看得见（格子归属色条 + 格详情卡），公开背包由桌上立牌承担。
+	#
+	# **角位 = 桌位**：谁坐哪个桌位（game._seat_peers 的"自己打头、其余按行动序"）就挂到
+	# 对应的那个角（CORNER_SLOTS 左下 / 左上 / 右上 / 右下，沿屏幕顺时针）——
+	# 角标与桌上那块立牌对得上，选目标态立牌一亮就知道亮的是哪个角。
+	g.corner_bars = []
+	for ci in CORNER_SLOTS.size():
+		g.corner_bars.append(_make_corner_bar(g, hud, CORNER_SLOTS[ci]))
 
 	var hair := ColorRect.new()
 	hair.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
@@ -436,6 +390,99 @@ static func build_play_ui(g: Node) -> void:
 		g.chat_edit.clear()
 	)
 	chat_row.add_child(send_btn)
+
+## 四角条的尺寸（屏幕像素）。**写死并显式设成 `custom_minimum_size`**：面板的高度是内容撑出来的
+## （13 + 14 两行字 + 内外边距），只给 `offset_*` 的话 Godot 会按最小尺寸把它撑大 —— 底边那两条
+## 会朝**下**长进「规则说明」按钮里（实测 63 > 48，压住 5 像素）。写死 + 按它算偏移，两边永远一致。
+const CORNER_BAR_SIZE := Vector2(195.0, 64.0)
+
+## 四角身家条的落位：**屏幕四角**，与桌位一一对应（`game._seat_peers` 的顺序）。
+## 每项 = 锚点 + 到屏幕边的距离（`mx` 离左右边、`my` 离上下边）。
+##
+## 位置是**对着出图定的**，两条硬约束：
+##   ① **不让开** 三个角按钮 —— 左上「暂停」（12,10–92,38）、右上「战报」（底 40）、
+##      左下「规则说明」（顶 ≈ 754）：上边那两条从 y = 48 往下挂、下边那两条从底往上留 56。
+##      右下这一角没有按钮，同样贴 12 / 56（四角对称，看着才是一套）。
+##   ② **不让开** 四块立牌 —— 它们立在桌沿、投影落在屏幕**中段偏外**（左/右两块的牌心在 450 高
+##      附近、上家那块顶部居中、自己那块只在 2D 端出现且居中），四个角都是空的。
+const CORNER_SLOTS := [
+	# 自己（桌位 = 底）→ 左下
+	{"preset": Control.PRESET_BOTTOM_LEFT, "mx": 12.0, "my": 56.0},
+	# 下家（左）→ 左上
+	{"preset": Control.PRESET_TOP_LEFT, "mx": 12.0, "my": 48.0},
+	# 对家（上）→ 右上
+	{"preset": Control.PRESET_TOP_RIGHT, "mx": 12.0, "my": 48.0},
+	# 上家（右）→ 右下
+	{"preset": Control.PRESET_BOTTOM_RIGHT, "mx": 12.0, "my": 56.0},
+]
+
+## 一条四角身家条：棋子色小片 + 名次徽章 + 「名字 / 身家」两行。
+## 建一次就不动结构，之后只由 `game._refresh_corner_bars` 改文字 / 换徽章 / 换描边 ——
+## 整条 `mouse_filter = IGNORE`：它只是读数，绝不吃点击（四角下面还有棋盘与按钮）。
+static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dictionary:
+	var root := UIKit.panel_container(Color(0.085, 0.095, 0.138, 0.82), 10,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var s: Vector2 = CORNER_BAR_SIZE
+	root.custom_minimum_size = s
+	var preset := int(slot.preset)
+	root.set_anchors_preset(preset)
+	# 偏移由"离边的距离 + 面板尺寸"算出来 —— 改 CORNER_BAR_SIZE 不必再手改四个角
+	var mx: float = float(slot.mx)
+	var my: float = float(slot.my)
+	var on_left: bool = preset == Control.PRESET_TOP_LEFT or preset == Control.PRESET_BOTTOM_LEFT
+	var on_top: bool = preset == Control.PRESET_TOP_LEFT or preset == Control.PRESET_TOP_RIGHT
+	if on_left:
+		root.offset_left = mx
+		root.offset_right = mx + s.x
+	else:
+		root.offset_left = -mx - s.x
+		root.offset_right = -mx
+	if on_top:
+		root.offset_top = my
+		root.offset_bottom = my + s.y
+	else:
+		root.offset_top = -my - s.y
+		root.offset_bottom = -my
+	root.visible = false                 # 还没收到状态：一条都不显示
+	parent.add_child(root)
+
+	var m := UIKit.margins(9, 10, 5, 5)
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(m)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 7)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	m.add_child(row)
+	var chip_slot := Control.new()
+	chip_slot.custom_minimum_size = Vector2(18, 18)
+	chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chip_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(chip_slot)
+	var badge_slot := Control.new()
+	badge_slot.custom_minimum_size = Vector2(24, 24)
+	badge_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(badge_slot)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(col)
+	var name_l := UIKit.label("", 13, UIKit.TEXT)
+	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_l.custom_minimum_size = Vector2(84, 0)
+	col.add_child(name_l)
+	var worth_l := UIKit.label("", 14, UIKit.ACCENT)
+	worth_l.custom_minimum_size = Vector2(84, 0)
+	col.add_child(worth_l)
+	return {
+		"root": root, "chip_slot": chip_slot, "chip": null, "chip_color": -999,
+		"badge_slot": badge_slot, "badge": null, "badge_rank": -1,
+		"name_l": name_l, "worth_l": worth_l,
+		"peer": GameData.NO_PEER, "border_active": false,
+	}
 
 # ================= 房主：初始化与主循环 =================
 

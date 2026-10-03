@@ -26,9 +26,9 @@ func _run() -> void:
 		"向上的射线打不到地面（返回 null）")
 
 	print("== 世界 ↔ UV 往返 ==")
-	# 尺寸是 Vector2（宽 × 进深），函数对任意矩形都成立。当前实现里贴图窗口 = 整张方画布，
-	# 所以 TABLE_D == TABLE_W == 8.0（正方形）；下面另用 8×4 钉住「进深按自己的边长折算」，
-	# 否则窗口一旦与桌面比例脱钩、贴图就被拉伸（批次 3 若再裁窗口会用到）。
+	# 尺寸是 Vector2（宽 × 进深），函数对任意矩形都成立。（今天桌面**不是**正方形：进深由
+	# 贴图窗口的宽高比派生，见 table_geometry.gd 类头。）下面用 8×8 与 8×4 两份尺寸，
+	# 钉住「进深按自己的边长折算」—— 少了这条，窗口与桌面比例一旦脱钩、贴图就被拉伸。
 	var side := Vector2(8.0, 8.0)
 	for uv in [Vector2(0.25, 0.25), Vector2(0.75, 0.25), Vector2(0.25, 0.75),
 			Vector2(0.75, 0.75), Vector2(0.5, 0.5), Vector2(0.0, 1.0)]:
@@ -766,6 +766,15 @@ func _run() -> void:
 					color4 = false
 			_check(thick4, "每张牌都是有厚度的盒子（BoxMesh，厚度 ≥ 0.01 世界单位）")
 			_check(color4, "牌身用品质色（招财猫=白 / 黑卡=橙）")
+			# 批次 5 Task 3 把牌**放大到 1.5 倍上下**（0.30×0.34 → 0.46×0.54）。
+			# 尺寸取**节点自己的 mesh**（不是读常量），下界钉在 0.40/0.48：谁要是缩回批次 3 那档，
+			# 这条先红（"明显比批次 3 更大"是本任务的验收项）。
+			var size_ok := true
+			var bm0 := (hr.get_child(0) as MeshInstance3D).mesh as BoxMesh
+			if bm0 == null or bm0.size.x < 0.40 or bm0.size.z < 0.48:
+				size_ok = false
+			_check(size_ok, "牌比批次 3 明显更大（宽 ≥ 0.40 / 进深 ≥ 0.48，实得 %s）"
+				% ("?" if bm0 == null else "%.2f×%.2f" % [bm0.size.x, bm0.size.z]))
 
 			print("== 手中牌：命中盒盖住看得见的那张牌 ==")
 			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
@@ -862,34 +871,48 @@ func _run() -> void:
 				"重摆手牌后选中的那张仍抬着（画布 y %.0f）" % tp4.hand_rect(1).get_center().y)
 			tp4.set_hand_selected(-1)
 
-			# 位置：整排落在**自己面前的近端空桌垫**上 —— 在桌垫之内 / 不与自己那排格子错位 /
-			# 不与筹码堆和体力件重叠。筹码与体力件的位置**从它们自己的节点读**（不是抄常量）。
-			print("== 手中牌：落在近端空桌垫上、不与筹码 / 体力件打架 ==")
+			# 位置：整排落在**自己面前那条木纹留白**上（批次 5 Task 3 起）—— 在桌垫**之外**、
+			# 木桌之内、桌面的近端半幅；不与自己那排格子错位、不与筹码堆和体力件重叠。
+			# 筹码与体力件的位置**从它们自己的节点读**（不是抄常量）。
+			print("== 手中牌：落在桌垫前沿的木纹留白上、不与筹码 / 体力件打架 ==")
 			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
 			await process_frame
-			# 唯一的线：**桌垫的下沿**。手牌整排是"自己面前那张近端桌垫"上的实物 ——
-			# 落点与看得见的那块（投影盒）都得在桌垫之内、且都在桌垫下半幅。
-			# （注意：它**会**擦到自己那排格子的下边框，那是有意的、也是 hud_test 的
-			#  R2/R38 那几条断言的实测前提 —— 所以这里不钉"不压格子"。）
+			# 批次 5 Task 3 把整排**放大 1.5 倍并下移到桌垫下沿之外**（阶段按钮之下），
+			# 所以"落在桌垫之内"这条老断言反过来成真：牌**在桌垫之外**、还在**木桌之内**。
+			# 为什么必须这样：放大后整排的屏幕包围盒高 174 画布像素，而桌垫下沿那两条空档
+			# （格子下沿→按钮上沿、按钮下沿→桌垫下沿）各只有 72 像素 —— 塞不下（见 HAND_BASE_PX）。
 			var mat_px4: Rect2 = t3.board.mat_rect_px()
-			var off_mat4 := 0
-			var off_bottom4 := 0
+			var on_mat4 := 0          # 落在桌垫**之内**的张数（今天应当为 0）
+			var off_wood4 := 0        # 飞出木桌沿的张数（应当为 0）
 			var sunk4 := 0
 			var nearest4 := 0.0
+			# 木桌 = 桌垫再往外 WOOD_FRAME。画布 px / 世界单位在 x、y 上都是
+			# `窗口边长 / 桌面边长`（窗口与桌面同比例 ⇒ 两轴同值），按各自的边长折算。
+			var px_per_w: Vector2 = Vector2(t3.TEX_WINDOW_PX.size.x / t3.TABLE_W,
+				t3.TEX_WINDOW_PX.size.y / t3.TABLE_D) * float(t3.WOOD_FRAME)
+			var wood_px: Rect2 = Rect2(mat_px4.position - px_per_w, mat_px4.size + px_per_w * 2.0)
 			for i in 3:
 				var mi := hr.get_child(i) as MeshInstance3D
 				var bp: Vector2 = t3.world_to_canvas_px(mi.global_position)
-				if not mat_px4.has_point(bp):
-					off_mat4 += 1
-				if tp4.hand_rect(i).end.y > mat_px4.end.y:
-					off_bottom4 += 1
+				if mat_px4.has_point(bp):
+					on_mat4 += 1
+				if not wood_px.has_point(bp):
+					off_wood4 += 1
 				if mi.global_position.y <= t3.table_mesh.global_position.y:
 					sunk4 += 1
 				nearest4 = maxf(nearest4, bp.y)
-			_check(off_mat4 == 0, "手牌整排落在桌垫之内（越出窗口 %d 张）" % off_mat4)
-			_check(off_bottom4 == 0, "连看得见的那块也没垂到桌垫外（悬出 %d 张，桌垫下沿画布 y=%.0f）"
-				% [off_bottom4, mat_px4.end.y])
-			_check(sunk4 == 0, "手牌都浮在桌垫之上（陷进去 %d 张）" % sunk4)
+			_check(on_mat4 == 0, "手牌整排落在**桌垫之外**那条木纹留白上（落在桌垫内的 %d 张）" % on_mat4)
+			_check(off_wood4 == 0, "手牌都还在木桌之内（飞出桌沿 %d 张；木桌 %s）" % [off_wood4, wood_px])
+			_check(sunk4 == 0, "手牌都浮在桌面上（陷进去 %d 张）" % sunk4)
+			# 看得见的那块（投影盒）也必须在木桌之内 —— 牌是抬起来 + 倾斜的实物，
+			# 它的屏幕包围盒比桌面落点更靠外（近端），出图核过它在桌沿之内。
+			var box_out4 := 0
+			for i in 3:
+				var rq: Rect2 = tp4.hand_rect(i)
+				if rq.position.y < wood_px.position.y or rq.end.y > wood_px.end.y \
+						or rq.position.x < wood_px.position.x or rq.end.x > wood_px.end.x:
+					box_out4 += 1
+			_check(box_out4 == 0, "连看得见的那块也没伸出木桌沿（出界 %d 张）" % box_out4)
 			_check(nearest4 > mat_px4.get_center().y, "手牌在自己这半张桌子（近端，最靠里一张画布 y=%.0f）" % nearest4)
 			# 不与筹码堆 / 体力件重叠：把它们的**实际落点**读出来，命中盒里不许有它们。
 			var others4: Array = []
@@ -1246,6 +1269,60 @@ func _run() -> void:
 			tpS.set_standees(rowsS)
 			_check((sr.get_child(2) as Node3D).visible, "人又齐了：藏起来的那块重新露出")
 			_check(tpS.standee_hit(Vector2(50.0, 50.0)) == -1, "角落不算命中")
+
+			# ---- 批次 5 Task 3：可选中的立牌高亮 ----
+			# 座位卡上的金框（`board.set_select_peers`）随座位卡退场后没有落点了，
+			# 这条反馈补在立牌上：可选中的那块**提亮牌面 + 自发光 + 略微抬起**，其余保持原样。
+			# 断言走可观察量（材质色 / emission / 世界 y），不读内部标志。
+			print("== 立牌：可选中的那块亮着（提亮 + 自发光 + 抬一点），其余原样 ==")
+			var plate_of := func(i: int) -> MeshInstance3D:
+				return (sr.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
+			var mat_of := func(i: int) -> StandardMaterial3D:
+				return plate_of.call(i).material_override as StandardMaterial3D
+			var lum_of := func(i: int) -> float:
+				return mat_of.call(i).albedo_color.get_luminance()
+			var plain_lum: Array = []
+			var plain_y: Array = []
+			for i in 4:
+				plain_lum.append(lum_of.call(i))
+				plain_y.append((sr.get_child(i) as Node3D).global_position.y)
+			_check(not mat_of.call(1).emission_enabled, "（前置）没高亮时牌面不自发光")
+			tpS.set_standee_highlight([2, 4])          # 乙 / 丁（第 2、第 4 块）
+			_check(mat_of.call(1).emission_enabled and mat_of.call(3).emission_enabled,
+				"可选中的两块亮着（自发光打开）")
+			_check(not mat_of.call(0).emission_enabled and not mat_of.call(2).emission_enabled,
+				"不可选中的两块保持原样（不自发光）")
+			_check(lum_of.call(1) > plain_lum[1] + 0.05 and lum_of.call(3) > plain_lum[3] + 0.05,
+				"亮着的牌面真提亮了（乙 %.3f→%.3f / 丁 %.3f→%.3f）"
+					% [plain_lum[1], lum_of.call(1), plain_lum[3], lum_of.call(3)])
+			_check(absf(lum_of.call(0) - plain_lum[0]) < 0.001 and absf(lum_of.call(2) - plain_lum[2]) < 0.001,
+				"没选中的牌面颜色一字未动")
+			_check((sr.get_child(1) as Node3D).global_position.y > plain_y[1] + 0.01,
+				"亮着的那块还抬起来一点（y %.3f → %.3f）"
+					% [plain_y[1], (sr.get_child(1) as Node3D).global_position.y])
+			_check(absf((sr.get_child(0) as Node3D).global_position.y - plain_y[0]) < 0.001,
+				"没选中的那块高度一字未动")
+			# 广播不能把高亮弄丢：`set_standees` 每次重摆都要把这份状态重放一遍（与倒计时同款）
+			tpS.set_standees(rowsS)
+			_check(mat_of.call(1).emission_enabled and lum_of.call(1) > plain_lum[1] + 0.05,
+				"一次重摆（=状态广播）之后高亮仍在（重放没有丢）")
+			_check(not mat_of.call(0).emission_enabled, "重摆之后没选中的那块仍不自发光")
+			# 熄灭：材质与高度都回到没高亮过的那一档
+			tpS.set_standee_highlight([])
+			_check(not mat_of.call(1).emission_enabled and not mat_of.call(3).emission_enabled,
+				"清空之后四块一起熄灭")
+			_check(absf(lum_of.call(1) - plain_lum[1]) < 0.001 and absf(lum_of.call(3) - plain_lum[3]) < 0.001,
+				"熄灭后牌面颜色回到原样")
+			_check(absf((sr.get_child(1) as Node3D).global_position.y - plain_y[1]) < 0.001,
+				"熄灭后高度落回原样")
+			# 越界的 peer（不在桌上）不该点亮任何一块
+			tpS.set_standee_highlight([GameData.NO_PEER, 999])
+			var any_lit := false
+			for i in 4:
+				if mat_of.call(i).emission_enabled:
+					any_lit = true
+			_check(not any_lit, "不在桌上的 peer 不点亮任何一块")
+			tpS.set_standee_highlight([])
 
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。

@@ -98,49 +98,109 @@ func _run() -> void:
 		await process_frame
 	await create_timer(0.4).timeout
 
-	print("== 右栏名册（客户端视角：我是乙，行动的也是我）==")
+	print("== 四角身家条（客户端视角：我是乙，行动的也是我）==")
+	# 角位 = 桌位（`game._seat_peers`：自己打头、其余按行动序 → 底/左/上/右），
+	# 与桌上四块立牌一一对应；取代了右侧名册栏（名册栏与它挂的是同一份东西）。
+	# UIKit 一律**运行时 load**：静态写 `UIKit.X` 会把 ui_kit.gd 拽进本脚本的静态依赖链，
+	# 而它引用了 autoload `Fx` —— 在 `--script` 入口下此时 autoload 还没注册，
+	# 整链会以「Identifier not found: Fx」编译失败（同 layout_test 顶部那段说明）。
+	var UK = load("res://scripts/ui_kit.gd")
 	g.my_peer = 2
 	g.s_state(_state(2, false))          # 走客户端真正跑的那个处理函数
 	await process_frame
-	var rows: Array = g.roster_rows
-	_check(rows.size() >= 4, "名册建了 4 行（实得 %d）" % rows.size())
-	var visible_rows: Array = rows.filter(func(r) -> bool: return (r.root as Control).visible)
-	_check(visible_rows.size() == 4, "4 名玩家各占一行（实得 %d）" % visible_rows.size())
-	# 身家 = 现金 + 地产；甲 12000 + 一号楼地价(3800) = 15800 < 乙 20000 → 乙第一
-	_check(String(visible_rows[0].name_l.text).begins_with("1. 乙"), "名次按身家排，乙第一（实得「%s」）"
-		% String(visible_rows[0].name_l.text))
-	_check(String(visible_rows[0].name_l.text).contains("（我）"), "自己那行标「（我）」")
-	_check(String(visible_rows[0].money_l.text) == GameData.fmt_money(20000),
-		"大字显示身家（实得 %s）" % String(visible_rows[0].money_l.text))
-	_check(String(visible_rows[0].cash_l.text).contains(GameData.fmt_money(20000)),
-		"次行显示现金（实得 %s）" % String(visible_rows[0].cash_l.text))
-	# 甲 12000 现金 + 一号楼(宿舍楼 3800) = 15800 身家 → 排在现金 8000 的丙前面，
-	# 这条正是「名次按身家而不是现金」的证据
-	_check(String(visible_rows[1].name_l.text).begins_with("2. 甲"),
-		"甲现金少但有地产，靠身家排到第 2（实得「%s」）" % String(visible_rows[1].name_l.text))
-	_check(String(visible_rows[2].name_l.text).begins_with("3. 丙"),
-		"丙只有现金，排到第 3（实得「%s」）" % String(visible_rows[2].name_l.text))
-	_check(String(visible_rows[3].name_l.text).contains("破产"), "破产玩家标「破产」")
-	_check(String(visible_rows[3].money_l.text) == "已出局", "破产玩家身家列显示「已出局」")
-	# 行动者（我）的竖条点亮
-	_check((visible_rows[0].bar as ColorRect).color.a > 0.5, "行动者那行竖条点亮")
-	_check((visible_rows[1].bar as ColorRect).color.a < 0.5, "非行动者竖条不亮")
+	var bars: Array = g.corner_bars
+	_check(bars.size() == 4, "四角条建了 4 条（实得 %d）" % bars.size())
+	var vis_bars: Array = bars.filter(func(b) -> bool: return (b.root as Control).visible)
+	_check(vis_bars.size() == 4, "4 名玩家各占一条（实得 %d）" % vis_bars.size())
+	# 反向契约：右侧名册栏必须从 game 上**删净**（同时留着就是重复：都挂"名次+名字+身家"）
+	_check(g.get("roster_box") == null and g.get("roster_rows") == null,
+		"右侧名册栏已从 game 上删净（roster_box / roster_rows）")
+	# 角位 = 桌位：我是乙 ⇒ 左下是乙、左上丙、右上丁、右下甲（自己打头、其余按行动序）
+	_check(int(bars[0].peer) == 2 and int(bars[1].peer) == 3 \
+		and int(bars[2].peer) == 4 and int(bars[3].peer) == 1,
+		"角位 = 桌位（左下/左上/右上/右下 = 乙/丙/丁/甲，实得 %d/%d/%d/%d）" % [
+			int(bars[0].peer), int(bars[1].peer), int(bars[2].peer), int(bars[3].peer)])
+	# 名次徽章上的数字就是身家名次。身家 = 现金 + 地产；甲 12000 + 一号楼地价(3800) = 15800，
+	# 于是 乙(20000) > 甲(15800) > 丙(8000) > 丁(100)。
+	var rank_of := func(b: Dictionary) -> int:
+		var badge = b.get("badge")
+		if badge == null or not is_instance_valid(badge):
+			return -1
+		for c in (badge as Control).get_children():
+			if c is Label:
+				return int(String((c as Label).text))
+		return -1
+	_check(rank_of.call(bars[0]) == 1, "乙（我）身家最高 = 名次 1（实得 %d）" % rank_of.call(bars[0]))
+	_check(rank_of.call(bars[3]) == 2, "甲现金少但有地产，靠身家排到第 2（实得 %d）" % rank_of.call(bars[3]))
+	_check(rank_of.call(bars[1]) == 3, "丙只有现金，排到第 3（实得 %d）" % rank_of.call(bars[1]))
+	_check(rank_of.call(bars[2]) == 4, "丁最穷 = 名次 4（实得 %d）" % rank_of.call(bars[2]))
+	# 身家读数：期望值按**数据表**在测试里自己算一遍（与 game 的 `_state_worth` / 房主的
+	# `_net_worth` 同一公式：现金 + 名下地皮的地价）。写死"20,000"会随地产价格调整假红。
+	var worth_of := func(peer: int, cash: int) -> int:
+		var v := cash
+		var st_w: Array = g.st.tiles
+		for i in mini(st_w.size(), GameData.TILES.size()):
+			if int(st_w[i].get("owner", GameData.NO_OWNER)) == peer:
+				v += int(GameData.TILES[i].price)
+		return v
+	_check(String(bars[0].worth_l.text) == GameData.fmt_money(worth_of.call(2, 20000)),
+		"乙那条的身家 = 现金 + 地产（实得「%s」）" % String(bars[0].worth_l.text))
+	_check(String(bars[3].worth_l.text) == GameData.fmt_money(worth_of.call(1, 12000)),
+		"甲那条的身家 = 12000 + 他名下那块地（实得「%s」）" % String(bars[3].worth_l.text))
+	_check(String(bars[0].name_l.text).contains("乙") and String(bars[0].name_l.text).contains("（我）"),
+		"自己那条标「（我）」（实得「%s」）" % String(bars[0].name_l.text))
+	_check(String(bars[2].name_l.text).contains("破产"), "破产那家标「破产」（实得「%s」）"
+		% String(bars[2].name_l.text))
+	_check(String(bars[2].worth_l.text) == "已出局", "破产那家身家列显示「已出局」")
+	# 轮到谁行动：那一条的名字变金（角位的"该你了"提示，与立牌倒计时同一件事）
+	_check((bars[0].name_l as Label).get_theme_color("font_color") == UK.ACCENT,
+		"行动者（我）那条名字变金")
+	_check((bars[1].name_l as Label).get_theme_color("font_color") != UK.ACCENT,
+		"非行动者那条名字不变金")
+	# 四角条不许挡住三个角按钮（左上暂停 / 右上战报 / 左下规则说明），也不许出屏。
+	# 位置是"对着出图定"的（见 table_hud.CORNER_SLOTS），这条把结论钉住。
+	var quad_hit := {}
+	var overlap_bad := 0
+	var off_screen := 0
+	for b in vis_bars:
+		var r: Rect2 = (b.root as Control).get_global_rect()
+		var cx: int = 1 if r.get_center().x > g.size.x * 0.5 else 0
+		var cy: int = 1 if r.get_center().y > g.size.y * 0.5 else 0
+		quad_hit["%d%d" % [cx, cy]] = true
+		if r.position.x < 0.0 or r.position.y < 0.0 \
+				or r.end.x > g.size.x or r.end.y > g.size.y:
+			off_screen += 1
+		for btn in [g.opt_btn, g.log_toggle, g.rules_btn]:
+			if btn != null and is_instance_valid(btn) and r.intersects((btn as Control).get_global_rect()):
+				overlap_bad += 1
+		print("    [实测] 角标 peer %d：%s（面板 %s）" % [int(b.peer), r, (b.root as Control).size])
+	print("    [实测] 角按钮：暂停 %s / 战报 %s / 规则 %s" % [
+		(g.opt_btn as Control).get_global_rect(), (g.log_toggle as Control).get_global_rect(),
+		(g.rules_btn as Control).get_global_rect()])
+	_check(quad_hit.size() == 4, "四条各占一个角（实得 %d 个角）" % quad_hit.size())
+	_check(off_screen == 0, "四条都完整落在屏幕内（出屏 %d 条）" % off_screen)
+	_check(overlap_bad == 0, "四条都没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
 
 	print("== 客户端视角：行动者不是我 ==")
 	g.my_peer = 9                         # 观战/掉线后重连之类：自己不在名册里
 	g.s_state(_state(1, false))
 	await process_frame
-	var rows2: Array = g.roster_rows.filter(func(r) -> bool: return (r.root as Control).visible)
-	_check(rows2.size() == 4, "自己不在名册里也不崩、仍是 4 行")
-	var marked: Array = rows2.filter(func(r) -> bool: return String(r.name_l.text).contains("（我）"))
+	var vis2: Array = g.corner_bars.filter(func(b) -> bool: return (b.root as Control).visible)
+	_check(vis2.size() == 4, "自己不在名册里也不崩、仍是 4 条")
+	var marked: Array = vis2.filter(func(b) -> bool: return String(b.name_l.text).contains("（我）"))
 	_check(marked.is_empty(), "自己不在名册时没人被误标「（我）」")
-	_check((rows2[1].bar as ColorRect).color.a > 0.5, "轮到甲（名次 2）时他的竖条点亮")
+	# 自己不在名册 ⇒ 从第 0 家起轮转：甲排到左下、乙到左上
+	_check(int(g.corner_bars[0].peer) == 1 and int(g.corner_bars[1].peer) == 2,
+		"自己不在名册时从第 0 家起轮转（实得 %d/%d）"
+			% [int(g.corner_bars[0].peer), int(g.corner_bars[1].peer)])
+	_check((g.corner_bars[0].name_l as Label).get_theme_color("font_color") == UK.ACCENT,
+		"轮到甲（左下那条）时他的名字变金")
 
-	print("== 名册缓存：状态没变不重建 ==")
-	var sig_before: String = g._rail_sig
+	print("== 四角条缓存：状态没变不重建 ==")
+	var sig_before: String = g._corner_sig
 	g.s_state(_state(1, false))
 	await process_frame
-	_check(g._rail_sig == sig_before, "同一状态重复广播不复算（签名不变）")
+	_check(g._corner_sig == sig_before, "同一状态重复广播不复算（签名不变）")
 
 	print("== 底部操作坞已拆（批次 3 Task 6）：底栏没有，玩法入口还在 ==")
 	g.my_peer = 2
@@ -526,11 +586,11 @@ func _run() -> void:
 	_check(g.selected_slot == -1, "取消把选中态一并清掉（实得 %d）" % g.selected_slot)
 	_check(absf(tph.hand_rect(0).get_center().y - y_before) < 3.0, "取消后抬起反馈收回")
 
-	print("== 手牌不吃格子的点击（近排格子不能有点不动的死区）==")
-	# 近排（grid 最后一行，离镜头最近）= 手牌所在的那条带。判定顺序必须做到两件事：
-	# ① 牌只在道具阶段吃点击（别的阶段吃下点击毫无后果）；② 被吃掉的点屏幕上真的画着那张牌。
-	# 验收落点不是「格子完全不受影响」（牌就摆在格子上，物理上做不到），而是
-	# **「牌底下那几格在非道具阶段全都能点 / 道具阶段归牌且看得见牌」**。
+	print("== 近排格子不再被手牌压住（批次 5 Task 3：整排下移到木纹留白）==")
+	# 批次 3 那条老问题（R38/R40）是「牌盒上沿咬住近排格子，只在格子顶部留下十几画布像素的
+	# 可点缝；选中那张一抬起来，外侧两张的缝直接归零」。Task 3 把整排**放大 1.5 倍并下移到
+	# 桌垫前沿的木纹留白**（牌垫阶段按钮之下）之后，牌与近排格子**完全不重叠** —— 这条钉住新结论。
+	# 下面那段"牌底可点条带"的实测数值随之从 11~19 变成"整格皆可点"（报告与注释都按新值写）。
 	var cell_of := func(i: int) -> Rect2:
 		var p: Vector2 = g.board._view_from_world(g.board.tile_pos(i))
 		var s: float = g.board.TILE * g.board._zoom
@@ -540,6 +600,40 @@ func _run() -> void:
 		if g.board.tile_grid(i).y == GameData.BOARD_ROWS - 1:
 			near_row.append(i)
 	_check(near_row.size() == GameData.BOARD_COLS, "近排 %d 格都在（实得 %d）" % [GameData.BOARD_COLS, near_row.size()])
+	g.s_state(s_hand)
+	await process_frame
+	g._process(0.0)
+	var lowest_cell := 0.0
+	for i in near_row:
+		lowest_cell = maxf(lowest_cell, cell_of.call(i).end.y)
+	var hand_top := INF
+	var hand_bot := -INF
+	var hand_x0 := INF
+	var hand_x1 := -INF
+	for k in tph.hand_count():
+		var r: Rect2 = tph.hand_rect(k)
+		hand_top = minf(hand_top, r.position.y)
+		hand_bot = maxf(hand_bot, r.end.y)
+		hand_x0 = minf(hand_x0, r.position.x)
+		hand_x1 = maxf(hand_x1, r.end.x)
+	_check(hand_top > lowest_cell,
+		"手牌整排落在近排格子之下（牌上沿 %.1f > 格区下沿 %.1f）" % [hand_top, lowest_cell])
+	# 逐格逐张验「真的不相交」（只看整体上沿是不够的：扇形外侧那两张更靠上）
+	var cell_hits := 0
+	for i in near_row:
+		var cell: Rect2 = cell_of.call(i)
+		for k in tph.hand_count():
+			if cell.intersects(tph.hand_rect(k)):
+				cell_hits += 1
+	_check(cell_hits == 0, "没有一格与任何一张牌相交（相交 %d 处）—— 批次 3 的 R38/R40 就此消失" % cell_hits)
+	# 与牌垫阶段按钮也不许交叠（这是"放大"之后的另一条硬约束：按钮是出牌确认的唯一落点）
+	var pb := Rect2(g.board._phase_box.position, g.board._phase_box.size)
+	var hand_u := Rect2(Vector2(hand_x0, hand_top), Vector2(hand_x1 - hand_x0, hand_bot - hand_top))
+	_check(not hand_u.intersects(pb),
+		"手牌整排不与牌垫阶段按钮交叠（牌上沿 %.1f / 按钮下沿 %.1f，间距 %.1f 画布像素）"
+			% [hand_top, pb.end.y, hand_top - pb.end.y])
+	print("    [实测] 近排格区下沿 %.1f / 阶段按钮下沿 %.1f / 牌上沿 %.1f / 牌下沿 %.1f"
+		% [lowest_cell, pb.end.y, hand_top, hand_bot])
 
 	# ① 手牌只在道具阶段吃点击：牌是常驻显示的（每次广播都摆一遍），但别的阶段点它没有意义，
 	#    吃下点击就等于把本该落到格子上的一次点击吞成「什么都没发生」——那才是真正的死区。
@@ -552,44 +646,11 @@ func _run() -> void:
 	_check(not g._on_table_click(c0b), "不是道具阶段：点手牌不消费点击（漏给桌垫）")
 	_check(g.selected_slot == -1, "不是道具阶段：点了也不会选中")
 
-	# ② 牌底下的那几格：三种情况各点一次 —— **这才是「近排格子还能不能点」的验收**。
-	#    采样点一律取**真的落在牌盒里**的那种点（格子下沿 -3 画布像素）：格子上沿在牌盒
-	#    之上（近排格子 y∈[1651,1740]、牌盒 y∈[1662,1769]），拿上沿验「不吞」是恒真式 ——
-	#    那儿 hand_hit 本来就返回 -1，有没有阶段闸都过，什么都证明不了。
-	#    格子矩形是**左上锚定**的（board_view.tile_pos = BOARD_OFFSET + grid*TILE，
-	#    _index_at 做 floor(w/TILE)），所以 cell.position.y 就是格子上沿。
-	var covered: Array = []          # [{tile: int, card: int, pt: Vector2}]
-	var idx_bad := 0
-	for i in near_row:
-		var cell: Rect2 = cell_of.call(i)
-		var low := Vector2(cell.get_center().x, cell.end.y - 3.0)
-		if g.board._index_at(low) != i:
-			idx_bad += 1
-		for k in tph.hand_count():
-			if tph.hand_rect(k).has_point(low):
-				covered.append({"tile": i, "card": k, "pt": low})
-				break
-	_check(idx_bad == 0, "近排每格的下沿采样点都解算到它自己（解错 %d 格）" % idx_bad)
-	_check(covered.size() > 0, "有格子被手牌命中盒盖住（实得 %d 格）——这条重叠是实测事实" % covered.size())
-
-	# 2a 非道具阶段：这几个点必须**不被吞**（漏给桌垫）—— 这才是阶段闸的功劳，去掉闸这里就红
-	var blocked := 0
-	var still_covered := 0
-	for c in covered:
-		g._cancel_target()
-		if tph.hand_hit(c.pt) >= 0:
-			still_covered += 1
-		if g._on_table_click(c.pt):
-			blocked += 1
-	_check(still_covered == covered.size(),
-		"（对照）这 %d 个点确实落在牌盒里（实得 %d）——「不被吞」不是空谈" % [covered.size(), still_covered])
-	_check(blocked == 0, "不是道具阶段：牌底那 %d 格的下沿**全都能点**（被吞 %d 格）——阶段闸在干活"
-		% [covered.size(), blocked])
-	g._cancel_target()
-
-	# 2b 道具阶段：这几个点**被吞**，而且屏幕投影落在**那张牌**的屏幕包围盒里
-	#（两条链路只差一次 screen_to_viewport / viewport_to_screen 往返，所以这条是
-	#「牌的命中盒与牌角点的投影互相对得上」，不是完全独立的两次测量）
+	# ② 牌自己身上：三种情况各点一次。采样点一律取**牌面的中心**（真落在牌盒里，
+	#    不是"格子下沿恰好也在盒里"那种巧合）——「不被吞」才不是空谈。
+	#    取法走**真实的点击链路**：牌面八角的屏幕包围盒 → 盒心 → `screen_to_viewport` → 画布。
+	#    （**不能**反过来用 `viewport_to_screen` 把画布点映回屏幕：批次 5 Task 3 起牌整排
+	#     落在纹理窗口**之外**的木纹留白上，那个函数对窗口外的画布点一律返回 null。）
 	var screen_box := func(k: int) -> Rect2:
 		var mi := tph.get_node("Hand").get_child(k) as MeshInstance3D
 		var bm: BoxMesh = mi.mesh as BoxMesh
@@ -603,67 +664,94 @@ func _run() -> void:
 					mn = mn.min(sp)
 					mx = mx.max(sp)
 		return Rect2(mn, mx - mn)
+	var pts: Array = []              # [{card: int, pt: Vector2}]
+	for k in tph.hand_count():
+		var sp_c: Vector2 = (screen_box.call(k) as Rect2).get_center()
+		var cv = g.table3d.screen_to_viewport(sp_c)
+		pts.append({"card": k, "pt": cv if cv != null else Vector2(-9999.0, -9999.0),
+			"screen": sp_c})
+
+	# 2a 非道具阶段：这些点必须**不被吞**（漏给桌垫）—— 这才是阶段闸的功劳，去掉闸这里就红
+	var blocked := 0
+	var still_covered := 0
+	for c in pts:
+		g._cancel_target()
+		if tph.hand_hit(c.pt) >= 0:
+			still_covered += 1
+		if g._on_table_click(c.pt):
+			blocked += 1
+	_check(still_covered == pts.size(),
+		"（对照）这 %d 个点确实落在牌盒里（实得 %d）——「不被吞」不是空谈" % [pts.size(), still_covered])
+	_check(blocked == 0, "不是道具阶段：牌面上这 %d 个点**全都不被吞**（被吞 %d）——阶段闸在干活"
+		% [pts.size(), blocked])
+	g._cancel_target()
+
+	# 2b 道具阶段：这些点**被吞**，而且命中的正是**它自己那张**牌
+	#（点取自"看得见的那块屏幕包围盒的中心"，判据走 hand_hit —— 两条链路对得上才算数）
 	g.s_state(s_hand)
 	await process_frame
 	g._process(0.0)
 	var eaten := 0
-	var eaten_visible := 0
-	for c in covered:
+	var eaten_self := 0
+	for c in pts:
 		# 每次点之前先清空选中态：这样「点之前的手牌摆位」每次都一样，屏幕包围盒才在点之前算得准
 		#（点下去会把选中的牌抬起来，摆位就变了）。
 		g._cancel_target()
-		var low2: Vector2 = c.pt
 		var boxes: Array = []
 		for k in tph.hand_count():
 			boxes.append(screen_box.call(k))
-		if g._on_table_click(low2):
+		if g._on_table_click(c.pt):
 			eaten += 1
-			var sp2 = g.table3d.viewport_to_screen(low2)
-			if sp2 != null and (boxes[c.card] as Rect2).has_point(sp2 as Vector2):
-				eaten_visible += 1
+			if tph.hand_hit(c.pt) == int(c.card) \
+					and (boxes[c.card] as Rect2).has_point(c.screen as Vector2):
+				eaten_self += 1
 	g._cancel_target()
-	_check(eaten == covered.size(), "道具阶段：牌底那 %d 格的下沿都被手牌接收（实得 %d）"
-		% [covered.size(), eaten])
-	_check(eaten_visible == eaten, "被接收的点屏幕上确实画着**它自己那张**牌（%d / %d）"
-		% [eaten_visible, eaten])
+	_check(eaten == pts.size(), "道具阶段：牌面上这 %d 个点都被手牌接收（实得 %d）"
+		% [pts.size(), eaten])
+	_check(eaten_self == eaten, "被接收的点屏幕上确实画着**它自己那张**牌（%d / %d）"
+		% [eaten_self, eaten])
 
-	# 2c 实测取证（不为它下断言 —— 选中时的条带归零是批次 5 已知要改摆位解决的问题）：
-	#    未选中时牌盒上沿在格子下沿之上，留下一条可点的缝；**被选中那张抬起来之后**这条缝归零。
-	for c in covered:
-		var cell3: Rect2 = cell_of.call(c.tile)
-		g._cancel_target()
-		var gap_plain: float = maxf(0.0, tph.hand_rect(c.card).position.y - cell3.position.y)
-		g._on_table_click(c.pt)          # 选中那一张（抬起 ≈11 画布像素）
-		var gap_sel: float = maxf(0.0, tph.hand_rect(c.card).position.y - cell3.position.y)
-		print("    [实测] tile #%d ← 牌 %d：未选中时可点缝 %.1f 画布像素（格高 %.1f），选中后 %.1f"
-			% [c.tile, c.card, gap_plain, cell3.size.y, gap_sel])
+	# 2c 实测取证：**牌底那几格还剩多少可点条带**（批次 5 Task 3 的验收点）。
+	#    批次 3 的答案是"未选中 11~19、选中后外侧两张归零"；今天牌整排下移到木纹留白，
+	#    答案是**没有格子被盖住**：近排每格的整条高都能点。选中态只会把牌**抬得更高**
+	#    （离格子更远），所以这个结论对未选中 / 选中两档都成立。
 	g._cancel_target()
+	var gap_plain: float = hand_top - lowest_cell
+	var sel_card := 2 if tph.hand_count() > 2 else 0
+	g._on_table_click(tph.hand_rect(sel_card).get_center())
+	var sel_top := INF
+	for k in tph.hand_count():
+		sel_top = minf(sel_top, tph.hand_rect(k).position.y)
+	var gap_sel: float = sel_top - lowest_cell
+	print("    [实测] 牌底可点条带：未选中 %.1f 画布像素、选中（第 %d 张抬起）后 %.1f —— 都不为 0"
+		% [gap_plain, sel_card, gap_sel])
+	g._cancel_target()
+	_check(gap_plain > 0.0 and gap_sel > 0.0,
+		"选中 / 未选中两档下，近排格子都还有可点的条带（%.1f / %.1f 画布像素）" % [gap_plain, gap_sel])
 
-	# ③ 下沿：取一个没被手牌盖住的近排格子，点它的下沿必须**不被消费**，并打开该格详情。
-	#    说明措辞：这里验的是**下游那一半**（board._index_at 把它解算成这格 → game._on_tile_clicked
-	#    打开详情卡）；上游那一半（BoardView 在鼠标松开时 emit tile_clicked）是既有代码、
-	#    本任务没碰，`_on_table_click` 返回 false 意味着这次点击会照原样送进桌垫走到它。
-	var free_tile := -1
+	# ③ 下沿：近排**每一格**（不再需要"找没被盖住的那一格"—— 今天一格都没被盖住）的下沿都必须
+	#    **不被消费**，并解算到它自己。这里验的是**下游那一半**（board._index_at 把它解算成这格
+	#    → game._on_tile_clicked 打开详情卡）；上游那一半（BoardView 在鼠标松开时 emit
+	#    tile_clicked）是既有代码、本任务没碰，`_on_table_click` 返回 false 意味着这次点击
+	#    会照原样送进桌垫走到它。
+	var idx_bad := 0
+	var swallowed := 0
 	for i in near_row:
 		var cell: Rect2 = cell_of.call(i)
 		var low_pt := Vector2(cell.get_center().x, cell.end.y - 3.0)
-		var is_covered := false
-		for k in tph.hand_count():
-			if tph.hand_rect(k).has_point(low_pt):
-				is_covered = true
-		if not is_covered and g.board._index_at(low_pt) == i:
-			free_tile = i
-			break
-	_check(free_tile >= 0, "找到一个没被手牌盖住的近排格子（实得 #%d）" % free_tile)
-	if free_tile >= 0:
-		var cell_f: Rect2 = cell_of.call(free_tile)
-		var low_f := Vector2(cell_f.get_center().x, cell_f.end.y - 3.0)
-		_check(not g._on_table_click(low_f), "点它（#%d）的下沿：手牌不消费这次点击" % free_tile)
-		_check(g.board._index_at(low_f) == free_tile, "该点仍解算到这格（点击会照原样进桌垫）")
-		g.info_panel.visible = false
-		g._on_tile_clicked(free_tile)          # 桌垫那一端（tile_clicked）接的就是它
-		await process_frame
-		_check(g.info_panel.visible, "该格详情卡打开（_index_at → _on_tile_clicked 这一半打通）")
+		if g.board._index_at(low_pt) != i:
+			idx_bad += 1
+		if g._on_table_click(low_pt):
+			swallowed += 1
+	_check(idx_bad == 0, "近排每格的下沿采样点都解算到它自己（解错 %d 格）" % idx_bad)
+	_check(swallowed == 0, "近排 %d 格的下沿全都能点（被手牌吞掉 %d 格）" % [near_row.size(), swallowed])
+	var free_tile: int = near_row[mini(3, near_row.size() - 1)]
+	var cell_f: Rect2 = cell_of.call(free_tile)
+	var low_f := Vector2(cell_f.get_center().x, cell_f.end.y - 3.0)
+	g.info_panel.visible = false
+	g._on_tile_clicked(free_tile)          # 桌垫那一端（tile_clicked）接的就是它
+	await process_frame
+	_check(g.info_panel.visible, "该格（#%d）详情卡打开（_index_at → _on_tile_clicked 这一半打通）" % free_tile)
 
 	print("== 手牌重排：选中态不漂（每次广播都重摆一遍手牌）==")
 	g.s_state(s_hand)
@@ -830,46 +918,34 @@ func _run() -> void:
 	_check(g._discard_pending == -1, "回合推进（turn 变）时待确认解除（实得 %d）" % g._discard_pending)
 	_check(tph._hand_disc == -1, "回合推进后红标收掉（实得 _hand_disc=%d）" % tph._hand_disc)
 
-	print("== 选目标期间：手牌让位给格子（终审 R2）==")
-	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子，而牌底那 3~5 格
-	# 会被手牌抢答成「改选另一张牌」⇒ 指向性格子的道具打不到自家附近的格子。修完后手牌在
-	# 选目标期间对点击**完全透明**：左键落回棋盘 = 选格、右键 = 既有取消。
+	print("== 选目标期间：手牌对点击完全透明（终审 R2）==")
+	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子 / 立牌，手牌不能抢答成
+	# 「改选另一张牌」。修完后手牌在选目标期间对点击**完全透明**：左键落回棋盘 = 选格、
+	# 右键 = 既有取消。
+	# **批次 5 Task 3 起这条闸仍然必须站岗**，虽然牌已不再盖住任何近排格子（见上一段）：
+	# 玩家在选格时点到自己的牌上，那一下同样不能变成"换选另一张牌"。
 	g.hp[0].items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0}, {"id": "快递直达", "cd": 0}]
 	g.s_state(s_disc)
 	await process_frame
 	g._process(0.0)
-	var cov_tile := -1
-	var cov_card := -1
-	var cov_pt := Vector2.ZERO
-	for i in GameData.TILES.size():
-		if g.board.tile_grid(i).y != GameData.BOARD_ROWS - 1:
-			continue
-		var cell: Rect2 = cell_of.call(i)
-		var low := Vector2(cell.get_center().x, cell.end.y - 3.0)
-		for k in tph.hand_count():
-			if tph.hand_rect(k).has_point(low):
-				cov_tile = i
-				cov_card = k
-				cov_pt = low
-				break
-		if cov_tile >= 0:
-			break
-	_check(cov_tile >= 0, "找到一个被手牌盖住下沿的近排格子（实得 #%d / 牌 %d）" % [cov_tile, cov_card])
-	if cov_tile >= 0:
-		_check(tph.hand_hit(cov_pt) >= 0, "（对照）这个点确实落在手牌命中盒里")
-		# 进选地块态，把该格设为可选；此期间点它必须**不被手牌消费**
-		g._begin_tile_target(0, [cov_tile])
-		_check(g._tgt_stage == "tile" and g._tgt_tiles.has(cov_tile), "进了选地块态、该格可选")
-		var eaten2: bool = g._on_table_click(cov_pt, MOUSE_BUTTON_LEFT)
-		_check(not eaten2, "选目标期间：点被牌盖住的格子，手牌不消费（让位给格子）")
-		_check(not g._on_table_click(tph.hand_rect(0).get_center(), MOUSE_BUTTON_RIGHT),
-			"选目标期间：右键手牌也不消费（落回棋盘 = 既有取消）")
-		_check(g.selected_slot == -1, "选目标期间点牌不改选中态（实得 %d）" % g.selected_slot)
-		_check(g.board._index_at(cov_pt) == cov_tile, "该点仍解算到这格（会照原样进桌垫 → tile_clicked）")
-		if not eaten2:                    # 没被手牌吃掉，才谈得上"点到了那格"
-			g._on_tile_clicked(cov_tile)  # 桌垫那一端（tile_clicked）接的就是它
-			_check(g._tgt_stage == "", "该格被选中 → 选目标态收尾（实得「%s」）" % g._tgt_stage)
-		g._cancel_target()
+	var probe_pt: Vector2 = tph.hand_rect(0).get_center()
+	_check(tph.hand_hit(probe_pt) == 0, "（对照）这个点确实落在第一张牌的命中盒里")
+	g._begin_tile_target(0, [near_row[0]])
+	_check(g._tgt_stage == "tile" and g._tgt_tiles.has(near_row[0]), "进了选地块态、该格可选")
+	_check(not g._on_table_click(probe_pt, MOUSE_BUTTON_LEFT),
+		"选目标期间：左键点手牌不消费（落回棋盘）")
+	_check(not g._on_table_click(probe_pt, MOUSE_BUTTON_RIGHT),
+		"选目标期间：右键手牌也不消费（落回棋盘 = 既有取消）")
+	_check(g.selected_slot == -1, "选目标期间点牌不改选中态（实得 %d）" % g.selected_slot)
+	# 该格的下沿仍照原样落回桌垫（手牌不消费 → 会进 tile_clicked）
+	var cell_r0: Rect2 = cell_of.call(near_row[0])
+	var low_r0 := Vector2(cell_r0.get_center().x, cell_r0.end.y - 3.0)
+	_check(not g._on_table_click(low_r0, MOUSE_BUTTON_LEFT),
+		"选目标期间：点近排格子的下沿也不被手牌消费")
+	_check(g.board._index_at(low_r0) == near_row[0], "该点仍解算到这格（会照原样进桌垫 → tile_clicked）")
+	g._on_tile_clicked(near_row[0])           # 桌垫那一端（tile_clicked）接的就是它
+	_check(g._tgt_stage == "", "该格被选中 → 选目标态收尾（实得「%s」）" % g._tgt_stage)
+	g._cancel_target()
 
 	print("== 立牌（批次 5 Task 1）：数据来自已同步的 st、点对手立牌能选目标 ==")
 	# 座位卡的 3D 版。数据全走 st.players / st.tiles（客户端也准），顺序按"自己打头、
@@ -923,7 +999,12 @@ func _run() -> void:
 		# 选目标态：点对手立牌 = 选定目标，走的仍是既有的 _on_seat_clicked
 		# （强拆令是两段式：选完玩家要再点他名下的一块地）。
 		# 手上那张要从**已同步的 st** 里读（`_target_item_id` 读的是 st.players）——只改 hp 不够。
+		# `await = "item"` / `await_peer = 我` 是**必须的**：`_refresh_item_buttons` 对"不是在
+		# 道具阶段的我家"会顺手 `_cancel_target()`（既有行为，与本任务无关）。用掷轮窗口喂广播，
+		# 选目标态会被那次广播取消掉 —— 那验的就不是"高亮重放"而是别的东西了。
 		var s_tgt: Dictionary = _state(2, false)
+		s_tgt.await = "item"
+		s_tgt.await_peer = 2
 		for p in s_tgt.players:
 			if int(p.peer) == 2:
 				p.items = [{"id": "强拆令", "cd": 0}]
@@ -932,15 +1013,51 @@ func _run() -> void:
 			"items": [{"id": "强拆令", "cd": 0}]}]
 		g.s_state(s_tgt)
 		await process_frame
+		# 批次 5 Task 3：**可选中的立牌必须亮着** —— 座位卡退场后这条可见反馈在画布里没有落点了
+		# （Task 2 的遗留顾虑 1），补在立牌上。判据一律取材质上真实贴上去的东西（emission_enabled
+		# 与 albedo 的亮度），不读内部标志；驱动点就是 `_begin_peer_target` 那一处
+		#（`game._push_peer_highlight` 同一处推给 board 与立牌，判据只有一份）。
+		var plate_of := func(i: int) -> MeshInstance3D:
+			return (srh.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
+		var lit_of := func(i: int) -> bool:
+			var pm := plate_of.call(i).material_override as StandardMaterial3D
+			return pm != null and pm.emission_enabled
+		var lum_of := func(i: int) -> float:
+			return (plate_of.call(i).material_override as StandardMaterial3D).albedo_color.get_luminance()
+		var dim_lum: Array = []
+		for i in 4:
+			dim_lum.append(lum_of.call(i))
+		var dim_y: Array = []
+		for i in 4:
+			dim_y.append((srh.get_child(i) as Node3D).global_position.y)
 		g._begin_peer_target(0, false, true)
 		_check(g._tgt_stage == "peer", "进了既有的「选玩家」态（实得「%s」）" % g._tgt_stage)
+		# 强拆令是两段式（目标须名下有地）⇒ 四家里只有甲（peer 1，第 4 块）可选
+		_check(lit_of.call(3), "选目标态：可选中的那块（甲）亮着")
+		_check(not lit_of.call(1) and not lit_of.call(2),
+			"选目标态：不可选中的两块保持原样（不亮）")
+		_check(lum_of.call(3) > dim_lum[3] + 0.05,
+			"亮着的那块牌面真提亮了（%.3f → %.3f）" % [dim_lum[3], lum_of.call(3)])
+		_check(lum_of.call(1) < dim_lum[1] + 0.001,
+			"没选中的那块牌面颜色一字未动（%.3f → %.3f）" % [dim_lum[1], lum_of.call(1)])
+		_check((srh.get_child(3) as Node3D).global_position.y > dim_y[3] + 0.01,
+			"亮着的那块还抬起来一点（y %.3f → %.3f）"
+				% [dim_y[3], (srh.get_child(3) as Node3D).global_position.y])
+		# 广播不能把高亮弄丢（与倒计时同款：每次重摆都重放一遍）
+		g.s_state(s_tgt)
+		await process_frame
+		_check(lit_of.call(3) and not lit_of.call(1), "一次状态广播之后高亮仍在（重摆会重放）")
 		_check(g._on_table_click(foe_pt), "选目标态：点甲那块立牌被消费（选目标链路接上了）")
 		_check(g._tgt_stage == "tile" and g._tgt_peer == 1,
 			"选定甲 → 转进既有的第二段「选他名下的一块地」（实得「%s」/ target=%d）"
 				% [g._tgt_stage, g._tgt_peer])
+		# 走进第二段（选地块）之后，那份"可选玩家"高亮随之熄灭（与 board.set_select_tiles 同步）
+		_check(not lit_of.call(3), "转进「选地块」段后立牌高亮熄灭")
 		g._cancel_target()
+		_check(not lit_of.call(3) and not lit_of.call(1), "取消选目标后四块都不亮")
 		# 右键不消费：棋盘上右键是既有的取消，立牌不破例
 		g._begin_peer_target(0, false, true)
+		_check(lit_of.call(3), "（前置）重新进选目标态：甲那块又亮了")
 		_check(not g._on_table_click(foe_pt, MOUSE_BUTTON_RIGHT),
 			"选目标态下右键点立牌不消费（右键在棋盘上是既有的取消）")
 		g._cancel_target()

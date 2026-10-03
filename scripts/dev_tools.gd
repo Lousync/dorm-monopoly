@@ -430,6 +430,40 @@ func take_shot(path: String) -> void:
 		# 否则弹层会盖住正在翻的抽卡
 		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
 		g.casino.s_casino_roll.rpc({g.my_peer: 5})
+	if path.contains("target") and g.multiplayer.is_server() and not g.htiles.is_empty():
+		# 摆拍（批次 5 Task 3）：进**选目标态**，核对"可选中的立牌亮着、其余不亮"。
+		# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出
+		# "有的亮、有的不亮"，正是这条反馈要展示的对比（跑腿券那种"谁都能选"的拍不出对比）。
+		# 为了让这张图**可复现**：先把地皮归属清干净、只给**最后一家**两块地
+		#（同 level / hand 那类"只注入局面状态"的摆拍手法，玩法代码一行不改）。
+		for i in g.htiles.size():
+			g.htiles[i].owner = GameData.NO_OWNER
+			g.htiles[i].level = 0
+		var last_peer: int = int(g.hp[g.hp.size() - 1].peer) if not g.hp.is_empty() else g.my_peer
+		var given := 0
+		for i in g.htiles.size():
+			if String(GameData.TILES[i].get("type", "")) != "property":
+				continue
+			g.htiles[i].owner = last_peer
+			given += 1
+			if given >= 2:
+				break
+		g._broadcast_state()
+		await get_tree().create_timer(0.35).timeout
+		var me_t: Dictionary = g._player_by_peer(g.my_peer)
+		if not me_t.is_empty():
+			g._grant_item(me_t, "强拆令")
+			g._broadcast_state()
+			await get_tree().create_timer(0.3).timeout
+			var slot_t := 0
+			for k in (me_t.get("items", []) as Array).size():
+				if String(me_t.items[k].id) == "强拆令":
+					slot_t = k
+			g.selected_slot = slot_t
+			if g.table3d != null and g.table3d.table_props != null:
+				g.table3d.table_props.set_hand_selected(slot_t)
+			g._begin_peer_target(slot_t, false, true)
+			await get_tree().create_timer(0.25).timeout
 	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
 	for i in 3:
 		await get_tree().create_timer(0.6).timeout

@@ -78,7 +78,7 @@ func _run() -> void:
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	# 场景/脚本编译失败时成员是 null，后续断言里的表达式会先报错、根本走不到
 	# _check，于是整轮「全过」——必须在这里显式拦下（见 fix/v0.0.2）
-	if g.board == null or g.roster_box == null or g.shop_layer == null:
+	if g.board == null or g.corner_bars.is_empty() or g.shop_layer == null:
 		printerr("  FAIL - 对局场景未正确加载（脚本编译失败？）")
 		print("REGRESSION TEST: SCENE LOAD FAILED")
 		quit(1)
@@ -309,7 +309,8 @@ func _test_ui_widgets_applied(g) -> void:
 		"info_body", "info_sb", "chat_edit",
 		"opt_btn", "black_btns", "black_hint",
 		"menu_dim", "menu_wraps", "rules_btn", "rules_panel", "rules_body", "rules_tabs",
-		"roster_box", "roster_rows"]
+		# 批次 5 Task 3：四角身家条取代了右侧名册栏（roster_box / roster_rows 已从 game 上删净）
+		"corner_bars"]
 	var missing: Array = []
 	for n in names:
 		if g.get(n) == null:
@@ -319,12 +320,15 @@ func _test_ui_widgets_applied(g) -> void:
 	# 留在表里就是一条恒假的红条。这里把「确实删掉了」也钉住：谁要是把它们加回来，
 	# 等于坞又长出来了，这条会先红。
 	var removed := ["mat_bar", "action_bar", "dock_plate", "roll_btn", "use_phase_btn", "item_btn_box",
-		"status_label", "ph1_lab", "ph2_lab", "ph1_pill", "ph2_pill", "ph_arrow_l"]
+		"status_label", "ph1_lab", "ph2_lab", "ph1_pill", "ph2_pill", "ph_arrow_l",
+		# 批次 5 Task 3：右侧名册栏被四角身家条取代 —— 这两个名字必须**从 game 上删净**，
+		# 谁把它们加回来就等于名册栏又长出来了（四角条与它挂的是同一份东西，重复）。
+		"roster_box", "roster_rows"]
 	var back: Array = []
 	for n in removed:
 		if g.get(n) != null:
 			back.append(n)
-	_check(back.is_empty(), "底部操作坞的成员仍未回填（残留：%s）" % str(back))
+	_check(back.is_empty(), "底部操作坞 + 右栏名册的成员均已删净（残留：%s）" % str(back))
 
 func _test_dev_panel(g) -> void:
 	print("== 开发者面板（已搬到 dev_tools.gd）==")
