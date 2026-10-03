@@ -235,11 +235,15 @@ func _hide() -> void:
 
 # ---------------- 全屏演出层：场景 / 抽游戏 / 掷骰 ----------------
 
-## 铺好本局场景（骰子行清空、记录本局名单）
+## 铺好本局场景（骰子行清空、结果提示清空、记录本局名单）
+## 提示必须在这里清：面板是常驻的（`_build_ui` 只建一次），不清就会把上一轮的
+## 「XXX 掷出最高点，独吞奖池 ¥X！」一直留到本轮 s_casino_end 覆盖为止——
+## 被删的原实现靠每轮重建 Label 天然清空，搬家时漏了。
 func _enter(order: Array, names: Dictionary) -> void:
 	_order = order
 	_names = names
 	_dice = {}
+	_hint_l.text = ""
 	for c in _dice_row.get_children():
 		c.queue_free()
 
