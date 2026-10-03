@@ -213,6 +213,41 @@ func _run() -> void:
 
 	t3.queue_free()
 
+	# ---- Task 4b：座位栏是否落在画布外（先取证） ----
+	# 四条座位栏是「指向性道具点人选目标」的区域。座位栏比棋盘占位更宽（左右各 256px、
+	# 上下各 286px），若取景只按「棋盘 + 空区」算，栏条就会落到 0..2048 画布之外、点不到。
+	# 这里用真身容器（不是裸 BoardView）：座位落位发生在取景之后（客户端等 s_state 才建座），
+	# 复现的正是「首次取景时还没有座位」这条路径。
+	print("== 装了座位之后，四条座位栏是否都在画布内 ==")
+	var t4 = load("res://scripts/table_3d.gd").new()
+	root.add_child(t4)
+	await process_frame
+	await process_frame
+	# 装四个座位（peer 1..4；这里只要位置，不联网）
+	var pls := []
+	for i in 4:
+		pls.append({"peer": i + 1, "name": "P%d" % (i + 1), "color": i, "bot": false,
+			"money": 20000, "pos": 0, "alive": true, "skip": 0, "sleep": 0,
+			"stamina": 3, "items": [], "item_used": false})
+	t4.board.build_seats(pls, 1)
+	t4.board._process(0.0)        # 触发首帧布局/取景
+	t4.board._process(0.0)
+	var vp4 := Rect2(Vector2.ZERO, Vector2(t4.viewport.size))
+	var out := 0
+	for e in 4:
+		# _seat_bar 给的是**世界坐标**；要回答「在不在画布内」必须先过镜头变换换成画布（视图）坐标，
+		# 否则拿世界矩形直接跟 0..2048 比 —— 两边不同空间，四条永远算越界（假红）。
+		var bar: Rect2 = t4.board._seat_bar(e)
+		var c0: Vector2 = t4.board._view_from_world(bar.position)
+		var c1: Vector2 = t4.board._view_from_world(bar.end)
+		var bar_view := Rect2(c0, c1 - c0).abs()
+		print("    边 %d：世界 %s → 画布 %s" % [e, bar, bar_view])
+		if not vp4.encloses(bar_view):
+			out += 1
+			print("    [越界] 边 %d 的座位栏 %s 不在画布 %s 内" % [e, bar_view, vp4])
+	_check(out == 0, "四条座位栏都在画布内（越界 %d 条）" % out)
+	t4.queue_free()
+
 	if fails == 0:
 		print("LAYOUT TEST: ALL PASS")
 		quit(0)

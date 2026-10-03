@@ -942,6 +942,16 @@ func build_seats(players: Array, my_peer: int) -> void:
 		var p: Dictionary = players[(my_i + k) % players.size()]
 		_seats[k] = _make_seat(p, k)
 		_seat_of_peer[int(p.peer)] = k
+	# 座位栏比棋盘占位大一圈（左右各 BAND_SIDE+HOLE_MX、上下各 BAND_TB）：落位后必须重取景，
+	# 否则四条栏落在画布之外，指向性道具（交换生 / 跑腿券 / 强拆令）点不到人。
+	# 取景本身不用改：_occupied_rect() 已把座位栏 merge 进去，重算一次就够。
+	# 光置 _need_fit 不够：客户端要等 s_state 才建座，那时首次取景早已做完（_fitted=true），
+	# _process 会走 _apply_cam() 分支 —— 只重算变换，不重算基准倍率与注视点。故这里直接取景。
+	# （座位只在开局落一次 —— game.gd 以 seat_count()==0 为界 —— 这次硬取景就是初始镜头。）
+	if size.x > 10.0:
+		fit_overview(true)
+	else:
+		_need_fit = true   # 布局还没跑（首个 _process 之前）：交给它做首次取景，那时已含座位栏
 
 func seat_count() -> int:
 	return _seats.size()
