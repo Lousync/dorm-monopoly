@@ -222,6 +222,115 @@ func _run() -> void:
 	_check(got_events.size() == 1 and (got_events[0] as InputEventMouseMotion) != null,
 		"悬停（MouseMotion）同样送到 2D 控件（实得 %d）" % got_events.size())
 
+	# ---- 批次 3 Task 1：实体物件先于桌垫内容消费点击 ----
+	# 这是本任务唯一的新运行时行为：on_table_click 返回 true = 这次点击落在实体上，2D 棋盘
+	# 不该知道它发生过。三条覆盖：消费 / 放行 / 默认态。夹具沿用上面那套（真坐标 push_input
+	# 进根视口 → 3D 映射 → SubViewport 内的探针控件）。
+	print("== 实体物件先消费点击（on_table_click）==")
+	var seen_px: Array = []
+	var at_center := func(_px: Vector2) -> bool:
+		seen_px.append(_px)
+		return true
+	t3.on_table_click = at_center
+	var pc := InputEventMouseButton.new()
+	pc.button_index = MOUSE_BUTTON_LEFT
+	pc.pressed = true
+	pc.position = click.position        # 与上面同一条链：屏幕点 → 桌面中心
+	got_events.clear()
+	root.push_input(pc)
+	await process_frame
+	_check(got_events.is_empty(), "回调返回 true：按下被消费，棋盘收不到（实得 %d）" % got_events.size())
+	# 回调拿到的必须是**画布像素**：实体层的命中判定（转盘半径、手牌矩形）全在画布坐标系里做，
+	# 这里给错了坐标系，命中就会整体错位 —— 而这在"收到没收到事件"上完全看不出来。
+	_check(seen_px.size() == 1 and (seen_px[0] as Vector2).distance_to(win.get_center()) < 2.0,
+		"回调收到的是画布像素坐标（实得 %s，期望 ≈%s）" % [seen_px, win.get_center()])
+
+	# 配对的松开也要吞掉。反例（review 实测过的那条）：先在桌垫上左键按下（转发，2D 侧
+	# `_dragging = true`）→ 再在转盘上右键按下（被实体消费，不转发）→ 右键松开：此时左键还
+	# 按着，`board_view.gd:902` 不会清 `_dragging`，于是松开走到 `:900-901` 的 cancel_clicked
+	# —— 一次明明被实体吃掉的点击，却给 2D 板子送了个取消。
+	got_events.clear()
+	var rel := InputEventMouseButton.new()
+	rel.button_index = MOUSE_BUTTON_LEFT
+	rel.pressed = false
+	rel.position = pc.position
+	root.push_input(rel)
+	await process_frame
+	_check(got_events.is_empty(), "被消费按下的配对松开也被吞掉（实得 %d）" % got_events.size())
+
+	# 放行：返回 false = 没落在实体上，照旧送进 SubViewport。
+	t3.on_table_click = func(_px: Vector2) -> bool: return false
+	got_events.clear()
+	var pc2 := InputEventMouseButton.new()
+	pc2.button_index = MOUSE_BUTTON_LEFT
+	pc2.pressed = true
+	pc2.position = click.position
+	root.push_input(pc2)
+	await process_frame
+	_check(got_events.size() == 1, "回调返回 false：照旧转发进 SubViewport（实得 %d）" % got_events.size())
+
+	# 默认态：没接回调（批次 3 Task 1 的常态）时一行都不拦 —— 上面所有 2D 交互因此零回归。
+	t3.on_table_click = Callable()
+	got_events.clear()
+	var pc3 := InputEventMouseButton.new()
+	pc3.button_index = MOUSE_BUTTON_LEFT
+	pc3.pressed = true
+	pc3.position = click.position
+	root.push_input(pc3)
+	await process_frame
+	_check(got_events.size() == 1, "回调为空（Callable()）：默认不拦任何点击（实得 %d）" % got_events.size())
+
+	# 旗标的生命期：只该覆盖「被消费的按下 → 它的松开」这一段。两条边界分别钉住：
+	# （a）同一个键又按下 = 上一次配对早就断了（松开的事件没送到），旗标必须让位给新的一次，
+	#     否则新按下的**松开**会被误吞 —— 而新按下的按下是转发过的，2D 侧正等着那个松开。
+	t3.on_table_click = func(_px: Vector2) -> bool: return true
+	var pa := InputEventMouseButton.new()
+	pa.button_index = MOUSE_BUTTON_LEFT
+	pa.pressed = true
+	pa.position = click.position
+	root.push_input(pa)                       # 被消费 → 旗标 = 左键
+	await process_frame
+	t3.on_table_click = func(_px: Vector2) -> bool: return false
+	var pa2 := InputEventMouseButton.new()
+	pa2.button_index = MOUSE_BUTTON_LEFT
+	pa2.pressed = true
+	pa2.position = click.position
+	got_events.clear()
+	root.push_input(pa2)                      # 同一个键又按下、这次转发
+	await process_frame
+	_check(got_events.size() == 1, "同键再次按下被转发（实得 %d）" % got_events.size())
+	var ra := InputEventMouseButton.new()
+	ra.button_index = MOUSE_BUTTON_LEFT
+	ra.pressed = false
+	ra.position = click.position
+	got_events.clear()
+	root.push_input(ra)
+	await process_frame
+	_check(got_events.size() == 1,
+		"旧旗标不让位的话，这次松开会被误吞（实得 %d）" % got_events.size())
+
+	# （b）别的键打不到桌面（射线翻过水平线）时**不能**清旗标：旗标按键记，只可能被同一个键
+	#     的松开消费，顺手清掉就会让那个配对的松开漏进 2D。
+	t3.on_table_click = func(_px: Vector2) -> bool: return true
+	var pb := InputEventMouseButton.new()
+	pb.button_index = MOUSE_BUTTON_LEFT
+	pb.pressed = true
+	pb.position = click.position
+	root.push_input(pb)                       # 被消费 → 旗标 = 左键
+	await process_frame
+	var pmiss := InputEventMouseButton.new()
+	pmiss.button_index = MOUSE_BUTTON_RIGHT
+	pmiss.pressed = true
+	pmiss.position = Vector2(vr.size.x * 0.5, -vr.size.y * 2.0)   # 打不到桌面
+	root.push_input(pmiss)
+	await process_frame
+	got_events.clear()
+	root.push_input(ra)                       # 左键的配对松开：仍须被吞掉
+	await process_frame
+	_check(got_events.is_empty(),
+		"别的键打不到桌面也不清旗标：配对松开仍被吞（实得 %d）" % got_events.size())
+	t3.on_table_click = Callable()
+
 	# ---- 批次 3 Task 1：3D 物件层地基 ----
 	# props 是实体物件（转盘 / 筹码 / 体力件 / 手牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
 	# 物件摆位一律走 canvas_px_to_world（画布像素 → 桌面世界），而不是另立一套坐标。

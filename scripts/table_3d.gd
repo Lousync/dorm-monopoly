@@ -42,6 +42,12 @@ var props: Node3D
 ## 默认无效（Callable()），即不拦截任何点击 —— 只有 game.gd 接上后才有实体可点。
 var on_table_click: Callable = Callable()
 
+## 被实体层吃掉的那次按下的按钮（MOUSE_BUTTON_NONE = 无）。只为了在配对的松开时
+## 把这一对事件一起拦掉：2D 侧若只收到「松开」而没收到「按下」，会把上一次按下的拖拽
+## 状态当成这次松开在收尾（见 _unhandled_input 里的反例）。按 button_index 认，
+## 这样吞掉的必定是同一次点击的松开，不会误伤别的键。
+var _consumed_press_btn: int = MOUSE_BUTTON_NONE
+
 func _init() -> void:
 	_build_environment()
 	_build_table()
@@ -223,6 +229,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		viewport.notification(Viewport.NOTIFICATION_VP_MOUSE_ENTER)
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		# 滚轮分支不吃旗标：旗标认的是某个具体按键的"按下还没被松开"，而滚轮既不是那个按键、
+		# 也不代表它松开了（滚轮事件照旧推拉，与左/右键的配对互不相干）。这里若顺手清掉，
+		# 一个被消费的按下在"滚一格再松开"之后就又漏进 2D 了。
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			dolly(1.12)
 			get_viewport().set_input_as_handled()
@@ -231,14 +240,35 @@ func _unhandled_input(event: InputEvent) -> void:
 			dolly(1.0 / 1.12)
 			get_viewport().set_input_as_handled()
 			return
+		# 旗标的生命期恰好是「被消费的按下 → 它的松开」。所以同一个键**又按下**时先清掉：
+		# 那意味着上一次配对早就断了（松开的那个事件根本没送到，比如按住时窗口失焦后松手），
+		# 而新按下的按下是照常转发进 2D 的 —— 旗标若还挂着，新按下的松开就会被误吞，
+		# 2D 侧于是收到一个没有按下的松开（正是这个旗标要防的那类事故）。
+		if mb.pressed and mb.button_index == _consumed_press_btn:
+			_consumed_press_btn = MOUSE_BUTTON_NONE
+		# 实体层吃掉的那次按下，它的**松开**也必须一并吞掉（配对，按 button_index 认）。
+		# 放进去会出事：BoardView 的点击语义其实在**松开**分支（seat_clicked :894 / tile_clicked
+		# :899 / cancel_clicked :901），而按下分支（:885）只设 `_dragging`。反例：桌垫上左键按下
+		# （转发，`_dragging = true`）→ 转盘上右键按下（被实体消费，不转发）→ 右键松开：左键还
+		# 按着，`:902` 不会清 `_dragging`，松开就命中 `:900-901` 发出 cancel_clicked ——
+		# 一次明明被实体吃掉的点击，却给 2D 板子送了个取消。
+		if not mb.pressed and mb.button_index == _consumed_press_btn:
+			_consumed_press_btn = MOUSE_BUTTON_NONE
+			get_viewport().set_input_as_handled()
+			return
 		var pos = screen_to_viewport(mb.position)
 		if pos == null:
+			# 打不到桌面 = 这次事件谁也收不到，旗标留着没意义（兜底；配对的按下/松开其实已被上面
+			# 两条拦掉）。只清**同一个键**的：旗标按键记，只可能被同一个键的松开消费，
+			# 别的键打不到桌面时顺手清掉反而有害 —— 旗标一没，那个还没到的配对松开就会照常
+			# 转发进 2D，正是下面反例里的事故。
+			if mb.button_index == _consumed_press_btn:
+				_consumed_press_btn = MOUSE_BUTTON_NONE
 			return
 		# 实体物件优先：命中转盘 / 手牌等实体则消费掉，不再送进 SubViewport。
-		# 只判按下：点击语义全在按下（2D 侧的 BoardView 也只在 pressed 分支处理，
-		# 见 board_view.gd:885 / :1176），于是消费一次即够 —— 同一次点击的松开照旧放行，
-		# 2D 侧对它无动作，不会留下"松开了但没人按过"的怪状态。
+		# 只判按下：一次点击消费一次即可，松开的收尾由上面的旗标分支负责。
 		if mb.pressed and on_table_click.is_valid() and bool(on_table_click.call(pos as Vector2)):
+			_consumed_press_btn = mb.button_index
 			get_viewport().set_input_as_handled()
 			return
 		var fwd := InputEventMouseButton.new()
