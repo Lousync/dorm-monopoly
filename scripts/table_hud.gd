@@ -43,6 +43,10 @@ static func build_play_ui(g: Node) -> void:
 	g.board.tile_clicked.connect(g._on_tile_clicked)
 	g.board.seat_clicked.connect(g._on_seat_clicked)
 
+	# 屏幕层暗角：铺满屏幕、四角压暗（Compatibility 没有 SSAO/景深，氛围靠它补）。
+	# 挂在 hud 层之前 —— 压暗 3D 桌面，但不能盖住底栏/名册等屏幕层控件。
+	g.table3d.build_vignette(g)
+
 	# 屏幕层：不随摄像机旋转的悬浮控件都挂这里
 	var hud := Control.new()
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)

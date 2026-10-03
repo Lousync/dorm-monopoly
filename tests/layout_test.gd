@@ -26,7 +26,9 @@ func _run() -> void:
 		"向上的射线打不到地面（返回 null）")
 
 	print("== 世界 ↔ UV 往返 ==")
-	var side := 8.0
+	# 尺寸是 Vector2（宽 × 进深）：桌面非正方形 —— 贴图窗口取的是「棋盘 + 一圈木边」，
+	# 比例必须跟着窗口走，否则贴图被拉伸（Task 4 的棋盘/桌面比例）。
+	var side := Vector2(8.0, 8.0)
 	for uv in [Vector2(0.25, 0.25), Vector2(0.75, 0.25), Vector2(0.25, 0.75),
 			Vector2(0.75, 0.75), Vector2(0.5, 0.5), Vector2(0.0, 1.0)]:
 		var w := TableGeometry.uv_to_world(uv, side)
@@ -34,14 +36,22 @@ func _run() -> void:
 		_check(back.distance_to(uv) < 0.0001, "UV %s → 世界 %s → UV %s" % [uv, w, back])
 	_check(TableGeometry.uv_to_world(Vector2(0.25, 0.25), side).is_equal_approx(Vector3(-2, 0, -2)),
 		"UV(0.25,0.25) 落在远左（z 负）")
+	_check(TableGeometry.uv_to_world(Vector2(0.25, 0.25), Vector2(8.0, 4.0)).is_equal_approx(Vector3(-2, 0, -1)),
+		"非正方形桌面：进深按自己的边长折算（8×4 → z=-1）")
 
-	print("== UV ↔ SubViewport 像素往返 ==")
-	var vp := Vector2i(2048, 2048)
+	print("== UV ↔ SubViewport 像素往返（贴图窗口）==")
+	# 窗口是画布上的一块矩形（px）。恒等窗口（0,0,2048,2048）= 铺满整张画布的老行为。
+	var vp := Rect2(0.0, 0.0, 2048.0, 2048.0)
 	for uv in [Vector2(0.0, 0.0), Vector2(0.25, 0.25), Vector2(0.5, 0.5), Vector2(1.0, 1.0)]:
 		var px := TableGeometry.uv_to_viewport(uv, vp)
 		var back := TableGeometry.viewport_to_uv(px, vp)
 		_check(back.distance_to(uv) < 0.0001, "UV %s → px %s → UV %s" % [uv, px, back])
 	_check(TableGeometry.uv_to_viewport(Vector2(0.5, 0.5), vp) == Vector2(1024, 1024), "中心映射到像素中心")
+	var half := Rect2(400.0, 300.0, 1000.0, 800.0)
+	_check(TableGeometry.uv_to_viewport(Vector2(0.5, 0.5), half) == Vector2(900.0, 700.0),
+		"窗口不铺满画布时，UV 中心映射到窗口中心")
+	_check(TableGeometry.viewport_to_uv(Vector2(400.0, 300.0), half) == Vector2.ZERO,
+		"窗口左上角 = UV 原点")
 
 	print("== TableView3D 容器结构 ==")
 	# 用运行时 load() 取 TableView3D，而不是写类名：--script 入口脚本的静态依赖链在
@@ -62,16 +72,54 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
+	print("== 棋盘 / 桌面比例：贴图只取画布的一块（棋盘铺满桌面）==")
+	# 画布 = 整张方桌（棋盘 + 四条座位栏 + 上下死区），棋盘只占其中一小块。
+	# 直接铺满画布就会读成「棋盘摆在桌上」；贴图窗口把棋盘外那一小圈木边之外的都裁掉。
+	var win: Rect2 = t3.TEX_WINDOW_PX
+	_check(win.position.x >= 0.0 and win.position.y >= 0.0
+			and win.position.x + win.size.x <= 2048.0 and win.position.y + win.size.y <= 2048.0,
+		"贴图窗口落在画布内（窗口 %s）" % win)
+	_check(win.size.y < 2048.0 or win.size.x < 2048.0,
+		"贴图窗口比整张画布小（%s < 2048²，即真的裁掉了桌面外的死区）" % win.size)
+	_check(absf(t3.TABLE_D / t3.TABLE_W - win.size.y / win.size.x) < 0.002,
+		"桌面宽:进深 与 窗口宽:高 同比例（贴图不被拉伸：%.3f vs %.3f）"
+			% [t3.TABLE_D / t3.TABLE_W, win.size.y / win.size.x])
+	# 材质取样窗口必须与输入映射同源：只改几何不改材质 → 看到的是整张桌子、点到的却是窗口那块。
+	# （本任务实现时真踩过这个坑：出图「变好」了、点击却整体错位。）
+	var canvas := Vector2(t3.VP_SIZE)
+	var want_scale := Vector2(win.size.x / canvas.x, win.size.y / canvas.y)
+	var want_offset := Vector2(win.position.x / canvas.x, win.position.y / canvas.y)
+	_check(Vector2(t3.table_mat.uv1_scale.x, t3.table_mat.uv1_scale.y).is_equal_approx(want_scale)
+			and Vector2(t3.table_mat.uv1_offset.x, t3.table_mat.uv1_offset.y).is_equal_approx(want_offset),
+		"桌面材质取样窗口 = 输入映射的窗口（scale %s / offset %s）"
+			% [t3.table_mat.uv1_scale, t3.table_mat.uv1_offset])
+
+	print("== 暗角贴片 ==")
+	# 暗角由 build_vignette(parent) 造出来并挂到**屏幕层**（容器自己不管挂载），
+	# 所以这里要自己给一个父 Control —— 裸容器上 vignette 恒为 null（计划原文那三条
+	# 断言在裸容器上不可能通过，见 Ruling 2）。
+	var vig_parent := Control.new()
+	vig_parent.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vig_parent.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 别让测试自己建的父层吃掉后面注入的点击
+	root.add_child(vig_parent)
+	t3.build_vignette(vig_parent)
+	_check(t3.vignette != null, "容器带暗角贴片")
+	_check(t3.vignette.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"暗角不吃鼠标（否则整屏点不动）")
+	_check(t3.vignette.color.a > 0.0, "暗角有可见的暗度")
+	_check(t3.vignette.get_parent() == vig_parent, "暗角挂在调用方给的屏幕层上")
+	_check(t3.vignette.material is ShaderMaterial and (t3.vignette.material as ShaderMaterial).shader != null,
+		"暗角是 shader 画的四周压暗（不是一块死黑）")
+
 	# ---- 输入映射（Task 3）：相机与视口要真的入树、布局过一帧 ----
 	await process_frame
 	await process_frame
 	print("== 屏幕点 → 桌面 → SubViewport 往返 ==")
-	var vp_size: Vector2i = t3.viewport.size
 	for uv in [Vector2(0.25, 0.25), Vector2(0.75, 0.25), Vector2(0.25, 0.75), Vector2(0.75, 0.75)]:
-		var world: Vector3 = t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIDE)
+		var world: Vector3 = t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIZE)
 		var screen_pt: Vector2 = t3.camera.unproject_position(world)
 		var got = t3.screen_to_viewport(screen_pt)
-		var want := TableGeometry.uv_to_viewport(uv, vp_size)
+		var want := TableGeometry.uv_to_viewport(uv, win)
 		_check(got != null and (got as Vector2).distance_to(want) < 2.0,
 			"UV %s：屏幕 %s → SubViewport %s（期望 %s）" % [uv, screen_pt, got, want])
 	# 「打不到桌面」在视口内不可达：俯角 50° − 垂直半 FOV 27.5° = 22.5° > 0，
@@ -83,8 +131,8 @@ func _run() -> void:
 	# 反之：桌面之外的屏幕点仍给坐标，只是落在 SubViewport 矩形之外（设计稿 §6.2 的
 	# 平面是无界的），SubViewport 内的 2D 控件自己会忽略越界点。
 	var off = t3.screen_to_viewport(Vector2(2.0, 2.0))
-	_check(off != null and not Rect2(Vector2.ZERO, Vector2(vp_size)).has_point(off as Vector2),
-		"桌面之外的屏幕点返回桌面外坐标（实得 %s）" % off)
+	_check(off != null and not win.has_point(off as Vector2),
+		"桌面之外的屏幕点返回贴图窗口外的坐标（实得 %s）" % off)
 
 	# ---- 反变换（Task 3b）：棋盘画布坐标 → 屏幕坐标 ----
 	# 为什么必须单独钉：BoardView 搬进 SubViewport 后，tile/token/wheel_screen_pos 返回的是
@@ -93,7 +141,7 @@ func _run() -> void:
 	print("== 屏幕 ↔ SubViewport 往返（反变换）==")
 	for uv in [Vector2(0.25, 0.25), Vector2(0.5, 0.5), Vector2(0.75, 0.75)]:
 		var screen_pt: Vector2 = t3.camera.unproject_position(
-			t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIDE))
+			t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIZE))
 		var vp_pt = t3.screen_to_viewport(screen_pt)
 		_check(vp_pt != null, "正变换可解 UV %s" % uv)
 		if vp_pt == null:
@@ -141,7 +189,7 @@ func _run() -> void:
 	var got_events: Array = []
 	probe.gui_input.connect(func(ev: InputEvent) -> void: got_events.append(ev))
 	await process_frame
-	var mid_world: Vector3 = t3.table_mesh.global_transform * TableGeometry.uv_to_world(Vector2(0.5, 0.5), t3.TABLE_SIDE)
+	var mid_world: Vector3 = t3.table_mesh.global_transform * TableGeometry.uv_to_world(Vector2(0.5, 0.5), t3.TABLE_SIZE)
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	click.pressed = true
@@ -152,8 +200,8 @@ func _run() -> void:
 	if got_events.size() == 1:
 		var ev_mb := got_events[0] as InputEventMouseButton
 		var got_pos: Vector2 = ev_mb.position if ev_mb != null else Vector2(-9999.0, -9999.0)
-		_check(got_pos.distance_to(Vector2(1024, 1024)) < 2.0,
-			"控件收到的坐标是 SubViewport 空间的桌面中心（实得 %s）" % got_pos)
+		_check(got_pos.distance_to(win.get_center()) < 2.0,
+			"控件收到的坐标是贴图窗口中心（棋盘中心，实得 %s）" % got_pos)
 	# 悬停同理（InputEventMouseMotion）
 	got_events.clear()
 	var mm := InputEventMouseMotion.new()
