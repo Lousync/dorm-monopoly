@@ -1136,9 +1136,9 @@ func _flair_roll(v: int) -> void:
 	if not is_inside_tree():
 		return
 	if v == 24:
-		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "满值 12！再来一次", UIKit.ACCENT, 21)
+		Fx.float_text(self, _board_to_screen(board.wheel_screen_pos()) + Vector2(0, -60), "满值 12！再来一次", UIKit.ACCENT, 21)
 	elif v == 0:
-		Fx.float_text(self, board.wheel_screen_pos() + Vector2(0, -60), "0……转了个寂寞", UIKit.TEXT_DIM, 19)
+		Fx.float_text(self, _board_to_screen(board.wheel_screen_pos()) + Vector2(0, -60), "0……转了个寂寞", UIKit.TEXT_DIM, 19)
 
 @rpc("authority", "call_local", "reliable")
 func s_move(peer: int, path: Array, step_time: float) -> void:
@@ -1294,7 +1294,7 @@ func _refresh_players() -> void:
 				# 而全景缩放下两枚棋子可能只差十几像素、标签却有七八十像素宽 → 必然叠在一起。
 				# 按涨/跌分开纵向落点：进账往上飘、支出往下飘，拉开约 46px，任何格距都不重叠。
 				var fy := -26.0 if diff > 0 else 20.0
-				var pos := board.token_screen_pos(peer) + Vector2(0, fy)
+				var pos := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, fy)
 				Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
 				Fx.play("cash" if diff > 0 else "pay", -5.0)
 				_spawn_money_fly(peer, diff, ml)
@@ -1517,12 +1517,22 @@ func _on_tile_clicked(idx: int) -> void:
 	var tw := create_tween()
 	tw.tween_property(info_panel, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
+## 棋盘坐标 → 屏幕坐标。Batch2 把 BoardView 搬进 TableView3D 的 SubViewport 后，
+## tile/token/wheel_screen_pos 返回的都是那个 2048² 画布的坐标，而消费它们的屏幕层 HUD
+## 活在窗口空间（1280×800）—— 少了这步换算，格详情卡会被下面的 clamp 钉在屏幕边缘、
+## 收租/转盘飘字也整体错位（Task 3 实测）。table3d 缺失或该点不在桌面上时原样返回（降级）。
+func _board_to_screen(p: Vector2) -> Vector2:
+	if table3d == null:
+		return p
+	var sp = table3d.viewport_to_screen(p)
+	return p if sp == null else (sp as Vector2)
+
 ## 格详情卡悬浮在被点格子的正上方（原来是钉在屏幕左下角，和格子对不上号）。
 ## 镜头会平移/缩放/旋转，所以逐帧跟着格子走；上方放不下就翻到格子下方，并夹在屏幕内。
 func _place_info_panel() -> void:
 	if info_panel == null or not info_panel.visible or _info_tile < 0 or board == null:
 		return
-	var c := board.tile_screen_pos(_info_tile)
+	var c := _board_to_screen(board.tile_screen_pos(_info_tile))
 	var sz := info_panel.size
 	var pos := Vector2(c.x - sz.x * 0.5, c.y - sz.y - 20.0)
 	if pos.y < 8.0:
@@ -3270,7 +3280,7 @@ func _apply_audio() -> void:
 func _spawn_money_fly(peer: int, diff: int, ml: Label) -> void:
 	var good := diff > 0
 	var card_at := ml.get_global_rect().get_center()
-	var token_at := board.token_screen_pos(peer) + Vector2(0, -18)
+	var token_at := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, -18)
 	for i in 4:
 		var bill := Panel.new()
 		bill.size = Vector2(22, 12)

@@ -86,6 +86,25 @@ func _run() -> void:
 	_check(off != null and not Rect2(Vector2.ZERO, Vector2(vp_size)).has_point(off as Vector2),
 		"桌面之外的屏幕点返回桌面外坐标（实得 %s）" % off)
 
+	# ---- 反变换（Task 3b）：棋盘画布坐标 → 屏幕坐标 ----
+	# 为什么必须单独钉：BoardView 搬进 SubViewport 后，tile/token/wheel_screen_pos 返回的是
+	# 0..2048 的画布坐标，而消费它们的屏幕层 HUD 活在窗口空间（1280×800）。少了这条反变换，
+	# 格详情卡会被 clamp 到屏幕边缘、两处飘字错位（正是 Task 3 实测到的现象）。
+	print("== 屏幕 ↔ SubViewport 往返（反变换）==")
+	for uv in [Vector2(0.25, 0.25), Vector2(0.5, 0.5), Vector2(0.75, 0.75)]:
+		var screen_pt: Vector2 = t3.camera.unproject_position(
+			t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIDE))
+		var vp_pt = t3.screen_to_viewport(screen_pt)
+		_check(vp_pt != null, "正变换可解 UV %s" % uv)
+		if vp_pt == null:
+			continue
+		var back = t3.viewport_to_screen(vp_pt)
+		_check(back != null and (back as Vector2).distance_to(screen_pt) < 2.0,
+			"反变换来回一致：屏幕 %s → vp %s → 屏幕 %s" % [screen_pt, vp_pt, back])
+	# 负路径：桌面之外的 SubViewport 坐标（画布矩形外）不算「桌面上的点」，返回 null。
+	_check(t3.viewport_to_screen(Vector2(-50.0, -50.0)) == null,
+		"画布外的坐标返回 null（不是无限平面上的任意点）")
+
 	print("== 滚轮推拉：factor > 1 拉近，且只改距离、不改方位 ==")
 	var d0: float = t3.camera.global_position.length()
 	var dir0: Vector3 = t3.camera.global_position.normalized()

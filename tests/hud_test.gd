@@ -259,12 +259,24 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	_check(g.info_panel.visible, "点格子后详情卡显示")
-	var tc: Vector2 = g.board.tile_screen_pos(27)
+	# 跨层断言（Task 3b）：期望位置必须走「棋盘画布坐标 → 屏幕坐标」的反变换 —— 这正是
+	# game.gd 消费点做的事。旧写法两边都取自 board.tile_screen_pos，而棋盘搬进 SubViewport
+	# 后那个值是 0..2048 的画布坐标，两边一起缩放：卡片被 clamp 钉死在屏幕边缘也照样成立。
+	# 现在期望值走 TableView3D.viewport_to_screen（屏幕空间），卡片位置由屏幕层自己摆 ——
+	# 少了反变换，两者会差出上百像素。
+	var raw: Vector2 = g.board.tile_screen_pos(27)
+	var anchored = g.table3d.viewport_to_screen(raw)
+	_check(anchored != null, "27 号格的画布坐标 %s 可解算到屏幕坐标" % raw)
+	var tc: Vector2 = anchored if anchored != null else Vector2(-9999.0, -9999.0)
 	var pc: Vector2 = g.info_panel.position
 	var pcz: float = pc.x + g.info_panel.size.x * 0.5
 	_check(absf(pcz - tc.x) < 4.0, "卡片横向居中于该格（卡中心 %.0f / 格 %.0f）" % [pcz, tc.x])
 	_check(pc.y + g.info_panel.size.y < tc.y, "卡片在格子上方（卡底 %.0f / 格 %.0f）"
 		% [pc.y + g.info_panel.size.y, tc.y])
+	# 错位的旧症状正是「卡片贴死屏幕边缘」：卡片必须完整落在屏幕内，且横向居中不是靠
+	# clamp 凑出来的（被夹住时 pcz 会偏离锚点 x，上面那条居中检查随之失败）。
+	_check(pc.x >= 8.0 and pc.y >= 8.0 and pc.x + g.info_panel.size.x <= g.size.x
+		and pc.y + g.info_panel.size.y <= g.size.y, "卡片完整落在屏幕内（位置 %s）" % pc)
 
 	print("== 归属色条：谁的地都要有，颜色与该玩家的棋子一致 ==")
 	var ts: Dictionary = _state(2, false)

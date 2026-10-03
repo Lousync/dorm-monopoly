@@ -98,6 +98,17 @@ func screen_to_uv(screen_pt: Vector2) -> Variant:
 	var local: Vector3 = table_mesh.global_transform.affine_inverse() * (hit as Vector3)
 	return TableGeometry.world_to_uv(local, TABLE_SIDE)
 
+## SubViewport 像素坐标 → 屏幕像素坐标；该点不在桌面上时返回 null。
+## （Task 3 的正变换 screen_to_viewport 的逆；见设计稿 §6.2 与批次 2 的 Task 3b）
+## 用途：BoardView 的 tile/token/wheel_screen_pos 返回的是画布（SubViewport）坐标，
+## 而消费它们的屏幕层 HUD 活在窗口空间 —— 少了这步换算，格详情卡会被 clamp 到屏幕边缘。
+func viewport_to_screen(pos: Vector2) -> Variant:
+	var uv := TableGeometry.viewport_to_uv(pos, viewport.size)
+	if uv.x < 0.0 or uv.x > 1.0 or uv.y < 0.0 or uv.y > 1.0:
+		return null                       # 超出桌面范围
+	var world: Vector3 = table_mesh.global_transform * TableGeometry.uv_to_world(uv, TABLE_SIDE)
+	return camera.unproject_position(world)
+
 ## 沿视线推拉（滚轮缩放）。factor > 1 拉近。
 ## 只改「相机到桌面中心的距离」、方向不变 —— 于是俯角恒定，推拉不会把桌子翻成平视。
 ## 夹取上下限，免得太近钻进桌面、太远让桌子退到屏幕一角。
