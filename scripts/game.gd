@@ -1332,6 +1332,13 @@ func _refresh_table_props() -> void:
 	if board.size.x <= 10.0:
 		return
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
+	# 两摞实体牌堆（批次 6 Task 2）：中心 = **印在桌垫上那摞卡背**的画布位置（`deck_center`
+	# 过 `board._view_from_world` 折成画布像素 —— 就是 `wheel_screen_pos` 里那一步）。
+	# 与轮缘同一个理由：它要接住的正是那块印刷图案，所以跟着 2D 取景走，每次广播都重算。
+	# 幂等（只改 root 的位置，不重建节点），所以每次广播都刷没有代价。
+	table3d.table_props.build_decks({
+		"机会": board._view_from_world(board.deck_center("机会")),
+		"命运": board._view_from_world(board.deck_center("命运"))})
 	# 四块立牌（批次 5 Task 1）：名字 / 身家 / 公开背包。放在 `mine.is_empty()` 那道早退**之前**
 	# —— 立牌的数据全来自 st.players（客户端也准），观战者（自己不在名册里）照样该看见四家。
 	_refresh_standees()

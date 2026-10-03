@@ -1574,6 +1574,106 @@ func _run() -> void:
 			_check(not any_lit, "不在桌上的 peer 不点亮任何一块")
 			tpS.set_standee_highlight([])
 
+	# ---- 批次 6 Task 2：机会 / 命运两摞实体牌堆 ----
+	# 桌垫上最后两处"贴片"（画布上印着的那两摞卡背）实体化。钉四件事：
+	#   ① 两摞都在、都**有厚度**（叠层 > 1 —— 一块等厚方砖不算"一摞牌"）；
+	#   ② 落点与印在桌垫上的那摞卡背**重合**（`deck_center` 过 `board._view_from_world` 折成画布像素，
+	#      与轮缘 / 筹码 / 立牌同一条 chain；这里也是 layout_test 后面那段"牌堆在窗口内"用的口径）；
+	#   ③ 材质是**不透明档**（批次 4 的教训：ALPHA 混合进透明队列、不写深度、投影就废了）；
+	#   ④ 幂等（状态广播每次都调，节点池只建一次）。
+	# 身份（哪摞是机会、哪摞是命运）走摞顶面平贴的 Label3D：文字 + 配色两重信号。
+	print("== 实体牌堆：两摞有厚度的牌，落在画布牌堆中心上 ==")
+	var tpD = t3.table_props
+	if tpD == null:
+		_check(false, "TableProps 未就绪，牌堆断言整段跳过")
+	else:
+		t3.board.fit_overview(true)
+		var deck_names := ["机会", "命运"]
+		var deck_px := {}
+		for dn in deck_names:
+			deck_px[dn] = t3.board._view_from_world(t3.board.deck_center(dn))
+		tpD.build_decks(deck_px)
+		var dr: Node = tpD.get_node_or_null("Decks")
+		_check(dr != null, "牌堆父节点在（build_decks 时建）")
+		if dr == null:
+			_check(false, "牌堆父节点缺了，后半段跳过")
+		else:
+			_check(dr.get_child_count() == 2, "两摞都在（实得 %d 摞）" % dr.get_child_count())
+			var tops := {}
+			var bodies := {}
+			for dn in deck_names:
+				var droot: Node3D = dr.get_node_or_null("Deck_%s" % dn) as Node3D
+				_check(droot != null, "「%s」那一摞在" % dn)
+				if droot == null:
+					continue
+				# ① 有厚度：层数 > 1 + 叠起来的高度
+				var layers: Array = []
+				for ch in droot.get_children():
+					var mi := ch as MeshInstance3D
+					if mi != null and mi.mesh is BoxMesh:
+						layers.append(mi)
+				_check(layers.size() > 1, "「%s」是叠出来的（%d 层）" % [dn, layers.size()])
+				var lo := INF
+				var hi := -INF
+				var opaque := true
+				var shadows := true
+				for mi in layers:
+					var bm: BoxMesh = (mi as MeshInstance3D).mesh as BoxMesh
+					lo = minf(lo, (mi as MeshInstance3D).global_position.y - bm.size.y * 0.5)
+					hi = maxf(hi, (mi as MeshInstance3D).global_position.y + bm.size.y * 0.5)
+					var m := (mi as MeshInstance3D).material_override as StandardMaterial3D
+					if m == null or m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+						opaque = false
+					if (mi as MeshInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+						shadows = false
+					bodies[dn] = m
+				_check(hi - lo > 0.03, "「%s」有厚度（叠起来 %.3f 世界单位高）" % [dn, hi - lo])
+				_check(opaque, "「%s」的材质是不透明档（写深度、投得出影子）" % dn)
+				_check(shadows, "「%s」的层都投影（实体的影子是台灯那盏灯给的）" % dn)
+				# ② 落点 = 画布上那摞卡背的位置（反算回画布像素再比 —— 不把换算公式重述一遍）
+				var back: Vector2 = t3.world_to_canvas_px(droot.global_position)
+				_check(back.distance_to(deck_px[dn]) < 1.0,
+					"「%s」落在画布牌堆中心上（实得 %s，期望 %s）" % [dn, back, deck_px[dn]])
+				_check(droot.global_position.y > t3.table_mesh.global_position.y,
+					"「%s」坐在桌垫之上（y=%.3f）" % [dn, droot.global_position.y])
+				# 身份：摞顶面平贴的 Label3D 写着牌名
+				var lab := droot.get_node_or_null("Name") as Label3D
+				_check(lab != null and String(lab.text) == dn,
+					"「%s」摞上写着牌名（实得「%s」）" % [dn, String(lab.text) if lab != null else "无"])
+				tops[dn] = tpD.deck_top_px(dn)
+			_check(bodies.get("机会") != null and bodies.get("机会") != bodies.get("命运"),
+				"两摞的配色分得开（机会 %s / 命运 %s）"
+					% [bodies.get("机会").albedo_color, bodies.get("命运").albedo_color])
+			# ③ 抽卡「抽出」的起点 = 这一摞的**顶面**：
+			#    顶面比桌面高 ⇒ 屏幕投影往远端挪一截 ⇒ 画布 y 应该比落点**小**（更远）。
+			var top_c: Vector2 = tops["机会"]
+			_check(top_c.distance_to(deck_px["机会"]) < 60.0,
+				"起点在那一摞附近（离落点 %.1f 画布像素）" % top_c.distance_to(deck_px["机会"]))
+			_check(top_c.y < deck_px["机会"].y,
+				"起点（顶面）比落点更靠远端（y %.1f < %.1f）" % [top_c.y, deck_px["机会"].y])
+			# ④ 幂等：重复调用只重摆、不重建节点树
+			var first_root: Node = dr.get_child(0)
+			var first_kids: int = (first_root as Node3D).get_child_count()
+			tpD.build_decks(deck_px)
+			_check(dr.get_child_count() == 2 and dr.get_child(0) == first_root,
+				"重复调用不重建节点（实得 %d 摞）" % dr.get_child_count())
+			_check((first_root as Node3D).get_child_count() == first_kids,
+				"摞里的层数一字未变（%d）" % (first_root as Node3D).get_child_count())
+			# ⑤ 抽卡动画的「抽出」起点确实取自实体摞（BoardView 本批次唯一一处改动）。
+			#    起点是 `_world` 局部坐标，而 deck_top_px 给的是画布像素 ⇒ 中间那一跳也得钉住。
+			var card_sz: Vector2 = t3.board.CARD_SIZE
+			t3.board.cam_locked = true
+			t3.board.play_deck_card("机会", "good", "测试卡文")
+			var want_from: Vector2 = t3.board._world_from_view(tops["机会"]) - card_sz * 0.5
+			_check(t3.board._deck_from.distance_to(want_from) < 1.0,
+				"「抽出」从实体摞顶面起（实得 %s，期望 %s）" % [t3.board._deck_from, want_from])
+			var old_from: Vector2 = t3.board.deck_center("机会") - card_sz * 0.5 + Vector2(0.0, 54.0)
+			_check(t3.board._deck_from.distance_to(old_from) > 3.0,
+				"起点不再是画布上那点扁图案（离旧起点 %.1f 画布像素）"
+					% t3.board._deck_from.distance_to(old_from))
+			t3.board._tick_deck_card(t3.board.DECK_CARD_TIME + 0.1)   # 收尾，别把演出留进后面的断言
+			t3.board.cam_locked = false
+
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
 	# 注意：**单靠这条抓不到「贴图与 UV 约定整体镜像」**，那要对着出图核（见 task-3-report 的镜像核对）。

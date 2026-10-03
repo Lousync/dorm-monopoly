@@ -156,6 +156,175 @@ func build_wheel(center_px: Vector2, radius_px: float) -> void:
 func wheel_hit(canvas_px: Vector2) -> bool:
 	return canvas_px.distance_to(_wheel_px) <= _hit_r
 
+# ---------------- 两摞实体牌堆（批次 6 Task 2） ----------------
+#
+# 桌垫上最后两处"贴片"（画布上印着的机会 / 命运两摞卡背，见 board_view._build_deck）的实体化。
+# 每摞 = **若干层薄 BoxMesh 叠出厚度**，摆在画布坐标下那摞卡背的**中心**上
+# （`board.deck_center` → `board._view_from_world` 折成画布像素 → `canvas_px_to_world`，
+# 与其他物件同一条链）。
+#
+# 为什么是"叠几层薄板"而不是"一整块砖"：牌堆的辨识度全在**层与层的错缝**上 —— 等厚的方砖在
+# 50° 俯角下只是一坨有影子的色块。错缝量对着出图定：每上一层往"远左"收一点（方向与量级同
+# 画布上那 3 张错位卡背），叠出来的轮廓正好接住印着的那摞卡背。
+#
+# **位置跟印着的那块图案走**（`build_decks` 每次收到的是**当下取景**下的画布像素），与转盘轮缘
+# 同一个理由：它要接住的正是那块印刷图案（见文件头"摆放约定"里轮缘那一条），
+# 所以 `game._refresh_table_props` 每次广播都重算一遍。尺寸则与其他实物一样是**世界常数**
+# —— 摞是实物，不会因为 2D 取景被推近而变大（代价同 `_apply_hand_alpha` 那条：
+# 抽卡推近时印着的图案会胀大 2×、摞只跟着走不跟着胀，于是盖不住放大后的图案）。
+#
+# **身份不能丢**（brief 第 2 条）：实体摞盖住的正是画布上印着的卡面图案**与压在它正中的那块
+# 牌名小牌**（`board_view._build_deck` 的 tplate 就在牌堆正中）。"只盖卡背、留住标签"这条路
+# 走不通：标签在图案正中，而摞也该摆在正中，除非去挪 2D 那块标签 —— 那是 BoardView 的改动，
+# 本批次只允许一处。所以选**在摞顶面平贴一个 Label3D**：文字 + 配色两重信号，3D 端与 2D 端
+# 都读得到（2D 端接近正俯视，平贴的文字最清楚）。被盖住的牌名小牌不影响识别；它下面那行
+#「落在【机会】格时从这里抽卡」在摞的外面（图案下沿之下），仍看得见。
+
+## 每摞的层数。**必须 > 1**：一层就是一整块砖，那正是这一条要治的"贴片感"；
+## 也是「有厚度」那条断言的可执行判据。
+const DECK_LAYERS := 5
+## 单层厚度（世界单位）：比手中牌（0.030）薄得多 —— 一张牌不该和一块砖一样厚。
+## 5 层叠起来 0.05 世界单位 ≈ 13 画布像素（全景取景下），一眼看得出是"一摞"。
+const DECK_LAYER_T := 0.010
+## 每上一层往"远左"收的画布量（**世界单位**，≈ 2.5 画布像素）：
+## 与画布上那 3 张错位卡背的 (6,6) 同一方向（下层偏近右、顶层偏远左）。
+## 4 层错开共 0.04 世界 ≈ 12 画布像素 —— 与印着的那摞（3 张错 12 像素）正好一个量级。
+const DECK_LAYER_SHIFT := 0.010
+## 单张牌的尺寸（世界单位，宽 × 厚 × 进深）。基准 = 画布上那摞卡背（单张 90×135 画布像素，
+## 3 张错缝后 ≈ 0.37×0.53 世界；换算式见 `board_view` 的 MAT_WINDOW_W / MAT_RECT 与 2020÷8），
+## 再**留一档余量**（≈+8%）—— 不留余量时出图能看到印着的卡背从摞的近边露出来一条：
+##   ① 摞是**抬起来**的实物，屏幕上会往远端挪一截（实测顶面偏 **23.6 画布像素 ≈ 0.09 世界**，
+##      见 `deck_top_px` 那段），而印着的图案在桌面上不动 ⇒ 近端要补这一截；
+##   ② 错缝的**台阶**本身会露出底下印着的那摞（这是要的"一摞牌"观感，但台阶下那条缝隙别露成
+##      "两摞"）。
+## **按世界单位写死**：实物不跟 2D 相机（同筹码 / 手牌 / 立牌），只有"位置"跟图案。
+const DECK_SIZE := Vector3(0.40, DECK_LAYER_T, 0.58)
+## 牌面文字的量法（Label3D）：pixel_size × font_size = 一个字的边长（世界单位）。
+## 0.0020 × 64 = 0.128 —— **已经是上限**：两个汉字并排 0.256 世界，占牌宽（0.33）的 78%；
+## 再大就出牌面了（牌面宽是死的 0.33，字号的上界由它钉住）。
+const DECK_FONT_PS := 0.0020
+## 两摞的**牌身**颜色：暗底、色相分明（远看一眼分得开）—— 机会 = 暗金（接 UIKit.ACCENT）、
+## 命运 = 暗紫（接 board_view._build_deck 那个紫色 accent）。都压得够暗，不会在近黑的屋子里发亮。
+const DECK_BODY_COLORS := {
+	"机会": Color(0.43, 0.33, 0.13),
+	"命运": Color(0.30, 0.25, 0.44),
+}
+## 两摞**牌名**的颜色：亮一档的同一族色相，压在深色牌身上仍读得出（配深描边）。
+const DECK_LABEL_COLORS := {
+	"机会": Color(0.97, 0.85, 0.52),
+	"命运": Color(0.80, 0.75, 1.00),
+}
+## 牌堆名（也是节点名的后缀）由调用方给（`build_decks` 的字典键；节点名 = `Deck_<牌名>`）——
+## 这里**不另立一份牌名表**：`board_view` 那两处硬编码的牌名是这套名字的唯一来源，
+## 谁摆牌堆谁把名字传进来，多一份常量就多一处会漂开的数。
+
+var _decks_root: Node3D
+## 两摞的节点池：牌名 → {root, layers, mat, label, top_local, top_world}。
+## **只建一次**：之后刷新只改 root 的 global_position（层与标签的局部位置只跟层数有关）。
+var _decks := {}
+var _deck_mesh: BoxMesh              # 两摞共用一份：牌面尺寸完全一致
+
+## 按 `decks`（**牌名 → 画布像素**中心，调用方从 `board.deck_center` 折出来）摆两摞实体牌堆。
+##
+## **幂等**：节点池只建一次，之后每次调用只**重算 root 的位置**（每次状态广播都会调它）。
+## 为什么位置每次都要重算：印在桌垫上那块图案随 2D 取景（`_view_from_world`）走，摞要接住它。
+func build_decks(decks: Dictionary) -> void:
+	if _t3 == null or decks.is_empty():
+		return
+	if _decks_root == null:
+		_decks_root = Node3D.new()
+		_decks_root.name = "Decks"
+		add_child(_decks_root)
+	for key in decks:
+		var dname := String(key)
+		var d: Dictionary = _decks.get(dname, {})
+		if d.is_empty():
+			d = _make_deck(dname)
+			_decks[dname] = d
+		_place_deck(d, decks[key] as Vector2)
+
+## 造一摞（节点只造一次）：5 层薄板 + 顶面平贴的牌名。
+## 局部坐标原点 = **这摞牌堆的中心在地面的落点**（见 _place_deck）：层 0（最下）抬半层高，
+## 层与层之间往"远左"收 DECK_LAYER_SHIFT（错缝），顶层再抬 DECK_LAYER_T 留给牌名。
+func _make_deck(dname: String) -> Dictionary:
+	var root := Node3D.new()
+	root.name = "Deck_%s" % dname
+	_decks_root.add_child(root)
+	if _deck_mesh == null:
+		_deck_mesh = BoxMesh.new()
+		_deck_mesh.size = DECK_SIZE
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = DECK_BODY_COLORS.get(dname, Color(0.35, 0.30, 0.20))
+	mat.roughness = 0.72
+	mat.metallic = 0.0
+	# 显式写死**不透明档**：批次 4 的教训 —— ALPHA 混合会进透明队列、不写深度、投影就废了，
+	# 而 Task 1 刚把光照与阴影调到位（牌堆必须投得出影子）。别手滑改成透明。
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	var layers: Array = []
+	var half := float(DECK_LAYERS - 1) * 0.5
+	for i in DECK_LAYERS:
+		var mi := MeshInstance3D.new()
+		mi.name = "Layer%d" % i
+		mi.mesh = _deck_mesh
+		mi.material_override = mat
+		# 层 i：底层（i=0）往近右偏最多、顶层（i=LAYERS-1）不偏 —— 与画布上那 3 张卡背同方向，
+		# 且**关于 root 对称**（±half × SHIFT），所以整摞的落点中心就是 root 那一点。
+		var off := (half - float(i)) * DECK_LAYER_SHIFT
+		mi.position = Vector3(off, DECK_LAYER_T * (float(i) + 0.5), off)
+		root.add_child(mi)
+		layers.append(mi)
+	# 顶面：最上一层（i = LAYERS-1，off = -half × SHIFT）的**上表面中心** —— 抽卡的起点（deck_top_px）。
+	var top_local := Vector3(-half * DECK_LAYER_SHIFT, DECK_LAYER_T * float(DECK_LAYERS),
+		-half * DECK_LAYER_SHIFT)
+	var lab := Label3D.new()
+	lab.name = "Name"
+	lab.text = dname
+	lab.font_size = 64
+	lab.pixel_size = DECK_FONT_PS
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER   # 包围盒以原点为中心（居中压在顶层上）
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.autowrap_mode = TextServer.AUTOWRAP_OFF
+	lab.modulate = DECK_LABEL_COLORS.get(dname, Color.WHITE)
+	lab.outline_size = 10
+	lab.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
+	lab.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # 文字不投影（影子交给牌身）
+	# 平贴在摞顶面：Label3D 默认躺在 XY 平面、面朝 +Z；绕 X 转 **-90°** 之后法线朝上（+Y）、
+	# 字头朝远端（-Z）—— 从近端的镜头看文字正是正的（转 +90° 才是倒的，那面朝下看不见）。
+	# 不 billboard：它是一张印在牌面上的标签，不该随镜头转。
+	lab.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
+	lab.position = top_local + Vector3(0.0, 0.001, 0.0)      # 抬 1mm：与顶层上表面不共面（免得 z-fighting）
+	root.add_child(lab)
+	return {"root": root, "layers": layers, "mat": mat, "label": lab,
+		"top_local": top_local, "top_world": Vector3.ZERO}
+
+## 把一摞摆到画布像素 center_px 上（层与标签的局部位置在 _make_deck 里已经摆好，这里只挪 root）。
+func _place_deck(d: Dictionary, center_px: Vector2) -> void:
+	var root: Node3D = d.root
+	var w: Vector3 = _t3.canvas_px_to_world(center_px)
+	w.y = _t3.table_mesh.global_position.y + PROPS_Y
+	root.global_position = w
+	# 顶面中心的**世界**坐标（deck_top_px 要用）—— 走 root 的真变换算，不手搓"位置 + 高度"
+	d["top_world"] = root.global_transform * (d.top_local as Vector3)
+
+## 第 deck 摞**顶面中心**落在画布上的位置（抽卡「抽出」的起点，见 board_view.play_deck_card）。
+## **没有这摞实体时返回 `Vector2.ZERO`**（调用方按"没有起点"处理，退回它原来那点）。
+##
+## 为什么不是把顶面的世界点直接 `world_to_canvas_px`：那条链只看平面 (x, z)、**高度被丢掉**，
+## 反算出来的就是摞的**落点**（= 那摞卡背的画布中心），而不是"顶面看起来在哪"。
+## 顶面比桌面高，屏幕投影会往远端挪一截 —— 要的正是那一截，所以走
+## 「世界点 → 屏幕（unproject）→ 桌面平面 → 画布像素（screen_to_viewport）」，
+## 与 hand_rect / _standee_rect 同一条链（拿不到屏幕（相机不可用）时退回落点口径，不返回零）。
+func deck_top_px(deck: String) -> Vector2:
+	var d: Dictionary = _decks.get(deck, {})
+	if d.is_empty() or _t3 == null:
+		return Vector2.ZERO
+	var top: Vector3 = d.get("top_world", Vector3.ZERO)
+	if _t3.camera != null:
+		var px = _t3.screen_to_viewport(_t3.camera.unproject_position(top))
+		if px != null:
+			return px
+	return _t3.world_to_canvas_px(top)
+
 # ---------------- 自己的现金（筹码堆）与体力（小件排） ----------------
 #
 # 两者读的都是**已同步**的状态（game.gd 用 _state_player(my_peer)，客户端同样可用），

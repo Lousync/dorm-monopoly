@@ -127,6 +127,12 @@ var _deck_front: Control       # 卡面（正文）
 var _deck_t := 0.0             # 抽卡动画相位计时（_process 驱动，不用 Tween）
 var _deck_from := Vector2.ZERO
 var _deck_shown := Vector2.ZERO
+## 「抽出」的起点取哪儿：**实体牌堆顶面在画布上的落点**（批次 6 Task 2 —— 本批次 BoardView
+## 的唯一改动，见 doc/development/开发台账.md §三）。由 3D 侧的 `TableProps.deck_top_px` 注入
+## （同 `TableView3D.on_table_click` 的注入方式：BoardView 活在 2D 画布里，不该把 3D 物件层的
+## 类型拖进它的编译链）。默认无效 ⇒ 退回原来那点（画布上的扁图案），动画照常演。
+## 返回 `Vector2.ZERO` = 没有实体牌堆（同样退回原来那点）。
+var deck_top_provider: Callable = Callable()
 var _deck_restore := GameData.NO_PEER
 var _deck_prev_zoom := 0.0     # 抽卡前的缩放，展示完还原（抽卡时会临时拉近看清牌面）
 
@@ -742,6 +748,15 @@ func play_deck_card(deck: String, kind: String, text: String, restore_peer := Ga
 	card.add_child(_deck_front)
 
 	var start := center - card.size * 0.5 + Vector2(0, 54)
+	# 批次 6 Task 2：**「抽出」的起点从画布上的扁图案改到实体摞的顶面**（本批次 BoardView 的
+	# 唯一改动）。四段动画的语义与节奏一字未动 —— 只换起点（"收回"也回这儿，因为收回的落点就是
+	# 它从哪儿抽出来的）。
+	# 起点要的是 `_world` 局部坐标，而 provider 给的是**画布像素**（3D 侧的口径）⇒ 过
+	# `_world_from_view` 折一次。少了这一跳，起点会按"画布像素当成局部坐标"落到几百像素之外。
+	if deck_top_provider.is_valid():
+		var top_px: Vector2 = deck_top_provider.call(deck)
+		if top_px != Vector2.ZERO:
+			start = _world_from_view(top_px) - card.size * 0.5
 	var shown := center - card.size * 0.5 - Vector2(0, 120)
 	shown.x = clampf(shown.x, 16.0, WORLD.x - card.size.x - 16.0)
 	card.position = start
