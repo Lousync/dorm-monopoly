@@ -167,7 +167,7 @@ func _test_round_counter(g) -> void:
 	_check(g.round_no == 1, "0 号位破产后三人一圈仍记一轮（实得 %d）" % g.round_no)
 
 func _test_client_item_bar(g) -> void:
-	print("== 牌垫道具（点选→使用 三态） ==")
+	print("== 选中道具 → 「使用道具」按钮三态（玩法侧 selected_slot） ==")
 	var pls := [
 		{"peer": 2, "name": "我", "color": 1, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false,
@@ -184,11 +184,12 @@ func _test_client_item_bar(g) -> void:
 	_check(g.board._phase_use != null, "牌垫上有「使用道具」按钮")
 	_check(String(g.board._phase_use.text) == "跳过" and not g.board._phase_use.disabled,
 		"未选卡时该按钮为「跳过」（可点）")
-	# 点牌垫上的「交换生」（槽 1）→ 选中（绿光）
+	# 选中「交换生」（槽 1）—— 走**玩法侧唯一入口** `_on_item_slot_clicked`（桌上手牌点击最终也落到它）。
+	# 证据取 `g.selected_slot`（玩法侧单一来源）：座位卡牌位已随批次 3 Task 6 拆除后，
+	# `board.item_selected` 不再有任何可见效果（`set_item_selected` 遍历的是恒空的 slots），
+	# 拿它当证据的话「选择坏了」也会通过。选中的**可见**反馈在桌上那张手牌自己身上（抬起 + 提亮）。
 	g._on_item_slot_clicked(2, 1)
-	_check(int(g.board.item_selected.get("peer", -1)) == 2 \
-		and int(g.board.item_selected.get("slot", -1)) == 1,
-		"点牌垫道具卡后选中该槽（绿光）")
+	_check(g.selected_slot == 1, "选中「交换生」→ 玩法侧 selected_slot = 1（实得 %d）" % g.selected_slot)
 	_check(not g.board._phase_use.disabled and String(g.board._phase_use.text).contains("交换生"),
 		"选中后按钮变可用并显示道具名（形态二）")
 

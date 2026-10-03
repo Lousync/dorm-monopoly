@@ -14,8 +14,8 @@ signal seat_clicked(peer: int)
 ## 选道具改由桌面上的手中牌实体调 `game._on_item_slot_clicked`，丢弃按钮的落点待定。
 ## 信号与连接一律保留 —— 玩法入口函数（`_on_item_slot_clicked` / `_on_discard_clicked`）
 ## 仍在，接口别动。
-signal item_slot_clicked(peer: int, slot: int)   # 牌垫道具卡点选（阶段二选道具）
-signal item_discard_clicked(peer: int, slot: int) # 卡片右上角「✕」丢弃
+signal item_slot_clicked(peer: int, slot: int)   # 见上方说明：已无发射方，接口保留
+signal item_discard_clicked(peer: int, slot: int) # 见上方说明：已无发射方，接口保留
 signal phase_spin_clicked()          # 牌垫上的「转转盘」
 signal phase_use_clicked()           # 牌垫上的「使用道具」
 signal cancel_clicked()              # 右键单击（未拖拽平移）：取消当前选择
@@ -1330,9 +1330,14 @@ func _pulse_select(on: bool) -> void:
 	_select_tw.tween_method(apply, 0.45, 1.0, 0.7).set_trans(Tween.TRANS_SINE)
 
 ## 丢弃待确认：把那张卡的「✕」点亮成红色。
-## **座位卡道具牌位已随批次 3 Task 6 拆除** ⇒ 循环体拿到的是空数组（`sd.get("slots", [])`），
-## 这里只记 `_discard_hl` 这份状态，不再有可点亮的「✕」。丢弃按钮的新落点待定，见
-## doc/development/开发台账.md §三。
+##
+## **当前不可达（循环体空转，不是死代码，别删）**：座位卡道具牌位已随批次 3 Task 6 拆除，
+## 于是 `sd.get("slots", [])` 恒为空数组、下面的红色循环一次都跑不到；本函数今天只剩
+## 「记下 `_discard_hl` 这份状态」的作用。**为什么留着**：① 玩法侧仍在调它
+##（`game._on_discard_clicked` / `_on_item_slot_clicked`），接口不能断；② 它是「座位字典为什么
+## 没有 `slots` 键」与**两步丢弃高亮**的唯一书面记录；③ **批次 5 的 3D 立牌会把牌位拿回来**，
+## 届时这个循环原样复活。丢弃的新落点是**手牌上点右键**，待确认的可见反馈在
+## `table_props.set_hand_discard_pending`（牌身染红），见 doc/development/开发台账.md §三。
 func mark_discard_pending(peer: int, slot: int) -> void:
 	_discard_hl = {"peer": peer, "slot": slot}
 	for e in _seats:
@@ -1349,10 +1354,14 @@ func mark_discard_pending(peer: int, slot: int) -> void:
 				(b as Button).modulate = Color(1, 0.45, 0.45) \
 					if (int(peer) == self_peer and int(slot) == i) else Color(1, 1, 1, 0.78)
 
-## 记「当前选中的道具槽」并给座位卡牌位上绿光。座位卡牌位已拆（Task 6）⇒ 高亮循环空转，
-## 只留 `item_selected` 这份状态（选中的**可见**反馈在桌面上那张手牌自己身上，见
-## table_props.set_hand_selected）。保留本函数是因为玩法侧（game.gd 的
-## `_on_item_slot_clicked` / `_clear_item_selection`）仍在写它。
+## 记「当前选中的道具槽」并给座位卡牌位上绿光。
+##
+## **当前不可达（高亮循环空转，不是死代码，别删）**：座位卡牌位已拆（Task 6）⇒
+## `sd.get("slots", [])` 恒空，下面的绿光循环跑不到；今天只剩 `item_selected` 这份状态。
+## 选中的**可见**反馈在桌面上那张手牌自己身上（`table_props.set_hand_selected`：抬起 + 提亮）。
+## **为什么留着**：玩法侧（`game._on_item_slot_clicked` / `_clear_item_selection`）仍在写它、
+## 接口不能断；且与 `mark_discard_pending` 同为「座位字典没有 `slots` 键」的书面记录，
+## **批次 5 的立牌会把牌位拿回来**，届时原样复活。
 func set_item_selected(peer: int, slot: int) -> void:
 	item_selected = {"peer": peer, "slot": slot}
 	for e in _seats:

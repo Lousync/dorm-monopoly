@@ -1269,13 +1269,17 @@ func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 
 # ================= 界面刷新 =================
 
-## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（Task 3 会在这里加筹码堆 / 体力件 / 手牌）。
+## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（筹码堆 / 体力件 / 手牌也在这里）。
 ##
-## 为什么**每次状态广播**都要刷、而不是建一次就完：物件的圆心与半径都是 BoardView 的
-## **画布像素**口径（`wheel_screen_pos` / `wheel_screen_radius`），而半径 = `200 × 镜头倍率`，
-## 倍率会被取景 / 滚轮推拉 / 抽卡推近 / 人数变化改动 —— 只建一次，实体就会与桌垫上画出来的
-## 图案脱开（转盘尤其明显：轮缘对不上盘面）。build_wheel 是幂等的，只改 transform 与
+## 为什么**每次状态广播**都要刷、而不是建一次就完：**转盘轮缘**的位置与半径都是 BoardView 的
+## **画布像素**口径（`wheel_screen_pos` / `wheel_screen_radius`），而半径 = `200 × 2D 镜头倍率`，
+## 倍率会被 `focus_grid` / `focus_point_zoom` / `fit_overview` / 人数变化改动 —— 只建一次，
+## 轮缘就会与桌垫上画出来的那个轮盘脱开。build_wheel 是幂等的，只改 transform 与
 ## mesh 尺寸，**不重建节点**，所以每次状态都调它没有代价。
+##
+## 注意**滚轮推拉不算在内** —— 那是 TableView3D 的 3D 相机 `dolly`，只改相机到桌心的距离，
+## 不碰 2D 的 `_zoom`，桌垫图案与轮缘一起原样不动。「谁跟相机、谁不跟」见 table_props.gd
+## 文件头的摆放约定：只有轮缘跟 2D 相机，筹码 / 体力件 / 手牌是画布常量的实物、不跟。
 func _refresh_table_props() -> void:
 	if table3d == null or table3d.table_props == null or board == null:
 		return
