@@ -916,6 +916,21 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 	if button == MOUSE_BUTTON_LEFT and tp.wheel_hit(canvas_px):
 		_on_roll_pressed()
 		return true
+	# 3) 立牌：**只在"选目标"态吃点击** —— 判据与 `_on_seat_clicked` 的第一行**同源**
+	#    （它只在 `_tgt_stage == "peer"` 且目标不是自己时才做事；其余情形它是无害的空转）。
+	#    非选目标态下点立牌**没有后果**，消费它就是白吞一次点击 —— 而立牌正贴在四条座位栏的位置上，
+	#    那是"点地图选玩家"和近端近排格子的常规区域，凭空多一块死区是不能接受的。
+	#    只吃左键：右键在棋盘上是既有的取消（转盘上同理不吃），立牌不该破例。
+	#    排在**手牌与转盘之后**：那两处一个在近端、一个在盘心，与桌沿的立牌互不重叠；
+	#    反过来把立牌排前面，2D 端（自己的立牌这时看得见也点得到）会先把手牌 / 格子那一片吃掉。
+	#    后果一律走**既有的** `_on_seat_clicked(peer)` —— 玩法链路一行没改。
+	if button == MOUSE_BUTTON_LEFT and _tgt_stage == "peer":
+		var si: int = tp.standee_hit(canvas_px)
+		if si >= 0:
+			var sp: int = tp.standee_peer(si)
+			if sp != GameData.NO_PEER and sp != my_peer:
+				_on_seat_clicked(sp)
+				return true
 	return false
 
 ## 这张手牌此刻点得动吗：轮到我、正在道具阶段、没在选目标，且这一张是已实装的道具。
@@ -1310,6 +1325,9 @@ func _refresh_table_props() -> void:
 	if board.size.x <= 10.0:
 		return
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
+	# 四块立牌（批次 5 Task 1）：名字 / 身家 / 公开背包。放在 `mine.is_empty()` 那道早退**之前**
+	# —— 立牌的数据全来自 st.players（客户端也准），观战者（自己不在名册里）照样该看见四家。
+	_refresh_standees()
 	# 自己的现金 / 体力也搬到桌上（Task 3）：筹码堆按金额分档、体力件用掉的熄灭。
 	# 输入只要**画布像素**那点信息 —— _state_player 读的是已同步的 st.players（客户端也有）。
 	# 两者与 build_wheel 一样幂等（只改 transform / visible / 材质色，不重建节点），
@@ -1340,6 +1358,46 @@ func _refresh_table_props() -> void:
 		if stale:
 			_clear_discard_pending()
 	table3d.table_props.set_hand_discard_pending(_discard_pending)
+
+## 客户端也能算的身家：与 `_refresh_players` 顶部战况面板**同一公式**，但读的是已同步的
+## `st.tiles`，而不是房主专有的 `htiles` —— 立牌两端都要显示（客户端没有 hp / htiles）。
+func _state_worth(peer: int) -> int:
+	var v := int(_state_player(peer).get("money", 0))
+	var tiles_arr: Array = st.get("tiles", [])
+	for i in mini(tiles_arr.size(), GameData.TILES.size()):
+		var td: Dictionary = tiles_arr[i]
+		if int(td.get("owner", GameData.NO_OWNER)) == peer:
+			v += int(GameData.TILES[i].price) + int(td.get("level", 0)) * GameData.upgrade_cost(i)
+	return v
+
+## 四块立牌的**数据**（批次 5 Task 1）。行序 = 桌位顺序（底 / 左 / 上 / 右）：
+## 与 `board.build_seats` 同源，把 st.players **轮转成"自己打头、其余按行动序"**
+## —— 于是 STANDEE_BASE_PX[0..3] 依次对上 e0..e3（自己 / 下家 / 对家 / 上家），
+## 立牌与（Task 2 才拆的）座位栏严丝合缝站在同一侧。
+## 身家走 `_state_worth`（读 st.tiles）而不是 host 专有的 `_net_worth`：客户端也要显示。
+func _refresh_standees() -> void:
+	var t3 = table3d
+	if t3 == null or t3.table_props == null:
+		return
+	var pls: Array = st.get("players", [])
+	if pls.is_empty():
+		t3.table_props.set_standees([])     # 还没进对局：一块都不摆（池子是空的）
+		return
+	var my_i := 0
+	for i in pls.size():
+		if int(pls[i].peer) == my_peer:
+			my_i = i
+			break
+	var rows: Array = []
+	for k in pls.size():
+		var p: Dictionary = pls[(my_i + k) % pls.size()]
+		var peer := int(p.peer)
+		rows.append({
+			"peer": peer, "name": String(p.get("name", "?")), "worth": _state_worth(peer),
+			"color_idx": int(p.get("color", 0)), "alive": bool(p.get("alive", true)),
+			"items": p.get("items", []), "is_self": peer == my_peer,
+		})
+	t3.table_props.set_standees(rows)
 
 func _name_by_peer(peer: int) -> String:
 	for p in st.get("players", []):
@@ -3480,6 +3538,12 @@ func _refresh_op_timer(delta: float) -> void:
 	if show or _op_shown:
 		var kind_text := String(OP_KIND_LABELS.get(_op_kind, _op_kind)) if show else ""
 		board.set_op_timer(_op_owner, kind_text, _op_left, _op_total)
+		# 同一份数据再推一份到桌上的立牌（批次 5 Task 1）。**不动上面那条**（座位卡还没拆，
+		# Task 2 才拆）。立牌上只有**当前行动者**那一块露倒计时（留痕 §四），
+		# 所以窗口收起时传 NO_PEER = 四块一起收起。
+		if table3d != null and table3d.table_props != null:
+			table3d.table_props.set_standee_timer(_op_owner if show else GameData.NO_PEER,
+				kind_text, _op_left, _op_total)
 		# 小卖部全屏界面盖住整块棋盘，座位卡上的倒计时在里面看不见：同一份数据再推一份到面板
 		if shop_layer != null and shop_layer.visible:
 			_refresh_shop_timer(kind_text)

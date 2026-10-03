@@ -390,6 +390,8 @@ func set_view_t(t: float) -> void:
 		return
 	_view_t = nt
 	_apply_hand_alpha()
+	# 立牌也看这个量：自己的那面在 3D 端整块藏掉（见 _standee_shown）。
+	_apply_standee_show()
 
 ## 当前手牌的不透明度：3D 端 1，2D 端 0，中间是 HAND_FADE_LO→HI 的平滑过渡。
 ## smoothstep 而不是线性：两端多一段"几乎不变"的平缓区，滚轮走到头才明显淡掉。
@@ -547,7 +549,7 @@ func hand_count() -> int:
 ## **抬高 + 倾斜**那一段：整个盒子比"把扁矩形画在牌位落点上"往远端挪了约 13 画布像素
 ##（测试里 `命中盒按抬起算` 那条钉的就是它）。
 ##
-## 不缓存：相机推拉（滚轮）会改"你看到它的位置"，而实物的世界位置不动。
+## 不缓存：相机变动（取景 / 滚轮推移视角）会改"你看到它的位置"，而实物的世界位置不动。
 func hand_rect(i: int) -> Rect2:
 	if i < 0 or i >= _hand_n:
 		return Rect2()
@@ -608,3 +610,328 @@ func hand_hit(canvas_px: Vector2) -> int:
 			best_z = z
 			best = i
 	return best
+
+# ---------------- 四块立牌（批次 5 Task 1） ----------------
+#
+# 座位卡的 3D 版：**名字 / 身家 / 公开背包 / 操作倒计时**都在牌面上，点它 = 选目标
+#（后果由 game.gd 的 `_on_seat_clicked` 决定，这里只负责"摆在哪、长什么样、点到没点到"）。
+# 与筹码 / 手牌同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），尺寸是世界常数
+#（实物不跟 2D 相机，见文件头那段），刷新幂等（节点池只建一次，每次状态广播只改
+# visible / 文字 / 颜色 / transform）。
+#
+# **公开背包为什么必须摆在这里、为什么必须摆满 7 件**：座位卡上的道具牌位在批次 3 拆了，
+#「背包对所有人公开」（留痕 §三 6）一时没有载体。近场那排手中牌最多只显示 5 张（HAND_MAX）
+# 那是**空间所限**（近端只剩一条几十像素高的桌垫缝），不是规则上限 ——
+#「看得见全部件数」这半由立牌兜住：背包上限带置物架是 7（道具系统 §12），
+# 这里一件一张小卡、封顶 BACKPACK_MAX = 7，**不再截到 5**。
+
+## 立牌后倾角（绕 X 轴，度）。**必须后倾**：2D 端接近正俯视，直立薄板从上方只剩一条线；
+## 向后倾（像桌上的菜单牌）两端才都看得见一块面（设计稿 §九 补记 3）。
+## 方向是"顶边往远端倒"（绕 X 负角）—— 相机在 +z，四块都朝近端镜头；
+## 四块用同一个角，2D 端（几乎正俯视）看到的都是"被压扁的一整块面、文字正着"。
+const STANDEE_LEAN_DEG := 25.0
+## 立牌尺寸（世界单位）：宽 × 高 × 厚。**宽被左右两个桌位反过来钉住**：牌面的宽沿世界 X 展开，
+## 左右桌位中心在 x = ±3.56、棋盘外沿在 x ≈ ±3.1、桌沿在 x = ±4.0 ⇒ 半宽只能落在中间那条缝里，
+## 宽 ≤ 0.76。四块共用这一份尺寸（同一个 STANDEE_SIZE），所以取 0.70 留一点余量。
+## 厚度 0.03：有厚度才投得出影子（贴纸立牌投不出，那正是本批次要治的"贴纸感"）。
+const STANDEE_SIZE := Vector3(0.70, 0.72, 0.03)
+## 四块立牌的桌位（画布像素）：**底 / 左 / 上 / 右**，与 board.build_seats 的边序一一对应
+##（e0 = 自己、e1 = 下家、e2 = 对家、e3 = 上家）。取值 = 四条座位栏的中心
+##（`board._seat_center(e)` 经 `_view_from_world` 折成画布像素），也就是「座位卡搬到桌上」的
+## 那个位置：围桌全景取景下实测 (1024,1918) / (112,1024) / (1024,130) / (1936,1024)。
+## 同 CHIP_BASE_PX 的约定：它是**画布常量**，不跟 2D 相机。座位卡要到批次 5 Task 2 才拆，
+## 届时窗口若被裁到棋盘区，这四个值必须跟着重取（画布常量换算出来的世界位置会整体变）。
+const STANDEE_BASE_PX: Array = [
+	Vector2(1024.0, 1918.0),
+	Vector2(112.0, 1024.0),
+	Vector2(1024.0, 130.0),
+	Vector2(1936.0, 1024.0),
+]
+## 立牌最多几块（四人局）。
+const STANDEE_MAX := 4
+## 公开背包最多摆几件 = **背包上限**（带置物架 7，见 doc/game-design/道具系统.md §12）。
+## 别改成 HAND_MAX：那 5 是近场空间所限，不是规则上限（见本节开头的分工说明）。
+const BACKPACK_MAX := 7
+## 相邻两张公开背包小卡的间距（世界单位；小卡宽 0.078 + 缝 0.008）。
+## 7 张一排共 0.078 + 6 × 0.086 = 0.594，占牌面（0.70）的八成半 —— 是"再宽就出牌面"的上界。
+const STANDEE_CARD_STEP := 0.086
+## 倒计时进度条的长度（世界单位）。
+const STANDEE_BAR_W := 0.56
+## 立牌的视角分界线：view_t **低于**它 = 3D 第一人称（自己的那面看不见，见 _standee_shown）。
+## 0.5 就是两个端点的中点（滚轮 4 格从 3D 走到 2D，两格正好在这条线上）。
+const STANDEE_SELF_HIDE_T := 0.5
+## 牌面底色：暗蓝灰 —— 压在深色木桌上仍看得出是一块板。
+const STANDEE_PLATE_COLOR := Color(0.115, 0.125, 0.175)
+## 立牌文字的像素口径：pixel_size = 一个"字号像素"在世界里有多大。
+## 0.0022 × 字号 64 ≈ 0.141 世界单位一个字（≈ 9~10 屏幕像素，围桌全景下）。
+const STANDEE_FONT_PS := 0.0022
+
+var _standees_root: Node3D
+## 立牌的节点池：每块一个字典
+## {root, plate, plate_mat, name_l, worth_l, count_l, timer_l, track, fill, cards, card_mats}。
+var _standees: Array[Dictionary] = []
+## 最近一次 set_standees 的 rows —— **数据单一来源**（节点池只管画），
+## 命中判定 / 显隐 / 倒计时都从它取，越界的下标一律当作"没有这块"。
+var _standee_rows: Array = []
+var _standee_mesh: BoxMesh
+var _card_mesh: BoxMesh
+var _bar_mesh: BoxMesh
+# 倒计时最近一次收到的数据（set_standees 与 set_standee_timer 谁先谁后都画得对）
+var _st_timer_peer := GameData.NO_PEER
+var _st_timer_text := ""
+var _st_timer_left := 0.0
+var _st_timer_total := 0.0
+
+## 按行摆四块立牌；rows 每项 {peer, name, worth, color_idx, alive, items, is_self}。
+## 顺序 = **桌位顺序**（底 / 左 / 上 / 右）：game.gd 按"自己打头、其余按行动序"轮转后传来，
+## 与 board.build_seats 的边序同源。
+##
+## **幂等**：节点池只建一次（封顶 STANDEE_MAX），刷新只改 visible / 文字 / 颜色 / transform
+## —— 每次状态广播都会调它。
+func set_standees(rows: Array) -> void:
+	if _standees_root == null:
+		_standees_root = Node3D.new()
+		_standees_root.name = "Standees"
+		add_child(_standees_root)
+	_standee_rows = rows
+	while _standees.size() < mini(rows.size(), STANDEE_MAX):
+		_standees.append(_make_standee(_standees.size()))
+	for i in _standees.size():
+		var sd: Dictionary = _standees[i]
+		if i >= rows.size():
+			(sd.root as Node3D).visible = false
+			continue
+		var r: Dictionary = rows[i]
+		# 摆位：画布像素 → 桌垫世界坐标（与筹码 / 手牌同一条换算），y 抬到桌垫之上；
+		# 牌面原点在**下沿中点**，所以它"坐"在桌面上（见 _make_standee）。
+		var w: Vector3 = _t3.canvas_px_to_world(STANDEE_BASE_PX[i % STANDEE_BASE_PX.size()])
+		w.y = _t3.table_mesh.global_position.y + PROPS_Y
+		(sd.root as Node3D).global_position = w
+		# 牌面文字：名字 / 身家（破产与座位卡同款提示：不报数字）
+		var alive := bool(r.get("alive", true))
+		(sd.name_l as Label3D).text = String(r.get("name", "?"))
+		(sd.worth_l as Label3D).text = GameData.fmt_money(int(r.get("worth", 0))) if alive else "已出局"
+		var dim := Color(0.66, 0.66, 0.70) if not alive else Color.WHITE
+		(sd.name_l as Label3D).modulate = dim
+		(sd.worth_l as Label3D).modulate = Color(0.62, 0.57, 0.44) if not alive else Color(0.93, 0.84, 0.55)
+		# 牌身底色 = 暗底混一点玩家色（与棋子 / 座位卡同一个配色来源），破产再压暗
+		var pc: Color = GameData.PLAYER_COLORS[
+			int(r.get("color_idx", 0)) % GameData.PLAYER_COLORS.size()]
+		var base := STANDEE_PLATE_COLOR.lerp(pc, 0.18)
+		var k := 0.45 if not alive else 1.0
+		(sd.plate_mat as StandardMaterial3D).albedo_color = Color(base.r * k, base.g * k, base.b * k)
+		# 公开背包：**一件一张小卡**（品质色），封顶 BACKPACK_MAX；件数用一行文字写明
+		var items: Array = r.get("items", [])
+		(sd.count_l as Label3D).text = "背包 %d" % items.size()
+		var cards: Array = sd.cards
+		var mats: Array = sd.card_mats
+		for c in cards.size():
+			var card: MeshInstance3D = cards[c]
+			card.visible = c < mini(items.size(), BACKPACK_MAX)
+			if not card.visible:
+				continue
+			var iid := String((items[c] as Dictionary).get("id", ""))
+			var q := String(ItemData.def(iid).get("quality", "白"))
+			(mats[c] as StandardMaterial3D).albedo_color = \
+				ItemData.QUALITY_COLORS.get(q, Color.WHITE)
+	_apply_standee_show()
+	_apply_standee_timers()
+
+## 第 i 块立牌此刻露（也决定它能不能被点到）吗：行数之外的池子节点不露；
+## **自己的那面在 3D 端不露** —— 第一人称看不见自己（设计稿 §三）。它就立在近端桌沿上，
+## 不显式藏会卡在画面边缘露出半个。判据集中在 `_standee_shown` 一处，
+## `visible` 与命中判定都用它，免得"看得见"与"点得到"两套判据悄悄跑偏。
+func _standee_shown(i: int) -> bool:
+	if i < 0 or i >= _standee_rows.size():
+		return false
+	if bool((_standee_rows[i] as Dictionary).get("is_self", false)):
+		return _view_t >= STANDEE_SELF_HIDE_T
+	return true
+
+## 把 `_standee_shown` 贴到节点上。view_t 一变就要重贴 ⇒ set_view_t 也调这里。
+func _apply_standee_show() -> void:
+	for i in _standees.size():
+		(_standees[i].root as Node3D).visible = _standee_shown(i)
+
+## 倒计时：**只有当前行动者那一块**显示（留痕 §四 —— 原设计就是"嵌在行动者的座位卡里"，
+## 这条不改、只换载体）。peer 对不上 / kind_text 为空时四块一起收起。
+func _apply_standee_timers() -> void:
+	for i in _standees.size():
+		var sd: Dictionary = _standees[i]
+		var mine: bool = i < _standee_rows.size() and _st_timer_text != "" \
+			and int((_standee_rows[i] as Dictionary).get("peer", GameData.NO_PEER)) == _st_timer_peer
+		(sd.timer_l as Label3D).visible = mine
+		(sd.track as MeshInstance3D).visible = mine
+		(sd.fill as MeshInstance3D).visible = mine
+		if not mine:
+			continue
+		(sd.timer_l as Label3D).text = "%s %d 秒" % [_st_timer_text, ceili(maxf(_st_timer_left, 0.0))]
+		# 进度条：左端固定、长度按剩余比例缩（底轨与填充共用一份 mesh，靠 scale.x + 位移做）
+		var frac: float = clampf(_st_timer_left / _st_timer_total, 0.0, 1.0) if _st_timer_total > 0.0 else 1.0
+		var fill: MeshInstance3D = sd.fill
+		fill.scale.x = maxf(frac, 0.001)
+		fill.position.x = -(1.0 - frac) * STANDEE_BAR_W * 0.5
+
+## 倒计时数据入口：由 `game._refresh_op_timer` 逐帧推来（与 `board.set_op_timer` 同一份数据）。
+## **不动 board.set_op_timer 那条** —— 座位卡还在，Task 2 才拆。
+func set_standee_timer(peer: int, kind_text: String, left: float, total: float) -> void:
+	_st_timer_peer = peer
+	_st_timer_text = kind_text
+	_st_timer_left = left
+	_st_timer_total = total
+	_apply_standee_timers()
+
+## 画布像素命中第几块立牌（**-1 = 没命中**，本函数自己的约定，与 GameData 哨兵无关）。
+## 自己的那面 3D 端点不到：`_standee_shown` 与显示用**同一条判据**
+##（语义同手牌那条"看不见就点不到"）。两块都压住时取**离相机最近**的（不透明实物里它画在上面）。
+func standee_hit(canvas_px: Vector2) -> int:
+	var best := -1
+	var best_z := -INF
+	for i in _standees.size():
+		if not _standee_shown(i):
+			continue
+		if not _standee_rect(i).has_point(canvas_px):
+			continue
+		var z: float = (_standees[i].root as Node3D).global_position.z   # 相机在 +z：z 越大越近
+		if z > best_z:
+			best_z = z
+			best = i
+	return best
+
+## 第 i 块立牌是谁（越界 / 池子外给 `GameData.NO_PEER`）。
+func standee_peer(i: int) -> int:
+	if i < 0 or i >= _standee_rows.size():
+		return GameData.NO_PEER
+	return int((_standee_rows[i] as Dictionary).get("peer", GameData.NO_PEER))
+
+## 第 i 块立牌的命中矩形（**画布像素**）。与 `hand_rect` 同一条链：牌面八个角 → 世界 → 屏幕 → 画布，
+## 取包围盒。牌面是**立着又后倾**的实物，而玩家的点击是"屏幕点 → 桌面平面 → 画布像素"，
+## 两者之间差着"实物离桌面的高度"那一段投影 —— 只按立牌在桌面上的落点画个扁矩形，
+## 玩家照着看得见的牌面点就会点空（同 hand_rect 那条踩过的坑）。不缓存：相机一变它就得重算。
+func _standee_rect(i: int) -> Rect2:
+	var plate: MeshInstance3D = _standees[i].plate
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	var n := 0
+	for sx in [-0.5, 0.5]:
+		for sy in [-0.5, 0.5]:
+			for sz in [-0.5, 0.5]:
+				var corner: Vector3 = plate.global_transform * Vector3(
+					STANDEE_SIZE.x * float(sx), STANDEE_SIZE.y * float(sy), STANDEE_SIZE.z * float(sz))
+				var px = _t3.screen_to_viewport(_t3.camera.unproject_position(corner))
+				if px == null:
+					continue
+				var p: Vector2 = px
+				mn = mn.min(p)
+				mx = mx.max(p)
+				n += 1
+	if n < 4:
+		return _standee_mat_rect(i)      # 相机 / 视口不可用（理论上不会）：退回桌面落点
+	return Rect2(mn, mx - mn)
+
+## 退化口径：牌面四角**落到桌面平面上**的包围盒（不算抬高与后倾）。
+func _standee_mat_rect(i: int) -> Rect2:
+	var plate: MeshInstance3D = _standees[i].plate
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	for sx in [-0.5, 0.5]:
+		for sy in [-0.5, 0.5]:
+			var p: Vector2 = _t3.world_to_canvas_px(plate.global_transform * Vector3(
+				STANDEE_SIZE.x * float(sx), STANDEE_SIZE.y * float(sy), 0.0))
+			mn = mn.min(p)
+			mx = mx.max(p)
+	return Rect2(mn, mx - mn)
+
+## 造一块立牌（节点只造一次）。局部坐标：原点 = **板的下沿中点**（立牌坐在桌面上），
+## x 向右、y 向上、z 朝近端镜头。
+func _make_standee(i: int) -> Dictionary:
+	var root := Node3D.new()
+	root.name = "Standee%d" % i
+	# 后倾：绕 X **负**角 = 顶边往远端倒 —— 牌面因此朝上朝着近端镜头，2D 端也还看得见一块面。
+	root.rotation = Vector3(deg_to_rad(-STANDEE_LEAN_DEG), 0.0, 0.0)
+	_standees_root.add_child(root)
+
+	if _standee_mesh == null:
+		_standee_mesh = BoxMesh.new()
+		_standee_mesh.size = STANDEE_SIZE
+	var plate := MeshInstance3D.new()
+	plate.name = "Plate"
+	plate.mesh = _standee_mesh
+	plate.position = Vector3(0.0, STANDEE_SIZE.y * 0.5, 0.0)   # 板心抬到半高 ⇒ 下沿落在原点
+	var pmat := StandardMaterial3D.new()
+	pmat.albedo_color = STANDEE_PLATE_COLOR
+	pmat.roughness = 0.62
+	plate.material_override = pmat    # 保持默认的不透明模式：写深度、投得出影子（贴纸投不出）
+	root.add_child(plate)
+
+	# 文字四行 + 一条倒计时进度条。y 从板顶往下排（板高 0.72）：
+	# 倒计时 0.655 / 进度条 0.585 / 名字 0.46 / 身家 0.30 / 背包件数 0.165 / 背包小卡 0.075。
+	# 倒计时那一档平时空着（只有行动者露）—— 它是**固定档位**，不能让行动时整块牌跳一下。
+	var name_l := _make_standee_label(root, "Name", 0.46, 64, 9, Color(0.97, 0.97, 1.0))
+	var worth_l := _make_standee_label(root, "Worth", 0.30, 44, 7, Color(0.93, 0.84, 0.55))
+	var count_l := _make_standee_label(root, "Count", 0.165, 38, 6, Color(0.80, 0.84, 0.92))
+	var timer_l := _make_standee_label(root, "Timer", 0.655, 34, 7, Color(1.0, 0.88, 0.55))
+	timer_l.visible = false
+	var track := _make_standee_bar(root, "Track", 0.585, Color(0.16, 0.17, 0.22))
+	var fill := _make_standee_bar(root, "Fill", 0.585, Color(0.95, 0.72, 0.30))
+	track.visible = false
+	fill.visible = false
+
+	# 公开背包：一件一张小卡（品质色），封顶 BACKPACK_MAX —— **不截到 5**（理由见本节开头）
+	var cards: Array = []
+	var card_mats: Array = []
+	for c in BACKPACK_MAX:
+		var card := MeshInstance3D.new()
+		card.name = "Bag%d" % c
+		if _card_mesh == null:
+			_card_mesh = BoxMesh.new()
+			_card_mesh.size = Vector3(0.078, 0.054, 0.006)
+		card.mesh = _card_mesh
+		card.position = Vector3((float(c) - float(BACKPACK_MAX - 1) * 0.5) * STANDEE_CARD_STEP,
+			0.075, STANDEE_SIZE.z * 0.5 + 0.004)
+		var cm := StandardMaterial3D.new()
+		cm.albedo_color = Color.WHITE
+		cm.roughness = 0.6                # 同样保持不透明：小卡也要投得出影子
+		card.material_override = cm
+		root.add_child(card)
+		cards.append(card)
+		card_mats.append(cm)
+	return {"root": root, "plate": plate, "plate_mat": pmat, "name_l": name_l, "worth_l": worth_l,
+		"count_l": count_l, "timer_l": timer_l, "track": track, "fill": fill,
+		"cards": cards, "card_mats": card_mats}
+
+## 一块立牌上的一个 Label3D。贴在牌面**前方一点点**（不与板面共面，免得 z-fighting）；
+## 水平居中（CENTER 对齐下文字的包围盒以原点为中心）；带深色描边 ——
+## 立牌文字压在深色牌面上，描边是暗底可读性的全部来源（设计稿 §五 反转 4 的代价）。
+## **不 billboard、不 no_depth_test**：文字要贴着板面，也应当被前面挡着它的东西遮住。
+func _make_standee_label(parent: Node3D, lname: String, y: float, font_size: int,
+		outline: int, color: Color) -> Label3D:
+	var l := Label3D.new()
+	l.name = lname
+	l.font_size = font_size
+	l.pixel_size = STANDEE_FONT_PS
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF      # 不换行：一行就是一行（换行会撑出牌面）
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.position = Vector3(0.0, y, STANDEE_SIZE.z * 0.5 + 0.002)
+	l.modulate = color
+	l.outline_size = outline
+	l.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
+	l.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # 文字不投影（影子交给牌面）
+	parent.add_child(l)
+	return l
+
+## 倒计时的一条横条（底轨 / 填充共用一份 mesh；填充靠 scale.x 缩）。
+func _make_standee_bar(parent: Node3D, bname: String, y: float, color: Color) -> MeshInstance3D:
+	if _bar_mesh == null:
+		_bar_mesh = BoxMesh.new()
+		_bar_mesh.size = Vector3(STANDEE_BAR_W, 0.024, 0.006)
+	var bar := MeshInstance3D.new()
+	bar.name = bname
+	bar.mesh = _bar_mesh
+	bar.position = Vector3(0.0, y, STANDEE_SIZE.z * 0.5 + 0.004)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.roughness = 0.5
+	bar.material_override = m
+	parent.add_child(bar)
+	return bar

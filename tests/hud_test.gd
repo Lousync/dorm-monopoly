@@ -844,6 +844,80 @@ func _run() -> void:
 			_check(g._tgt_stage == "", "该格被选中 → 选目标态收尾（实得「%s」）" % g._tgt_stage)
 		g._cancel_target()
 
+	print("== 立牌（批次 5 Task 1）：数据来自已同步的 st、点对手立牌能选目标 ==")
+	# 座位卡的 3D 版。数据全走 st.players / st.tiles（客户端也准），顺序按"自己打头、
+	# 其余按行动序"轮转 —— 与 board.build_seats 同源，STANDEE_BASE_PX[0..3] 就是四个桌位。
+	# 点击那条：`_on_table_click` 里立牌只多一个命中分支，后果一律走**既有的** `_on_seat_clicked`。
+	g.my_peer = 2
+	g.s_state(_state(2, false))
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	var srh: Node = tph.get_node_or_null("Standees")
+	_check(srh != null, "立牌的父节点在（game._refresh_table_props 驱动）")
+	if srh == null:
+		_check(false, "立牌父节点缺了，下面整段跳过")
+	else:
+		_check(tph._standee_rows.size() == 4, "四家都有立牌（实得 %d）" % tph._standee_rows.size())
+		_check(tph.standee_peer(0) == 2 and tph.standee_peer(1) == 3 \
+			and tph.standee_peer(2) == 4 and tph.standee_peer(3) == 1,
+			"自己打头、其余按行动序（实得 %d/%d/%d/%d）" % [tph.standee_peer(0), tph.standee_peer(1),
+				tph.standee_peer(2), tph.standee_peer(3)])
+		_check(String((srh.get_child(0).get_node("Name") as Label3D).text) == "乙",
+			"第一块（自己）是「乙」（实得「%s」）"
+				% String((srh.get_child(0).get_node("Name") as Label3D).text))
+		# 身家读 st.tiles 而不是 host 专有的 htiles（客户端也要显示）：甲现金 12000 + 他名下那块地。
+		# 期望值在测试里按**数据表**自己算一遍 —— 写死"15,800"会随地产价格调整假红。
+		var want_w := 12000
+		var st_t: Array = g.st.tiles
+		for i in mini(st_t.size(), GameData.TILES.size()):
+			if int(st_t[i].get("owner", GameData.NO_OWNER)) == 1:
+				want_w += int(GameData.TILES[i].price)
+		var w1 := String((srh.get_child(3).get_node("Worth") as Label3D).text)
+		_check(w1.contains(GameData.fmt_money(want_w)) and not w1.contains(GameData.fmt_money(12000)),
+			"身家按「现金 + 地产」（已同步的口径）算（实得「%s」，期望含 %s、不等于现金 %s）"
+				% [w1, GameData.fmt_money(want_w), GameData.fmt_money(12000)])
+		_check(String((srh.get_child(2).get_node("Worth") as Label3D).text) == "已出局",
+			"破产那家（丁）写「已出局」")
+		_check(not (srh.get_child(0) as Node3D).visible,
+			"3D 端自己的立牌藏起来（view_t = 0）")
+		# 「看得见的那块牌面」= 板心经真实点击链路折回画布像素
+		var seen_h := func(i: int) -> Vector2:
+			var pl := (srh.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
+			var got = g.table3d.screen_to_viewport(g.table3d.camera.unproject_position(pl.global_position))
+			return got if got != null else Vector2(-9999.0, -9999.0)
+		var foe_pt: Vector2 = seen_h.call(3)          # 第 4 块 = 甲（peer 1）
+		_check(tph.standee_hit(foe_pt) == 3, "点甲那块立牌命中（实得 %d）" % tph.standee_hit(foe_pt))
+		# 非选目标态：立牌**不消费**点击 —— 它正贴在座位栏的位置上，那是棋盘上的常规区域，
+		# 凭空多一块死区是不能接受的（判据与 _on_seat_clicked 同源：它那时本来就什么都不做）。
+		g._cancel_target()
+		_check(g._tgt_stage == "", "前置：当前不在选目标态")
+		_check(not g._on_table_click(foe_pt), "非选目标态：点立牌**不消费**（点击照旧落回棋盘）")
+		# 选目标态：点对手立牌 = 选定目标，走的仍是既有的 _on_seat_clicked
+		# （强拆令是两段式：选完玩家要再点他名下的一块地）。
+		# 手上那张要从**已同步的 st** 里读（`_target_item_id` 读的是 st.players）——只改 hp 不够。
+		var s_tgt: Dictionary = _state(2, false)
+		for p in s_tgt.players:
+			if int(p.peer) == 2:
+				p.items = [{"id": "强拆令", "cd": 0}]
+		g.hp = [{"peer": 2, "name": "乙", "color": 1, "bot": false, "alive": true, "money": 20000,
+			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "silence": 0, "shield": 0,
+			"items": [{"id": "强拆令", "cd": 0}]}]
+		g.s_state(s_tgt)
+		await process_frame
+		g._begin_peer_target(0, false, true)
+		_check(g._tgt_stage == "peer", "进了既有的「选玩家」态（实得「%s」）" % g._tgt_stage)
+		_check(g._on_table_click(foe_pt), "选目标态：点甲那块立牌被消费（选目标链路接上了）")
+		_check(g._tgt_stage == "tile" and g._tgt_peer == 1,
+			"选定甲 → 转进既有的第二段「选他名下的一块地」（实得「%s」/ target=%d）"
+				% [g._tgt_stage, g._tgt_peer])
+		g._cancel_target()
+		# 右键不消费：棋盘上右键是既有的取消，立牌不破例
+		g._begin_peer_target(0, false, true)
+		_check(not g._on_table_click(foe_pt, MOUSE_BUTTON_RIGHT),
+			"选目标态下右键点立牌不消费（右键在棋盘上是既有的取消）")
+		g._cancel_target()
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

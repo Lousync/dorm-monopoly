@@ -86,7 +86,24 @@ var _consumed_press_btn: int = MOUSE_BUTTON_NONE
 ## 视角量：0 = 3D 第一人称（50°、手里有牌、能出牌），1 = 2D 桌面（88°、只看地图）。
 ## `view_target` 是滚轮改的**目标**，`view_t` 是每帧向它逼近的**当前值**（见 _process）。
 ## 纯本地表现：不进 s_state、不同步 —— 每个人自己滚自己的。
-var view_t := 0.0
+##
+## **用属性 setter 而不是裸 var（批次 5 Task 1 起）**：摆相机与"把视角量推给桌上物件"是同一次
+## 变化的两半，只做一半就会**静默脱钩**（相机动了、手牌与立牌却还按旧视角显示 / 命中）。
+## 早先靠"唯一更新点是 `_apply_camera`"这条**约定**；但 `view_t` 是公开 var，谁一句
+## `view_t = x` 都能绕过去。立牌正要用同一个推送点（自己的那面按 view_t 显隐），
+## 所以把不变量变成**结构**：赋值即推送，绕不过去。
+## setter 里 clamp 到 [0,1]、相等则早退（_process 每帧都赋值，值没变不必重摆相机），
+## 再调 `_apply_camera()`（推送就在它末尾）。**`_apply_camera` 不许写 view_t**（会递归）。
+## setter 的"相等"用**精确** `==` 而不是 is_equal_approx：`_process` 末尾会把当前值**贴到**
+## 目标值（`view_t = view_target`），近似相等时早退会让它永远差着百万分之几、再也贴不齐 ——
+## 于是 `_process` 的早退条件永远不成立、每帧白跑一次逼近。精确相等只在"确实没变"时早退。
+var view_t: float = 0.0:
+	set(v):
+		var nt := clampf(v, 0.0, 1.0)
+		if nt == view_t:
+			return
+		view_t = nt
+		_apply_camera()
 var view_target := 0.0
 
 func _init() -> void:
@@ -189,6 +206,10 @@ func set_view(t: float) -> void:
 	view_target = clampf(t, 0.0, 1.0)
 
 ## 设目标**并立即到位**：摆拍与测试用。玩法里别用 —— 那会丢掉平滑（滚轮要的是推移感）。
+##
+## `view_t = view_target` 走 setter（赋值即摆相机 + 推送）；**末尾这一笔显式 `_apply_camera()`
+## 仍然要留**：值没变时 setter 会早退（`snap_view(0.0)` 在已经 0 的时候是常态，测试与摆拍都这么调），
+## 而"摆到这一档"这件事本身必须发生。
 func snap_view(t: float) -> void:
 	view_target = clampf(t, 0.0, 1.0)
 	view_t = view_target
@@ -215,6 +236,12 @@ func snap_view(t: float) -> void:
 ## `look_at_from_position`（它按局部变换算，树外安全）。入树之后的每一次调用（滚轮 / snap_view /
 ## _process）都走真·全局那条。
 func _apply_camera() -> void:
+	# 本函数现在由 `view_t` 的 setter 调用，**不许**在里面写 view_t（会递归）。
+	# 相机还没造出来时直接返回：正常路径不会走到（view_t 的唯一初值来自字段初始化，
+	# 不触发 setter；`_build_camera` 在 _init 里建完相机才轮到别人赋值），
+	# 但留着这一条，将来谁把赋值挪到 _init 前面也不会炸。
+	if camera == null:
+		return
 	var rad := deg_to_rad(lerpf(CAM_TILT_DEG, CAM_TILT_2D_DEG, view_t))
 	var d3d := lerpf(CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)), VIEW_DIST_2D, view_t)
 	var pos := Vector3(0.0, d3d * sin(rad), d3d * cos(rad))
@@ -239,13 +266,16 @@ func _apply_camera() -> void:
 ## 挂在 `_apply_camera` 上（那条路覆盖 snap_view，见那里的注释），不跟着一起早退；
 ## 而 snap_view 那条路走完之后也不需要 `_process` 再推：`set_hand` 重建节点后会自己补贴
 ## 当前透明度（table_props._apply_hand_layout 末尾）。
+##
+## 批次 5 Task 1 起**本函数里不再显式调 `_apply_camera()`**：`view_t` 是属性，
+## 下面两次赋值（逼近值、最后贴到目标值）都走 setter，而 setter 里就是"赋值即摆相机 + 推送"。
+## 少一处显式调用不是省事，是要让"只有改 view_t 这一条路能改相机"成为结构上的事实。
 func _process(delta: float) -> void:
 	if is_equal_approx(view_t, view_target):
 		return
 	view_t = lerpf(view_target, view_t, exp(-VIEW_SNAP * delta))
 	if absf(view_t - view_target) < 0.001:
 		view_t = view_target
-	_apply_camera()
 
 func _build_viewport() -> void:
 	viewport = SubViewport.new()

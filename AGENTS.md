@@ -112,6 +112,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   用来拍「手里握着牌」——开局背包是空的；
   `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）。
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
+  **两条都会顺带推动手牌淡出**（`view2d` 端手里牌本就看不见）：想拍"手里有牌"，文件名别带
+  `tilt` / `view2d` —— 否则会拿到一张空手牌，并当成 bug 去查。
   常拼的几个：**干净全景 `xx_table_plain.png`**、**近景＋格详情卡 `xx_plain.png`**、
   **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**。
 - **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
