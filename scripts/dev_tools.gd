@@ -375,9 +375,7 @@ func take_shot(path: String) -> void:
 	# 摆拍期间默认锁住自动镜头（避免对局推进拽走视角）；文件名带 freecam 时不锁，
 	# 这样后面的 focus_grid 拉近才生效 —— 用来复现「玩家自己看到的近景」
 	g.board.cam_locked = not path.contains("freecam")
-	if g._shot_rot > 0:
-		g.board.rotate_to_edge(g._shot_rot, true)  # 摆拍：转到对应座位的视角
-		await get_tree().create_timer(0.15).timeout
+	# （原 _shot_rot 分支已随转视角一起删除，见 v0.5.0 批次 1）
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
 		g.board.focus_grid(27, 0.8, true)

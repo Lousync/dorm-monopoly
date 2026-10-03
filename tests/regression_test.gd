@@ -103,13 +103,14 @@ func _run() -> void:
 	_test_roster_marks_disconnected_bots(g, _net)
 	_test_card_sound_once(g)
 	_test_item_card_cooling_flag()
-	_test_rotate_next_empty(g)
+	_test_view_rotation_removed(g)
+	_test_tab_space_no_longer_rotates(g)
 	_test_turn_ring_first_render(g)
 	_test_ui_widgets_applied(g)
 	_test_dev_panel(g)
 	_test_hot_chain(g)
 	_test_shop_refresh_full_shelf(g)
-	_test_camera_state(g)
+	_test_camera_window_resize(g)
 	await _test_roll_button_off_home_view(g)
 	await _test_targeting(g)
 
@@ -245,12 +246,34 @@ func _test_item_card_cooling_flag() -> void:
 	counter.free()   # 这两张卡没进场景树，不自己释放会留 leak 警告
 	cooling.free()
 
-func _test_rotate_next_empty(g) -> void:
-	print("== 座位表为空时按 Tab 不应除零 ==")
-	_check(g.board._next_edge([], 0) == -1, "空座位表返回 -1（不除零）")
-	_check(g.board._next_edge([0, 1, 2], 0) == 1, "切到下一个座位")
-	_check(g.board._next_edge([0, 1, 2], 2) == 0, "末尾回环到第一个")
-	_check(g.board._next_edge([0, 1, 2], 9) == 0, "当前不在表内则取第一个")
+func _test_view_rotation_removed(g) -> void:
+	print("== 转视角已删除（入口不存在） ==")
+	for m in ["rotate_to_seat", "rotate_to_edge", "rotate_home", "go_home_follow",
+			"rotate_next", "at_home_view"]:
+		_check(not g.board.has_method(m), "board.%s 已删除" % m)
+
+func _test_tab_space_no_longer_rotates(g) -> void:
+	print("== Tab / 空格 不再切视角 ==")
+	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
+	_rebuild_seats(g, pls)
+	g.board._process(0.0)
+	g.board._zoom = 1.2
+	var rot_target_before: float = g.board._rot_target
+	for code in [KEY_TAB, KEY_SPACE]:
+		var ev := InputEventKey.new()
+		ev.keycode = code
+		ev.pressed = true
+		g._unhandled_input(ev)
+		_check(g.board._rot_target == rot_target_before,
+			"按 %s 后镜头旋转目标未变（实得 %.3f / 期望 %.3f）" % [
+				OS.get_keycode_string(int(code)), g.board._rot_target, rot_target_before])
+	# Esc 分支必须还在（别把 _unhandled_input 整段删了）：真的走一遍取消选目标
+	g._tgt_stage = "peer"
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	g._unhandled_input(esc)
+	_check(g._tgt_stage == "", "Esc 仍能取消选目标（Esc 分支未因删视角误删）")
 
 func _test_turn_ring_first_render(g) -> void:
 	print("== 首个行动玩家的脉冲光环应亮起 ==")
@@ -414,36 +437,23 @@ func _test_room_info_port() -> void:
 	_check(int(info.get("port", 0)) == 8123, "解析出房主端口")
 	_check(NetAddr.parse_room_info("bad").is_empty(), "坏报文返回空")
 
-func _test_camera_state(g) -> void:
-	print("== 镜头状态：回自己视角 / 窗口缩放 ==")
+func _test_camera_window_resize(g) -> void:
+	print("== 镜头状态：窗口缩放不重置镜头 ==")
 	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
 	_rebuild_seats(g, pls)
 	g.board._process(0.0)             # 首次布局：fit_overview
 	_check(g.board.size.x > 10.0, "棋盘控件已布局（w=%.0f）" % g.board.size.x)
-	# 默认全景倍率下 _clamp_center 会退化成「恒等于桌面中心」，座座位目标无从区分
 	g.board._zoom = 1.2
-
-	# A) 回自己视角必须更新镜头目标，否则会沿用别人座位的旧目标，
-	#    与跟随镜头互相拉扯、_rotating 永不归位
-	g.board.rotate_to_edge(0, true)
-	var home_target: Vector2 = g.board._center_target
-	g.board.rotate_to_edge(1, true)
-	_check(g.board._center_target != home_target, "转到别人座位后镜头目标随之改变")
-	g.board.go_home_follow(1)
-	_check(g.board._center_target == home_target, "回自己视角后镜头目标回到自己座位")
-	for i in 180:
-		g.board._process(1.0 / 60.0)
-	_check(not g.board.is_rotating(), "回自己视角后镜头动画能收敛归位")
-
-	# B) 窗口尺寸变化不该把视角拽回全景并关掉跟随（对局中途改窗口/缩放）
-	g.board.rotate_to_edge(2, true)
+	g.board.focus_grid(27, 0.8, true) # 模拟对局中途镜头停在某格
+	var center_before: Vector2 = g.board._center
 	g.board.emit_signal("resized")
 	g.board._process(0.016)
-	_check(absf(wrapf(g.board._rot, -PI, PI)) > 0.5,
-		"窗口尺寸变化后视角仍在别人座位（实得 %.2f rad）" % g.board._rot)
+	_check(g.board._center == center_before,
+		"窗口尺寸变化后镜头注视点不被拽回（实得 %s / 期望 %s）" % [g.board._center, center_before])
+	_check(absf(g.board._rot) < 0.001, "镜头旋转恒为 0（实得 %.4f rad）" % g.board._rot)
 
 func _test_roll_button_off_home_view(g) -> void:
-	print("== 阶段按钮在牌垫上（世界坐标，随视角；本人掷轮时可点） ==")
+	print("== 阶段按钮在牌垫上（世界坐标；本人掷轮时可点） ==")
 	var pls := [
 		{"peer": 1, "name": "我", "color": 0, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": []},
@@ -458,7 +468,6 @@ func _test_roll_button_off_home_view(g) -> void:
 		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
 	}
 	_rebuild_seats(g, pls)            # 建立座位（边 0 = 自己）
-	g.board.rotate_to_edge(0, true)   # 前面的镜头用例可能把视角留在别人座位
 	g._refresh_actions()              # 阶段按钮的状态由状态决定
 	await process_frame
 	await process_frame               # 等容器布局算出真实尺寸
@@ -467,11 +476,6 @@ func _test_roll_button_off_home_view(g) -> void:
 		"牌垫上有「转转盘」按钮")
 	_check(not g.board._phase_spin.disabled, "轮到我掷轮时「转转盘」可点")
 	_check(g.mat_bar.is_visible_in_tree(), "状态条仍显示")
-	# 牌垫按钮是世界坐标：转到别人视角后仍存在（随桌世界旋转/可能转出画面，但对象在）
-	g.board.rotate_to_edge(1, true)
-	_check(not g.board.at_home_view(), "已转离自己视角")
-	g._process(0.0)
-	_check(g.board._phase_spin != null, "转离视角后牌垫按钮对象仍在（随桌世界）")
 
 ## 指向性道具：点棋盘选玩家 / 两段式手选地块（本轮返工）
 func _test_targeting(g) -> void:

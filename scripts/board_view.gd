@@ -778,21 +778,16 @@ func _pan_toward(world_center: Vector2, delta: float) -> void:
 func _visible_rect() -> Rect2:
 	return Rect2(overlay_left, overlay_top, size.x - overlay_left - overlay_right, size.y - overlay_top - overlay_bottom)
 
-## 全桌概览（把整张围桌塞进可视区域，回到自己视角）；hard=true 立即到位
+## 全桌概览（把整张围桌塞进可视区域）；hard=true 立即到位
 func fit_overview(hard := false) -> void:
 	auto_follow = false
 	_follow_peer = -1
 	_has_follow_pt = false
-	_rot_target = 0.0
-	_rotating = true
 	var vr := _visible_rect()
 	var occ := _occupied_rect()
-	var osize := occ.size.rotated(_rot_target).abs()
-	_zoom = clampf(minf(vr.size.x / (osize.x + 40.0), vr.size.y / (osize.y + 40.0)), MIN_ZOOM, 1.0)
+	_zoom = clampf(minf(vr.size.x / (occ.size.x + 40.0), vr.size.y / (occ.size.y + 40.0)), MIN_ZOOM, 1.0)
 	_center_target = occ.get_center()
 	if hard:
-		_rot = 0.0
-		_rotating = false
 		_center = _center_target
 	_apply_cam()
 
@@ -813,8 +808,8 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 ## 镜头对准某个世界坐标点并拉近：抽卡时用，牌面文字要看得清
 ## （全景倍率下整张牌只有七八十像素宽，字是糊的）。
 func focus_point_zoom(world_pt: Vector2, zoom: float) -> void:
-	if cam_locked or not at_home_view():
-		return  # 摆拍锁定或身在别人视角时，对局镜头不抢方向盘
+	if cam_locked:
+		return  # 摆拍锁定；视角已固定在自己座位（v0.5.0 批次 1 删转视角）
 	auto_follow = true
 	_follow_peer = -1
 	_has_follow_pt = true
@@ -825,8 +820,8 @@ func focus_point_zoom(world_pt: Vector2, zoom: float) -> void:
 
 ## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
 func focus_point(world_pt: Vector2, hard := false) -> void:
-	if cam_locked or not at_home_view():
-		return  # 摆拍锁定或身在别人视角时，对局镜头不抢方向盘
+	if cam_locked:
+		return  # 摆拍锁定；视角已固定在自己座位（v0.5.0 批次 1 删转视角）
 	auto_follow = true
 	_follow_peer = -1
 	_has_follow_pt = true
@@ -838,8 +833,8 @@ func focus_point(world_pt: Vector2, hard := false) -> void:
 	_apply_cam()
 
 func focus_peer(peer: int, hard := false) -> void:
-	if cam_locked or not at_home_view():
-		return  # 身在别人视角时，对局镜头不抢方向盘
+	if cam_locked:
+		return  # 摆拍锁定；视角已固定在自己座位（v0.5.0 批次 1 删转视角）
 	auto_follow = true
 	_follow_peer = peer
 	_has_follow_pt = false
@@ -873,8 +868,7 @@ func _gui_input(ev: InputEvent) -> void:
 					var e := _seat_edge_at(mb.position)
 					if e != -1:
 						Fx.play("click", -10.0)
-						rotate_to_edge(e)
-						seat_clicked.emit(int(_seats[e].peer))
+						seat_clicked.emit(int(_seats[e].peer))   # 仍要发：指向性道具靠它选目标
 					else:
 						var idx := _index_at(mb.position)
 						if idx >= 0:
@@ -889,14 +883,11 @@ func _gui_input(ev: InputEvent) -> void:
 		var mm := ev as InputEventMouseMotion
 		var mask := mm.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)
 		if _dragging and mask != 0:
+			# 只判定「位移超过阈值 = 拖拽」，用于抑制拖拽结束时的误点击；
+			# 相机平移本身留到批次 2 随 3D 相机一起处理
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
 				_set_seat_hover(-1)
-				_rotating = false   # 拖拽立即接管，转场动画不再拉扯
-				auto_follow = false
-				_has_follow_pt = false
-				_center = _clamp_center(_center - mm.relative.rotated(-_rot) / _zoom)
-				_apply_cam()
 		else:
 			set_hover(_index_at(mm.position))
 			_set_seat_hover(_seat_edge_at(mm.position))
@@ -965,66 +956,8 @@ func _occupied_rect() -> Rect2:
 		Vector2(WORLD.x + 2.0 * HOLE_MX, BOARD_OFFSET.y - 26.0 - zone_top)))
 	return r
 
-var _view_edge := 0         # 当前视角所在的座位边（0=自己）
-
-## 视角旋转：点谁转谁（TA 的区域转到屏幕下方变正）；空格/点自己回自己视角
-func rotate_to_seat(peer: int) -> void:
-	rotate_to_edge(int(_seat_of_peer.get(peer, -1)))
-
-func rotate_to_edge(e: int, hard := false) -> void:
-	if e < 0 or not _seats.has(e):
-		return
-	_view_edge = e
-	_rot_target = -e * PI * 0.5
-	_center_target = _clamp_center(_seat_center(e), _rot_target)
-	if hard:
-		_rot = _rot_target
-		_center = _center_target
-		_rotating = false
-	else:
-		_rotating = true
-	auto_follow = false
-	_follow_peer = -1
-	_has_follow_pt = false
-	_apply_cam()
-
-func rotate_home() -> void:
-	rotate_to_edge(0)
-
-## 「跟随」：视角转回自己并恢复行动跟随（绕过别人视角的镜头闸）
-func go_home_follow(peer: int) -> void:
-	auto_follow = true
-	_follow_peer = peer
-	_has_follow_pt = false
-	_view_edge = 0
-	_rot_target = 0.0
-	# 必须同步更新注视点目标：否则旋转插值会把镜头拖回上一次（别人座位）
-	# 的旧目标，与跟随互相拉扯、_rotating 永不归位（见 fix/v0.0.2）。
-	_center_target = _clamp_center(_seat_center(0), _rot_target)
-	_rotating = true
-
-## Tab：按行动顺序循环切换到下一个有人的座位视角
-func rotate_next() -> void:
-	var order: Array = _seats.keys()
-	order.sort()
-	var nxt := _next_edge(order, _view_edge)
-	if nxt < 0:
-		return
-	rotate_to_edge(nxt)
-
-## 行动顺序里当前座位的下一个（末尾回环；当前不在表内则取第一个）。
-static func _next_edge(order: Array, cur: int) -> int:
-	if order.is_empty():
-		return -1  # 座位还没建好（首个 s_state 之前按 Tab）：% 0 会直接报除零
-	var i: int = order.find(cur)
-	return int(order[(i + 1) % order.size()])
-
 func is_rotating() -> bool:
 	return _rotating
-
-## 是否坐在自己的视角上（≈0°）；转去别人座位期间对局层不应把镜头拉回
-func at_home_view() -> bool:
-	return absf(wrapf(_rot, -PI, PI)) < 0.3
 
 func _seat_edge_at(view_pos: Vector2) -> int:
 	var wpt := _world_from_view(view_pos)

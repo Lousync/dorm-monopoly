@@ -152,7 +152,6 @@ var _over_shown := false
 var _roll_epoch := 0
 var _shot_path := ""
 var _shot_taken := false
-var _shot_rot := 0
 var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/房子这类局中状态就调大）
 
 # ---------------- 表现层状态 ----------------
@@ -196,8 +195,6 @@ func _ready() -> void:
 				print("--tier 非法挡位，忽略：", tid)
 		elif a.begins_with("--shot="):
 			_shot_path = a.substr(7)
-		elif a.begins_with("--shot-rot="):
-			_shot_rot = clampi(int(a.substr(11)), 0, 3)
 		elif a.begins_with("--shot-round="):
 			_shot_round = maxi(1, int(a.substr(13)))
 	if at_mode != "":
@@ -1410,7 +1407,7 @@ func _refresh_actions() -> void:
 			if is_my_roll:
 				status_label.text = "轮到你转盘了！"
 				if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
-						and not board.is_rotating() and board.at_home_view():
+						and not board.is_rotating():
 					board.focus_peer(my_peer)
 			else:
 				status_label.text = "等待 %s 转盘…" % turn_name
@@ -1430,19 +1427,13 @@ func _refresh_actions() -> void:
 		_at_auto_roll()
 
 func _unhandled_input(event: InputEvent) -> void:
-	# 空格：视角转回自己座位；Tab：循环切到下一家视角
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_F1:
 			dev.toggle()
 		elif k.keycode == KEY_ESCAPE and _tgt_stage != "":
 			_cancel_target()
-		elif k.keycode == KEY_SPACE:
-			board.go_home_follow(my_peer)
-		elif k.keycode == KEY_TAB:
-			board.rotate_next()
 
-## 临时自测：合成一次对顶部座位卡的点击，验证视角旋转链路（--click-test）
 func _toggle_log() -> void:
 	log_panel.visible = not log_panel.visible
 	log_toggle.text = "战报 ▴" if log_panel.visible else "战报 ▾"
@@ -3137,9 +3128,6 @@ func _on_seat_clicked(peer: int) -> void:
 		_log("选定目标：%s" % _name_by_peer(peer), "#f0c064")
 		_send_use_item(_tgt_slot, peer)
 		return
-	# 非选目标态：点自己座位卡 = 回自己视角并恢复跟随
-	if peer == my_peer and board != null:
-		board.go_home_follow(my_peer)
 
 ## 选地块完成（棋盘格子点击）
 func _finish_tile_target(idx: int) -> void:
