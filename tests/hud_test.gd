@@ -107,6 +107,27 @@ func _state(turn_peer: int, with_shop: bool) -> Dictionary:
 		"shop_peer": 2 if with_shop else 0, "black_peer": 0, "refresh_price": 500,
 	}
 
+## 房主侧名册（4 家，字段与 `game._build_hp` 对齐）。两个用途：
+##  ① 房主 `_host_setup` 在开局 1.5 秒后会自己 `_broadcast_state()` 一次（见 game.gd:382），
+##     而 `_broadcast_state` 要读 `hp[turn_i].peer` —— 名册为空时它抛
+##     `SCRIPT ERROR: Out of bounds`（本批之前就挂着的噪声）。给一份**与 `_state()` 同形**的
+##     名册（peer 顺序相同 ⇒ 立牌行序也相同），那次自动广播就与测试自己喂的状态一致。
+##  ② 「点手中牌」段要走真房主路径 `_use_item`，它读的就是这份名册（不是 st）。
+func _host_roster() -> Array:
+	var out := []
+	var seeds := [[1, "甲", 0, 12000, 0, true], [2, "乙", 1, 20000, 3, true],
+		[3, "丙", 2, 8000, 6, true], [4, "丁", 3, 100, 9, false]]
+	for s in seeds:
+		out.append({
+			"peer": int(s[0]), "name": String(s[1]), "color": int(s[2]), "bot": false,
+			"money": int(s[3]), "pos": int(s[4]), "alive": bool(s[5]), "skip": 0, "sleep": 0,
+			"stamina": 3, "items": [], "item_used": false, "item_used_n": 0,
+			"cheat_roll": -1, "hot_chain": 0, "cost_pen": [], "first_used": false,
+			"roll_bonus": 0, "reroll_next": false, "silence": 0, "silence2": 0, "shield": 0,
+			"charm_used": false, "emg_used": false, "loan_left": 0, "rework": 3,
+		})
+	return out
+
 func _run() -> void:
 	root.size = Vector2i(1280, 800)
 	var net = root.get_node_or_null("Net")
@@ -118,6 +139,14 @@ func _run() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false
+	# 名册为空时，房主 `_host_setup` 开局 1.5 秒后那次自动 `_broadcast_state()` 会读 `hp[turn_i]`
+	# 越界（`SCRIPT ERROR: Out of bounds`，本批之前就有）。先种一份最小名册让那次广播成立。
+	# `lab_mode` 只是让它的 `phase` 落在 "playing"（不跑回合循环的沙盒 = 道具试验场同一档），
+	# 免得那一下被 `s_state` 当成对局结束、给 g 挂上结算层；`turn_i = 0`（peer 2 那份在 index 1，
+	# 但后面几段会把 hp 换成 1 家的名册 —— 恒取 0 号位对两种规模都成立）。
+	g.hp = _host_roster()
+	g.turn_i = 0
+	g.lab_mode = true
 	for i in 4:
 		await process_frame
 	await create_timer(0.4).timeout
@@ -700,15 +729,25 @@ func _run() -> void:
 	# 直出 = 点一张牌就出它，不再有"选中 → 再点确认"。走**真实**的 `_on_table_click` 链路。
 	# 本机是默认 multiplayer（unique_id=1 ⇒ is_server() 恒真，见文件头），所以直接出牌走的是
 	# 房主路径 `_use_item`（不是 RPC），可以安全地跑在无头测试里。
+	# 关键：`_use_item` 的两条守卫是「房主名册（**hp**，不是 st）里有这个人」与「`_awaiting_item` == 我」
+	# （game.gd:2371/2402）。名册 / 窗口归属不种齐，点击会在第二行就 return，牌根本没离手 ——
+	# 只断言「点击被消费」就成了空转（空实现的 `_on_hand_clicked` 也能过）。第一张特意选
+	# **效果只动现金、不走 await** 的 兼职中介，好让"真的执行了"有硬证据。
 	g.my_peer = 2
+	var hand_items: Array = [{"id": "兼职中介", "cd": 0}, {"id": "跑腿券", "cd": 0},
+		{"id": "快递直达", "cd": 0}, {"id": "作弊器", "cd": 0}, {"id": "共享单车", "cd": 0}]
 	var s_hand: Dictionary = _state(2, false)
 	s_hand.await = "item"          # 轮到我、道具阶段
 	s_hand.await_peer = 2
 	for p in s_hand.players:
 		if int(p.peer) == 2:
-			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0},
-				{"id": "快递直达", "cd": 0}, {"id": "作弊器", "cd": 0}, {"id": "兼职中介", "cd": 0}]
+			p.items = hand_items.duplicate(true)
 	g.s_state(s_hand)
+	g.hp[1].items = hand_items.duplicate(true)   # 房主名册里 peer 2 那一份（_host_roster 的 index 1）
+	g._awaiting_item = 2                          # 道具阶段窗口归属 = 我
+	# `_awaiting_roll` 还留着上面「点转盘」段的 2：不清掉的话出牌后那次 `_broadcast_state`
+	# 会把它当成掷轮窗口（`await` 先判 roll），下面 ②③④ 的 `_hand_clickable` 就整个不成立。
+	g._awaiting_roll = 0
 	await process_frame
 	await process_frame
 	g._process(0.0)
@@ -716,11 +755,25 @@ func _run() -> void:
 	_check(tph.hand_count() == 5, "我的五件道具摆成五张手牌（满手，实得 %d）" % tph.hand_count())
 	_check(g.selected_slot == -1, "初始未选中")
 
-	# ① 不带目标的牌：点一下就出去了（不留在选中态、不进任何选目标态）
+	# ① 不带目标的牌：点一下就出去了（不留在选中态、不进任何选目标态），**而且牌真的离手**：
+	#    房主名册里那一件进了冷却、体力被扣、本回合计数 +1，现金真的到账（兼职中介 = 立刻 +¥800）。
+	var money0: int = int(g._player_by_peer(2).money)
+	var stam0: int = int(g._player_by_peer(2).stamina)
+	var cost0: int = int(ItemData.def("兼职中介").cost)
 	_check(g._on_table_click(tph.hand_rect(0).get_center()), "点第一张牌（不带目标）：点击被手牌消费")
+	_check(int(g._player_by_peer(2).item_used_n) == 1 \
+			and int(g._player_by_peer(2).items[0].cd) > 0 \
+			and int(g._player_by_peer(2).stamina) == stam0 - cost0 \
+			and int(g._player_by_peer(2).money) == money0 + 800,
+		"不带目标的牌：**真的执行了 _use_item**（item_used_n=%d / 那件 cd=%d / 体力 %d→%d / 现金 %d→%d）"
+			% [int(g._player_by_peer(2).item_used_n), int(g._player_by_peer(2).items[0].cd),
+				stam0, int(g._player_by_peer(2).stamina), money0, int(g._player_by_peer(2).money)])
 	_check(g.selected_slot == -1 and g._tgt_stage == "",
 		"不带目标的牌：点一下直接出（selected_slot=%d / tgt_stage=「%s」）"
 			% [g.selected_slot, g._tgt_stage])
+	# 用完还原：别的段落不该有「道具阶段窗口」一直开着 —— 会让那几处点选目标后的
+	# `_send_use_item` 真的走到 `_use_item`（本段只需它一次）。
+	g._awaiting_item = 0
 
 	# ② 需要选玩家的牌（跑腿券）：点一下**直接进**选目标态（不再需要第二次点击确认）
 	_check(g._on_table_click(tph.hand_rect(1).get_center()), "点第二张（跑腿券）：点击被手牌消费")
@@ -730,12 +783,12 @@ func _run() -> void:
 	_check(g._tgt_stage == "", "取消目标后回到无事态")
 
 	# ③ 需要选格子的牌（快递直达）：同理，点一下直接进选地块态
-	g._on_table_click(tph.hand_rect(2).get_center())
+	_check(g._on_table_click(tph.hand_rect(2).get_center()), "点第三张（快递直达）：点击被手牌消费")
 	_check(g._tgt_stage == "tile", "点一下就快递直达直接进选地块态（实得「%s」）" % g._tgt_stage)
 	g._cancel_target()
 
 	# ④ 作弊器：点一下弹点数框（既不直接发也不进选目标态）
-	g._on_table_click(tph.hand_rect(3).get_center())
+	_check(g._on_table_click(tph.hand_rect(3).get_center()), "点第四张（作弊器）：点击被手牌消费")
 	_check(g.cheat_picker != null and g.cheat_picker.visible and g.cheat_slot == 3,
 		"点作弊器 → 弹点数框、记下槽位 3（实得槽位 %d）" % g.cheat_slot)
 	g._close_cheat_picker()
@@ -743,7 +796,7 @@ func _run() -> void:
 	print("== 近排格子不再被手牌压住（批次 5 Task 3：整排下移到木纹留白）==")
 	# 批次 3 那条老问题（R38/R40）是「牌盒上沿咬住近排格子，只在格子顶部留下十几画布像素的
 	# 可点缝；选中那张一抬起来，外侧两张的缝直接归零」。Task 3 把整排**放大 1.5 倍并下移到
-	# 桌垫前沿的木纹留白**（牌垫阶段按钮之下）之后，牌与近排格子**完全不重叠** —— 这条钉住新结论。
+	# 桌垫前沿的木纹留白（桌垫下沿之外、木桌之内）之后，牌与近排格子**完全不重叠** —— 这条钉住新结论。
 	# 下面那段"牌底可点条带"的实测数值随之从 11~19 变成"整格皆可点"（报告与注释都按新值写）。
 	var cell_of := func(i: int) -> Rect2:
 		var p: Vector2 = g.board._view_from_world(g.board.tile_pos(i))

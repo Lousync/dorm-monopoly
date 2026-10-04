@@ -970,7 +970,8 @@ func _on_hand_clicked(hi: int) -> void:
 	_on_use_pressed()                    # 既有的出牌分发（选玩家 / 选地块 / 点数框 / 直接发）
 
 ## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 手牌表现（桌上那张牌还抬着）。
-## `board.set_item_selected` 照旧一起调，但它自座位卡退场（批次 5）后**只记状态、没有落点**
+## `board.set_item_selected` 照旧一起调，但它那个落点（座位卡的**牌位**那一排）是**批次 3 Task 6**
+## 拆掉的，座位卡**本身**随后在**批次 5** 退场 —— 如今它**只记状态、没有落点**
 ## （同 `_set_hl_peers` 那类无落点的接口按先例保留）；今天真正看得见的反馈只有手牌自己收起抬起。
 func _clear_item_selection() -> void:
 	selected_slot = -1
@@ -1622,18 +1623,20 @@ func _refresh_actions() -> void:
 ## "其余"含「我掷完、正在移动与落地结算」那段（await==""）—— 那一段没有可做的操作，
 ## 显示一枚禁用的「转动转盘」会让玩家以为还能再掷。
 func _refresh_action_button() -> void:
-	if action_btn == null or not is_instance_valid(action_btn):
-		return
-	var phase := String(st.get("phase", ""))
 	var await_state := String(st.get("await", ""))
 	# 非道具阶段 → 收掉选中态与未完成的选目标态。**这一段是从 _refresh_item_buttons 顶部搬来的**
 	# （那个函数随按钮退场整段删掉，但这条清理不能丢）：道具阶段**超时**结束时 `_tgt_stage` 会挂着，
 	# 没有这一笔，选目标提示与牌上那点高亮会一直亮到下个回合。
+	# **必须排在下面那道 `action_btn == null` 早退之前**：清理与按钮无关（原来 `_refresh_item_buttons`
+	# 守的是 `board`、不是按钮），早退只护后面的按钮写入 —— 否则按钮一旦不存在，这条清理会静默消失。
 	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
 	if not using and selected_slot >= 0:
 		_clear_item_selection()
 	if not using and _tgt_stage != "":
 		_cancel_target()
+	if action_btn == null or not is_instance_valid(action_btn):
+		return
+	var phase := String(st.get("phase", ""))
 	var my_roll: bool = phase == "playing" and await_state == "roll" \
 		and int(st.get("turn", -1)) == my_peer
 	var my_item: bool = phase == "playing" and await_state == "item" \

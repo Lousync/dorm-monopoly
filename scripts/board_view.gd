@@ -1067,6 +1067,10 @@ var _discard_hl := {"peer": -1, "slot": -1}
 ## 桌垫在**画布**上的矩形（px）：`MAT_RECT × 基准倍率`，中心恒在可视区中心
 ##（取景就是这么定的）。它与 `TableView3D.TEX_WINDOW_PX` 是同一块地方 —— 一边是画布口径、
 ## 一边是世界口径；`table_3d.gd` 里有一条断言把它们钉在一起。
+##
+## **当前没有任何生产调用方**（只被测试引用：`layout_test.gd` 拿它量手牌是否落在桌垫之外），
+## 批次 7 删掉牌垫阶段按钮后它唯一的生产用途（按钮落位）随之消失。**别当死代码删掉** ——
+## 批次 9 的取景（棋盘放大、重定标画布常量）会接上它。
 func mat_rect_px() -> Rect2:
 	var r := Rect2(Vector2.ZERO, MAT_RECT.size * _fit_zoom)
 	r.position = _visible_center() - r.size * 0.5
