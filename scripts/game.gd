@@ -136,6 +136,18 @@ var corner_bars: Array = []
 ## 右下角动作按钮（批次 7）：轮到我掷轮 → 「转动转盘」，掷完进道具阶段 → 「结束回合」，
 ## 其余时候整枚隐藏。由 `TableHud.build_play_ui` 建，状态见 `_refresh_action_button`。
 var action_btn: Button
+## 屏幕层容器（批次 11 Task 3）：`TableHud.build_play_ui` 建的 `hud`（不随摄像机旋转的悬浮控件
+## 都挂它）。此前它只是那个静态函数里的局部变量 —— 悬停信息条要挂在**屏幕层**上，于是把它记一份
+## 到 game 上（`hud_test` 靠它断言"条不在画布里"）。不改任何行为。
+var hud_layer: Control
+## 悬停棋子的信息条（批次 11 Task 3）：屏幕层 Control，由 `TableHud.build_play_ui` 建。
+## 载体从画布搬到屏幕层的原因与 z 档见那里；内容 / 数据源（`board._peers_info`）与显隐由
+## `_on_table_hover` / `_set_token_hover` / `_place_token_tip` 负责，`_process` 每帧重摆一次。
+var token_tip: Control
+var _tip_name: Label                # 条里那行昵称（颜色 = 该玩家的棋子色）
+var _tip_sub: Label                 # 第二行「身家 … · 第 N 名（· 已出局）」
+## 当前悬停到谁（哨兵是 `GameData.NO_PEER`，**不是 -1** —— 机器人 peer 从 -1 起编号）。
+var _tip_peer := GameData.NO_PEER
 ## 抽卡演出的屏幕层大字卡（批次 8）：由 `TableHud.build_play_ui` 建、`s_card` 调它。
 ## 演出不再动 2D 相机（旧 `board.play_deck_card` 那一路已删），见 scripts/deck_reveal.gd。
 var deck_reveal: DeckReveal
@@ -268,6 +280,7 @@ func _ready() -> void:
 	board.item_discard_clicked.connect(_on_discard_clicked)
 	board.cancel_clicked.connect(_cancel_target)
 	table3d.on_table_click = _on_table_click   # 桌面实体（转盘 / 手牌）先于桌垫内容消费点击
+	table3d.on_table_hover = _on_table_hover   # 悬停桌面实体（棋子）⇒ 屏幕层信息条的显隐
 	Net.chat_received.connect(_refresh_chat)
 	Net.connection_lost.connect(_on_conn_lost)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -949,6 +962,82 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 	#    原先的"点桌上立牌"那一支随立牌一起删掉了（立牌命中链已不存在）。
 	return false
 
+# ================= 悬停棋子的信息条（批次 11 Task 3） =================
+
+## 鼠标在桌面上移动（画布像素）：命中**棋子**就浮出屏幕层的信息条，返回被悬停的 peer
+## （`GameData.NO_PEER` = 谁都没悬停）。**不消费输入** —— 悬停照旧转发进 SubViewport
+##（见 `TableView3D.on_table_hover` 的说明），这里只是"顺路把条的显隐更新一下"。
+##
+## 载体是**屏幕层**的 `token_tip`：原先它是画布里的一个 Control（随桌垫一起倾斜、3D 端读着是
+## 歪的 —— 用户报的"角度不对"），搬到屏幕层后天然面向镜头。
+## **内容与判据一字未改**（昵称 / 身家 / 名次 / 已出局），数据源仍是 **`board._peers_info`**
+##（`board.render` 每次广播重填，身家公式与四角条同源）—— **单一来源**，不另取 game 那份 `standing`。
+##
+## 降级：实体层还没就位 ⇒ 谁都不悬停（照 `_on_table_click` 的同一道守卫）。
+## 拿不到画布点（射线打不到桌面，`TableView3D` 传 `Vector2.INF`）⇒ 谁都不悬停 ——
+## 悬停是"每一动都重算"的语义，漏掉这一动会让条留在上一枚棋子上不掉。
+func _on_table_hover(canvas_px: Vector2) -> int:
+	if table3d == null or table3d.table_props == null:
+		return GameData.NO_PEER
+	if not (is_finite(canvas_px.x) and is_finite(canvas_px.y)):
+		_set_token_hover(GameData.NO_PEER)
+		return GameData.NO_PEER
+	var peer: int = table3d.table_props.token_hit(canvas_px)
+	_set_token_hover(peer)
+	return peer
+
+## 悬停目标变了才重写条的内容；**同一枚棋子时只重摆位置**（悬停期间镜头会动，每帧都要贴一次，
+## 见 `_place_token_tip`）。`GameData.NO_PEER` ⇒ 收起。
+##
+## 降级：这枚棋子不在池里（已被移除 / 断线），或 `_peers_info` 里没有它（名册还没同步到）⇒ 收起，
+## 不抛错、不漏半条（照 `_token_screen_pos` / `standee_screen_center` 那几条先例）。
+func _set_token_hover(peer: int) -> void:
+	if token_tip == null or not is_instance_valid(token_tip):
+		return
+	if peer == _tip_peer:
+		if _tip_peer != GameData.NO_PEER and token_tip.visible:
+			_place_token_tip()        # 还是同一枚：镜头可能动了，重摆一下就行
+		return
+	_tip_peer = peer
+	var info: Dictionary = {}
+	if peer != GameData.NO_PEER and board != null:
+		info = board._peers_info.get(peer, {})
+	var tp = table3d.table_props if table3d != null else null
+	if info.is_empty() or tp == null or not tp.has_token(peer):
+		token_tip.visible = false
+		return
+	_tip_name.text = String(info.get("name", "?"))
+	_tip_name.add_theme_color_override("font_color", info.get("color", UIKit.TEXT))
+	_tip_sub.text = "身家 %s · 第 %d 名%s" % [
+		GameData.fmt_money(int(info.get("worth", 0))), int(info.get("rank", 0)),
+		"" if bool(info.get("alive", true)) else " · 已出局",
+	]
+	token_tip.visible = true
+	_place_token_tip()
+
+## 把信息条摆到棋子此刻**在屏幕上的位置**正上方，并夹在屏幕内（夹取规则沿用旧画布版：
+## 左右不越界、上下不越界）。**每帧调**（`_process`）—— 悬停期间镜头会动（自动跟随 / 滚轮推移
+## 视角 / 取景变化），照四角条 / 格详情卡那套"每帧贴一次"的既有做法。
+##
+## 位置必须**过相机**（`camera.unproject_position`：棋子的世界点 → 屏幕）：棋子在桌上的位置不动，
+## 而"你看到它在哪"随镜头变 —— 这正是每帧重摆的理由，也是"屏幕层天然面向镜头"那条的实现。
+##
+## 降级：棋子不在池里（走子途中被移除 / 断线）⇒ 收起并清掉悬停目标，不抛错。
+func _place_token_tip() -> void:
+	if token_tip == null or not is_instance_valid(token_tip) or _tip_peer == GameData.NO_PEER:
+		return
+	if table3d == null or table3d.table_props == null \
+			or not table3d.table_props.has_token(_tip_peer):
+		token_tip.visible = false
+		_tip_peer = GameData.NO_PEER
+		return
+	var c: Vector2 = table3d.camera.unproject_position(table3d.table_props.token_world_pos(_tip_peer))
+	var sz := token_tip.size
+	var pos := Vector2(c.x - sz.x * 0.5, c.y - sz.y - 38.0)
+	pos.x = clampf(pos.x, 6.0, maxf(6.0, size.x - sz.x - 6.0))
+	pos.y = clampf(pos.y, 6.0, maxf(6.0, size.y - sz.y - 6.0))
+	token_tip.position = pos
+
 ## 这张手牌此刻点得动吗：轮到我、正在道具阶段、没在选目标，且这一张是已实装的道具。
 ## 判据与 _on_item_slot_clicked 的守卫**同源** —— 只有它真会做事的那一次点击才该被手牌消费。
 ## `_tgt_stage == ""` 是后补的一条（终审 R2）：选目标期间玩家正要**点棋盘选格**，而他点下去的那一下
@@ -1352,7 +1441,8 @@ func _board_follow_ready() -> bool:
 ## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
 ## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
 ## 桌垫图案与实物一起原样不动（3D 端点变化不改变画布像素口径）。「谁跟相机、谁不跟」见
-## table_props.gd 文件头的摆放约定：只有这两件跟 2D 相机，手牌是画布常量的实物、不跟。
+## table_props.gd 文件头的摆放约定：**跟 2D 相机的是四件 + 棋子的位置**（本函数这两件、`_refresh_tokens`
+## 里的光环与棋子、`_refresh_houses` 里的房子 —— 它们都压在印刷图案上），手牌是画布常量的实物、不跟。
 func _refresh_board_followers() -> void:
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
 	# 牌堆：**位置与尺寸都跟印刷图案**（`deck_screen_pos` / `deck_screen_size`，同轮缘那一套）。
@@ -3755,6 +3845,7 @@ func _spawn_money_fly(peer: int, diff: int) -> void:
 
 func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
+	_place_token_tip()    # 悬停信息条同理（它跟着**棋子**走；悬停期间镜头也会动）
 	# （原先这里有一段"抽卡演出期间逐帧重推跟图案的实体" —— 前提是抽卡会把 2D 取景推近。
 	#  批次 8 把演出搬到屏幕层、相机全程不动 ⇒ 不再有逐帧的取景变化要跟，整段删掉。）
 	# 批次 11 T1 起又回来了，但**换了判据**：自动跟随（`board._process` 的 `_pan_toward`）与

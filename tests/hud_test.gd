@@ -478,11 +478,12 @@ func _run() -> void:
 	_check(g.deck_reveal.z_index < g.shop_layer.z_index,
 		"抽卡大字卡在小卖部·赌场层之下（z %d < %d）" % [g.deck_reveal.z_index, g.shop_layer.z_index])
 
-	print("== 悬停信息条：本批搬到屏幕层（过渡态：Task 3 之前没有悬停反馈）==")
+	print("== 悬停信息条：挂在屏幕层、悬停出条 / 移开收起（批次 11 Task 3）==")
 	# **R2 裁定**：2D 悬停条整套（`_token_tip` / `_token_at_view` / `_set_token_hover` /
 	# `_ensure_token_tip` / `_place_token_tip`）随 Task 1 一起删 —— 它们的数据源就是 `_tokens`，
-	# 那套一删整段必然解析失败。屏幕层的条由 **Task 3** 重建（那时它会带回"悬停出条"的断言）。
-	# 这里只钉**数据源**仍然在、且内容同源（Task 3 要读它）：`board._peers_info`。
+	# 那套一删整段必然解析失败。屏幕层的条由 **Task 3** 重建（本段就是它带回来的断言）。
+	# **载体从画布搬到屏幕层**的原因就是用户报的那句「角度不对」：画布上的 Control 随桌垫一起
+	# 倾斜、被透视缩小；屏幕层 Control 天然面向镜头。**内容 / 判据 / 数据源一字未改**。
 	# 关键仍是「机器人 peer 是负数」—— 判据写成 `peer < 0` 就会把机器人全挡掉。
 	var hs: Dictionary = _state(2, false)
 	hs.players.append({"peer": -1, "name": "机器人A", "color": 0, "bot": true,
@@ -492,11 +493,84 @@ func _run() -> void:
 	await process_frame
 	var pinfo: Dictionary = g.board._peers_info
 	_check(pinfo.has(1) and String(pinfo[1].get("name", "")) == "甲",
-		"悬停信息的数据源 `board._peers_info` 仍在（Task 3 要读）")
+		"悬停信息的数据源 `board._peers_info` 仍在（Task 3 读它）")
 	_check(pinfo.has(-1) and String(pinfo[-1].get("name", "")) == "机器人A",
 		"**负数 peer 的机器人也在 `_peers_info` 里**（判据别写成 peer < 0）")
 	_check(int(pinfo[1].get("rank", 0)) > 0 and int(pinfo[1].get("worth", 0)) > 0,
 		"`_peers_info` 里带着身家与名次（信息条的内容与它同源）")
+
+	_check(g.token_tip != null, "屏幕层悬停信息条已建（TableHud.build_play_ui）")
+	_check(g.token_tip.get_parent() == g.hud_layer,
+		"条挂在**屏幕层容器**上（`get_parent() == g.hud_layer`，不是棋盘画布）")
+	_check(not g.board.is_ancestor_of(g.token_tip),
+		"条不在棋盘画布（SubViewport）里 ⇒ 不随桌垫倾斜（用户报的「角度不对」就是它）")
+	# z 档（写代码前核对过，这里把核对结论钉住）：压在屏幕 HUD 那一整片 **0** 之上，
+	# 又低于抽卡大字卡与所有模态 —— 不被四角条 / 动作按钮盖住，也不去盖演出 / 模态。
+	_check(g.token_tip.z_index > g.action_btn.z_index,
+		"条压在动作按钮之上（z %d > %d）" % [g.token_tip.z_index, g.action_btn.z_index])
+	_check(g.token_tip.z_index > int((g.corner_bars[0] as Dictionary).root.z_index),
+		"条压在四角身家条之上（z %d > %d）"
+			% [g.token_tip.z_index, int((g.corner_bars[0] as Dictionary).root.z_index)])
+	_check(g.token_tip.z_index < g.deck_reveal.z_index and g.token_tip.z_index < g.player_popup.z_index,
+		"条低于抽卡大字卡(z %d)与玩家道具弹窗(z %d)"
+			% [g.deck_reveal.z_index, g.player_popup.z_index])
+	_check(not g.token_tip.visible, "还没悬停时条是收起的")
+
+	# 悬停到 peer 1（甲，pos 0 / 槽 0）那枚棋子上：走**真入口** `g._on_table_hover`
+	#（`TableView3D.on_table_hover` 的注入点直调的就是它）。
+	g.table3d.snap_view(0.0)
+	await process_frame
+	var want_c: Vector2 = g.board.token_screen_pos(0, 0)
+	_check(g._on_table_hover(want_c) == 1, "悬停甲那枚棋子：命中 peer 1")
+	await process_frame
+	await process_frame
+	_check(g.token_tip.visible, "悬停到棋子上 ⇒ 条浮出")
+	_check(String(g._tip_name.text) == "甲",
+		"条上的昵称与数据源同源（实得 %s）" % g._tip_name.text)
+	var want_sub := "身家 %s · 第 %d 名" % [GameData.fmt_money(int(pinfo[1].worth)), int(pinfo[1].rank)]
+	_check(String(g._tip_sub.text) == want_sub,
+		"条上的身家 / 名次与 `_peers_info` 同源（实得 %s / 期望 %s）" % [g._tip_sub.text, want_sub])
+	# 位置 = 棋子**屏幕坐标**的正上方（"屏幕层天然面向镜头"那条的可执行判据：条的位置是**屏幕**像素，
+	# 不是画布像素 —— 两者差着 TableView3D 那次投影，给错坐标系会整体偏开一大截）。
+	var tok_screen: Vector2 = g.table3d.camera.unproject_position(g.table3d.table_props.token_world_pos(1))
+	var tip_cx: float = g.token_tip.position.x + g.token_tip.size.x * 0.5
+	_check(absf(tip_cx - tok_screen.x) < 4.0,
+		"条横向居中于棋子（条心 %.0f / 棋子 %.0f）" % [tip_cx, tok_screen.x])
+	_check(g.token_tip.position.y + g.token_tip.size.y < tok_screen.y,
+		"条在棋子**上方**（条底 %.0f < 棋子 %.0f）"
+			% [g.token_tip.position.y + g.token_tip.size.y, tok_screen.y])
+	_check(g.token_tip.position.x >= 6.0 and g.token_tip.position.y >= 6.0
+		and g.token_tip.position.x + g.token_tip.size.x <= g.size.x
+		and g.token_tip.position.y + g.token_tip.size.y <= g.size.y,
+		"条完整落在屏幕内（位置 %s）" % g.token_tip.position)
+	# **每帧重摆**：悬停期间镜头会动（自动跟随 / 滚轮推移视角 / 取景变化）—— 推一下 3D 视角，
+	# 条要跟着那枚棋子走（少了每帧这一贴，条会留在旧位置、与棋子脱开）。
+	var p1: Vector2 = g.token_tip.position
+	g.table3d.snap_view(0.5)
+	await process_frame
+	await process_frame
+	var tok_screen2: Vector2 = g.table3d.camera.unproject_position(g.table3d.table_props.token_world_pos(1))
+	var tip_cx2: float = g.token_tip.position.x + g.token_tip.size.x * 0.5
+	_check(p1.distance_to(g.token_tip.position) > 3.0,
+		"镜头一动条就跟着重摆（%s → %s）" % [p1, g.token_tip.position])
+	_check(absf(tip_cx2 - tok_screen2.x) < 4.0,
+		"重摆后仍居中于棋子（条心 %.0f / 棋子 %.0f）" % [tip_cx2, tok_screen2.x])
+	g.table3d.snap_view(0.0)
+	# 移开（悬停到没有棋子的桌垫点）⇒ 收起。
+	_check(g._on_table_hover(Vector2(30.0, 30.0)) == GameData.NO_PEER, "悬停到空处：谁都没悬停")
+	await process_frame
+	_check(not g.token_tip.visible, "移开 ⇒ 条收起")
+	# 「已出局」那一支（判据一字未改）：悬停到丁（peer 4，pos 9 / 槽 3，alive=false）——
+	# 条上要多一句「 · 已出局」。
+	var got4: int = g._on_table_hover(g.board.token_screen_pos(9, 3))
+	_check(got4 == 4, "悬停到丁那枚棋子：命中 peer 4（实得 %d）" % got4)
+	if got4 == 4:
+		await process_frame
+		_check(String(g._tip_sub.text).ends_with(" · 已出局"),
+			"已出局的玩家条上带「 · 已出局」（实得 %s）" % g._tip_sub.text)
+	g._on_table_hover(Vector2(30.0, 30.0))      # 收尾：别把悬停态留给下一段
+	await process_frame
+	_check(not g.token_tip.visible, "（收尾）条已收起")
 
 	print("== 格详情卡：悬浮在被点格子的上方 ==")
 	g.board.cam_locked = false

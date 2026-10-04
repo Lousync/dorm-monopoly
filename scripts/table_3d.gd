@@ -318,6 +318,17 @@ var table_props: TableProps
 ## 默认无效（Callable()），即不拦截任何点击 —— 只有 game.gd 接上后才有实体可点。
 var on_table_click: Callable = Callable()
 
+## 鼠标在桌面上移动时先问这里；签名 `func(canvas_px: Vector2) -> int`，返回被悬停的 peer
+## 或 `GameData.NO_PEER`。**默认无效（Callable()），即谁都不悬停** —— 与 `on_table_click`
+## 同一种注入方式（只有 game.gd 接上后才有反馈）。
+##
+## 与点击那条的区别：**悬停不消费输入** —— 问完之后这次 motion 照旧转发进 SubViewport
+##（2D 那边的悬停高亮还要），所以这里只是"顺路问一句"，没有返回值的使用者（返回 peer 是给
+## 调用方 / 测试读的）。
+## 拿不到画布点（射线打不到桌面）时**仍会调一次**，传 `Vector2.INF`：悬停是"每一动都重算"的
+## 语义，漏掉这一动会让信息条留在上一枚棋子上不掉（旧 2D 那条链每个 motion 都会重算）。
+var on_table_hover: Callable = Callable()
+
 ## 被实体层吃掉的那次按下的按钮（MOUSE_BUTTON_NONE = 无）。只为了在配对的松开时
 ## 把这一对事件一起拦掉：2D 侧若只收到「松开」而没收到「按下」，会把上一次按下的拖拽
 ## 状态当成这次松开在收尾（见 _unhandled_input 里的反例）。按 button_index 认，
@@ -885,7 +896,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mm := event as InputEventMouseMotion
 		var pos = screen_to_viewport(mm.position)
 		if pos == null:
+			# 打不到桌面：这一动谁都不悬停 —— 也要通知一次（传 `Vector2.INF`），
+			# 否则悬停信息条会留在上一枚棋子上不掉（见 `on_table_hover` 的说明）。
+			if on_table_hover.is_valid():
+				on_table_hover.call(Vector2.INF)
 			return
+		# 实体层先问一句（与点击同一条注入点）：鼠标压在一枚棋子/实体上时由 game 决定悬停到谁
+		#（屏幕层信息条的显隐）。**不消费** —— 下面照旧把这一动转发进 SubViewport。
+		if on_table_hover.is_valid():
+			on_table_hover.call(pos as Vector2)
 		var fwd := InputEventMouseMotion.new()
 		fwd.position = pos
 		fwd.relative = Vector2.ZERO      # SubViewport 内不靠相对位移做平移

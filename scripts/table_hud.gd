@@ -55,6 +55,46 @@ static func build_play_ui(g: Node) -> void:
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.add_child(hud)
+	# 记一份到 game 上（批次 11 Task 3）：屏幕层容器本身此前只有局部变量，而"悬停信息条挂在
+	# **屏幕层**"这条要靠它才断言得出来（`hud_test` 读 `g.hud_layer`）。不改任何行为，只是把
+	# 那个容器从一个局部量变成可引用的成员。
+	g.hud_layer = hud
+
+	# ---- 悬停棋子的信息条（批次 11 Task 3）----
+	# 悬停到桌面上一枚棋子时浮出「昵称 / 身家 / 名次 / 已出局」。**内容与判据一字未改**：
+	# 原先它是画布里的一个 PanelContainer（`board_view._token_tip`，批次 11 Task 1 随棋子一起删了），
+	# 载体从**画布**搬到**屏幕层**的原因就是用户报的那句「角度不对」——画布上的 Control 随桌垫
+	# 一起倾斜、被透视缩小（3D 端读着是歪的）；屏幕层 Control 天然面向镜头。
+	# 数据源仍是 `board._peers_info`（`game._on_table_hover` 里读，**单一来源**，不另取 standing）。
+	#
+	# **z_index = 30 —— 写之前核对过屏幕层现有的 z**（批次 8/9 的 R5 教训）：
+	#   屏幕 HUD 带（≤40）：四角身家条 / 动作按钮 / 战报开关与战报栏 / 格详情卡 / 黑市条 **全是 0**
+	#      （相对 hud，hud 自身 0），抽卡大字卡 `DeckReveal` **40**；
+	#   模态带：玩家道具弹窗 45 / 结算 50 / 弹问 60 / 小卖部与赌场 70 / 菜单与暂停遮罩 80；
+	#   特效：飞钞 90 / 飘字 90~95。
+	#   取 30 ⇒ 压在那一整片 **0** 之上（设计 §5.4 的「不该被四角身家条与动作按钮盖住」），
+	#   又低于抽卡大字卡与所有模态（演出与模态该压住悬停提示）。**别改回 0**：同为 0 时谁在上
+	#   由树序决定（`z_as_relative` 默认为真），建节点的顺序一变就会漂 —— 批次 8 的教训。
+	# 鼠标透明（`IGNORE`）：它只是个提示，不参与拾取 —— 四角条 / 动作按钮的点击一律穿透过去。
+	g.token_tip = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.94), 10,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 6)
+	g.token_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.token_tip.z_index = 30
+	g.token_tip.visible = false
+	hud.add_child(g.token_tip)
+	var ttm := UIKit.margins(12, 12, 7, 7)
+	ttm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.token_tip.add_child(ttm)
+	var ttv := VBoxContainer.new()
+	ttv.add_theme_constant_override("separation", 2)
+	ttv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ttm.add_child(ttv)
+	g._tip_name = UIKit.label("", 15, UIKit.TEXT)
+	g._tip_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ttv.add_child(g._tip_name)
+	g._tip_sub = UIKit.label("", 12, UIKit.TEXT_DIM)
+	g._tip_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ttv.add_child(g._tip_sub)
 
 
 	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条；

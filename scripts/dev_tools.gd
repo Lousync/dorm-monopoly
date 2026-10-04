@@ -515,6 +515,20 @@ func take_shot(path: String) -> void:
 				g._grant_item(me, String(hid_v))
 		g._broadcast_state()
 		await get_tree().create_timer(0.35).timeout
+	if path.contains("tip") and g.multiplayer.is_server():
+		# 摆拍（批次 11 Task 3）：把**屏幕层悬停信息条**显出来 —— 它只在鼠标悬停到棋子上时出现，
+		# 而静态截图里没有鼠标 ⇒ 走**真入口** `g._on_table_hover(棋子的画布落点)` 注入这一次悬停
+		#（与 hand / level / popup 同类：只注入局面 / 表现状态，玩法代码一行不改）。
+		# 用法：`--autotest=host --rounds=6 --shot=shots/b11_tip_table_plain.png`
+		#   `table` → 停在围桌全景（不拉近、不弹格详情卡）；`plain` → 跳过抽卡与赌局浮层
+		#  （那两样会盖住屏幕中段；**别**再带 card）。
+		# 悬停**自己**那枚棋子：它一定在名册里、`board._peers_info` 里也一定有它。
+		await get_tree().create_timer(0.2).timeout
+		var me_tip: Dictionary = g._player_by_peer(g.my_peer)
+		if not me_tip.is_empty():
+			g._on_table_hover(g.board.token_screen_pos(
+				int(me_tip.get("pos", 0)), int(me_tip.get("color", 0))))
+			await get_tree().create_timer(0.2).timeout
 	if path.contains("popup") and g.multiplayer.is_server():
 		# 摆拍（终审 fix wave）：开一个**对手**的道具弹窗，核对"卡牌图标 / 名称 / 能量小格 /
 		# 身家现金都读得出、面板居中"。与 hand / level / target 同类 —— 只在对局里注入**局面状态**，

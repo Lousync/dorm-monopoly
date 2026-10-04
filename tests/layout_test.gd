@@ -1523,6 +1523,51 @@ func _run() -> void:
 	# 命中走 token_hit 自己、位置走真反变换（world_to_canvas_px）折回画布像素比 ——
 	# 不把实现的推导再写一遍（那样写成什么样都过）。
 	print("== 棋子：薄牌立着（有高度 / 后倾 / 与印刷图案同链） ==")
+	# ---- 批次 11 Task 3：悬停转发（on_table_hover）----
+	# 放在**这一节之前**：悬停链要有一枚棋子才问得出来，而下面那一节断言"peer 7 是新棋子（弹入）"
+	#（`set_tokens` 对已存在的池子不重建、也就没有弹入）⇒ 本段用完必须把池子清空还回去。
+	# 悬停（MouseMotion）此前**从不**问实体层：棋子搬进 3D 之后命中判定只在 `TableProps.token_hit`
+	# 里，而那条链的入口就是本注入点。三条覆盖：命中一枚棋子 / 打不到桌面 / 默认态。
+	# 关键区别：**悬停不消费输入** —— 问完之后这一动照旧转发进 SubViewport（2D 悬停高亮还要）。
+	print("== 悬停转发（on_table_hover）：先问实体层、但不消费这一动 ==")
+	t3.snap_view(0.0)
+	var hover_px: Array = []
+	t3.on_table_hover = func(px: Vector2) -> int:
+		hover_px.append(px)
+		return GameData.NO_PEER
+	t3.table_props.set_tokens([{"peer": 7, "slot": 0, "idx": 20}])
+	await create_timer(0.5).timeout                  # 等棋子弹入落定
+	var tok_screen: Vector2 = t3.camera.unproject_position(t3.table_props.token_world_pos(7))
+	got_events.clear()
+	var hv := InputEventMouseMotion.new()
+	hv.position = tok_screen                          # 鼠标指着那枚棋子
+	root.push_input(hv)
+	await process_frame
+	_check(hover_px.size() == 1, "悬停回调被调用一次（实得 %d）" % hover_px.size())
+	var hv_px: Vector2 = hover_px[0] if not hover_px.is_empty() else Vector2(-9999.0, -9999.0)
+	# 回调收到的必须是**画布像素**（实体层的命中判定全在画布坐标系里做）——用 token_hit 自己复核
+	# 这一点真落在 peer 7 的命中盒里（给错坐标系这条会红）。
+	_check(t3.table_props.token_hit(hv_px) == 7,
+		"回调收到的是棋子上那一点（画布 %s → 命中 %d）" % [hv_px, t3.table_props.token_hit(hv_px)])
+	_check(got_events.size() == 1,
+		"悬停**不消费**输入：这一动仍转发进 SubViewport（实得 %d）" % got_events.size())
+	# 打不到桌面（射线翻过水平线）：**仍要通知一次**，传 `Vector2.INF` —— 悬停是"每一动都重算"的
+	# 语义，漏掉这一动会让信息条留在上一枚棋子上不掉（旧 2D 那条链每个 motion 都会重算）。
+	hover_px.clear()
+	var hv_miss := InputEventMouseMotion.new()
+	hv_miss.position = Vector2(vr.size.x * 0.5, -vr.size.y * 2.0)
+	root.push_input(hv_miss)
+	await process_frame
+	_check(hover_px.size() == 1 and not is_finite((hover_px[0] as Vector2).x),
+		"打不到桌面时仍通知一次、且传 Vector2.INF（实得 %s）" % str(hover_px))
+	# 默认态：没接回调（批次 3 以来的常态）时一行都不做 —— 悬停零回归。
+	t3.on_table_hover = Callable()
+	hover_px.clear()
+	root.push_input(hv)
+	await process_frame
+	_check(hover_px.is_empty(), "回调为空（Callable()）：默认谁都不悬停")
+	t3.table_props.set_tokens([])                    # 归还：下面那节要"全新"的池子（弹入那条）
+	await process_frame
 	var tpT = t3.table_props
 	if tpT == null or not tpT.has_method("set_tokens"):
 		_check(false, "TableProps 没有 set_tokens（棋子还没搬进来），本段整段跳过")
@@ -1604,9 +1649,14 @@ func _run() -> void:
 		await process_frame
 		_check(tpT.token_hit(want_a) == 7,
 			"棋子画布落点上命中 peer 7（实得 %d）" % tpT.token_hit(want_a))
-		_check(tpT.token_hit(Vector2(30.0, 30.0)) == -1, "桌垫之外不算命中（-1）")
+		# **没命中用 `GameData.NO_PEER`、不是 -1**（批次 11 T3 从 T1 的 -1 改过来）：机器人 peer
+		# **从 -1 起编号**（`net._free_bot_id`；AGENTS.md 硬性约定「哨兵值…不要用 -1」），
+		# -1 作哨兵会与"命中 -1 号机器人"撞成同一个数 —— 而悬停链正是分不开两者的那个消费者。
+		# 下面（重叠段之后）有一条「-1 号机器人也能被命中」把它钉死。
+		_check(tpT.token_hit(Vector2(30.0, 30.0)) == GameData.NO_PEER,
+			"桌垫之外不算命中（NO_PEER = %d）" % GameData.NO_PEER)
 		var cell30: Vector2 = t3.board.tile_pos(30) + Vector2(t3.board.TILE, t3.board.TILE) * 0.5
-		_check(tpT.token_hit(cell30) == -1, "没有棋子的格心不算命中（-1）")
+		_check(tpT.token_hit(cell30) == GameData.NO_PEER, "没有棋子的格心不算命中")
 		# 重叠：把两枚都摆在**同一格**（槽 0 与槽 2 —— 偏移只差 y，一远一近，命中盒会交叠）。
 		# **前提（真有交叠）不靠猜**：先在"只摆一枚"的两趟里把"同时落在两枚盒内"的点**探出来**
 		#（用 token_hit 自己探，不把命中盒的推导再写一遍），再用"两枚都在"的那一次断言取近的那枚。
@@ -1646,6 +1696,51 @@ func _run() -> void:
 			_check(tpT.token_world_pos(8).z > tpT.token_world_pos(7).z,
 				"（前提）peer 8 那枚确实更近（z %.3f > %.3f）"
 					% [tpT.token_world_pos(8).z, tpT.token_world_pos(7).z])
+
+		# 哨兵改 `GameData.NO_PEER` 的**意义**就在这里：-1 号机器人必须能被命中。
+		# 机器人 peer 从 -1 起编号（`net._free_bot_id` 第一个就给 -1）—— 若哨兵还是 -1，
+		# "命中机器人 A"与"没命中"就再也分不开，悬停链会静默地对单人局里的 -1 号机器人失效。
+		print("== 命中哨兵：-1 号机器人也命中，且与「没命中」分得开 ==")
+		var want_bot: Vector2 = t3.board.token_screen_pos(21, 0)
+		tpT.set_tokens([{"peer": -1, "slot": 0, "idx": 21}])
+		await create_timer(0.5).timeout      # 等被换掉的那枚释放 + 新棋子弹入落定
+		_check(tpT.token_hit(want_bot) == -1,
+			"**-1 号机器人**的落点上命中、回 -1（实得 %d —— 与「没命中」同值但语义相反）"
+				% tpT.token_hit(want_bot))
+		_check(tpT.token_hit(Vector2(30.0, 30.0)) == GameData.NO_PEER,
+			"同一时刻「没命中」仍是 NO_PEER（两者不再撞车）")
+
+		# **看不见就点不到**（批次 11 T1 审查 M3 裁定）：与手牌那条既有闸（`HAND_HIT_MIN_ALPHA`）
+		# **同一条规则** —— 正在传送淡出的棋子不该还能被悬停出信息条。
+		# 闸是**读 alpha 的**（`token_hit` 逐枚比 `TOKEN_HIT_MIN_ALPHA`），所以这里把棋子按在
+		# 「淡出中」那一档：`_set_token_alpha(池子条目, true, 0.10)` 正是**传送补间每帧驱动的
+		# 那个 setter**（两条路写的是同一份材质），只是不跑补间、直接把值放上去。
+		# **故意不跑真补间再逐帧采样**：那版在本任务里真写过 —— 无头下闸下那一档只有一两帧
+		# （0.16s 的淡出里 a<0.15 只占 0.024s），采到与否**取决于机器每帧多长**，正是项目里
+		# 一再避免的那类靠帧率的脆弱断言。补间的 alpha 曲线本身由 hud_test 的
+		# 「传送期间淡到看不见（最小 alpha < 0.05）」钉住，这里只钉**闸**。
+		print("== 看不见就点不到：淡到闸下的棋子不参与命中（M3 闸） ==")
+		var tcm: Dictionary = tpT.get_script().get_script_constant_map()
+		var v_tok := float(tcm.get("TOKEN_HIT_MIN_ALPHA", -1.0))
+		var v_hand := float(tcm.get("HAND_HIT_MIN_ALPHA", -2.0))
+		_check(v_tok > 0.0 and is_equal_approx(v_tok, v_hand),
+			"棋子的命中闸与手牌那条**同值**（同一条规则，实得 %.2f / 手牌 %.2f）" % [v_tok, v_hand])
+		tpT.set_tokens([{"peer": 7, "slot": 0, "idx": 20}])
+		await create_timer(0.5).timeout
+		var tk7: Dictionary = tpT._tokens.get(7, {})
+		_check(not tk7.is_empty(), "（前提）拿到 peer 7 的池子条目")
+		if not tk7.is_empty():
+			tpT._set_token_alpha(tk7, true, 0.10)      # 半路淡出中（闸下）
+			await process_frame
+			_check(tpT.token_alpha(7) < v_tok,
+				"（前提）棋子已淡到闸下（alpha %.3f < %.2f）" % [tpT.token_alpha(7), v_tok])
+			_check(tpT.token_hit(want_a) == GameData.NO_PEER,
+				"淡到闸下的棋子**命中不到**（看不见就点不到，实得 %d）" % tpT.token_hit(want_a))
+			# 闸是双向的：淡完回到不透明后必须又能命中（否则"临时淡出"就成了"永久点不到"）。
+			tpT._set_token_alpha(tk7, false, 1.0)
+			await process_frame
+			_check(tpT.token_hit(want_a) == 7,
+				"恢复不透明后又命中得到（实得 %d）" % tpT.token_hit(want_a))
 
 		# 光环：贴桌垫的一条 3D 环，套在当前行动者脚下；尺寸**跟印刷图案**（与转盘轮缘同口径）。
 		print("== 当前行动者光环：3D 环、跟印刷图案、NO_PEER 时收起 ==")
@@ -1837,22 +1932,55 @@ func _run() -> void:
 			t3.board.fit_overview(true)
 			await process_frame
 
-		# 反向契约：2D 的房子图标整套必须**真的没了**（不留空壳）。谁把它们加回来（或只加个空壳），
-		# 这几条先红。画法只留一份 —— 留在 `TableProps` 里（烘纹理要用它）。
-		print("== 反向契约：2D 房子图标整套已从 BoardView 删净 ==")
-		var bvh = t3.board
-		_check(bvh.get("_house_icons") == null, "BoardView._house_icons 已删净")
-		_check(bvh.get("_levels") == null, "BoardView._levels（房子弹跳的等级缓存）已删净")
-		_check(not bvh.has_method("_set_house"), "BoardView._set_house 已删净")
-		_check(not bvh.has_method("_make_house"), "BoardView 没有留下建房壳子")
-		var hcm: Dictionary = bvh.get_script().get_script_constant_map()
-		_check(hcm.get("HouseIcon") == null, "BoardView 不再带 HouseIcon 类（画法只留在 TableProps）")
-		# 保留的查询（3D 侧摆房子要用；谁顺手删了这条先红）
-		var hkept: Array = []
-		for m in ["house_anchor", "house_screen_pos", "house_screen_size"]:
-			if not bvh.has_method(m):
-				hkept.append(m)
-		_check(hkept.is_empty(), "house_anchor / house_screen_pos / house_screen_size 保留（缺 %s）" % str(hkept))
+			# **visible → visible 的材质切换**（R8-e）：3 级 → 1 级时牌子**留在原地**（不收起）
+			# 但正面必须换成 1 级那份材质。上面那几条只覆盖了"可见 → 可见的**不同格**"，
+			# 同一格换档这条路径（`_set_house_plate` 的 `lv != _house_levels[i]` 那一支）此前没测过。
+			var lv2: Array = lvs.duplicate()
+			lv2[0] = 1
+			tpH.set_houses(lv2)
+			await process_frame
+			var f0b: MeshInstance3D = _house_face(hroot, 0)
+			var m0b: StandardMaterial3D = f0b.material_override as StandardMaterial3D if f0b != null else null
+			_check(h0 != null and h0.visible, "换档后房子仍在（3 级 → 1 级不收起）")
+			_check(m0b != null and m0b.albedo_texture == tex1,
+				"3 级 → 1 级：正面换成 1 级那张纹理（实得 %s）"
+					% (m0b.albedo_texture if m0b != null else null))
+			# `clampi(lv, 0, MAX_LEVEL)`：越界等级要**夹**到合法档 —— 99 ⇒ MAX_LEVEL 那份材质、
+			# -3 ⇒ 0（收起）。少了夹取，越界值会去索引一个不存在的材质 / 把 -3 当"有等级的"摆出来。
+			var lv3: Array = lvs.duplicate()
+			lv3[0] = 99
+			lv3[5] = -3
+			tpH.set_houses(lv3)
+			await process_frame
+			var f0c: MeshInstance3D = _house_face(hroot, 0)
+			var m0c: StandardMaterial3D = f0c.material_override as StandardMaterial3D if f0c != null else null
+			var tex_max = tpH.house_tex(GameData.MAX_LEVEL)
+			_check(m0c != null and m0c.albedo_texture == tex_max,
+				"越界等级 99 夹到 MAX_LEVEL=%d 那份纹理" % GameData.MAX_LEVEL)
+			var h5c: Node3D = _house_node(hroot, 5)
+			_check(h5c != null and not h5c.visible, "负等级 -3 夹到 0 ⇒ 那一格收起")
+			tpH.set_houses(lvs)          # 还原（反向契约那段与本段无依赖，但别把状态留在半截）
+			await process_frame
+
+	# 反向契约：2D 的房子图标整套必须**真的没了**（不留空壳）。谁把它们加回来（或只加个空壳），
+	# 这几条先红。画法只留一份 —— 留在 `TableProps` 里（烘纹理要用它）。
+	# **提一层**（R8-d）：这段原先落在上面那个 `else:`（`set_houses` 存在）分支里 ⇒ RED 时被跳过
+	# （`TableProps` 还没有 `set_houses`，正是它要抓的那个状态），`set_houses` 真被删时同样被跳过
+	# —— 反向契约在最需要它的两个时刻都不跑。它只读 `t3.board`，与 `tpH` 无关 ⇒ 提到 `if/else` 之外。
+	print("== 反向契约：2D 房子图标整套已从 BoardView 删净 ==")
+	var bvh = t3.board
+	_check(bvh.get("_house_icons") == null, "BoardView._house_icons 已删净")
+	_check(bvh.get("_levels") == null, "BoardView._levels（房子弹跳的等级缓存）已删净")
+	_check(not bvh.has_method("_set_house"), "BoardView._set_house 已删净")
+	_check(not bvh.has_method("_make_house"), "BoardView 没有留下建房壳子")
+	var hcm: Dictionary = bvh.get_script().get_script_constant_map()
+	_check(hcm.get("HouseIcon") == null, "BoardView 不再带 HouseIcon 类（画法只留在 TableProps）")
+	# 保留的查询（3D 侧摆房子要用；谁顺手删了这条先红）
+	var hkept: Array = []
+	for m in ["house_anchor", "house_screen_pos", "house_screen_size"]:
+		if not bvh.has_method(m):
+			hkept.append(m)
+	_check(hkept.is_empty(), "house_anchor / house_screen_pos / house_screen_size 保留（缺 %s）" % str(hkept))
 
 	t3.queue_free()
 
