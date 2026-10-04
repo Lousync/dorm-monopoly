@@ -379,12 +379,6 @@ static func build_play_ui(g: Node) -> void:
 	g.deck_reveal = DeckReveal.new()
 	hud.add_child(g.deck_reveal)
 
-	# 玩家道具弹窗（批次 9）：点四角身家条打开（卡牌 / 能量 / 身家现金；**z 45**，见 player_popup.gd）。
-	# 挂在 hud 上、显式 z 高于四角条与动作按钮、但**低于整个模态带**（结算 50 / 弹问 60 / 70 / 80）
-	# —— 它自己的压暗底是 STOP，盖住弹问面板就会把那条链点死。别靠树序（`z_as_relative` 为真）。
-	g.player_popup = PlayerPopup.new()
-	hud.add_child(g.player_popup)
-
 	var hair := ColorRect.new()
 	hair.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
 	hair.custom_minimum_size = Vector2(0, 1)
@@ -416,6 +410,25 @@ static func build_play_ui(g: Node) -> void:
 		g.chat_edit.clear()
 	)
 	chat_row.add_child(send_btn)
+
+	# ---- 玩家道具弹窗（批次 9）：点四角身家条打开（卡牌 / 能量 / 身家现金）----
+	# **挂在 `game` 上、并在本函数最末 append**（终审 fix wave 裁定 R5）。原因不显然，写清楚：
+	#
+	# Godot 4 的 **GUI 拾取按树序**（子节点倒序），**不看 `z_index`** —— `z_index` 只管绘制。
+	# 弹窗的压暗底是 `STOP`（模态靠它），所以"谁先被拾取"决定它挡不挡得住别人：
+	#   ① 建在它**之前**的那些屏幕层控件（暂停按钮 / 战报开关 / 战报栏 / 格详情卡 / 黑市条）
+	#      在树序上排在它前面 ⇒ 弹窗被优先拾取 ⇒ 压暗底挡得住它们（这正是要的）；
+	#      （之前它挂在 `hud` 上、而 `hud` 排在那几个控件之前 ⇒ 反过来，点击会穿透过去。）
+	#   ② 结算层(50) / 弹问层(60) 是**运行时懒建**的（`_show_game_over` / `_show_prompt` 里才
+	#      new 出来并 append 到 `game`）⇒ 天然比这里更晚 ⇒ 被优先拾取（不吃亏）；
+	#   ③ 暂停菜单每次打开都 `move_child(menu_layer, -1)`（`_menu_show`）、小卖部(70) 与赌场
+	#      在显示时同样把自己搬到最后 ⇒ 它们仍压在弹窗之上。
+	# **注意**：本函数之后 `game._build_ui` 还会挂「规则说明」按钮 / 面板，故 `_build_ui`
+	# 末尾把弹窗再 `move_child` 到最末（见那里）—— 别只靠这一处。
+	# `z_index = 45` 由 `PlayerPopup._init` 设，**只定绘制带**（高于四角条 / 动作按钮 /
+	# 抽卡大字卡 40，低于模态带 50/60/70/80），不再承担模态。
+	g.player_popup = PlayerPopup.new()
+	g.add_child(g.player_popup)
 
 ## 四角条的尺寸（屏幕像素）。**写死并显式设成 `custom_minimum_size`**：面板的高度是内容撑出来的
 ## （名字 + 身家 + 现金 + 倒计时行 + 内外边距），只给 `offset_*` 的话 Godot 会按最小尺寸把它撑大

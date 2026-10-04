@@ -140,7 +140,8 @@ var action_btn: Button
 ## 演出不再动 2D 相机（旧 `board.play_deck_card` 那一路已删），见 scripts/deck_reveal.gd。
 var deck_reveal: DeckReveal
 ## 玩家道具弹窗（批次 9，见 scripts/player_popup.gd）：点四角身家条打开（`_on_corner_bar_clicked`），
-## 装立牌退场后没有落点的**公开背包 + 能量**。由 `TableHud.build_play_ui` 建；数据由
+## 装立牌退场后没有落点的**公开背包 + 能量**。由 `TableHud.build_play_ui` 建，**挂在 `game` 上并
+## 排在所有建期屏幕层控件之后**（模态靠树序，见 `build_play_ui` 末尾那段）；数据由
 ## `_open_player_popup` **一处**组装（全取已同步的 st，客户端也准）。
 var player_popup: PlayerPopup
 ## 「此刻可被选中的玩家」的**单一来源**（批次 9）：由 `_push_peer_highlight` 写、四角条高亮读
@@ -354,6 +355,12 @@ func _build_ui() -> void:
 	TableHud.build_play_ui(self)
 	# 左下角「📖 规则说明」：收起是按钮、点开原位向上展开分页规则（文案见 RulesText）
 	RulesPanel.build(self)
+	# 玩家道具弹窗（批次 9）**排到最末**：GUI 拾取按**树序**（不看 z_index，见
+	# `table_hud.build_play_ui` 末尾那段说明），而规则说明的按钮 / 面板是 `build_play_ui`
+	# **之后**才挂的 —— 只在 `build_play_ui` 末尾 append 的话，它们仍会抢先拾取、点穿压暗底。
+	# 排到最后 ⇒ 弹窗的压暗底挡得住所有建期控件；**运行时懒建的**结算(50) / 弹问(60) 层、
+	# 以及显示时 `move_child(-1)` 的小卖部(70) / 赌场 / 暂停菜单(80) 天然更晚，仍压在它之上。
+	move_child(player_popup, -1)
 func _build_hp() -> Array:
 	var out := []
 	var live := multiplayer.get_peers()
