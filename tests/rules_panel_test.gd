@@ -102,8 +102,12 @@ func _run() -> void:
 	# 手牌右键丢弃（M7）：批次 3 起这条入口就存在，规则说明里却从没写过。
 	_check(basic_page.contains("右键") and basic_page.contains("丢弃"),
 		"基础操作页写了「手牌右键丢弃」这条入口")
-	_check(basic_page.contains("使用道具"),
-		"基础操作页写了「选中后点桌垫使用道具确认」这条出牌入口")
+	_check(basic_page.contains("直接使用"),
+		"基础操作页写了「点一张牌 = 直接使用」这条出牌入口")
+	# 反向钉住旧措辞不回来（同上「滚轮缩放」同款）：只删掉正断言等于放行，
+	# 那句「点桌垫「使用道具」确认」教的是批次 7 已删除的两段式出牌。
+	_check(not basic_page.contains("点桌垫"),
+		"基础操作页不再教「点桌垫使用道具确认」那条已删除的两段式")
 
 	print("== 控件与初始状态 ==")
 	_check(g.rules_btn != null and g.rules_panel != null and g.rules_body != null,

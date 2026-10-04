@@ -696,20 +696,16 @@ func _run() -> void:
 	_check(g.board.get_node_or_null("PhaseButtons") == null, "牌垫阶段按钮层已拆净")
 	_check(not g.board.has_method("set_phase_buttons"), "set_phase_buttons 接口已退场")
 
-	print("== 点手中牌：选中 / 取消（批次 3 Task 5）==")
-	# 走**真实**的 `_on_table_click`（table_3d 命中实体那条链路），命中点取 `hand_rect` 的中心。
-	# 证据一律挑底栏拆掉之后还活着的可观察量：`selected_slot`（玩法侧的选中态，单一来源）、
-	# `hand_rect`（桌上手牌自己的命中盒）、`info_panel`（格详情卡）——底栏按钮与座位卡牌位都不碰。
+	print("== 点手中牌：一次点击直出（批次 7）==")
+	# 直出 = 点一张牌就出它，不再有"选中 → 再点确认"。走**真实**的 `_on_table_click` 链路。
+	# 本机是默认 multiplayer（unique_id=1 ⇒ is_server() 恒真，见文件头），所以直接出牌走的是
+	# 房主路径 `_use_item`（不是 RPC），可以安全地跑在无头测试里。
 	g.my_peer = 2
 	var s_hand: Dictionary = _state(2, false)
 	s_hand.await = "item"          # 轮到我、道具阶段
 	s_hand.await_peer = 2
 	for p in s_hand.players:
 		if int(p.peer) == 2:
-			# **满手 5 张**：前三张刚好盖住既有三分支（不带目标 / 选玩家 / 选格子），后两张凑满手。
-			# 不是"顺手多放两件"：下面的「牌底可点条带」（2c）要量**最坏档** —— 扇形外侧那张
-			# 离中心最远、画布 y 最高，也最难不压格子；3 张手牌量到的根本不是那个数（批次 5
-			# Task 4 就是来钉这一条的）。
 			p.items = [{"id": "共享单车", "cd": 0}, {"id": "跑腿券", "cd": 0},
 				{"id": "快递直达", "cd": 0}, {"id": "作弊器", "cd": 0}, {"id": "兼职中介", "cd": 0}]
 	g.s_state(s_hand)
@@ -720,40 +716,29 @@ func _run() -> void:
 	_check(tph.hand_count() == 5, "我的五件道具摆成五张手牌（满手，实得 %d）" % tph.hand_count())
 	_check(g.selected_slot == -1, "初始未选中")
 
-	var c0: Vector2 = tph.hand_rect(0).get_center()
-	var y_before: float = c0.y
-	_check(g._on_table_click(c0), "点第一张牌：这次点击被手牌消费")
-	_check(g.selected_slot == 0, "点第一张 → 选中下标 0（实得 %d）" % g.selected_slot)
-	# 选中反馈在**3D**上（座位卡牌位已随 Task 6 拆掉，board.set_item_selected 现在空转）：
-	# 牌抬起来 → 屏幕上看更高 → 射线打到桌面的点更远 → 画布 y 变小。
-	_check(tph.hand_rect(0).get_center().y < y_before - 3.0,
-		"选中的牌抬起来了（命中盒中心 %.0f → %.0f）" % [y_before, tph.hand_rect(0).get_center().y])
-	_check(absf(tph.hand_rect(1).get_center().y - tph.hand_rect(2).get_center().y) < 60.0,
-		"没选中的两张不受影响（仍在原位附近）")
-	_check(g._on_table_click(c0), "再点同一张：仍被手牌消费")
-	_check(g.selected_slot == -1, "再点同一张 → 取消选中（实得 %d）" % g.selected_slot)
-	_check(absf(tph.hand_rect(0).get_center().y - y_before) < 3.0, "取消后牌落回原位")
+	# ① 不带目标的牌：点一下就出去了（不留在选中态、不进任何选目标态）
+	_check(g._on_table_click(tph.hand_rect(0).get_center()), "点第一张牌（不带目标）：点击被手牌消费")
+	_check(g.selected_slot == -1 and g._tgt_stage == "",
+		"不带目标的牌：点一下直接出（selected_slot=%d / tgt_stage=「%s」）"
+			% [g.selected_slot, g._tgt_stage])
 
-	# 选中之后走**既有**出牌路径：牌垫上的「使用道具」（_on_use_pressed），本任务一行不改它
-	g._on_table_click(tph.hand_rect(1).get_center())
-	_check(g.selected_slot == 1, "点第二张（跑腿券）→ 选中下标 1（实得 %d）" % g.selected_slot)
-	g._on_use_pressed()
-	_check(g._tgt_stage == "peer", "需要选玩家的道具：转进既有的两段式选目标态（实得「%s」）" % g._tgt_stage)
-	_check(g.selected_slot == -1, "出牌路径把选中态清掉（既有行为不变）")
+	# ② 需要选玩家的牌（跑腿券）：点一下**直接进**选目标态（不再需要第二次点击确认）
+	_check(g._on_table_click(tph.hand_rect(1).get_center()), "点第二张（跑腿券）：点击被手牌消费")
+	_check(g._tgt_stage == "peer", "点一下就跑腿券直接进选目标态（实得「%s」）" % g._tgt_stage)
+	_check(g.selected_slot == -1, "进选目标态后 selected_slot 已清（不常驻）")
 	g._cancel_target()
 	_check(g._tgt_stage == "", "取消目标后回到无事态")
+
+	# ③ 需要选格子的牌（快递直达）：同理，点一下直接进选地块态
 	g._on_table_click(tph.hand_rect(2).get_center())
-	_check(g.selected_slot == 2, "点第三张（快递直达）→ 选中下标 2（实得 %d）" % g.selected_slot)
-	g._on_use_pressed()
-	_check(g._tgt_stage == "tile", "选格子类道具：进既有的选地块态（实得「%s」）" % g._tgt_stage)
+	_check(g._tgt_stage == "tile", "点一下就快递直达直接进选地块态（实得「%s」）" % g._tgt_stage)
 	g._cancel_target()
 
-	# 取消（Esc / 右键走的是同一个 _cancel_target）也要把手牌选中态收回
-	g._on_table_click(tph.hand_rect(0).get_center())
-	_check(g.selected_slot == 0, "重新选中第一张（实得 %d）" % g.selected_slot)
-	g._cancel_target()
-	_check(g.selected_slot == -1, "取消把选中态一并清掉（实得 %d）" % g.selected_slot)
-	_check(absf(tph.hand_rect(0).get_center().y - y_before) < 3.0, "取消后抬起反馈收回")
+	# ④ 作弊器：点一下弹点数框（既不直接发也不进选目标态）
+	g._on_table_click(tph.hand_rect(3).get_center())
+	_check(g.cheat_picker != null and g.cheat_picker.visible and g.cheat_slot == 3,
+		"点作弊器 → 弹点数框、记下槽位 3（实得槽位 %d）" % g.cheat_slot)
+	g._close_cheat_picker()
 
 	print("== 近排格子不再被手牌压住（批次 5 Task 3：整排下移到木纹留白）==")
 	# 批次 3 那条老问题（R38/R40）是「牌盒上沿咬住近排格子，只在格子顶部留下十几画布像素的
@@ -857,9 +842,10 @@ func _run() -> void:
 	var eaten := 0
 	var eaten_self := 0
 	for c in pts:
-		# 每次点之前先清空选中态：这样「点之前的手牌摆位」每次都一样，屏幕包围盒才在点之前算得准
-		#（点下去会把选中的牌抬起来，摆位就变了）。
+		# 每次点之前先清空选中 / 选目标态：这样「点之前的手牌摆位」每次都一样，屏幕包围盒才在点之前算得准
+		#（批次 7 起点下去 = 直接出牌，跑腿券 / 快递直达会进选目标态 —— 这里把上一跳的状态先收干净）。
 		g._cancel_target()
+		g._close_cheat_picker()
 		var boxes: Array = []
 		for k in tph.hand_count():
 			boxes.append(screen_box.call(k))
@@ -875,24 +861,27 @@ func _run() -> void:
 		% [eaten_self, eaten])
 
 	# 2c 实测取证：**牌底那几格还剩多少可点条带**（批次 5 Task 3 的验收点）。
-	#    批次 3 的答案是"未选中 11~19、选中后外侧两张归零"；今天牌整排下移到木纹留白，
+	#    批次 3 的答案是"未选中 11~19、抬起后外侧两张归零"；今天牌整排下移到木纹留白，
 	#    答案是**没有格子被盖住**：近排每格的整条高都能点。
-	#    **量的是最坏档**（批次 5 Task 4 改）：**满手 5 张、选中扇形最外侧那张** —— 外侧那张
-	#    画布 y 最高（离格子最近），选中又把它整体抬高，正是当年"归零"的那一档；
-	#    3 张手牌选中间那张量到的是另一个数（201.5 / 188.8），钉不住最坏情况。
+	#    **量的是最坏档**（批次 5 Task 4 改）：**满手 5 张、抬起扇形最外侧那张** —— 外侧那张
+	#    画布 y 最高（离格子最近），抬起又把它整体抬高，正是当年"归零"的那一档；
+	#    3 张手牌量到的是另一个数（201.5 / 188.8），钉不住最坏情况。
 	#    这两个数**钉进断言**（不只写在注释里）：改手牌尺寸 / 摆位就得回来重取，改不动就红。
+	#    **批次 7 起点击 = 直出**，一次点击不再**留在**选中态（抬起只在那一瞬间发生），
+	#    所以这里走**保留的玩法侧选中入口** `_on_item_slot_clicked` 把那张牌抬起来 ——
+	#    抬起的表现（`set_hand_selected`）与这条布局约束都还在，量到的仍是同一档。
 	g._cancel_target()
 	var gap_plain: float = hand_top - lowest_cell
 	var sel_card := 0                 # 0 = 扇形最外侧（外侧两张对称，取哪张都一样）
-	g._on_table_click(tph.hand_rect(sel_card).get_center())
-	# 先钉「选中真的发生了」：不然点击没生效时 gap_sel == gap_plain 也照样过，这条就白测了。
+	g._on_item_slot_clicked(g.my_peer, sel_card)
+	# 先钉「真的抬起来了」：不然没抬时 gap_sel == gap_plain 也照样过，这条就白测了。
 	_check(g.selected_slot == sel_card,
-		"点在牌上**真的选中了**那张（selected_slot 期望 %d，实得 %d）" % [sel_card, g.selected_slot])
+		"选中入口**真的抬起了一张**（selected_slot 期望 %d，实得 %d）" % [sel_card, g.selected_slot])
 	var sel_top := INF
 	for k in tph.hand_count():
 		sel_top = minf(sel_top, tph.hand_rect(k).position.y)
 	var gap_sel: float = sel_top - lowest_cell
-	print("    [实测] 牌底可点条带：未选中 %.1f 画布像素、选中（第 %d 张抬起）后 %.1f —— 都不为 0"
+	print("    [实测] 牌底可点条带：未选中 %.1f 画布像素、抬起（第 %d 张）后 %.1f —— 都不为 0"
 		% [gap_plain, sel_card, gap_sel])
 	g._cancel_target()
 	_check(gap_plain > 0.0 and gap_sel > 0.0,
@@ -925,20 +914,20 @@ func _run() -> void:
 	await process_frame
 	_check(g.info_panel.visible, "该格（#%d）详情卡打开（_index_at → _on_tile_clicked 这一半打通）" % free_tile)
 
-	print("== 手牌重排：选中态不漂（每次广播都重摆一遍手牌）==")
+	print("== 手牌重排：抬起反馈不漂（每次广播都重摆一遍手牌）==")
 	g.s_state(s_hand)
 	await process_frame
-	var y1_plain: float = tph.hand_rect(1).get_center().y      # 选中前的第二张
-	g._on_table_click(tph.hand_rect(1).get_center())
+	var y1_plain: float = tph.hand_rect(1).get_center().y      # 抬起前的第二张
+	# 批次 7 起点击 = 直出（点一下就把 跑腿券 用掉），要钉「广播重摆不丢抬起反馈」就得走
+	# **保留的玩法侧选中入口** —— 它写 selected_slot + set_hand_selected，是抬起反馈的唯一来源。
+	g._on_item_slot_clicked(g.my_peer, 1)
 	_check(g.selected_slot == 1, "选中第二张（实得 %d）" % g.selected_slot)
 	g.s_state(s_hand)                    # 再来一次广播：手牌被重摆
 	await process_frame
 	_check(g.selected_slot == 1, "广播重摆手牌后选中态不漂（实得 %d）" % g.selected_slot)
 	_check(tph.hand_rect(1).get_center().y < y1_plain - 4.0,
-		"重摆后抬起反馈还在（选中的第二张 %.0f，未选中时是 %.0f）"
+		"重摆后抬起反馈还在（抬起的第二张 %.0f，未抬起时是 %.0f）"
 			% [tph.hand_rect(1).get_center().y, y1_plain])
-	g._cancel_target()
-	g._on_table_click(tph.hand_rect(1).get_center())
 	g._cancel_target()
 	_check(g.selected_slot == -1, "收尾：选中态清空（实得 %d）" % g.selected_slot)
 

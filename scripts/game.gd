@@ -893,21 +893,21 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 	if table3d == null or table3d.table_props == null:
 		return false
 	var tp = table3d.table_props
-	# 1) 手牌优先：左键命中一张牌 = 选中，再点同一张 = 取消；右键命中一张牌 = 丢弃（两步确认）。
+	# 1) 手牌优先：左键命中一张牌 = **直接使用**（批次 7 起，杀戮尖塔式）；右键命中一张牌 = 丢弃（两步确认）。
 	#    左键**只在道具阶段吃点击** —— 牌是常驻显示的（每次广播都摆一遍），别的阶段点它没有意义，
 	#    吃下点击就等于把本该落到棋盘上的一次点击吞成「什么都没发生」。这条闸是必须的：手牌就摆在
-	#    近端自己面前（牌垫阶段按钮之下的木纹留白），与棋盘下沿相接，玩家想点棋盘时**很容易点到自己的牌**
-	#    —— 没有闸的话这一下会被牌抢答成「改选另一张牌」，本该落到棋盘上的那一点击就白吞了
+	#    近端自己面前（棋盘下沿的木纹留白），与棋盘下沿相接，玩家想点棋盘时**很容易点到自己的牌**
+	#    —— 没有闸的话这一下会被牌抢答成「直接把那张牌出掉」，本该落到棋盘上的那一点击就白吞了
 	#（测试里有配对用例钉住：同样的点，非道具阶段必须落回桌垫、道具阶段才归牌）。
-	#    **手牌与近排格子已经完全不相交**（批次 5 Task 3 把整排放大并下移到阶段按钮之下的木纹留白；
+	#    **手牌与近排格子已经完全不相交**（批次 5 Task 3 把整排放大并下移到木纹留白；
 	#    `hud_test` 断言牌盒与近排格子的相交处数为 0），所以这道闸防的是「抢答」，
 	#    不再是「抢走格子下沿那几像素」。
-	#    闸**含** `_tgt_stage == ""`（见 _hand_clickable）：选目标期间（牌垫上挂着「点地图选择目标格」
-	#    的提示）玩家**正要**点棋盘选格，那时更不该被自己的牌抢答成「改选另一张牌」。
+	#    闸**含** `_tgt_stage == ""`（见 _hand_clickable）：选目标期间玩家**正要**点棋盘选格，
+	#    那时更不该被自己的牌抢答成「把另一张牌出掉」。
 	#    所以选目标期间手牌对点击**完全透明**：左键落回棋盘 = 选格，
 	#    右键 = 既有的取消。退出选目标态走 Esc / 右键（点牌不再参与）。
-	#    出牌不在这里：选中之后由牌垫上的「使用道具」按钮走既有的 _on_use_pressed（两段式
-	#    选目标 / 直接发 _send_use_item）——玩法路径一行没改。
+	#    出牌就在 `_on_hand_clicked` 里：选中之后立刻走既有的 _on_use_pressed（两段式
+	#    选目标 / 作弊器点数框 / 直接发 _send_use_item）——玩法路径一行没改。
 	var hi: int = tp.hand_hit(canvas_px)
 	if hi >= 0:
 		if button == MOUSE_BUTTON_RIGHT:
@@ -961,15 +961,13 @@ func _hand_clickable(hi: int) -> bool:
 		return false
 	return bool(ItemData.def(String(items[hi].id)).get("implemented", false))
 
-## 点手中的牌：选中 / 再点同一张取消。选中即调用**既有的** _on_item_slot_clicked
-##（牌位时代的入口，玩法侧一个字没改）；出牌仍由牌垫上的「使用道具」走 _on_use_pressed。
-## 选中的**表现侧**（桌上那张牌抬起 + 提亮）由 _on_item_slot_clicked 内部统一同步，这里不补。
+## 点手中的牌 = **直接使用**（杀戮尖塔式，批次 7）：点一张牌就出它，不再有"选中 → 再点确认"。
+## 需要选目标的进选目标态，作弊器弹点数框，其余直接发 —— 分派逻辑复用既有的 `_on_use_pressed`，
+## 一行没改。右键丢弃的两步确认（`_on_discard_clicked`）也不动。
+## 调用前提由 `_hand_clickable` 保证（轮到我 + 道具阶段 + 没在选目标 + 已实装）。
 func _on_hand_clicked(hi: int) -> void:
-	if selected_slot == hi:
-		_clear_item_selection()
-		_refresh_actions()
-		return
-	_on_item_slot_clicked(my_peer, hi)
+	_on_item_slot_clicked(my_peer, hi)   # 玩法侧唯一入口：记 selected_slot + 桌上那张牌抬起
+	_on_use_pressed()                    # 既有的出牌分发（选玩家 / 选地块 / 点数框 / 直接发）
 
 ## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 两处表现侧（牌垫牌位 / 桌上手牌）。
 ## 三处必须一起动 —— 只清 selected_slot，牌垫上会留一块绿光、桌上一张牌还抬着。
@@ -3166,7 +3164,8 @@ func _on_item_slot_clicked(peer: int, slot: int) -> void:
 		return
 	if not bool(ItemData.def(String(items[slot].id)).get("implemented", false)):
 		return
-	# 任意道具都可选中（被动也能选中以丢弃）；能不能用由「使用」按钮三态表示
+	# 任意道具都可选中（被动也能选中以丢弃）；能不能用由 _on_use_pressed 的分派判定
+	#（批次 7 起选中与出牌是同一次点击，这里仍只负责「写入选中」这一步）
 	selected_slot = slot
 	_clear_discard_pending()                            # 选中任何一张 = 撤回上一步的待丢弃（槽位与 id 一起清）
 	if board != null:
@@ -3182,8 +3181,7 @@ func _on_use_pressed() -> void:
 	if String(st.get("await", "")) != "item" or int(st.get("await_peer", -1)) != my_peer:
 		return
 	if selected_slot < 0:
-		_on_skip_pressed()   # 未选卡时该按钮就是「跳过」
-		return
+		return          # 直出之后这里恒不成立（本函数只在选中之后被调）；留着当守卫
 	var p := _state_player(my_peer)
 	var items: Array = p.get("items", [])
 	if selected_slot >= items.size():
@@ -3412,9 +3410,9 @@ func _show_target_hint(text: String) -> void:
 		target_hint_l.text = text
 
 func _cancel_target() -> void:
-	# 选中态与「选目标态」是两件事：点手中的牌只**选中**，再点「使用道具」才可能进选目标态。
-	# 取消（Esc / 右键 / 出牌前收尾）要把两者一起收回 —— 只清 _tgt_stage 的话，
-	# 桌上一张牌会永远抬着、牌垫上留一块绿光。
+	# 选中态与「选目标态」是两件事：点手中的牌 = 选中并**紧接着**用掉（批次 7 起直出），
+	# 但选中态本身仍由 `_on_item_slot_clicked` 单独维护，所以取消要把两者一起收回 ——
+	# 只清 _tgt_stage 的话，桌上一张牌可能一直抬着（Esc / 右键这两条取消路径正是这么来的）。
 	_clear_item_selection()
 	if _tgt_stage == "":
 		return
