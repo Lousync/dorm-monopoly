@@ -1343,7 +1343,7 @@ func _board_follow_ready() -> bool:
 ## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
 ## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
 ## 桌垫图案与实物一起原样不动（3D 端点变化不改变画布像素口径）。「谁跟相机、谁不跟」见
-## table_props.gd 文件头的摆放约定：只有这两件跟 2D 相机，筹码 / 体力件 / 手牌是画布常量的实物、不跟。
+## table_props.gd 文件头的摆放约定：只有这两件跟 2D 相机，手牌 / 立牌是画布常量的实物、不跟。
 func _refresh_board_followers() -> void:
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
 	# 牌堆：**位置与尺寸都跟印刷图案**（`deck_screen_pos` / `deck_screen_size`，同轮缘那一套）。
@@ -1353,10 +1353,10 @@ func _refresh_board_followers() -> void:
 		"命运": board.deck_screen_pos("命运")},
 		board.deck_screen_size("机会"))
 
-## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（筹码堆 / 体力件 / 手牌也在这里）。
+## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（手牌 / 立牌也在这里）。
 ##
 ## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那两件（轮缘 / 牌堆）见
-## `_refresh_board_followers`；其余物件（筹码 / 体力件 / 手牌 / 立牌）也一律幂等，
+## `_refresh_board_followers`；其余物件（手牌 / 立牌）也一律幂等，
 ## 每次广播重贴一遍没有代价。它们读的都是**已同步**的状态（客户端也能算）。
 func _refresh_table_props() -> void:
 	if not _board_follow_ready():
@@ -1365,15 +1365,9 @@ func _refresh_table_props() -> void:
 	# 四块立牌（批次 5 Task 1）：名字 / 身家 / 公开背包。放在 `mine.is_empty()` 那道早退**之前**
 	# —— 立牌的数据全来自 st.players（客户端也准），观战者（自己不在名册里）照样该看见四家。
 	_refresh_standees()
-	# 自己的现金 / 体力也搬到桌上（Task 3）：筹码堆按金额分档、体力件用掉的熄灭。
-	# 输入只要**画布像素**那点信息 —— _state_player 读的是已同步的 st.players（客户端也有）。
-	# 两者与 build_wheel 一样幂等（只改 transform / visible / 材质色，不重建节点），
-	# 所以每次状态广播都调它们没有代价。
 	var mine := _state_player(my_peer)
 	if mine.is_empty():
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
-	table3d.table_props.set_chips(int(mine.get("money", 0)))
-	table3d.table_props.set_stamina(int(mine.get("stamina", 0)), _stamina_cap(mine))
 	# 自己的道具 = 桌上一排「手中牌」（Task 4 显示 / Task 5 点选）
 	table3d.table_props.set_hand(mine.get("items", []))
 	# 选中反馈（抬起 + 提亮）画在桌上那张牌身上：set_hand 重摆位置时不会带上它，

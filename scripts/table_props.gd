@@ -28,7 +28,7 @@ const PROPS_Y := 0.02
 # **例外是"压在印刷图案上"的那两件：转盘轮缘与两摞牌堆**（`build_wheel` / `build_decks` 里
 # 量真变换、随 `_zoom` 变）：它们必须与**印在桌垫上的**那块图案重合，而桌垫图案随 2D 镜头
 # 缩放，不跟就会脱开 —— 所以**位置与尺寸都要跟**（牌堆的尺寸那一半是修复波 F 补的）。
-# 筹码 / 体力件 / 手牌 / 立牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
+# 手牌 / 立牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
 # 不是"桌子变大了"，实物不该跟着长 —— 所以它们的尺寸写死在世界单位里。
 #
 # 手牌还多一层：它的**命中矩形**必须跟玩家看到的位置一致，那要过相机
@@ -37,15 +37,15 @@ const PROPS_Y := 0.02
 #
 # 摆放约定（物件 vs 2D 相机，2026-10-03 终审 I1 定案；批次 6 Task 3 + 修复波 F 修订）：
 # **跟 2D 相机的只有"压在印刷图案上"的那两件 —— 转盘轮缘与两摞牌堆；
-#   筹码 / 体力件 / 手牌 / 立牌一律不跟**。
+#   手牌 / 立牌一律不跟**。
 #   轮缘 — 位置来自 `board.wheel_screen_pos()` / 半径来自 `board.wheel_screen_radius()`
 #          （量真变换）：它必须贴**印在桌垫上的**那个轮盘，而桌垫图案随 2D 取景缩放 ⇒ 跟着走。
 #   牌堆 — 位置来自 `board.deck_screen_pos()` / 尺寸来自 `board.deck_screen_size()`（同形）：
 #          **同一个理由**（它要盖住印着的那摞卡背）⇒ 位置与尺寸都跟。修复波 F 补的正是尺寸
 #          那一半 —— 原先只跟位置，抽卡推近 2× 时印刷图案整体胀大而摞不动，**只盖住图案的
 #          约四分之一**（面积比），而那正是玩家盯着牌堆的那一刻。
-#   其余 — 位置走**画布常量**（`CHIP_BASE_PX` / `PIP_BASE_PX` / `HAND_BASE_PX` /
-#          `STANDEE_BASE_PX`）：它们是**自由立在桌上的实物**，不该因为"印出来的图案"变了而移动。
+#   其余 — 位置走**画布常量**（`HAND_BASE_PX` / `STANDEE_BASE_PX`）：
+#          它们是**自由立在桌上的实物**，不该因为"印出来的图案"变了而移动。
 #          相机推近是「你凑近看」，不是「桌子被重新排版」。
 # **代价（必须记住）**：抽卡动画会把 2D 取景推到 ≥2×（`board_view.gd` 的 `DECK_PUSH_FACTOR`），
 # 那一刻桌垫图案整体滑动、而**不跟相机的那几件**纹丝不动 ——「手牌落在自己面前那条桌垫上」
@@ -56,40 +56,10 @@ const PROPS_Y := 0.02
 # 它们也一直压在印刷图案上（位置与尺寸同一处重推）。
 # 本条原先挂的"轮缘要不要补每帧跟 `_zoom`"到这里结清：**要，而且与牌堆同一处逐帧升级**。
 
-## 每 ¥5,000 一枚筹码。对着出图定：开局 ¥20,000 → 4 枚（正好半摞，一眼看出起始身家几何）；
-## 常见的租金 / 罚款多在几百到几千，一档 5,000 意味着零星收支不动筹码堆、攒够一大笔才长一枚
-## —— 筹码是「身家的量级」，不是记账本（精确读数在**四角身家条**上：身家做大字、
-## **现金**做第二行小字，四条都显示 —— 座位卡在批次 5 Task 2 已整体退场，读数搬到了那里）。
-const CHIP_PER := 5000
-## 筹码堆上限：再多也只画这么多枚。近端桌面上还有体力件与（后续任务里）手牌，
-## 堆到十枚以上既挤不下、也一枚一枚数不清，反而看不出身家差别。
-const CHIP_MAX := 8
-const CHIP_R := 0.10             # 单枚筹码半径（世界单位；≈ 半块地皮宽，出图核过）
-const CHIP_H := 0.028            # 单枚厚度
-const CHIP_STEP := 0.030         # 叠放间距：略大于厚度 —— 层间留一道缝，看出是一枚一枚摞的
-const CHIP_LEAN_PX := 13.0       # 每上一枚往远端挪一点画布像素：斜着摞，正对镜头也数得清枚数
-## 筹码堆底枚的画布像素位置：**自己面前的空桌垫**上。
-##
-## 这个数**在批次 5 Task 2 重取过**（窗口裁到桌垫、取景倍率跟着变，画布口径整体换了一套）：
-## 它对应的**桌垫位置一字未动** —— 底枚仍落在绿绒嵌板下沿之内、转盘之下、装饰圈之外，
-## 只是换算成新的画布像素。换算口径：`棋盘局部坐标 (601.8, 1306.6)`（旧取景下的世界坐标）
-## × 新倍率 0.9116 + 新平移 (90.6, 132.5) ⇒ (639, 1324)。
-## **别按"画布像素"抄旧值**：旧 1530 是四人围桌那一版取景下的数，今天会落到格子行上。
-##
-## 为什么落在嵌板下沿之内而不是贴着它：底枚的**平面**落点看着离下方那排格子还有 100 多
-## 画布像素，但实体是抬在桌面之上的（PROPS_Y + 半厚），相机把"高度"投影成屏幕上的一段位移
-## —— 出图实测：贴着下沿时整摞的可见下沿与格子图案只差 1~2 像素（擦着），往上收一点
-## 才空出约 20 像素的桌垫。**这条只能靠出图核，算平面距离会被骗。**
-const CHIP_BASE_PX := Vector2(639.0, 1324.0)
-const CHIP_COLOR := Color(0.85, 0.66, 0.28)   # 金色筹码
-
-const PIP_SIZE := Vector3(0.115, 0.055, 0.115)   # 一件体力小件（方块，坐得起、投得出影子）
-const PIP_STEP_PX := 42.0                        # 相邻两件的间距（画布像素）
-## 与筹码同一排、落在玩家右手边（筹码在左、体力在右，各占自己面前的一半）。y 同 CHIP_BASE_PX。
-## 同 CHIP_BASE_PX：批次 5 Task 2 按新取景重取（旧 1180 是新口径下的 1188）。
-const PIP_BASE_PX := Vector2(1188.0, 1324.0)
-const PIP_LIT := Color(0.95, 0.78, 0.35)         # 还有的体力：亮金
-const PIP_SPENT := Color(0.22, 0.20, 0.18)       # 用掉的：熄灭
+## 批次 7：**筹码堆（现金）与体力件（体力）整体退场** —— 身家读数搬到屏幕四角的四角身家条
+##（大字身家 + 小字现金，见 table_hud.CORNER_SLOTS），体力归批次 9 的玩家道具弹窗。
+## 理由是桌面减负（用户要求）：筹码只是"身家的量级示意"、与四角身家条重复；体力件是同一份
+## 数据的第二个落点。**别再把它们加回来**：`layout_test` 里有"接口与节点都已退场"的反向契约。
 
 var _t3: TableView3D
 var _wheel_px := Vector2.ZERO
@@ -97,26 +67,8 @@ var _hit_r := 0.0                 # 命中半径（画布像素）
 var _rim: MeshInstance3D
 var _rim_mesh: TorusMesh
 
-# 筹码堆 / 体力件的**节点池**：只建一次，之后刷新只改 visible / 材质色 / transform。
-# 为什么用池而不是像转盘那样"一个节点"：它们按数值个数变化（金额几档、体力几点），
-# 而这两个刷新点都被 game.gd 每次状态广播调用（见 _refresh_table_props）——
-# 每次重建节点树（brief 原稿的 queue_free + new）等于每广播都造一堆 MeshInstance3D。
-var _chips_root: Node3D
-var _chips: Array[MeshInstance3D] = []
-var _chip_mesh: CylinderMesh          # 所有筹码共用一份：尺寸完全一致
-var _pips_root: Node3D
-var _pips: Array[MeshInstance3D] = []
-var _pip_mats: Array[StandardMaterial3D] = []   # 亮 / 灭只改颜色，材质一件一份
-var _pip_mesh: BoxMesh
-
 func setup(t3: TableView3D) -> void:
 	_t3 = t3
-
-## 金额 → 筹码枚数。**静态纯函数**：与节点、场景无关，可以无头单测。
-static func chip_count(money: int) -> int:
-	if money <= 0:
-		return 0
-	return clampi(money / CHIP_PER, 0, CHIP_MAX)
 
 ## 在画布坐标 center_px、画面半径 radius_px（**都是画布像素**）处摆好转盘的轮缘实体。
 ##
@@ -235,7 +187,7 @@ const DECK_LAYER_SHIFT := 0.010
 ## 盖住印刷脚印靠的是**最下一层**（它就在桌面上、投影和图案同面）。
 const DECK_SIZE := Vector3(0.368, DECK_LAYER_T, 0.531)
 ## 牌堆顶面那块牌名要不要**吃光**（`Label3D.shaded`）。默认 `false`（全亮、不吃光），
-## 「读得出，但略像贴上去的」；旁边被台灯照着的筹码 / 立牌都有明暗。
+## 「读得出，但略像贴上去的」；旁边被台灯照着的立牌 / 牌堆都有明暗。
 ##
 ## **批次 6 Task 3 试过 `true`、出图比对后保持 `false`**。量测（1280×800 真实窗口，固定屏幕
 ## 区域取亮度均值 `0.2126R + 0.7152G + 0.0722B`，区域就是牌名那一小块）：
@@ -411,100 +363,11 @@ func deck_top_px(deck: String) -> Vector2:
 			return px
 	return _t3.world_to_canvas_px(top)
 
-# ---------------- 自己的现金（筹码堆）与体力（小件排） ----------------
+# ---------------- 筹码堆 / 体力件（批次 7 已整体退场） ----------------
 #
-# 两者读的都是**已同步**的状态（game.gd 用 _state_player(my_peer)，客户端同样可用），
-# 与 build_wheel 同一套约定：只负责"摆在哪、长什么样"，一个玩法数字都不碰。
-#
-# 坐标：一律 canvas_px_to_world（桌垫 UV 坐标系），y 抬到桌垫之上（见 PROPS_Y）。
-# 画布 y 越大 = 越靠近镜头（相机在 +z），所以"自己面前"就落在画布的近端；但近端那片
-# 画布上还画着自己的座位卡（UI），实体的落点必须避开它（见 CHIP_BASE_PX）。
-
-## 按金额在自己面前摆一摞筹码。枚数 = chip_count(money)，0 元 = 一枚都不露。
-##
-## **幂等**：节点池只建一次，刷新只改 visible 与 global_position —— 每次状态广播都会调它。
-func set_chips(money: int) -> void:
-	var n := chip_count(money)
-	if n <= 0 and _chips.is_empty():
-		return                                  # 一直没钱：连池子都不必建
-	if _chips_root == null:
-		_chips_root = Node3D.new()
-		_chips_root.name = "Chips"
-		add_child(_chips_root)
-	while _chips.size() < n:
-		_chips.append(_make_chip())
-	for i in _chips.size():
-		var chip := _chips[i]
-		chip.visible = i < n
-		if not chip.visible:
-			continue
-		# 第 i 枚：画布上往远端挪一点（斜摞），世界坐标里往上抬一层
-		var w: Vector3 = _t3.canvas_px_to_world(
-			CHIP_BASE_PX + Vector2(0.0, -CHIP_LEAN_PX * float(i)))
-		# 底枚的下表面正好落在 PROPS_Y 上：既不与桌垫共面（不会 z-fighting），也不浮空
-		w.y = _t3.table_mesh.global_position.y + PROPS_Y + CHIP_H * 0.5 + CHIP_STEP * float(i)
-		chip.global_position = w
-
-func _make_chip() -> MeshInstance3D:
-	if _chip_mesh == null:
-		_chip_mesh = CylinderMesh.new()
-		# CylinderMesh 立在 XZ 平面（轴朝 Y）—— 一枚平放在桌上的筹码就是这个朝向。
-		_chip_mesh.top_radius = CHIP_R
-		_chip_mesh.bottom_radius = CHIP_R
-		_chip_mesh.height = CHIP_H
-		_chip_mesh.radial_segments = 24
-	var chip := MeshInstance3D.new()
-	chip.name = "Chip%d" % _chips.size()
-	chip.mesh = _chip_mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = CHIP_COLOR
-	mat.metallic = 0.55
-	mat.roughness = 0.35
-	chip.material_override = mat
-	_chips_root.add_child(chip)      # 摆位在 set_chips 里统一做（世界坐标，挂哪儿都行）
-	return chip
-
-## 自己面前一排体力小件：还有的亮、用掉的熄灭。cap = _stamina_cap(p)（5，带充电宝是 6）。
-##
-## **幂等**：池子按见过的最大上限长，刷新只改 visible / 颜色 / 位置。
-func set_stamina(cur: int, cap: int) -> void:
-	var n := maxi(cap, 0)
-	if n <= 0 and _pips.is_empty():
-		return
-	if _pips_root == null:
-		_pips_root = Node3D.new()
-		_pips_root.name = "Stamina"
-		add_child(_pips_root)
-	while _pips.size() < n:
-		_pips.append(_make_pip())
-	for i in _pips.size():
-		var pip := _pips[i]
-		pip.visible = i < n
-		if not pip.visible:
-			continue
-		# 按**序号**分亮灭：第 cur 件之后全灭（cur 大于上限时也只亮到 n，不溢到别处）
-		_pip_mats[i].albedo_color = PIP_LIT if i < mini(cur, n) else PIP_SPENT
-		var w: Vector3 = _t3.canvas_px_to_world(PIP_BASE_PX + Vector2(PIP_STEP_PX * float(i), 0.0))
-		# 方块要**坐在**桌垫上：中心抬到半高。像轮缘那样只写 PROPS_Y 的话，下半截会陷进桌子里
-		# （轮缘是管子，沉一半看不出来；方块沉一半就只剩一层薄片）。
-		w.y = _t3.table_mesh.global_position.y + PROPS_Y + PIP_SIZE.y * 0.5
-		pip.global_position = w
-
-func _make_pip() -> MeshInstance3D:
-	if _pip_mesh == null:
-		_pip_mesh = BoxMesh.new()
-		_pip_mesh.size = PIP_SIZE
-	var pip := MeshInstance3D.new()
-	pip.name = "Pip%d" % _pips.size()
-	pip.mesh = _pip_mesh
-	# 一件一份材质：亮 / 灭是逐件改自己的颜色，共用一份材质会把整排一起点亮
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = PIP_SPENT
-	mat.roughness = 0.55
-	pip.material_override = mat
-	_pips_root.add_child(pip)
-	_pip_mats.append(mat)
-	return pip
+# 原先这一段是自己现金（每 ¥5,000 一枚的筹码堆）与体力（一排用掉即灭的小件）的落地处。
+# 桌面减负后两条一起删掉：身家读数在屏幕四角的四角身家条上（`table_hud.CORNER_SLOTS`），
+# 体力归批次 9 的玩家道具弹窗。**别再加回来** —— `layout_test` 有"接口与节点都已退场"的反向契约。
 
 # ---------------- 自己的手牌（道具） ----------------
 #
@@ -512,7 +375,7 @@ func _make_pip() -> MeshInstance3D:
 # 命中判定（hand_hit / hand_rect）与状态反馈（set_hand_selected 选中 / set_hand_discard_pending
 # 待确认丢弃）都在这儿；「点中之后选中谁、什么时候能出牌、右键丢弃谁」是 game.gd 的事
 #（_on_table_click → _on_hand_clicked / _on_discard_clicked）。
-# 与筹码 / 体力件同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），
+# 与立牌同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），
 # 尺寸是世界常数（见 PROPS_Y 下面那段），刷新幂等（节点池只建一次）。
 
 ## 手牌上限 = 背包格数上限（与座位卡那排牌位一样是最多 5 个）。
@@ -735,7 +598,7 @@ func _apply_hand_layout() -> void:
 		var px := HAND_BASE_PX + Vector2(HAND_STEP_PX * k, -HAND_ARC_PX * absf(k))
 		var w: Vector3 = _t3.canvas_px_to_world(px)
 		# 卡心抬到"近边正好坐在桌面上"的高度：抬不够的话，倾斜后近边会切进桌子
-		# （方块沉一半就只剩薄片 —— 同体力件那条注释）。选中的再额外抬 HAND_SEL_LIFT。
+		# （方块沉一半就只剩薄片：轮缘是管子、沉一半看不出来，牌是方块、不行）。选中的再额外抬 HAND_SEL_LIFT。
 		# （批次 5 Task 3 起这一排落在**木桌**上而不是桌垫上，但"坐在桌面上"这条一字未改。）
 		w.y = _t3.table_mesh.global_position.y + PROPS_Y + HAND_CARD_T * 0.5 \
 			+ (HAND_CARD_D * 0.5) * sin(deg_to_rad(HAND_TILT_DEG)) \
@@ -881,7 +744,7 @@ func hand_hit(canvas_px: Vector2) -> int:
 #
 # 座位卡的 3D 版：**名字 / 身家 / 公开背包 / 操作倒计时**都在牌面上，点它 = 选目标
 #（后果由 game.gd 的 `_on_seat_clicked` 决定，这里只负责"摆在哪、长什么样、点到没点到"）。
-# 与筹码 / 手牌同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），尺寸是世界常数
+# 与手牌同一套约定：坐标一律 canvas_px_to_world（桌垫 UV 坐标系），尺寸是世界常数
 #（实物不跟 2D 相机，见文件头那段），刷新幂等（节点池只建一次，每次状态广播只改
 # visible / 文字 / 颜色 / transform）。
 #
@@ -922,7 +785,7 @@ const STANDEE_SIZE := Vector3(0.76, 0.84, 0.03)
 ##
 ## **它们与 `TableView3D.TEX_WINDOW_PX` 是同一套口径**：`canvas_px_to_world` 先过那个窗口
 ## 折成 UV、再乘桌面尺寸，所以**改窗口就必须把这四个值一起重取**（改桌子尺寸同理）。
-## 它们是**画布常量、不跟 2D 相机**（同 CHIP_BASE_PX 的约定）。
+## 它们是**画布常量、不跟 2D 相机**（同 HAND_BASE_PX 的约定）。
 ##
 ## 取值 = **木桌沿**：桌垫外沿在世界 x = ±4.0 / z = ±`TABLE_D/2`（≈3.08），
 ## 木纹外框再往外 1.2，四个桌位取在这条木纹带的正中（沿出桌垫 0.55），
@@ -1041,7 +904,7 @@ func set_standees(rows: Array) -> void:
 			(sd.root as Node3D).visible = false
 			continue
 		var r: Dictionary = rows[i]
-		# 摆位：画布像素 → 桌垫世界坐标（与筹码 / 手牌同一条换算），y 抬到桌垫之上；
+		# 摆位：画布像素 → 桌垫世界坐标（与手牌同一条换算），y 抬到桌垫之上；
 		# 牌面原点在**下沿中点**，所以它"坐"在桌面上（见 _make_standee）。
 		# 可选中的那块再抬 STANDEE_HL_LIFT（批次 5 Task 3 的高亮，见 _apply_standee_highlight）。
 		var w: Vector3 = _t3.canvas_px_to_world(STANDEE_BASE_PX[i % STANDEE_BASE_PX.size()])

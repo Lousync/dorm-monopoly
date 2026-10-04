@@ -230,7 +230,7 @@ func _run() -> void:
 			lights.append(n)
 		_check(lights.size() == 1 and lights[0] == lamp_l,
 			"全场只有台灯这一盏灯（实得 %d 盏）" % lights.size())
-		_check(lamp_l.shadow_enabled, "台灯开着阴影（筹码 / 手牌 / 立牌才投得出影子）")
+		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 立牌 / 牌堆才投得出影子）")
 		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
 		_check(lamp_l.light_energy > 0.5, "台灯有能量（实得 %.2f）" % lamp_l.light_energy)
 		var lp: Vector3 = lamp_l.global_position
@@ -572,7 +572,7 @@ func _run() -> void:
 	# 也必须在整条轨道上看得见 —— 它们的桌位（STANDEE_BASE_PX）是画布常量，窗口一改就得重取，
 	# 重取错了这里会红。量的是**牌面八个角**（真·看得见的那块，不是桌面上那个落点）。
 	# 量在一台**临时**的 TableProps 上（不进 t3.table_props）：那台的子节点数被后面
-	# 的筹码 / 轮缘断言数着，这里塞一块立牌进去会把它们带偏。
+	# 的**轮缘**断言数着（`get_child_count() == 1`），这里塞一块立牌进去会把它带偏。
 	var S0 = load("res://scripts/table_props.gd")
 	var tp0 = S0.new()
 	tp0.setup(t3)
@@ -829,7 +829,7 @@ func _run() -> void:
 	t3.on_table_click = Callable()
 
 	# ---- 批次 3 Task 1：3D 物件层地基 ----
-	# props 是实体物件（转盘 / 筹码 / 体力件 / 手牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
+	# props 是实体物件（转盘 / 两摞牌堆 / 手牌 / 四块立牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
 	# 物件摆位一律走 canvas_px_to_world（画布像素 → 桌面世界），而不是另立一套坐标。
 	# 这条往返就是"共用坐标系"的可执行定义 —— 两套坐标系一旦漂移，往返立刻对不上。
 	# 同时钉住 y：画布中心落在桌面上、与桌垫齐平，物件才不会浮空或陷进桌子。
@@ -921,122 +921,22 @@ func _run() -> void:
 			_check(t3.table_props.wheel_hit(wheel_px + Vector2(wheel_r * 1.4, 0.0)),
 				"命中半径也跟着放大（%.0f 画布像素处仍算命中）" % (wheel_r * 1.4))
 
-	# ---- 批次 3 Task 3：桌上的筹码堆 / 体力件 ----
-	# 静态函数一律**经 load() / 实例取**，不写 `TableProps.chip_count(...)`：原因同文件顶部那段
-	# （--script 入口脚本的静态依赖链先于 autoload 全局标识符注册编译，静态写类名会以
-	# 「Identifier not found: Fx」整链失败，报错与改动无关）。
-	print("== 筹码堆与体力件：按数值分档（纯函数） ==")
+	# ---- 批次 7：筹码堆与体力件整体退场（读数归四角身家条 / 批次 9 的道具弹窗） ----
+	# 反向契约：谁把这两条子系统加回来，这几条先红。
+	print("== 筹码堆与体力件：接口与节点都已退场（不留空壳） ==")
 	var tp3 = t3.table_props
 	if tp3 == null:
-		_check(false, "TableProps 未就绪，筹码 / 体力件断言整段跳过")
+		_check(false, "TableProps 未就绪，退场断言整段跳过")
 	else:
+		_check(not tp3.has_method("set_chips"), "set_chips 已退场")
+		_check(not tp3.has_method("set_stamina"), "set_stamina 已退场")
+		_check(tp3.get_node_or_null("Chips") == null, "桌上没有筹码堆节点")
+		_check(tp3.get_node_or_null("Stamina") == null, "桌上没有体力件节点")
+		# 常量经 load() 取（不静态写类名，理由见文件顶部那段）
 		var S3 = load("res://scripts/table_props.gd")
-		# 取景一律是"桌垫概览"那一版（`fit_overview`）：座位栏退场后它与"有没有座位"再无关系，
-		# 画布口径也只剩这一套。上面那些断言可能留下过被推近的镜头，这里拉回全景再量位置。
-		t3.board.fit_overview(true)
-		# 唯一的"别压上去"的线：自己那一排格子的**外沿**（棋盘格区的近端边）—— 实体越过它
-		# 就是压在自己那排格子的图案上了（属性名 / 价格）。批次 5 Task 2 之前还要躲座位栏，
-		# 座位栏一走就只剩这一条（也更贴近本意）。
-		var row_top: float = t3.board._view_from_world(t3.board.BOARD_OFFSET + t3.board.WORLD).y
-		_check(S3.chip_count(0) == 0, "0 元 → 0 枚")
-		_check(S3.chip_count(-100) == 0, "欠债（负数）→ 0 枚")
-		_check(S3.chip_count(4999) == 0, "不足一档 → 0 枚")
-		_check(S3.chip_count(5000) == 1, "满一档 → 1 枚")
-		_check(S3.chip_count(39999) == 7, "七档半 → 7 枚（取整不四舍五入）")
-		_check(S3.chip_count(40000) == 8, "八档 → 8 枚")
-		_check(S3.chip_count(123456) == 8, "再多也不超上限（封顶）")
-
-		# 可见件数：池子里的节点是**藏起来**而不是拆掉的（幂等要求），所以数 visible。
-		var vis3 := func(root: Node) -> int:
-			var c := 0
-			for ch in root.get_children():
-				if (ch as Node3D).visible:
-					c += 1
-			return c
-		print("== 筹码堆：按金额长出实体、落在自己面前的空桌垫上 ==")
-		tp3.set_chips(5000)
-		var cr: Node = tp3.get_node_or_null("Chips")
-		_check(cr != null, "筹码堆的父节点在（set_chips 时建）")
-		if cr != null:
-			tp3.set_chips(0)
-			_check(vis3.call(cr) == 0, "0 元：一枚都不露（实得 %d）" % vis3.call(cr))
-			tp3.set_chips(5000)
-			_check(vis3.call(cr) == 1, "1 档：露 1 枚（实得 %d）" % vis3.call(cr))
-			tp3.set_chips(100000)
-			_check(vis3.call(cr) == 8, "封顶：露 8 枚（实得 %d）" % vis3.call(cr))
-			# 幂等：节点池只建一次，刷新只改 visible 与 transform（每次状态广播都会调这里）
-			var pool3: int = cr.get_child_count()
-			var first3: Node = cr.get_child(0)
-			tp3.set_chips(100000)
-			_check(cr.get_child_count() == pool3 and cr.get_child(0) == first3,
-				"重复调用不重建节点（%d → %d 个）" % [pool3, cr.get_child_count()])
-			# 位置：整摞都得落在**自己面前的空桌垫**上 —— 在棋盘格区之外（`row_top` 之内），
-			# 且仍在桌垫之内（批次 5 Task 2 起桌垫就是画布的窗口，越过它等于"摆到木桌上了"）。
-			var over_row := 0
-			var sunk := 0
-			var off_mat := 0
-			var nearest := 0.0
-			for ch in cr.get_children():
-				if not (ch as Node3D).visible:
-					continue
-				var cpx: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
-				if cpx.y >= row_top:
-					over_row += 1
-				if not t3.TEX_WINDOW_PX.has_point(cpx):
-					off_mat += 1
-				if (ch as Node3D).global_position.y <= t3.table_mesh.global_position.y:
-					sunk += 1
-				nearest = maxf(nearest, cpx.y)
-			_check(over_row == 0, "筹码没压在自己那排格子上（越界 %d 枚，格区近端画布 y=%.0f）" % [over_row, row_top])
-			_check(off_mat == 0, "筹码都落在桌垫之内（越出窗口 %d 枚）" % off_mat)
-			_check(sunk == 0, "筹码都浮在桌垫之上（陷进去 %d 枚）" % sunk)
-			_check(nearest > row_top - 500.0, "筹码在自己这半张桌子（近端，最靠里一枚画布 y=%.0f）" % nearest)
-
-		print("== 体力件：一排小件、用掉的熄灭 ==")
-		tp3.set_stamina(3, 5)
-		var sr: Node = tp3.get_node_or_null("Stamina")
-		_check(sr != null, "体力件的父节点在（set_stamina 时建）")
-		if sr != null:
-			# 亮 / 灭按**亮度**分：拿 PIP_LIT 常量比是自指，改配色时两边一起改就永远绿。
-			var lit3 := func(root: Node) -> int:
-				var c := 0
-				for ch in root.get_children():
-					var mi := ch as MeshInstance3D
-					if mi == null or not mi.visible:
-						continue
-					var mat := mi.material_override as StandardMaterial3D
-					if mat != null and mat.albedo_color.get_luminance() > 0.5:
-						c += 1
-				return c
-			_check(vis3.call(sr) == 5, "上限 5 → 摆 5 件（实得 %d）" % vis3.call(sr))
-			_check(lit3.call(sr) == 3, "3 点体力 → 3 件亮的（实得 %d）" % lit3.call(sr))
-			tp3.set_stamina(0, 5)
-			_check(vis3.call(sr) == 5 and lit3.call(sr) == 0,
-				"用光了：5 件全灭（实得 亮 %d 件）" % lit3.call(sr))
-			tp3.set_stamina(9, 6)     # 上限 6（充电宝）时多出来的点数不该溢到别处
-			_check(vis3.call(sr) == 6 and lit3.call(sr) == 6,
-				"上限 6 / 满体力 → 6 件全亮（实得 亮 %d 件）" % lit3.call(sr))
-			var pool_s: int = sr.get_child_count()
-			var first_s: Node = sr.get_child(0)
-			tp3.set_stamina(2, 6)
-			_check(sr.get_child_count() == pool_s and sr.get_child(0) == first_s,
-				"重复调用不重建体力件节点（%d → %d 个）" % [pool_s, sr.get_child_count()])
-			var over_row_s := 0
-			var sunk_s := 0
-			var off_mat_s := 0
-			for ch in sr.get_children():
-				if not (ch as Node3D).visible:
-					continue
-				var spx: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
-				if spx.y >= row_top:
-					over_row_s += 1
-				if not t3.TEX_WINDOW_PX.has_point(spx):
-					off_mat_s += 1
-				if (ch as Node3D).global_position.y <= t3.table_mesh.global_position.y:
-					sunk_s += 1
-			_check(over_row_s == 0, "体力件没压在自己那排格子上（越界 %d 件）" % over_row_s)
-			_check(off_mat_s == 0, "体力件都落在桌垫之内（越出窗口 %d 件）" % off_mat_s)
-			_check(sunk_s == 0, "体力件都坐在桌垫之上（陷进去 %d 件）" % sunk_s)
+		var consts3: Dictionary = S3.get_script_constant_map()
+		_check(not consts3.has("CHIP_PER"), "CHIP_PER 常量已删")
+		_check(not consts3.has("PIP_SIZE"), "PIP_SIZE 常量已删")
 
 	# ---- 批次 3 Task 4：手中牌（显示） ----
 	# 本步**只做显示**（点击是 Task 5），但 hand_count / hand_rect / hand_hit 是这一步的交付物。
@@ -1203,9 +1103,9 @@ func _run() -> void:
 			tp4.set_hand_selected(-1)
 
 			# 位置：整排落在**自己面前那条木纹留白**上（批次 5 Task 3 起）—— 在桌垫**之外**、
-			# 木桌之内、桌面的近端半幅；不与自己那排格子错位、不与筹码堆和体力件重叠。
-			# 筹码与体力件的位置**从它们自己的节点读**（不是抄常量）。
-			print("== 手中牌：落在桌垫前沿的木纹留白上、不与筹码 / 体力件打架 ==")
+			# 木桌之内、桌面的近端半幅；不与自己那排格子错位。
+			#（批次 3 时代的"不与筹码堆 / 体力件重叠"那两条随两条子系统退场一并作废，见上。）
+			print("== 手中牌：落在桌垫前沿的木纹留白上 ==")
 			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
 			await process_frame
 			# 批次 5 Task 3 把整排**放大 1.5 倍并下移到桌垫下沿之外**（阶段按钮之下），
@@ -1248,29 +1148,8 @@ func _run() -> void:
 			_check(box_out4 == 0, "连看得见的那块也没被画布边缘裁掉（出界 %d 张；画布 %s）"
 				% [box_out4, canvas_rect4])
 			_check(nearest4 > mat_px4.get_center().y, "手牌在自己这半张桌子（近端，最靠里一张画布 y=%.0f）" % nearest4)
-			# 不与筹码堆 / 体力件重叠：把它们的**实际落点**读出来，命中盒里不许有它们。
-			var others4: Array = []
-			var chip_root4: Node = tp4.get_node_or_null("Chips")
-			var pip_root4: Node = tp4.get_node_or_null("Stamina")
-			var deepest4 := 0.0
-			for r in [chip_root4, pip_root4]:
-				if r == null:
-					continue
-				for ch in r.get_children():
-					if not (ch as Node3D).visible:
-						continue
-					var op: Vector2 = t3.world_to_canvas_px((ch as Node3D).global_position)
-					others4.append(op)
-					deepest4 = maxf(deepest4, op.y)
-			var clash4 := 0
-			for i in 3:
-				for op in others4:
-					if tp4.hand_rect(i).has_point(op):
-						clash4 += 1
-			_check(others4.size() > 0, "筹码 / 体力件的落点读到了（%d 个）" % others4.size())
-			_check(clash4 == 0, "手牌命中盒里没有筹码 / 体力件（重叠 %d 处）" % clash4)
-			_check(nearest4 > deepest4, "手牌整排比筹码 / 体力件更靠自己（%.0f > %.0f 画布 y）"
-				% [nearest4, deepest4])
+			# 批次 7：筹码堆 / 体力件已退场 ⇒ 原来这段"手牌不与它们重叠"的比较失去参照物，作废。
+			# 手牌落位的硬约束由上面那几条承担（在木纹留白上 / 不压棋盘 / 不被画布边缘裁掉）。
 
 			# ---- 批次 4 Task 2：手牌随视角淡出（看不见就点不到） ----
 			# 视角量 view_t 是**纯本地表现**（不进 s_state、不同步）：3D 端看得见也点得到，
@@ -1678,7 +1557,7 @@ func _run() -> void:
 	# ---- 批次 6 Task 2：机会 / 命运两摞实体牌堆 ----
 	# 桌垫上最后两处"贴片"（画布上印着的那两摞卡背）实体化。钉四件事：
 	#   ① 两摞都在、都**有厚度**（叠层 > 1 —— 一块等厚方砖不算"一摞牌"）；
-	#   ② 落点与印在桌垫上的那摞卡背**重合**（走 `board.deck_screen_pos()` —— 与轮缘 / 筹码 / 立牌
+	#   ② 落点与印在桌垫上的那摞卡背**重合**（走 `board.deck_screen_pos()` —— 与轮缘 / 立牌
 	#      同一条 chain：`global_position + _view_from_world(...)`；这里也是 layout_test 后面那段
 	#      "牌堆在窗口内"用的口径。**别再自己拼 `_view_from_world`** —— 它是私有方法、且容易漏
 	#      `global_position` 那一项，批次 6 Task 3 把这条链收进了公开入口）；

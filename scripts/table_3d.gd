@@ -196,11 +196,11 @@ var lamp: Node3D
 var lamp_light: OmniLight3D
 
 ## 实体物件层：与桌垫共用同一套 UV 坐标系，物件都挂这里（见设计稿 §五）。
-## 桌垫（table_mesh）只是"印在桌上的画"；转盘 / 筹码 / 体力件 / 手牌这些有厚度、
+## 桌垫（table_mesh）只是"印在桌上的画"；转盘 / 两摞牌堆 / 手牌 / 立牌这些有厚度、
 ## 能投影的实体一律挂 props，摆位走 canvas_px_to_world。
 var props: Node3D
 
-## 实体物件的构建与刷新（转盘 / 筹码堆 / 体力件 / 手牌，见 scripts/table_props.gd）。
+## 实体物件的构建与刷新（转盘 / 两摞牌堆 / 手牌 / 立牌，见 scripts/table_props.gd）。
 ## 挂在 props 下、与桌垫共用同一套坐标；由 game.gd 在收到首个状态后驱动 build_wheel。
 var table_props: TableProps
 
@@ -446,7 +446,7 @@ func _build_lamp() -> void:
 	lamp_light.light_energy = LAMP_ENERGY
 	lamp_light.omni_range = LAMP_RANGE
 	lamp_light.omni_attenuation = LAMP_ATTEN
-	# 批次 3 为"筹码 / 手牌能投影"重开的阴影，本批跟着换成这一盏：**全场唯一投影的光源**。
+	# 批次 3 为"桌上实物能投影"重开的阴影，本批跟着换成这一盏：**全场唯一投影的光源**。
 	# 影子方向从此由台灯决定（从近端一侧斜着拉出来），不再是顶灯那种正下方的短影。
 	lamp_light.shadow_enabled = true
 	shade.add_child(lamp_light)
