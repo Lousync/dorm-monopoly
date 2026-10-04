@@ -1483,6 +1483,191 @@ func _run() -> void:
 	_check(t3.canvas_px_to_world(Vector2(1024.0, 2048.0)).z > t3.canvas_px_to_world(Vector2(1024.0, 0.0)).z,
 		"画布下方 = 近端（y 大 → z 大）")
 
+	# ---- 批次 11 Task 1：棋子（小人）+ 当前行动者光环搬进 3D ----
+	# 桌垫上印着的那枚小人（Kenney 棋子贴图）做成**立在桌上的薄牌**；行动光环从 2D Panel
+	# 换成贴桌垫的一条 3D 环。判据一律走**可观察量**：几何取自节点自己的 mesh + 世界变换、
+	# 命中走 token_hit 自己、位置走真反变换（world_to_canvas_px）折回画布像素比 ——
+	# 不把实现的推导再写一遍（那样写成什么样都过）。
+	print("== 棋子：薄牌立着（有高度 / 后倾 / 与印刷图案同链） ==")
+	var tpT = t3.table_props
+	if tpT == null or not tpT.has_method("set_tokens"):
+		_check(false, "TableProps 没有 set_tokens（棋子还没搬进来），本段整段跳过")
+	else:
+		t3.snap_view(0.0)          # 3D 端取景：命中盒与出图核对都在这一档
+		await process_frame
+		tpT.set_tokens([
+			{"peer": 7, "slot": 0, "idx": 20},
+			{"peer": 8, "slot": 2, "idx": 20},
+		])
+		# 弹入（新棋子出现时 scale 0 → 1，TRANS_BACK）：先抓一帧"还在弹"，再等它落定。
+		await process_frame
+		var troot0: Node = tpT.get_node_or_null("Tokens")
+		var tk_pop: Node3D = troot0.get_node_or_null("Token_p7") as Node3D if troot0 != null else null
+		if tk_pop != null:
+			_check(tk_pop.scale.x < 0.99, "新棋子是**弹入**出现的（首帧 scale %.2f < 1）" % tk_pop.scale.x)
+		await create_timer(0.5).timeout          # 弹入 0.35s：等它落定再量几何
+		var troot: Node = tpT.get_node_or_null("Tokens")
+		_check(troot != null, "棋子的父节点在（set_tokens 时建）")
+		var tkA: Node3D = null
+		var plateA: MeshInstance3D = null
+		var bmA: BoxMesh = null
+		if troot != null:
+			tkA = troot.get_node_or_null("Token_p7") as Node3D
+			if tkA != null:
+				plateA = tkA.get_node_or_null("Plate") as MeshInstance3D
+				if plateA != null:
+					bmA = plateA.mesh as BoxMesh
+		_check(tkA != null and plateA != null and bmA != null, "peer 7 的棋子是一块 BoxMesh 薄牌")
+		if bmA != null:
+			_check(bmA.size.y > 0.1, "薄牌**有高度**（%.3f > 0.1，不是平面贴纸）" % bmA.size.y)
+			_check(bmA.size.z < bmA.size.y * 0.5, "薄牌是「薄」的（厚 %.3f 世界单位）" % bmA.size.z)
+			# 「后倾」的可执行定义（同已退场立牌那条）：牌面**顶边比板底更靠远端**（z 更小）。
+			# 顶边 = 板心沿自己的 +y 半高、板底 = 沿 -y 半高 —— 倾角方向错（或压根没倾）这条就红。
+			var top_v: Vector3 = plateA.global_transform * Vector3(0.0, bmA.size.y * 0.5, 0.0)
+			var bot_v: Vector3 = plateA.global_transform * Vector3(0.0, -bmA.size.y * 0.5, 0.0)
+			_check(top_v.z < bot_v.z, "顶边比板底更靠远端（后倾 ⇒ 2D 端近正俯视也看得见一块面）")
+			# 正面贴图：棋子贴图（Kenney CC0）。贴图缺失时退回牌身纯色（与 2D 那套同一条降级），
+			# 所以这里只钉"面片在、且它的贴图就是 UIKit 给这个槽位的那张"（拿不到就不钉）。
+			var UKt = load("res://scripts/ui_kit.gd")
+			var want_tex = UKt.piece_tex(0)
+			if want_tex != null:
+				var faceA: MeshInstance3D = tkA.get_node_or_null("Face") as MeshInstance3D
+				var fmatA: StandardMaterial3D = faceA.material_override as StandardMaterial3D if faceA != null else null
+				_check(faceA != null and fmatA != null and fmatA.albedo_texture == want_tex,
+					"正面贴的是这个槽位的棋子贴图（UIKit.piece_tex）")
+		# 位置 = 与**印在桌垫上的**那一格同一条链：`tile_screen_pos` / `deck_screen_pos` /
+		# `wheel_screen_pos` 的那条（`global_position + _view_from_world(局部点)`）—— 也就是
+		# `board.token_screen_pos(idx, slot)`。量法：把棋子的世界落点过真反变换折回画布像素比。
+		# **不能拿 `slot_anchor` 的局部坐标比**：那是"镜头在原点、倍率 1"那一档的位置，
+		# 全景取景下与印刷位置差约一格（出图逮到过 —— 棋子偏到隔壁格）。
+		var want_a: Vector2 = t3.board.token_screen_pos(20, 0)
+		var local_a: Vector2 = t3.board.slot_anchor(20, 0)
+		_check(want_a.distance_to(local_a) > 8.0,
+			"（前提）印刷口径与局部坐标确实不同（差 %.1f 画布像素 —— 少了镜头变换就会偏开）"
+				% want_a.distance_to(local_a))
+		if tkA != null:
+			var back_a: Vector2 = t3.world_to_canvas_px(tkA.global_position)
+			_check(back_a.distance_to(want_a) < 1.0,
+				"棋子落在该格的「印刷口径」落点上（实得 %s / 期望 %s）" % [back_a, want_a])
+			_check(tkA.global_position.y > t3.table_mesh.global_position.y,
+				"棋子抬在桌垫之上（y=%.3f）" % tkA.global_position.y)
+
+		# 命中三态：落点上命中 / 别处 -1 / 重叠时取离相机最近。
+		# 先只留 peer 7 一枚 —— 两枚都在时它那枚的落点会被**更近**的那枚抢先命中（那是下面要钉的
+		# "取最近"），所以"落点上命中"这条必须单枚量。
+		print("== 棋子命中：落点上命中 / 别处 -1 / 重叠时取离相机最近 ==")
+		tpT.set_tokens([{"peer": 7, "slot": 0, "idx": 20}])
+		await process_frame
+		_check(tpT.token_hit(want_a) == 7,
+			"棋子画布落点上命中 peer 7（实得 %d）" % tpT.token_hit(want_a))
+		_check(tpT.token_hit(Vector2(30.0, 30.0)) == -1, "桌垫之外不算命中（-1）")
+		var cell30: Vector2 = t3.board.tile_pos(30) + Vector2(t3.board.TILE, t3.board.TILE) * 0.5
+		_check(tpT.token_hit(cell30) == -1, "没有棋子的格心不算命中（-1）")
+		# 重叠：把两枚都摆在**同一格**（槽 0 与槽 2 —— 偏移只差 y，一远一近，命中盒会交叠）。
+		# **前提（真有交叠）不靠猜**：先在"只摆一枚"的两趟里把"同时落在两枚盒内"的点**探出来**
+		#（用 token_hit 自己探，不把命中盒的推导再写一遍），再用"两枚都在"的那一次断言取近的那枚。
+		# 换人之前要 `await` 一帧：被移走的节点是 queue_free（延迟释放），同帧重建会同名重命名。
+		var scan_x := range(-120, 25, 4)
+		var scan_y := range(-140, 45, 4)
+		var solo_a := {}
+		for xi in scan_x:
+			for yi in scan_y:
+				var qa: Vector2 = want_a + Vector2(float(xi), float(yi))
+				if tpT.token_hit(qa) == 7:
+					solo_a[qa] = true
+		tpT.set_tokens([{"peer": 8, "slot": 2, "idx": 20}])
+		await create_timer(0.5).timeout
+		var solo_b := {}
+		for xi in scan_x:
+			for yi in scan_y:
+				var qb: Vector2 = want_a + Vector2(float(xi), float(yi))
+				if tpT.token_hit(qb) == 8:
+					solo_b[qb] = true
+		var both: Array = []
+		for q in solo_a.keys():
+			if solo_b.has(q):
+				both.append(q)
+		_check(not both.is_empty(),
+			"两枚的命中盒**确有交叠**（交叠探针 %d 个；没有交叠这条先红，重叠判据无从谈起）" % both.size())
+		if not both.is_empty():
+			tpT.set_tokens([{"peer": 7, "slot": 0, "idx": 20}, {"peer": 8, "slot": 2, "idx": 20}])
+			await create_timer(0.5).timeout
+			var wrong := 0
+			for q in both:
+				var qc: Vector2 = q
+				if tpT.token_hit(qc) != 8:
+					wrong += 1
+			# 槽 2 的偏移 y 更大 = 画布更靠下 = 离相机更近 ⇒ 交叠处必须一律给 8（近的那枚）。
+			_check(wrong == 0, "交叠处一律取**离相机最近**的那枚（%d/%d 个探针给错）" % [wrong, both.size()])
+			_check(tpT.token_world_pos(8).z > tpT.token_world_pos(7).z,
+				"（前提）peer 8 那枚确实更近（z %.3f > %.3f）"
+					% [tpT.token_world_pos(8).z, tpT.token_world_pos(7).z])
+
+		# 光环：贴桌垫的一条 3D 环，套在当前行动者脚下；尺寸**跟印刷图案**（与转盘轮缘同口径）。
+		print("== 当前行动者光环：3D 环、跟印刷图案、NO_PEER 时收起 ==")
+		tpT.set_tokens([{"peer": 7, "slot": 0, "idx": 20}])
+		await create_timer(0.5).timeout
+		tpT.set_ring(7)
+		await process_frame
+		var ring: MeshInstance3D = tpT.get_node_or_null("Ring") as MeshInstance3D
+		_check(ring != null, "光环节点在（set_ring 时建）")
+		if ring != null:
+			_check(ring.visible, "set_ring(peer) 后光环可见")
+			var torus: TorusMesh = ring.mesh as TorusMesh
+			_check(torus != null, "光环是圆环（TorusMesh —— 中间透空，不盖住格子的图案）")
+			var ring_back: Vector2 = t3.world_to_canvas_px(ring.global_position)
+			_check(ring_back.distance_to(want_a) < 8.0,
+				"环心落在该棋子附近（实得 %s / 棋子 %s）" % [ring_back, want_a])
+			if torus != null:
+				# 尺寸跟印刷图案：把环的外沿折回**画布像素**，与 board 报的半径比 ——
+				# 同轮缘那条（走真反变换，不把"像素 ÷ 常数"的实现重述一遍）。
+				var out_px0: float = t3.world_to_canvas_px(
+					ring.global_position + ring.global_transform.basis.x * torus.outer_radius) \
+					.distance_to(t3.world_to_canvas_px(ring.global_position))
+				var want_r: float = t3.board.token_ring_radius_px()
+				_check(absf(out_px0 - want_r) < 2.0,
+					"环外沿 == 画在桌垫上的那个半径（%.1f vs %.1f 画布像素）" % [out_px0, want_r])
+				# 跟取景：2D 镜头推近（取景 / 人数变化都会改 _zoom），重推环要跟着胀 ——
+				# 与"轮缘跟着画面半径放大"同一条（只跟位置不跟尺寸时这条会红）。
+				t3.board.focus_grid(20, 2.0, true)
+				await process_frame
+				tpT.set_ring(7)
+				var out_px1: float = t3.world_to_canvas_px(
+					ring.global_position + ring.global_transform.basis.x * torus.outer_radius) \
+					.distance_to(t3.world_to_canvas_px(ring.global_position))
+				_check(out_px1 > out_px0 * 1.5,
+					"取景推近后环跟着胀（%.1f → %.1f 画布像素）" % [out_px0, out_px1])
+				t3.board.fit_overview(true)
+				await process_frame
+			tpT.set_ring(GameData.NO_PEER)
+			await process_frame
+			_check(not ring.visible, "set_ring(NO_PEER) 后光环收起")
+
+		# 反向契约：2D 的棋子 / 光环 / 悬停条整套必须**真的没了**（不留空壳）。
+		# 谁把它们加回来（或只加个空壳），这几条先红 —— 悬停条由 Task 3 在屏幕层重建。
+		print("== 反向契约：2D 棋子 / 光环 / 悬停条整套已从 BoardView 删净 ==")
+		var bv = t3.board
+		_check(bv.get("_tokens") == null, "BoardView._tokens 已删净")
+		_check(bv.get("_token_tip") == null and bv.get("_ring") == null,
+			"悬停条与 2D 光环的成员已删净")
+		# （`token_screen_pos` 不在这一串里：**名字被新的那条接走了** —— 旧的取 `peer`、
+		#   新的取 `(idx, slot)`，是 3D 侧摆棋子用的"印刷口径落点"，上面已经用过、能用。）
+		var gone_m := ["play_move", "set_teleport_target", "_teleport_anim", "_kill_token_tw",
+			"_set_ring", "_build_ring", "_make_token", "token_world_pos",
+			"_token_at_view", "_set_token_hover", "_ensure_token_tip", "_place_token_tip"]
+		var still: Array = []
+		for m in gone_m:
+			if bv.has_method(m):
+				still.append(m)
+		_check(still.is_empty(), "棋子的 12 个方法都已退场（残留：%s）" % str(still))
+		# 保留的接口：3D 侧摆棋子与格详情卡的锚点（`tile_pos` / `slot_offset` 上面已经用过、
+		# 能用；这里把"还在"钉住 —— 谁顺手删了，这条先红）
+		var kept: Array = []
+		for m in ["slot_offset", "slot_anchor", "tile_screen_pos", "token_screen_pos"]:
+			if not bv.has_method(m):
+				kept.append(m)
+		_check(kept.is_empty(), "slot_offset / slot_anchor / tile_screen_pos / token_screen_pos 保留（缺 %s）" % str(kept))
+
 	t3.queue_free()
 
 	# ---- 批次 5 Task 2：座位栏退场，改钉"窗口覆盖了什么"（原第 ③ 条「立牌贴桌沿」随批次 9 删）----

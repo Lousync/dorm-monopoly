@@ -439,28 +439,25 @@ func _run() -> void:
 	_check(g.deck_reveal.z_index < g.shop_layer.z_index,
 		"抽卡大字卡在小卖部·赌场层之下（z %d < %d）" % [g.deck_reveal.z_index, g.shop_layer.z_index])
 
-	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
+	print("== 悬停信息条：本批搬到屏幕层（过渡态：Task 3 之前没有悬停反馈）==")
+	# **R2 裁定**：2D 悬停条整套（`_token_tip` / `_token_at_view` / `_set_token_hover` /
+	# `_ensure_token_tip` / `_place_token_tip`）随 Task 1 一起删 —— 它们的数据源就是 `_tokens`，
+	# 那套一删整段必然解析失败。屏幕层的条由 **Task 3** 重建（那时它会带回"悬停出条"的断言）。
+	# 这里只钉**数据源**仍然在、且内容同源（Task 3 要读它）：`board._peers_info`。
+	# 关键仍是「机器人 peer 是负数」—— 判据写成 `peer < 0` 就会把机器人全挡掉。
 	var hs: Dictionary = _state(2, false)
 	hs.players.append({"peer": -1, "name": "机器人A", "color": 0, "bot": true,
 		"money": 20000, "pos": 1, "alive": true, "skip": 0, "sleep": 0,
 		"stamina": 3, "items": [], "item_used": false})
 	g.s_state(hs)
 	await process_frame
-	g.board._set_token_hover(1)
-	_check(g.board._token_tip != null and g.board._token_tip.visible, "悬停真人后信息条显示")
-	_check(String(g.board._token_tip_name.text) == "甲",
-		"显示昵称（实得「%s」）" % String(g.board._token_tip_name.text))
-	_check(String(g.board._token_tip_sub.text).contains("身家")
-		and String(g.board._token_tip_sub.text).contains("名"),
-		"显示身家与排名（实得「%s」）" % String(g.board._token_tip_sub.text))
-	# 关键：**机器人 peer 是负数**。之前判据写成 `peer < 0` 就把机器人全挡了，
-	# 表现正是「悬停自己的小人有效、悬停别人的（机器人）没反应」。
-	g.board._set_token_hover(-1)
-	_check(g.board._token_tip.visible, "**悬停机器人也显示信息条（负 peer）**")
-	_check(String(g.board._token_tip_name.text) == "机器人A",
-		"显示机器人的昵称（实得「%s」）" % String(g.board._token_tip_name.text))
-	g.board._set_token_hover(GameData.NO_PEER)
-	_check(not g.board._token_tip.visible, "移开后信息条收起")
+	var pinfo: Dictionary = g.board._peers_info
+	_check(pinfo.has(1) and String(pinfo[1].get("name", "")) == "甲",
+		"悬停信息的数据源 `board._peers_info` 仍在（Task 3 要读）")
+	_check(pinfo.has(-1) and String(pinfo[-1].get("name", "")) == "机器人A",
+		"**负数 peer 的机器人也在 `_peers_info` 里**（判据别写成 peer < 0）")
+	_check(int(pinfo[1].get("rank", 0)) > 0 and int(pinfo[1].get("worth", 0)) > 0,
+		"`_peers_info` 里带着身家与名次（信息条的内容与它同源）")
 
 	print("== 格详情卡：悬浮在被点格子的上方 ==")
 	g.board.cam_locked = false
@@ -1289,6 +1286,49 @@ func _run() -> void:
 	await process_frame
 	_check(hot.size() > 0 and not _corner_bar_hot(g, _bar_of(g, 1)),
 		"取消选目标后四角条高亮熄灭")
+
+	print("== 棋子动画（批次 11 Task 1）：走子抬 y、传送淡到看不见 ==")
+	# 棋子那四样动作（逐格走 / 传送 / 弹入 / 光环）在 3D 里重写了（设计 §4.1）。走子与传送
+	# 必须有**可观察量** —— 否则"传送看不见"这类事没法断言。这里量两个只读量：
+	# `token_world_pos`（走子的 y 弧）与 `token_alpha`（传送的淡出）。
+	g.my_peer = 2
+	g.s_state(_state(2, false))
+	await process_frame
+	var tpA = g.table3d.table_props
+	if tpA == null or not tpA.has_method("play_token_move"):
+		_check(false, "TableProps 没有 play_token_move（棋子动画未接），本段整段跳过")
+	else:
+		await create_timer(0.5).timeout      # 等首次弹入（scale 0→1）落定
+		var p3 := int(g._state_player(3).get("pos", 0))
+		var base_y: float = tpA.token_world_pos(3).y
+		_check(base_y > 0.0, "棋子在桌面上（基准 y=%.3f）" % base_y)
+		# 走子走**真入口** `s_move`（@rpc call_local：直调就是本机那一次）；两步、每步 0.4s。
+		g.s_move(3, [p3 + 1, p3 + 2], 0.4)
+		# 采样窗口覆盖整段动画（2 步 × 0.4s）还有余量；每步一个弧，取全程峰值与终值。
+		var max_y := base_y
+		for i in 36:
+			await create_timer(0.03).timeout
+			max_y = maxf(max_y, tpA.token_world_pos(3).y)
+		_check(max_y > base_y + 0.03,
+			"走子期间棋子的世界 y **抬升过**（%.3f → 峰值 %.3f —— 竖直小跳的弧）" % [base_y, max_y])
+		_check(absf(tpA.token_world_pos(3).y - base_y) < 0.01,
+			"走完落回桌面高度（%.3f，基准 %.3f）" % [tpA.token_world_pos(3).y, base_y])
+		# 传送：`s_tp`（送监 / 传送类道具走的同一条）——淡出 → 瞬移 → 淡入。
+		# **放慢 5 倍再采样**：`token_alpha` 只有逐帧采样才抓得住"淡到看不见"那一档，
+		# 正常速度下每帧的 alpha 步长（≈0.075/帧）比判据还粗，采不到接近 0 的点。
+		var before_tp: Vector3 = tpA.token_world_pos(3)
+		Engine.time_scale = 0.2
+		g.s_tp(3, 12)
+		var min_a := 1.0
+		var t0 := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - t0 < 2600:
+			await process_frame
+			min_a = minf(min_a, tpA.token_alpha(3))
+		Engine.time_scale = 1.0
+		_check(min_a < 0.05, "传送期间棋子**淡到看不见**（alpha 最低 %.3f）" % min_a)
+		_check(tpA.token_alpha(3) > 0.95, "传送完毕回到不透明（%.3f）" % tpA.token_alpha(3))
+		_check(tpA.token_world_pos(3).distance_to(before_tp) > 0.1,
+			"传送落点真的变了（%s → %s）" % [before_tp, tpA.token_world_pos(3)])
 
 	g.get_tree().paused = false
 	g.free()

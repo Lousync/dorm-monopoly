@@ -2,8 +2,12 @@ extends Control
 class_name BoardView
 ## 56 格（18×12 外圈）棋盘：世界坐标渲染，自研 2D 相机（注视点 / 缩放，取景与近景）、
 ## 自动跟随行动棋子。
-## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修房子弹跳、悬停高亮、
-## 当前行动者脉冲光环、传送淡入淡出。
+## 表现细节：归属描边与底色渐变、装修房子弹跳、悬停高亮。
+##
+## **棋子（小人）、当前行动者光环与悬停信息条都不在这里**（批次 11 Task 1 起）：
+## 前两者是立在桌上的 3D 实物 / 贴桌垫的一条环（`TableProps`），走子 / 传送 / 弹入那几样动画
+## 也在那边；信息条改挂**屏幕层**（Task 3）。本类只留"棋子落在画布哪个像素"这份纯数据
+##（`_peer_anchor` / `slot_anchor`），供镜头跟随用。
 ##
 ## 注意：本组件住在 `TableView3D` 的 `SubViewport`（2048²）内，滚轮与拖拽平移
 ## **都不归它管**——滚轮 = 3D/2D 视角连续推移（`TableView3D.set_view`，批次 4 起取消推拉），
@@ -103,19 +107,15 @@ var _levels: Array = []        # 上一次渲染的等级（用于房子弹跳�
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
 var _tile_hl: Array = []       # 每格「可选中」高亮叠层（选地块/两段式时显示）
 var _tile_tw := {}             # 每格进行中的补间
-var _tokens := {}              # peer -> 棋子 Panel
-## 悬停棋子时浮出的信息条。挂在 BoardView 下、用 `_view_from_world` 定位，所以它是
-## **棋盘画布（桌面）空间**的 —— 随桌面一起倾斜、并被透视缩小，字偏小。
-## 计划在「文字上屏幕层」收尾时改到屏幕层（见 doc/development/开发台账.md §三）。
-var _token_tip: PanelContainer
-var _token_tip_name: Label
-var _token_tip_sub: Label
-var _tip_peer := GameData.NO_PEER   # 当前悬停到谁（哨兵不能用 -1：机器人 peer 是负数）
+## 每 peer 的**棋子落点**（画布像素）：格心 + 槽位偏移。**棋子本身住在 `TableProps`**（批次 11
+## Task 1 搬进 3D，见 scripts/table_props.gd「棋子（小人）」那一段），画布里已经没有它了；
+## 但"镜头跟着自己那枚棋子"（`focus_peer` / 自动跟随）仍要一个落点，所以这里留这份**纯数据**：
+## 每次 `render` 从状态里重算一次，与 `tile_pos` / `slot_offset` / `TILE` 同一条链。
+var _peer_anchor := {}         # peer -> Vector2（画布像素）
+## 悬停棋子的信息条**已随批次 11 Task 1 从画布搬走**（原 `_token_tip` 那套）：
+## 它挂在画布上 ⇒ 随桌面倾斜、3D 下是歪的。新的载体是**屏幕层**的 `g.token_tip`
+##（批次 11 Task 3），数据源仍是下面这份 `_peers_info`。
 var _peers_info := {}          # peer -> {name, color, worth, rank, alive}
-var _animating := {}           # peer -> bool
-var _ring: Panel
-var _ring_peer := GameData.NO_PEER
-var _ring_tw: Tween
 var _select_tw: Tween          # 「可选中」高亮的呼吸补间
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
@@ -147,7 +147,6 @@ func _ready() -> void:
 	_build_backdrop()
 	_build_tiles()
 	_build_interior()
-	_build_ring()
 	resized.connect(func() -> void: _need_fit = true)
 	mouse_exited.connect(func() -> void: set_hover(-1))
 
@@ -570,7 +569,7 @@ func deck_center(deck: String) -> Vector2:
 	return _deck_pos.get(deck, WORLD * 0.5)
 
 ## **印在桌垫上**那摞卡背（`_build_deck` 画的那块）在**画布像素**里的落点 ——
-## 与 `wheel_screen_pos` / `token_screen_pos` 同一条链、同一口径（都是
+## 与 `wheel_screen_pos` / `tile_screen_pos` 同一条链、同一口径（都是
 ## `global_position + _view_from_world(某局部点)`；board 住在 SubViewport 原点，两者数值相等）。
 ##
 ## 为什么要有这个公开入口（批次 6 Task 3）：3D 侧的实体摞要接住的正是这块印刷图案，
@@ -619,16 +618,17 @@ func _deck_back_tex(deck: String) -> Texture2D:
 	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
 		else "res://assets/cards/atlas_back_blue_brown.svg")
 
-func _build_ring() -> void:
-	_ring = Panel.new()
-	_ring.size = Vector2(64, 64)
-	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ring.z_index = 15
-	var sb := UIKit.stylebox(Color(0, 0, 0, 0), 32, UIKit.ACCENT, 3)
-	sb.draw_center = false
-	_ring.add_theme_stylebox_override("panel", sb)
-	_ring.visible = false
-	_world.add_child(_ring)
+## 当前行动者光环在**画布像素**下的半径。光环压着格子 ⇒ 与转盘轮缘 / 两摞牌堆同一条口径
+##（位置与尺寸都跟 2D 相机：`_world` 局部尺寸 32 是原来那枚 64×64 Panel 的半径，
+##  过一遍镜头变换就是它在画布上的半径）—— 3D 侧拿它量真变换换算成世界半径
+##（`table_props._apply_ring_size`），取景一变环就跟着改，不会与格子脱开。
+##
+## 为什么用"量真变换"而不是直接给 `32 × _zoom`：同 `deck_screen_size` 那条 ——
+## 画布像素与世界之间隔着贴图窗口（`TEX_WINDOW_PX`）与桌面尺寸两个旋钮，写死换算常数会静默失配。
+const RING_R_WORLD := 32.0      # `_world` 局部半径（原 2D 光环 Panel 的 64×64 的一半）
+func token_ring_radius_px() -> float:
+	return _view_from_world(Vector2(RING_R_WORLD, 0.0)) \
+		.distance_to(_view_from_world(Vector2.ZERO))
 
 # ---------------- 视口：缩放 / 平移 / 跟随 ----------------
 
@@ -642,9 +642,8 @@ func _process(delta: float) -> void:
 			_apply_cam()        # 仅重算变换：resized 不该把对局中途的视角/跟随清零
 	if auto_follow and _has_follow_pt:
 		_pan_toward(_follow_pt, delta)
-	elif auto_follow and _follow_peer != -1 and _tokens.has(_follow_peer):
-		var tk: Control = _tokens[_follow_peer]
-		_pan_toward(tk.position + tk.size * 0.5, delta)
+	elif auto_follow and _follow_peer != -1 and _peer_anchor.has(_follow_peer):
+		_pan_toward(_peer_anchor[_follow_peer], delta)
 	if _rotating:
 		var k := 1.0 - exp(-7.0 * delta)
 		_rot = lerp_angle(_rot, _rot_target, k)
@@ -652,7 +651,7 @@ func _process(delta: float) -> void:
 		# 两者同时写 _center 会互相拉扯，_center 永远到不了 _center_target，
 		# 于是 _rotating 卡在 true，对局层的回正逻辑被一直抑制（见 fix/v0.0.2）。
 		var follow_drives: bool = auto_follow and (_has_follow_pt \
-			or (_follow_peer != -1 and _tokens.has(_follow_peer)))
+			or (_follow_peer != -1 and _peer_anchor.has(_follow_peer)))
 		if not follow_drives:
 			_center = _center.lerp(_center_target, k)
 		if absf(wrapf(_rot_target - _rot, -PI, PI)) < 0.004 \
@@ -661,9 +660,8 @@ func _process(delta: float) -> void:
 			if not follow_drives:
 				_center = _center_target
 			_rotating = false
-	if _ring_peer != GameData.NO_PEER and _tokens.has(_ring_peer):
-		var tk2: Control = _tokens[_ring_peer]
-		_ring.position = tk2.position + tk2.size * 0.5 - _ring.size * 0.5
+	# （原先这里逐帧把 2D 光环摆到棋子中心上。批次 11 Task 1 起光环是 `TableProps` 里的一条
+	#  3D 环、由它自己的 `_process` 跟着棋子走 —— 画布这一层不再有任何逐帧跟随。）
 	if _wheel_wait > 0.0:
 		_wheel_wait -= delta
 		if _wheel_wait <= 0.0 and _wheel_restore != GameData.NO_PEER:
@@ -740,9 +738,8 @@ func focus_peer(peer: int, hard := false) -> void:
 	_follow_peer = peer
 	_has_follow_pt = false
 	_rotating = false
-	if hard and _tokens.has(peer):
-		var tk: Control = _tokens[peer]
-		_center = _clamp_center(tk.position + tk.size * 0.5)
+	if hard and _peer_anchor.has(peer):
+		_center = _clamp_center(_peer_anchor[peer])
 		_center_target = _center
 	_apply_cam()
 
@@ -788,8 +785,8 @@ func _gui_input(ev: InputEvent) -> void:
 			if _panning or mm.position.distance_to(_press_pos) > 6.0:
 				_panning = true
 		else:
+			# 悬停棋子的信息条已搬到屏幕层（批次 11 Task 3 接上）：这里只剩格子的悬停高亮。
 			set_hover(_index_at(mm.position))
-			_set_token_hover(_token_at_view(mm.position))
 
 ## 镜头是否还在转（对局层用它避让：转的时候不抢注视点）。
 ## 转视角本身已在批次 1 删除（`_rot_target` 恒为 0），但 `_rotating` 这套状态保留 ——
@@ -995,42 +992,18 @@ func render(state: Dictionary) -> void:
 			var target: int = int(GameData.TILES[i2].price)
 			_sub_labels[i2].text = "焦土 %d/%d" % [prog, target]
 
-	var phase := String(state.get("phase", "playing"))
-
-	# 棋子：新建带弹入，动画中的不动
-	var seen := {}
+	# 棋子（小人）与当前行动者的光环**都搬到 3D 了**（批次 11 Task 1，见
+	# scripts/table_props.gd「棋子（小人）与当前行动者光环」那一段）：画布里不再建棋子 Control。
+	# 这里只留一份**纯数据**——每 peer 的棋子落点，镜头跟随（`focus_peer` / 自动跟随）要用它。
+	# 落点走 `slot_anchor`（**`_world` 局部坐标**）：`_clamp_center` 就是按 MAT_RECT 那个空间夹取的。
+	# **TableProps 摆棋子用的是 `token_screen_pos`**（同一个公式再过一遍 2D 镜头变换）—— 因为棋子
+	# 要落在**印刷图案**上（图案在 `_world` 里、带着镜头变换）。两个空间差着"镜头在原点、倍率 1"
+	# 那一档（全景下约一格），**别互相串**。
+	# （原先这里还按 `state.phase` 决定"结束时把光环收掉"：光环现在归 game.gd，
+	#  它在广播时按 `st.turn` / `phase` 调 `table_props.set_ring`。）
+	_peer_anchor = {}
 	for p in players:
-		var peer := int(p.peer)
-		seen[peer] = true
-		var slot := int(p.color)
-		if not _tokens.has(peer):
-			var tk := _make_token(slot, String(p.name))
-			tk.set_meta("slot", slot)
-			_tokens[peer] = tk
-			_animating[peer] = false
-			_world.add_child(tk)
-			tk.position = _token_at(int(p.pos), slot)
-			tk.pivot_offset = tk.size * 0.5
-			tk.scale = Vector2.ZERO
-			var tw := tk.create_tween()
-			tw.tween_property(tk, "scale", Vector2.ONE, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		elif not _animating.get(peer, false):
-			var tk2: Control = _tokens[peer]
-			tk2.set_meta("slot", slot)
-			tk2.position = _token_at(int(p.pos), slot)
-
-	for peer in _tokens.keys():
-		if not seen.has(peer):
-			_tokens[peer].queue_free()
-			_tokens.erase(peer)
-
-	# 行动光环必须在棋子建好之后再上：_set_ring 会缓存 _ring_peer，
-	# 若在 _tokens 还空着时先调，本回合的光环会被记成「已设置」而永远不亮
-	#（只有换到别的玩家后才恢复，见 fix/v0.0.2）。
-	if phase == "ended":
-		_set_ring(-1)
-	else:
-		_set_ring(int(state.get("turn", GameData.NO_PEER)))
+		_peer_anchor[int(p.peer)] = slot_anchor(int(p.pos), int(p.color))
 
 func _short_money(v: int) -> String:
 	if v >= 1000:
@@ -1093,211 +1066,54 @@ func _set_house(i: int, level: int) -> void:
 	var tw := house.create_tween()
 	tw.tween_property(house, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-func _set_ring(peer: int) -> void:
-	if peer == _ring_peer:
-		return
-	_ring_peer = peer
-	if _ring_tw != null and _ring_tw.is_valid():
-		_ring_tw.kill()
-		_ring_tw = null
-	if peer == GameData.NO_PEER or not _tokens.has(peer):
-		_ring.visible = false
-		return
-	_ring.visible = true
-	_ring.scale = Vector2.ONE
-	_ring.pivot_offset = _ring.size * 0.5
-	_ring_tw = create_tween()
-	_ring_tw.set_loops()
-	_ring_tw.tween_property(_ring, "scale", Vector2(1.16, 1.16), 0.55).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_ring_tw.parallel().tween_property(_ring, "modulate:a", 0.55, 0.55)
-	_ring_tw.tween_property(_ring, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_ring_tw.parallel().tween_property(_ring, "modulate:a", 1.0, 0.55)
+## 当前行动者光环 / 2D 棋子整套**已随批次 11 Task 1 搬进 3D**（`TableProps` 的
+## 「棋子（小人）与当前行动者光环」那一段）。原先这里住着 `_set_ring`（2D Panel 逐帧跟随 +
+## 呼吸补间）、`_make_token` / `_token_at` / `_token_target`（棋子 Control）、`token_world_pos` /
+## `token_screen_pos`（棋子的画布坐标）、`_token_at_view` / `_set_token_hover` /
+## `_ensure_token_tip` / `_place_token_tip`（2D 悬停信息条）、`play_move` / `_teleport_anim` /
+## `_kill_token_tw` / `set_teleport_target`（逐格走 / 传送动画）——**整段删除，接口不留空壳**：
+## 3D 侧的同名能力是 `TableProps.set_tokens` / `play_token_move` / `set_token_teleport` /
+## `set_ring` / `token_hit` / `token_world_pos`。悬停条改由**屏幕层**承担（批次 11 Task 3）。
+## `layout_test` 有"这 12 个方法都已退场"的反向契约，谁加回来先红。
+## （`token_screen_pos` **不在**那张名单里：名字被新的一条接走了 —— 旧的取 `peer`、新的取
+##  `(idx, slot)`，是"棋子落在印刷图案哪个像素"的入口，3D 侧摆棋子要用。）
+##
+## **保留 / 新增**的几条**纯坐标**入口（3D 侧与格详情卡都要用）：
+## `tile_pos`（静态，格心）、`slot_offset`（槽位偏移）、`slot_anchor`（两者的合成，`_world` 局部
+## 坐标 —— 画布这层的镜头跟随用它）、`token_screen_pos`（再叠一遍镜头变换 = **印刷口径**的落点，
+## `TableProps` 摆棋子用它）、`tile_screen_pos`（格详情卡锚点）、`token_ring_radius_px`（光环半径）。
 
-# ---------------- 棋子 ----------------
-
-func _token_target(p: Dictionary, slot: int) -> Vector2:
-	return _token_at(int(p.pos), slot)
-
-func _token_at(idx: int, slot: int) -> Vector2:
-	return tile_pos(idx) + Vector2(TILE, TILE) * 0.5 - Vector2(22, 25) + _slot_offset(slot)
-
-func _slot_offset(slot: int) -> Vector2:
+## 一个槽位在格内的偏移（画布像素）。0~3 对应四个角：远左 / 远右 / 近左 / 近右。
+## **公开**（批次 11 Task 1 起）：3D 侧摆棋子要用它 —— 与 `tile_pos` / `TILE` 同一条链，
+## 不另立一份（另立一份就会漂开）。
+func slot_offset(slot: int) -> Vector2:
 	match slot % 4:
 		0: return Vector2(-28, -28)
 		1: return Vector2(28, -28)
 		2: return Vector2(-28, 28)
 		_: return Vector2(28, 28)
 
-## 棋子：Kenney 桌游小人（CC0），按玩家槽位取色；素材缺失时退回纯色圆片
-func _make_token(slot: int, pname: String) -> Control:
-	var piece := UIKit.piece_tex(slot)
-	var tk: Control
-	if piece != null:
-		var tr := TextureRect.new()
-		tr.texture = piece
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tr.size = Vector2(44, 50)
-		tk = tr
-	else:
-		var p := Panel.new()
-		var sb := UIKit.stylebox(GameData.PLAYER_COLORS[slot % 4], 10, Color(0.95, 0.95, 0.97), 2, 4, Color(0, 0, 0, 0.45))
-		p.add_theme_stylebox_override("panel", sb)
-		p.size = Vector2(20, 20)
-		tk = p
-	tk.pivot_offset = tk.size * 0.5
-	tk.tooltip_text = pname
-	tk.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tk.z_index = 20
-	return tk
+## 某格 + 某槽位的**棋子落点**（画布像素）= 格心（`tile_pos(idx) + TILE/2`）+ 槽位偏移。
+## `TableProps` 摆棋子走它、画布这层的镜头跟随（`_peer_anchor`）也走它 —— 公式只写这一处。
+func slot_anchor(idx: int, slot: int) -> Vector2:
+	return tile_pos(idx) + Vector2(TILE, TILE) * 0.5 + slot_offset(slot)
 
-func token_world_pos(peer: int) -> Vector2:
-	if not _tokens.has(peer):
-		return Vector2.ZERO
-	var tk: Control = _tokens[peer]
-	return tk.position + tk.size * 0.5
-
-## 棋子在游戏界面坐标（飘字用，含视角旋转）
-func token_screen_pos(peer: int) -> Vector2:
-	return global_position + _view_from_world(token_world_pos(peer))
-
-## 某个格子的**屏幕坐标**（格子中心）——格详情卡要悬浮在它上方
+## 某个格子的**画布坐标**（格子中心）—— 格详情卡要悬浮在它上方（`game._board_to_screen`
+## 再折成屏幕坐标）。**保留**：它跟棋子无关（棋子的画布坐标那两条已随棋子搬进 3D 删掉），
+## 锚的仍是**印在桌垫上**的那一格。
 func tile_screen_pos(idx: int) -> Vector2:
 	return global_position + _view_from_world(tile_pos(idx) + Vector2(TILE, TILE) * 0.5)
 
-## 鼠标（board 局部坐标）落在哪个棋子上；-1 = 没有。重叠时取最近的那个。
-func _token_at_view(view_pos: Vector2) -> int:
-	var w := _world_from_view(view_pos)
-	var best := GameData.NO_PEER
-	var best_d := INF
-	for peer in _tokens:
-		var tk: Control = _tokens[peer]
-		if tk == null or not is_instance_valid(tk):
-			continue
-		var c: Vector2 = tk.position + tk.size * 0.5
-		var half: Vector2 = tk.size * 0.5 + Vector2(10.0, 14.0)   # 给点容差，好点中
-		if absf(w.x - c.x) > half.x or absf(w.y - c.y) > half.y:
-			continue
-		var d := w.distance_squared_to(c)
-		if d < best_d:
-			best_d = d
-			best = int(peer)
-	return best
-
-## 悬停到棋子上：浮出昵称 / 身家 / 排名（自己也一样能看到）
-func _set_token_hover(peer: int) -> void:
-	if peer == _tip_peer:
-		# 还是同一个人：镜头可能动了，重新摆一下位置就行
-		if peer != GameData.NO_PEER and _token_tip != null and is_instance_valid(_token_tip) and _token_tip.visible:
-			_place_token_tip(peer)
-		return
-	_tip_peer = peer
-	if peer == GameData.NO_PEER or not _peers_info.has(peer):
-		if _token_tip != null and is_instance_valid(_token_tip):
-			_token_tip.visible = false
-		return
-	_ensure_token_tip()
-	var info: Dictionary = _peers_info[peer]
-	_token_tip_name.text = String(info.get("name", "?"))
-	_token_tip_name.add_theme_color_override("font_color", info.get("color", UIKit.TEXT))
-	_token_tip_sub.text = "身家 %s · 第 %d 名%s" % [
-		GameData.fmt_money(int(info.get("worth", 0))), int(info.get("rank", 0)),
-		"" if bool(info.get("alive", true)) else " · 已出局",
-	]
-	_token_tip.visible = true
-	_place_token_tip(peer)
-
-func _ensure_token_tip() -> void:
-	if _token_tip != null and is_instance_valid(_token_tip):
-		return
-	_token_tip = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.94), 10,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 6)
-	_token_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_token_tip.z_index = 60
-	_token_tip.visible = false
-	add_child(_token_tip)
-	var m := UIKit.margins(12, 12, 7, 7)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_token_tip.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 2)
-	m.add_child(v)
-	_token_tip_name = UIKit.label("", 15, UIKit.TEXT)
-	_token_tip_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(_token_tip_name)
-	_token_tip_sub = UIKit.label("", 12, UIKit.TEXT_DIM)
-	_token_tip_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(_token_tip_sub)
-
-## 信息条摆在棋子正上方，并夹在可视区内
-func _place_token_tip(peer: int) -> void:
-	if _token_tip == null or not is_instance_valid(_token_tip):
-		return
-	var c := _view_from_world(token_world_pos(peer))     # board 局部坐标
-	var sz := _token_tip.size
-	var pos := Vector2(c.x - sz.x * 0.5, c.y - sz.y - 38.0)
-	pos.x = clampf(pos.x, 6.0, maxf(6.0, size.x - sz.x - 6.0))
-	pos.y = clampf(pos.y, 6.0, maxf(6.0, size.y - sz.y - 6.0))
-	_token_tip.position = pos
-
-func _kill_token_tw(peer: int) -> void:
-	if not _tokens.has(peer):
-		return
-	var tk: Control = _tokens[peer]
-	if tk.has_meta("tw"):
-		var old = tk.get_meta("tw")
-		if old is Tween and (old as Tween).is_valid():
-			(old as Tween).kill()
-
-## 传送落点（游戏层先 set_teleport_target 再 play_move(peer, [], t)）
-func set_teleport_target(peer: int, idx: int) -> void:
-	if _tokens.has(peer):
-		_tokens[peer].set_meta("tp", idx)
-
-## 逐步走子动画（每步小跳 + 挤压 + 落地音）；path 为空表示传送（淡出淡入）
-func play_move(peer: int, path: Array, step_time: float) -> void:
-	var p := int(peer)
-	if not _tokens.has(p):
-		return
-	var tk: Control = _tokens[p]
-	_kill_token_tw(p)
-	_animating[p] = true
-	if path.is_empty():
-		_teleport_anim(p, tk)
-		return
-	if auto_follow:
-		_follow_peer = p
-	var tw := create_tween()
-	tk.set_meta("tw", tw)
-	var slot := int(tk.get_meta("slot", 0))
-	for step in path:
-		var pos := _token_at(int(step), slot)
-		tw.tween_callback(Fx.play.bind("tick", -8.0, randf_range(0.9, 1.2)))
-		tw.tween_property(tk, "position", pos, step_time).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		tw.parallel().tween_property(tk, "scale", Vector2(1.28, 1.28), step_time * 0.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		tw.parallel().tween_property(tk, "scale", Vector2.ONE, step_time * 0.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tw.finished.connect(func() -> void:
-		_animating[p] = false
-	)
-
-func _teleport_anim(p: int, tk: Control) -> void:
-	var slot := int(tk.get_meta("slot", 0))
-	var tw := create_tween()
-	tk.set_meta("tw", tw)
-	if tk.has_meta("tp"):
-		var target := int(tk.get_meta("tp"))
-		var pos := _token_at(target, slot)
-		tw.tween_property(tk, "scale", Vector2(1.5, 1.5), 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		tw.parallel().tween_property(tk, "modulate:a", 0.0, 0.16)
-		tw.tween_callback(func() -> void:
-			tk.position = pos
-			Fx.play("pop", -6.0)
-		)
-		tw.tween_property(tk, "modulate:a", 1.0, 0.22)
-		tw.parallel().tween_property(tk, "scale", Vector2.ONE, 0.26).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	else:
-		tw.tween_interval(0.1)
-	tw.tween_callback(func() -> void:
-		tk.remove_meta("tp")
-		_animating[p] = false
-	)
+## 某格 + 某槽位的**棋子落点**在**画布**上的坐标：`slot_anchor` 过一遍 2D 镜头变换 ——
+## 与 `tile_screen_pos` / `deck_screen_pos` / `wheel_screen_pos` **同一条链**
+##（`global_position + _view_from_world(局部点)`）。3D 侧摆棋子用**它**，不用 `slot_anchor`。
+##
+## **为什么差这一步就不能用 `slot_anchor`**：棋子要坐在**印在桌垫上的**那一格上，而格子画在
+## `_world` 里、带着 2D 镜头的缩放与平移（`_apply_cam`：`_world.scale = _zoom`、
+## `_world.position = 可视中心 - 注视点 × _zoom`）。`slot_anchor` 给的是**局部**坐标 ——
+## 只有"镜头在原点、倍率 1"时才等于印刷位置；全景取景下它离印刷位置差着
+## **约 (37, 134) 画布像素（≈ 一格）**，棋子会整体偏到别的格上（批次 11 Task 1 出图逮到：
+## 小人/光环离自己那格一格远）。同 `deck_screen_pos` 那条注释说的"漏了 global_position 那一项"
+## 是同一类错，只是这里的漏项是**整个镜头变换**。
+func token_screen_pos(idx: int, slot: int) -> Vector2:
+	return global_position + _view_from_world(slot_anchor(idx, slot))

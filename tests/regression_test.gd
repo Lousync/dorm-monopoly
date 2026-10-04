@@ -287,8 +287,12 @@ func _test_tab_space_no_longer_rotates(g) -> void:
 	_check(g._tgt_stage == "", "Esc 仍能取消选目标（Esc 分支未因删视角误删）")
 
 func _test_turn_ring_first_render(g) -> void:
-	print("== 首个行动玩家的脉冲光环应亮起 ==")
-	var pls := [_mk_player(1, "我"), _mk_player(2, "乙")]
+	print("== 首个行动玩家的脉冲光环应亮起（批次 11 Task 1 起光环是 3D 的） ==")
+	# 原先这条读 `g.board._ring`（2D Panel）。棋子与光环搬进 3D 之后，单一来源是
+	# `table_props.set_tokens` / `set_ring`（由 `game._refresh_tokens` 在每次广播时推），
+	# 所以这里走**真入口**：喂状态 → 广播路径的刷新函数，再读桌面上那个 3D 环节点。
+	# （钉的仍是 fix/v0.0.2 那个病：光环必须在**棋子建好之后**才置位，否则会被记成"已设置"
+	#  而永远不亮 —— 顺序错时 `set_ring` 找不到那枚棋子、环直接不显示。）
 	g.st = {
 		"phase": "playing", "turn": 1, "round": 1, "max_rounds": 30,
 		"players": [
@@ -299,10 +303,19 @@ func _test_turn_ring_first_render(g) -> void:
 		],
 		"tiles": _fresh_tiles(),
 	}
-	g.board.render(g.st)
-	_check(g.board._ring.visible, "首次渲染后光环亮起（实得 %s）" % str(g.board._ring.visible))
-	g.board.render(g.st)
-	_check(g.board._ring.visible, "再次渲染后光环仍亮")
+	g._refresh_table_props()
+	var tp = g.table3d.table_props
+	var ring: Node3D = tp.get_node_or_null("Ring") as Node3D
+	_check(ring != null and ring.visible,
+		"首次刷新后光环亮起（环在？%s / 实得 %s）" % [str(ring != null), str(ring != null and ring.visible)])
+	# 环心落在 peer 1 那枚棋子上（光环是"套在行动者脚下"的，位置错就是套错人）
+	var tp_pos: Vector3 = tp.token_world_pos(1)
+	var ring_back: Vector2 = g.table3d.world_to_canvas_px(ring.global_position)
+	var tok_back: Vector2 = g.table3d.world_to_canvas_px(tp_pos)
+	_check(ring_back.distance_to(tok_back) < 8.0,
+		"环心落在 peer 1 的棋子上（环 %s / 棋子 %s 画布像素）" % [ring_back, tok_back])
+	g._refresh_table_props()
+	_check(ring.visible, "再次刷新后光环仍亮")
 
 func _test_ui_widgets_applied(g) -> void:
 	print("== HUD 控件回填（TableHud → game 同名成员）==")

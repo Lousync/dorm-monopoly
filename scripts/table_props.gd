@@ -743,6 +743,476 @@ func hand_hit(canvas_px: Vector2) -> int:
 			best = i
 	return best
 
+# ---------------- 棋子（小人）与当前行动者光环（批次 11 Task 1） ----------------
+#
+# 桌垫上那两处"印着的小人 / 印着的行动光环"的实体化（设计 §5.1 / §5.2）。原先它们是画布里的
+# 2D Control（`board_view._make_token` 的 Kenney 棋子贴图 + 一只 64×64 的呼吸光环 Panel），
+# **随桌垫一起倾斜** ⇒ 3D 下看着就是贴纸。现在：
+#   * 棋子 = 一块**立在桌上的薄牌**（`BoxMesh`，正面平贴同一张棋子贴图），后倾 25°；
+#   * 光环 = 一条**贴桌垫的 3D 环**（`TorusMesh` 压扁），套在当前行动者脚下、逐帧跟着它走。
+# 棋子那几样动作也一并搬进来（原 2D 的 `play_move` / `_teleport_anim` / `_make_token` 的弹入，
+# 见设计 §4.1 的四样动作）。
+#
+# **尺寸口径**（R4 裁定，见文件头"尺寸口径"那段）：棋子是**自由立在桌上的实物** ⇒ 尺寸写死
+# 世界单位（与手牌 / 已退场立牌同一条约定）；**光环压在格子上** ⇒ 位置与尺寸都跟印刷图案
+# （画布像素半径由 `board.token_ring_radius_px()` 报，这里量真变换换算）—— 与转盘轮缘同口径。
+#
+# **鼠标透明**：棋子不吃点击（点它脚下那格仍是"点格子"）。悬停命中由 `token_hit` 单独算
+# （画布像素进、peer 出），与 2D 那套 `MOUSE_FILTER_IGNORE` + `_token_at_view` 同一条语义。
+
+## 薄牌尺寸（世界单位：宽 × 高 × 厚）—— **写死**（见上面"尺寸口径"）。
+## 取值出处：把原来印在桌垫上那枚棋子（44×50 `_world` 局部像素，见旧 `board_view._make_token`）
+## 折成世界单位：44 × 全景 `_zoom`(0.96374) ÷ 252.5（2020 画布像素 = TABLE_W 8 世界）= **0.168**、
+## 50 同理 = **0.191** ⇒ 取 0.17 / 0.20（立起来之后要压得住格子那一小块，比贴纸略高一档）。
+## 厚度 0.022 与手牌（0.030）一个量级：有厚度才投得出影子、看得出是"牌"而不是贴纸。
+const TOKEN_SIZE := Vector3(0.17, 0.20, 0.022)
+## 后倾角（绕 X **负**角 = 顶边往远端倒 ⇒ 面朝近端镜头）。与已退场立牌同款 **25°**：
+## 2D 端（近正俯视）与 3D 端（50° 俯角）**都能看见一块面**；直立薄板在 2D 端只剩一条线。
+const TOKEN_LEAN_DEG := 25.0
+## 牌身底色：暗底（比周围格子的底色深一档）—— 身份靠正面那张棋子贴图。
+## 另外按 `TOKEN_BODY_TINT` 掺一点**玩家色**（见 `_place_token`）：素材在时它只是"牌边那一圈
+## 淡淡的同色"，**素材缺失时（`UIKit.piece_tex` 拿不到）整块就只剩这个色** —— 与 2D 那套
+## "素材缺失退回纯色圆片"的降级一致（那时它用的是 `GameData.PLAYER_COLORS`）。
+const TOKEN_BODY_COLOR := Color(0.125, 0.135, 0.185)
+const TOKEN_BODY_TINT := 0.25
+## 命中盒的放宽量（画布像素，**四面**各放这么多）：棋子只有 0.17×0.20 世界（≈43×46 画布像素），
+## 手指不容易点中；原 2D `_token_at_view` 也有 (10,14) 的容差 —— "好点中"这条一字未改。
+## 它同时让"同一格两枚棋子的命中盒有交叠"，`token_hit` 的"取最近"那条判据才有用武之地。
+const TOKEN_HIT_SLACK := Vector2(10.0, 14.0)
+## 逐格走子时**竖直小跳**的高度（世界单位）。0.075 是薄牌高的三分之一、屏幕上约 19 画布像素
+## （全景取景）—— 一眼看得出是"跳过一格"而不是"滑过去"。
+const TOKEN_HOP := 0.075
+## 走子每一步的**挤压**幅度（绕自身轴）：每步中段把 y 压到 `1-SQUASH`、x/z 各张 0.6 倍这么多，
+## 两端回到 1（落地回弹）。原 2D 是 scale 1.28 的脉冲 —— 同一个意思：这一步有分量。
+const TOKEN_SQUASH := 0.18
+## 弹入（新棋子出现）：scale 0 → 1 的时长（TRANS_BACK/EASE_OUT）。局部原点在**下沿** ⇒
+## 是"从桌面上长出来"，不是从中心炸开（见 `_make_token`）。
+const TOKEN_POP_TIME := 0.35
+## 传送：淡出时长 → 瞬移 → 淡入时长。原 2D `_teleport_anim` 是 0.16 / 0.22，一字未改。
+const TOKEN_TP_OUT := 0.16
+const TOKEN_TP_IN := 0.22
+
+## 光环（当前行动者）：径向范围相对"画布上报的半径"的比例 —— 与轮缘的 `RIM_*` 同一条口径
+## （内沿 / 外沿都是**环的径向范围**，不是管子半径）。取 0.60~1.0：比轮缘那圈细一点，
+## 它压在自己那一格上，不该盖住格子的图案。
+const RING_INNER_R := 0.60
+const RING_OUTER_R := 1.00
+## 压扁：`TorusMesh` 的管子截面是**圆形**（Y 向厚度 = 管径 = (outer - inner)），
+## 压到 0.30 才像"贴在桌上的一道环"而不是一根甜甜圈。
+const RING_FLATTEN := 0.30
+## 环心离桌垫的高度：环压得越低越好（见 `PROPS_Y` 那条"抬得越高、屏幕上越漂"）。
+const RING_Y := 0.008
+## 呼吸脉冲：**亮度**在 0.45~1.0 之间来回，一个周期 1.1s。原 2D 是"scale 1→1.16→1 +
+## alpha 1→0.55→1"（两半各 0.55s）—— 3D 里换成**只动亮度、不动几何**：
+## 环的尺寸是"跟印刷图案"的量（`layout_test` 会把它折回画布像素比），缩放会让它量不准。
+const RING_PULSE_TIME := 1.1
+const RING_GLOW_LO := 0.45
+const RING_GLOW_HI := 1.00
+
+var _tokens_root: Node3D
+## 节点池：peer -> `{root, plate, plate_mat, face, face_mat, idx, slot, tw}`。**只建一次**，
+## 刷新只改 transform / 可见性 / 贴图（照手牌那份幂等约定；`tw` 是这枚棋子当前的补间）。
+var _tokens := {}
+## peer -> bool：**正在走子 / 传送**的棋子不由 `set_tokens` 抢位置 —— 状态广播可能在动画中途
+## 到达，抢位置会让它瞬移回起点（同 2D 的 `_animating`）。
+var _moving := {}
+var _token_mesh: BoxMesh
+var _token_face_mesh: PlaneMesh
+var _ring: MeshInstance3D
+var _ring_mesh: TorusMesh
+var _ring_mat: StandardMaterial3D
+var _ring_peer := GameData.NO_PEER
+var _ring_phase := 0.0
+
+## 按 `rows`（每项 `{peer, slot, idx}`）摆棋子：`idx` = 路径格号、`slot` = 玩家槽位 0~3。
+##
+## **幂等**：节点池只建一次，之后每次只改落点与贴图（每次状态广播都会调，与 `set_hand` 同）。
+## 新 peer ⇒ 建一块 + **弹入**；正在走子 / 传送的那块**不动**（见 `_moving`）；
+## 状态里没有了的 peer ⇒ 收掉（断线 / 出局后的名册变化）。
+func set_tokens(rows: Array) -> void:
+	if _t3 == null:
+		return
+	if _tokens_root == null:
+		_tokens_root = Node3D.new()
+		_tokens_root.name = "Tokens"
+		add_child(_tokens_root)
+	var seen := {}
+	for row in rows:
+		var r: Dictionary = row
+		var peer := int(r.get("peer", GameData.NO_PEER))
+		var slot := int(r.get("slot", 0))
+		var idx := int(r.get("idx", 0))
+		seen[peer] = true
+		var tk: Dictionary = _tokens.get(peer, {})
+		if tk.is_empty():
+			tk = _make_token(peer)
+			_tokens[peer] = tk
+			_place_token(tk, idx, slot)
+			_pop_token_in(tk)
+		elif not bool(_moving.get(peer, false)):
+			_place_token(tk, idx, slot)
+	for peer in _tokens.keys():
+		if not seen.has(peer):
+			(_tokens[peer]["root"] as Node3D).queue_free()
+			_tokens.erase(peer)
+			_moving.erase(peer)
+
+## 这枚棋子此刻在不在（悬停链路要它来降级：拿不到就别显信息条）。没建过的 peer 给 false。
+func has_token(peer: int) -> bool:
+	return _tokens.has(int(peer))
+
+## 这枚棋子此刻是否正在走子 / 传送（`set_tokens` 会跳过它、不抢位置）。
+func token_moving(peer: int) -> bool:
+	return bool(_moving.get(int(peer), false))
+
+## 造一块棋子薄牌（节点只造一次）。局部坐标：原点 = **板的下沿中点**（棋子"站"在桌上），
+## x 向右、y 向上、z 朝近端镜头 —— 与已退场的立牌同一套局部约定。
+func _make_token(peer: int) -> Dictionary:
+	var root := Node3D.new()
+	root.name = "Token_p%d" % peer
+	# 后倾：绕 X **负**角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头（2D 端近正俯视也看得见一块面）
+	root.rotation = Vector3(deg_to_rad(-TOKEN_LEAN_DEG), 0.0, 0.0)
+	_tokens_root.add_child(root)
+	if _token_mesh == null:
+		_token_mesh = BoxMesh.new()
+		_token_mesh.size = TOKEN_SIZE
+	var plate := MeshInstance3D.new()
+	plate.name = "Plate"
+	plate.mesh = _token_mesh
+	plate.position = Vector3(0.0, TOKEN_SIZE.y * 0.5, 0.0)   # 板心抬半高 ⇒ 下沿落在原点
+	var pmat := StandardMaterial3D.new()
+	pmat.albedo_color = TOKEN_BODY_COLOR
+	pmat.roughness = 0.62
+	# 显式写死**不透明档**：3D 端留在不透明队列才有深度写入与投影（批次 4 的教训）。
+	# 只有传送淡出的那 0.38s 切成 ALPHA，淡完切回（见 `_set_token_alpha`）。
+	pmat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	plate.material_override = pmat
+	root.add_child(plate)
+	# 正面：棋子贴图（Kenney CC0 / `UIKit.piece_tex` 按槽位取色）。贴图带透明边 ⇒ 用
+	# **ALPHA_SCISSOR**（透明区裁掉、仍在**不透明队列**里写深度、投得出影子）—— 同手牌牌面那条
+	#（`_make_card` 里的 face）。抬 1mm：与板面不共面（免得 z-fighting 闪）。
+	var face := MeshInstance3D.new()
+	face.name = "Face"
+	if _token_face_mesh == null:
+		_token_face_mesh = PlaneMesh.new()
+		# 方片，边长取薄牌的**宽**（0.17）：棋子贴图是正方形（512²），贴图里那个"小人"本身
+		# 约 0.5 宽 × 0.88 高 —— 方片贴在板上，小人于是占板宽一半、板高约四分之三（对着出图核过）。
+		_token_face_mesh.size = Vector2(TOKEN_SIZE.x, TOKEN_SIZE.x)
+	face.mesh = _token_face_mesh
+	# `PlaneMesh` 躺在 XZ 平面（法线 +Y）：绕 X **+90°** ⇒ 法线朝 +Z（朝着近端镜头）、
+	# 贴图的上方朝 +Y。别用 -90°：那面朝下、从镜头这一侧看不见。
+	face.rotation = Vector3(deg_to_rad(90.0), 0.0, 0.0)
+	face.position = Vector3(0.0, TOKEN_SIZE.y * 0.5, TOKEN_SIZE.z * 0.5 + 0.001)
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_color = Color.WHITE
+	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	fmat.roughness = 0.8
+	face.material_override = fmat
+	root.add_child(face)
+	return {"root": root, "plate": plate, "plate_mat": pmat, "face": face, "face_mat": fmat,
+		"idx": 0, "slot": 0, "tw": null}
+
+## 把一块棋子的落点与正面贴图刷一遍（幂等，每次广播都走）。
+## 落点 = 「格心 + 槽位偏移」→ 世界（`_token_world`），y **落在桌面上**（+ `PROPS_Y` 那点小抬）：
+## 局部原点就在下沿 ⇒ 棋子是"站"在桌上，而不是插进桌垫或浮在空中。
+func _place_token(tk: Dictionary, idx: int, slot: int) -> void:
+	tk["idx"] = idx
+	tk["slot"] = slot
+	(tk["root"] as Node3D).global_position = _token_world(idx, slot)
+	# 牌身掺一点玩家色（见 TOKEN_BODY_COLOR 那段）：贴图在时是"牌边一圈同色"，贴图缺时是全部身份
+	(tk["plate_mat"] as StandardMaterial3D).albedo_color = \
+		TOKEN_BODY_COLOR.lerp(GameData.PLAYER_COLORS[slot % 4], TOKEN_BODY_TINT)
+	var tex := UIKit.piece_tex(slot)
+	var face: MeshInstance3D = tk["face"]
+	face.visible = tex != null
+	if tex != null:
+		(tk["face_mat"] as StandardMaterial3D).albedo_texture = tex
+
+## 某格 + 某槽位的**棋子落点**（画布像素，**已过 2D 镜头变换**）。公式归 BoardView
+##（`board.token_screen_pos` = `global_position + _view_from_world(slot_anchor(idx, slot))`），
+## 与 `tile_screen_pos` / `deck_screen_pos` / `wheel_screen_pos` **同一条链**。
+##
+## **必须走镜头变换**（不是 `slot_anchor` 那份局部坐标）：棋子要坐在**印在桌垫上的**那一格上，
+## 而印刷图案随 2D 镜头（`_zoom` / `_center`）走 —— 用局部坐标摆，全景取景下会整体偏开约一格
+##（批次 11 Task 1 出图逮到）。**代价与轮缘 / 牌堆一样**：不伴随状态广播的纯镜头变化
+##（摆拍用的 `focus_grid` / `fit_overview`）之后要重推一次，否则会跟印刷图案脱开
+##（见文件头"摆放约定"）。
+func _token_anchor_px(idx: int, slot: int) -> Vector2:
+	if _t3.board == null:
+		return Vector2.ZERO
+	return _t3.board.token_screen_pos(idx, slot)
+
+## 某格 + 某槽位的棋子落点的**世界坐标**（与 `_place_token` 同一条链，含桌面高度）。
+func _token_world(idx: int, slot: int) -> Vector3:
+	var w: Vector3 = _t3.canvas_px_to_world(_token_anchor_px(idx, slot))
+	w.y = _t3.table_mesh.global_position.y + PROPS_Y
+	return w
+
+## 弹入：scale 0 → 1（局部原点在下沿 ⇒ 从桌面上长出来）。一次性过渡 ⇒ Tween（既有约定）。
+func _pop_token_in(tk: Dictionary) -> void:
+	var root: Node3D = tk["root"]
+	root.scale = Vector3.ZERO
+	var tw := create_tween()
+	tk["tw"] = tw
+	tw.tween_property(root, "scale", Vector3.ONE, TOKEN_POP_TIME) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+## 掐掉一枚棋子上正在跑的补间（弹入 / 走子 / 传送共用一条 `tw`），并把 `_moving` 松开 ——
+## 调用方（`play_token_move` / `set_token_teleport`）紧接着会重新置位，所以松开不会让它乱跑。
+func _kill_token_tw(peer: int) -> void:
+	var tk: Dictionary = _tokens.get(peer, {})
+	if tk.is_empty():
+		return
+	var old = tk.get("tw")
+	if old is Tween and (old as Tween).is_valid():
+		(old as Tween).kill()
+	tk["tw"] = null
+	_moving[peer] = false
+
+## 逐格走子：每步 = 世界坐标补间 + **竖直小跳的弧** + 绕自身轴挤压 + 落地音效。
+## `path` 为空表示"原地传送"（同 2D `play_move` 的旧语义：那时由 `set_token_teleport` 先给落点）。
+##
+## 每步的落点由**本节点那套链**重算（格心 + 槽位偏移 → 世界），所以走出来的每一格与印刷图案
+## 严丝合缝。一步只用一个 `tween_method`：位置沿直线补间、y 叠一条 `sin(π·t)` 的弧（两端为 0 ⇒
+## 每步落地、下一步再抬）、同时按同一条 t 挤压 —— 两条补间分别写 x/z 与 y 会互相覆盖同一个
+## `global_position`，这是不能拆开的原因。
+func play_token_move(peer: int, path: Array, step_time: float) -> void:
+	var p := int(peer)
+	if _t3 == null or not _tokens.has(p):
+		return
+	var tk: Dictionary = _tokens[p]
+	_kill_token_tw(p)
+	_moving[p] = true
+	if path.is_empty():
+		_token_teleport_anim(p, tk, -1)
+		return
+	var root: Node3D = tk["root"]
+	var tw := create_tween()
+	tk["tw"] = tw
+	var slot := int(tk.get("slot", 0))
+	var dur := maxf(float(step_time), 0.01)
+	var prev := root.global_position
+	for step in path:
+		var target := _token_world(int(step), slot)
+		var from := prev
+		# 一步写成一个 `tween_method` 的闭包：`from` / `target` 都是循环体内的局部量，
+		# GDScript 的 lambda **按值捕获**，所以每一步各自记住自己的起终点。
+		tw.tween_method(func(t: float) -> void:
+			root.global_position = Vector3(lerpf(from.x, target.x, t),
+				target.y + TOKEN_HOP * sin(PI * t), lerpf(from.z, target.z, t))
+			var s := 1.0 - TOKEN_SQUASH * sin(PI * t)          # 中段最扁、两端回到 1
+			root.scale = Vector3(1.0 + (1.0 - s) * 0.6, s, 1.0 + (1.0 - s) * 0.6),
+			0.0, 1.0, dur).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_callback(Fx.play.bind("tick", -8.0, randf_range(0.9, 1.2)))
+		prev = target
+	tw.finished.connect(func() -> void:
+		_moving[p] = false
+	)
+
+## 传送（`传送` 类道具 / 送监 / 换位）：材质切 ALPHA → alpha 到 0 → 瞬移 → alpha 回 1 →
+## **切回不透明**。
+##
+## **必须切模式**（照手牌 `_apply_hand_alpha` 那条先例）：3D 端留在不透明队列才有深度写入与
+## 投影；淡出中不切 ALPHA 的话 `albedo_color.a` 根本不起作用（淡不动）。
+func set_token_teleport(peer: int, idx: int) -> void:
+	var p := int(peer)
+	if _t3 == null or not _tokens.has(p):
+		return
+	_kill_token_tw(p)
+	_moving[p] = true
+	_token_teleport_anim(p, _tokens[p], int(idx))
+
+func _token_teleport_anim(p: int, tk: Dictionary, target_idx: int) -> void:
+	var root: Node3D = tk["root"]
+	var tw := create_tween()
+	tk["tw"] = tw
+	if target_idx < 0:
+		# 没给落点（`play_move(peer, [], t)` 那条旧路）：原地淡一下再回来，不瞬移
+		tw.tween_interval(0.1)
+		tw.finished.connect(func() -> void: _moving[p] = false)
+		return
+	var target := _token_world(target_idx, int(tk.get("slot", 0)))
+	_set_token_alpha(tk, true, 1.0)
+	tw.tween_method(func(a: float) -> void: _set_token_alpha(tk, true, a), 1.0, 0.0, TOKEN_TP_OUT)
+	tw.parallel().tween_property(root, "scale", Vector3.ONE * 1.5, TOKEN_TP_OUT) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func() -> void:
+		root.global_position = target
+		Fx.play("pop", -6.0))
+	tw.tween_method(func(a: float) -> void: _set_token_alpha(tk, true, a), 0.0, 1.0, TOKEN_TP_IN)
+	tw.parallel().tween_property(root, "scale", Vector3.ONE, TOKEN_TP_IN + 0.04) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func() -> void:
+		_set_token_alpha(tk, false, 1.0)
+		_moving[p] = false)
+
+## 把一块棋子的不透明度贴到**两个材质**上（牌身 + 正面贴图），模式一起切。
+##
+## 牌身：不透明档 ⇄ ALPHA；正面贴图：ALPHA_SCISSOR（透明边裁掉、仍在不透明队列）⇄ ALPHA ——
+## 与手牌 `_apply_hand_alpha` 同一套（那里逐张一份材质，这里一块棋子两份）。
+## `fade = false` 时顺带把 alpha 复位成 `a`（正常路径是 1.0，即"淡完切回不透明"）。
+func _set_token_alpha(tk: Dictionary, fade: bool, a: float) -> void:
+	var pmat: StandardMaterial3D = tk["plate_mat"]
+	pmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if fade \
+		else BaseMaterial3D.TRANSPARENCY_DISABLED
+	var pc := pmat.albedo_color
+	pc.a = a
+	pmat.albedo_color = pc
+	var fmat: StandardMaterial3D = tk["face_mat"]
+	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if fade \
+		else BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	var fc := fmat.albedo_color
+	fc.a = a
+	fmat.albedo_color = fc
+
+## 一枚棋子当前的不透明度（**只读量**，给测试用：传送"淡到看不见"这件事没有别的可观察量）。
+## 拿不到这枚棋子时给 1.0 —— "没有这块棋子"不该被读成"它淡到看不见了"。
+func token_alpha(peer: int) -> float:
+	var tk: Dictionary = _tokens.get(peer, {})
+	if tk.is_empty():
+		return 1.0
+	return (tk["plate_mat"] as StandardMaterial3D).albedo_color.a
+
+## 某枚棋子在**世界坐标**下的位置（= 薄牌的**板心**，也就是屏幕上看到的那块面正中）。
+## 拿不到这枚棋子时返回 `Vector3.ZERO`（调用方先 `has_token` 或自己判零兜底）。
+## 用途：飘字 / 飞钞的锚点从"画布坐标"换成"世界点 → 屏幕"（`game._token_screen_pos`）。
+func token_world_pos(peer: int) -> Vector3:
+	var tk: Dictionary = _tokens.get(peer, {})
+	if tk.is_empty():
+		return Vector3.ZERO
+	var plate: MeshInstance3D = tk["plate"]
+	if plate == null or not is_instance_valid(plate):
+		return Vector3.ZERO
+	return plate.global_position
+
+## 画布像素命中哪枚棋子（**-1 = 没命中**，本函数自己的约定，与 GameData 的哨兵值无关）。
+##
+## 命中盒 = 薄牌八个角经 `unproject_position` → `screen_to_viewport` 折成画布像素的包围盒
+## （**与 `hand_rect` / 已退场的 `_standee_rect` 同一条链**：薄牌是立着又后倾的实物，而玩家的
+## 点击是"屏幕点 → 桌面平面 → 画布像素"，两者差着"实物离桌面的高度"那一段投影 —— 只按落点画个
+## 扁矩形，玩家照着看得见的牌点就会点空），再四面放宽 `TOKEN_HIT_SLACK`（手指容差）。
+## 两枚都压住时取**离相机最近**的那枚（相机在 +z：z 越大越近）—— 不透明实物里它画在上面。
+## **不缓存**：相机一变（取景 / 滚轮推移视角）它就得重算。
+func token_hit(canvas_px: Vector2) -> int:
+	var best := -1
+	var best_z := -INF
+	for peer in _tokens:
+		var rect := _token_rect(_tokens[peer])
+		if rect.size == Vector2.ZERO or not rect.has_point(canvas_px):
+			continue
+		var z: float = (_tokens[peer]["root"] as Node3D).global_position.z
+		if z > best_z:
+			best_z = z
+			best = int(peer)
+	return best
+
+## 一枚棋子的命中矩形（画布像素）：薄牌八角 → 世界 → 屏幕 → 画布取包围盒，再四面放宽。
+## 相机 / 视口不可用（理论上不会）时退回"落点周围按薄牌宽度折出的一块"，别返回空矩形 ——
+## 那会让整枚棋子忽然点不中（同 `hand_rect` 的 `_hand_mat_rect` 降级口径）。
+func _token_rect(tk: Dictionary) -> Rect2:
+	if _t3 == null or _t3.camera == null:
+		return Rect2()
+	var plate: MeshInstance3D = tk["plate"]
+	if plate == null or not is_instance_valid(plate):
+		return Rect2()
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	var n := 0
+	for sx_v in [-0.5, 0.5]:
+		for sy_v in [-0.5, 0.5]:
+			for sz_v in [-0.5, 0.5]:
+				var corner: Vector3 = plate.global_transform * Vector3(
+					TOKEN_SIZE.x * float(sx_v), TOKEN_SIZE.y * float(sy_v), TOKEN_SIZE.z * float(sz_v))
+				var px = _t3.screen_to_viewport(_t3.camera.unproject_position(corner))
+				if px == null:
+					continue
+				var p: Vector2 = px
+				mn = mn.min(p)
+				mx = mx.max(p)
+				n += 1
+	if n < 4:
+		var c: Vector2 = _t3.world_to_canvas_px((tk["root"] as Node3D).global_position)
+		var w_px: float = (_t3.canvas_px_to_world(Vector2(TOKEN_SIZE.x, 0.0)) \
+			- _t3.canvas_px_to_world(Vector2.ZERO)).length()
+		return Rect2(c - Vector2(w_px, w_px) * 0.5, Vector2(w_px, w_px))
+	return Rect2(mn - TOKEN_HIT_SLACK, (mx - mn) + TOKEN_HIT_SLACK * 2.0)
+
+## 当前行动者光环：`peer` = 本轮行动者；`GameData.NO_PEER` = 收起（结束时 / 没人在行动）。
+##
+## 幂等：节点只建一次，每次调用**重算尺寸**（半径跟印刷图案走，取景一变就得重算 —— 同
+## `build_wheel` 那条）。**位置与呼吸交给 `_process`**：环要逐帧跟着棋子走（含走子动画期间，
+## 那时棋子在动），而呼吸是**持续动画** —— 按项目约定手写 `_process` 相位，不用循环 Tween。
+func set_ring(peer: int) -> void:
+	if _t3 == null:
+		return
+	if _ring == null:
+		_build_ring()
+	_ring_peer = int(peer)
+	if peer == GameData.NO_PEER or not _tokens.has(_ring_peer):
+		_ring.visible = false
+		return
+	_apply_ring_size()
+	_apply_ring_pose()      # 立刻摆到棋子脚下（不等下一帧 `_process`，免得"亮了但在原点"闪一下）
+	_ring.visible = true
+
+## 把环摆到当前行动者那枚棋子的**脚下**（只取 xz —— 环是贴在桌垫上的，不跟棋子抬起来的 y）。
+## `set_ring` 与 `_process` 共用这一条。
+func _apply_ring_pose() -> void:
+	var tk: Dictionary = _tokens.get(_ring_peer, {})
+	if tk.is_empty():
+		return
+	var root: Node3D = tk.get("root")
+	if root == null or not is_instance_valid(root):
+		return
+	_ring.global_position = Vector3(root.global_position.x,
+		_t3.table_mesh.global_position.y + RING_Y, root.global_position.z)
+
+func _build_ring() -> void:
+	_ring = MeshInstance3D.new()
+	_ring.name = "Ring"
+	_ring_mesh = TorusMesh.new()
+	_ring_mesh.rings = 40
+	_ring_mesh.ring_segments = 10
+	_ring.mesh = _ring_mesh
+	_ring_mat = StandardMaterial3D.new()
+	# 自发光：屋子里只有一盏台灯，环要像"亮着的一道圈"（原 2D 那只金圈也是这个意思）。
+	# 亮度由 `_process` 呼吸（`emission_energy_multiplier`），材质本身始终不透明。
+	_ring_mat.albedo_color = UIKit.ACCENT
+	_ring_mat.emission_enabled = true
+	_ring_mat.emission = UIKit.ACCENT
+	_ring_mat.emission_energy_multiplier = RING_GLOW_HI
+	_ring.material_override = _ring_mat
+	_ring.visible = false
+	add_child(_ring)
+
+## 按**画布像素**半径重算环的世界尺寸（幂等；`set_ring` 与取景变化后都要调）。
+func _apply_ring_size() -> void:
+	if _ring_mesh == null or _t3.board == null:
+		return
+	var r_px: float = _t3.board.token_ring_radius_px()
+	if r_px <= 0.0:
+		return
+	# 画布像素 → 世界：**量真变换**（同 `build_wheel` 量半径那条 —— 别另写"像素 ÷ 某个常数"：
+	# 那条链隔着贴图窗口与桌面尺寸两个旋钮，写死了就会静默失配）
+	var o: Vector3 = _t3.canvas_px_to_world(Vector2.ZERO)
+	var r: float = (_t3.canvas_px_to_world(Vector2(r_px, 0.0)) - o).length()
+	_ring_mesh.inner_radius = r * RING_INNER_R
+	_ring_mesh.outer_radius = r * RING_OUTER_R
+	_ring.scale = Vector3(1.0, RING_FLATTEN, 1.0)   # 压扁（只压 Y ⇒ 径向尺寸不受影响）
+
+## 光环的逐帧：① 跟着棋子走（只取 xz —— 走子时棋子会抬 y，而环是**贴在桌垫上**的，不该跟着飞）；
+## ② 呼吸（亮度）。没人在行动 / 环收着时直接早退，不白跑。
+func _process(delta: float) -> void:
+	if _ring == null or not _ring.visible:
+		return
+	if _tokens.get(_ring_peer, {}).is_empty():
+		return
+	_apply_ring_pose()
+	_ring_phase = fposmod(_ring_phase + delta, RING_PULSE_TIME)
+	var k := 0.5 - 0.5 * cos(TAU * _ring_phase / RING_PULSE_TIME)
+	_ring_mat.emission_energy_multiplier = lerpf(RING_GLOW_LO, RING_GLOW_HI, k)
+
 # ---------------- 四块立牌：批次 9 已整体退场 ----------------
 # 名字 / 身家 / 公开背包 / 倒计时 / "可被选中"高亮**全都有更稳的落点**：前两者与倒计时在
 # **屏幕层四角身家条**（`table_hud.CORNER_SLOTS` + `game._refresh_corner_bars/_refresh_corner_timer`，

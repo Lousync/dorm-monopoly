@@ -850,8 +850,9 @@ func _send_to_jail(p: Dictionary) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func s_tp(peer: int, idx: int) -> void:
-	board.set_teleport_target(peer, idx)
-	board.play_move(peer, [], 0.0)
+	# 传送的淡出淡入在棋子自己身上（批次 11 Task 1 起棋子是 3D 的薄牌，见
+	# scripts/table_props.gd「棋子（小人）」）：淡完才瞬移 —— 材质在不透明 ⇄ ALPHA 之间切。
+	table3d.table_props.set_token_teleport(peer, idx)
 
 func _player_by_peer(peer: int) -> Dictionary:
 	for p in hp:
@@ -1257,7 +1258,8 @@ func _flair_roll(v: int) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func s_move(peer: int, path: Array, step_time: float) -> void:
-	board.play_move(peer, path, step_time)
+	# 逐格走子 = 世界坐标补间 + 竖直小跳的弧 + 挤压（棋子已搬进 3D，见 table_props.play_token_move）
+	table3d.table_props.play_token_move(peer, path, step_time)
 
 @rpc("authority", "call_local", "reliable")
 func s_card(text: String, kind: String = "info", deck: String = "") -> void:
@@ -1357,15 +1359,49 @@ func _refresh_board_followers() -> void:
 		"命运": board.deck_screen_pos("命运")},
 		board.deck_screen_size("机会"))
 
+## 棋子（小人）与当前行动者光环：**都住在 3D 的 `TableProps` 里**（批次 11 Task 1 搬进去的，
+## 原先由 `board.render` 在画布上建 2D Control —— 那份已整段删除）。
+##
+## 数据来源与判据一字未改：棋子 = `st.players` 的 `peer / color(槽位) / pos(格号)`；
+## 光环 = `st.turn`（`phase == "ended"` ⇒ 收起，哨兵是 `GameData.NO_PEER`，**不是 -1**
+## —— 机器人 peer 从 -1 起编号；旧代码那处写的 `_set_ring(-1)` 会把机器人 peer -1 误当行动者）。
+## `set_tokens` 幂等、`set_ring` 幂等，所以每次广播都推一遍（同轮缘 / 牌堆那两件）。
+##
+## 为什么在 `_refresh_table_props` 里排得**靠前**（`mine.is_empty()` 那道早退之前）：
+## 棋子与光环是"全员可见"的状态，与"我自己在不在名册里"无关 —— 掉线重连时也该看得见别人走子。
+func _refresh_tokens() -> void:
+	if not _board_follow_ready():
+		return
+	var rows: Array = []
+	for p in st.get("players", []):
+		rows.append({"peer": int(p.peer), "slot": int(p.color), "idx": int(p.pos)})
+	table3d.table_props.set_tokens(rows)
+	var ended := String(st.get("phase", "playing")) == "ended"
+	table3d.table_props.set_ring(GameData.NO_PEER if ended else int(st.get("turn", GameData.NO_PEER)))
+
+## 某枚棋子此刻在**屏幕**上的位置 —— 棋子住在 3D 层（`TableProps`），所以走
+## "世界点 → 相机投影"（`camera.unproject_position` 给的就是屏幕/窗口坐标，正是飘字与飞钞要的）。
+##
+## 拿不到这块棋子（名单里还没有它 / 相机不可用）时退回**它那一格的格心**
+##（`board.tile_screen_pos` + `_board_to_screen` 那条既有链）—— 反馈照旧有个落点，
+## 不会因为"棋子还没建出来"就静默消失（同 `_corner_bar_screen_center` 的降级精神）。
+func _token_screen_pos(peer: int, idx: int = -1) -> Vector2:
+	if table3d != null and table3d.table_props != null and table3d.table_props.has_token(peer):
+		return table3d.camera.unproject_position(table3d.table_props.token_world_pos(peer))
+	if idx >= 0 and board != null:
+		return _board_to_screen(board.tile_screen_pos(idx))
+	return size * 0.5
+
 ## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（手牌也在这里）。
 ##
-## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那两件（轮缘 / 牌堆）见
-## `_refresh_board_followers`；其余物件（手牌）也一律幂等，
+## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那几件（轮缘 / 牌堆 / 棋子与光环）
+## 见 `_refresh_board_followers` 与 `_refresh_tokens`；其余物件（手牌）也一律幂等，
 ## 每次广播重贴一遍没有代价。它们读的都是**已同步**的状态（客户端也能算）。
 func _refresh_table_props() -> void:
 	if not _board_follow_ready():
 		return
 	_refresh_board_followers()
+	_refresh_tokens()
 	var mine := _state_player(my_peer)
 	if mine.is_empty():
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
@@ -1468,7 +1504,8 @@ func _refresh_players() -> void:
 			# 而全景缩放下两枚棋子可能只差十几像素、标签却有七八十像素宽 → 必然叠在一起。
 			# 按涨/跌分开纵向落点：进账往上飘、支出往下飘，拉开约 46px，任何格距都不重叠。
 			var fy := -26.0 if diff > 0 else 20.0
-			var pos := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, fy)
+			# 锚点 = 那枚棋子此刻在屏幕上的位置（棋子已是 3D 实物，见 `_token_screen_pos`）
+			var pos := _token_screen_pos(peer, int(p.pos)) + Vector2(0, fy)
 			Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
 			Fx.play("cash" if diff > 0 else "pay", -5.0)
 			_spawn_money_fly(peer, diff)
@@ -3621,7 +3658,7 @@ func _corner_bar_screen_center(peer: int) -> Variant:
 ## 只影响飞钞的终点、不改变"金额变了才飞"的判据。
 func _spawn_money_fly(peer: int, diff: int) -> void:
 	var good := diff > 0
-	var token_at := _board_to_screen(board.token_screen_pos(peer)) + Vector2(0, -18)
+	var token_at := _token_screen_pos(peer, int(_state_player(peer).get("pos", -1))) + Vector2(0, -18)
 	var card_at := token_at
 	var sp = _corner_bar_screen_center(peer)
 	if sp != null:
