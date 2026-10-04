@@ -89,6 +89,20 @@ const CAM_FOV := 39.0            # 收窄默认 75°：探针实测默认 FOV �
 ##   面积比 **0.97**（A2 是 0.92）。
 const CAM_DIST := 5.77
 
+## 3D 端**注视点往近端挪**多少（世界单位，+z = 近端）。
+##
+## 为什么需要它：手牌那排坐在**桌垫前沿的木纹带**上、比桌垫本身还靠前，而相机一直正对
+## **桌心**（`look_at(Vector3.ZERO)`）⇒ 手牌整排的下半截（描述区 + 品质条）落到**屏幕下沿之外**。
+## 批次 12 A2b 之前的注释只论证过"手牌要留在屏内"，**判据用的是牌心**、也没有断言，
+## 于是这个切边一直没人管（`--shot` 出图里肉眼可见）。现在 `layout_test` 有断言了
+##（"整排手牌都在屏内"，量的是 `hand_rect` 四角投影回屏幕的 y）。
+##
+## 注意它**只挪注视点、不挪相机位置、也不改 FOV** ⇒ 格宽（字号那一半的分母）分文不取，
+## 只是把构图整体在屏幕上**上移**：腾出来的上方留白本来就有富余（桌垫上沿离画面上边
+## 还有一百多像素），下沿则原本**-42.8px 出画**（实测）。
+## 按 `view_t` 插值：2D 端手牌本就淡出、也不需要这一挪 ⇒ `view_t=1` 时回到原点，与从前一致。
+const LOOK_NEAR_Z_3D := 0.45
+
 # ---- 批次 4：双视角。滚轮沿一条轨道在 3D 第一人称 ↔ 2D 桌面之间连续推移
 #（`dolly` 推拉整个删除，见设计稿 §四）。view_t ∈ [0,1] 是这条轨道上的位置。
 const CAM_TILT_2D_DEG := 88.0    # 2D 端俯角：接近正俯视（只看桌上地图；手牌在这一端淡出，
@@ -707,11 +721,13 @@ func _apply_camera() -> void:
 	var rad := deg_to_rad(lerpf(CAM_TILT_DEG, CAM_TILT_2D_DEG, view_t))
 	var d3d := lerpf(CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)), VIEW_DIST_2D, view_t)
 	var pos := Vector3(0.0, d3d * sin(rad), d3d * cos(rad))
+	# 注视点：3D 端往近端挪一点（把整排手牌带回屏内），2D 端回原点（见 LOOK_NEAR_Z_3D）。
+	var look := Vector3(0.0, 0.0, lerpf(LOOK_NEAR_Z_3D, 0.0, view_t))
 	if camera.is_inside_tree():
 		camera.global_position = pos
-		camera.look_at(Vector3.ZERO, Vector3.UP)
+		camera.look_at(look, Vector3.UP)
 	else:
-		camera.look_at_from_position(pos, Vector3.ZERO, Vector3.UP)
+		camera.look_at_from_position(pos, look, Vector3.UP)
 	# 视角量顺带推给桌上实体（批次 4 Task 2：手牌跟着淡出，看不见就点不到）。推在**这里**、
 	# 不推在 `_process` 的循环体里 —— `_process` 在 view_t == view_target 时早退，而 snap_view
 	#（`--shot` 全部摆拍与测试都走它）**根本不经过 `_process`**：推在循环体里的话，摆拍与测试

@@ -676,8 +676,17 @@ func _run() -> void:
 	var pc: Vector2 = g.info_panel.position
 	var pcz: float = pc.x + g.info_panel.size.x * 0.5
 	_check(absf(pcz - tc.x) < 4.0, "卡片横向居中于该格（卡中心 %.0f / 格 %.0f）" % [pcz, tc.x])
-	_check(pc.y + g.info_panel.size.y < tc.y, "卡片在格子上方（卡底 %.0f / 格 %.0f）"
-		% [pc.y + g.info_panel.size.y, tc.y])
+	# 卡片**不得盖住被点的格子**。正常落在**上方**；格子太靠上、上方塞不下时
+	# `_place_info_panel` 会**翻到下方**（`pos.y < 8` ⇒ `c.y + 20`）—— 这是它的既定行为，
+	# 批次 12 A2b 把构图整体上移了一点之后，顶部那排格子正好会触发翻转，
+	# 所以这里按「有地方放就放上面、放不下就翻下面」断言，而不是死钉"必须在上面"。
+	var room_above: bool = (tc.y - g.info_panel.size.y - 20.0) >= 8.0
+	if room_above:
+		_check(pc.y + g.info_panel.size.y < tc.y, "卡片在格子上方（卡底 %.0f / 格 %.0f）"
+			% [pc.y + g.info_panel.size.y, tc.y])
+	else:
+		_check(pc.y > tc.y, "上方放不下 ⇒ 翻到格子下方且不盖住它（卡顶 %.0f / 格 %.0f）"
+			% [pc.y, tc.y])
 	# 错位的旧症状正是「卡片贴死屏幕边缘」：卡片必须完整落在屏幕内，且横向居中不是靠
 	# clamp 凑出来的（被夹住时 pcz 会偏离锚点 x，上面那条居中检查随之失败）。
 	_check(pc.x >= 8.0 and pc.y >= 8.0 and pc.x + g.info_panel.size.x <= g.size.x
@@ -1203,7 +1212,10 @@ func _run() -> void:
 	g.table3d.on_table_hover.call(Vector2.INF)      # 射线打不到桌面那一路 —— 悬停全清
 	_check(tph.hand_hover() == -1, "移开后悬停目标清掉（实得 %d）" % tph.hand_hover())
 	var t_b3b := Time.get_ticks_msec()
-	while tph.hand_hover_amt(1) > 0.01 and Time.get_ticks_msec() - t_b3b < 3000:
+	# 阈值必须与下面那条断言**同量级**：`scale = 1 + 0.12 × amt`，而
+	# `Vector3.is_equal_approx(Vector3.ONE)` 的相对容差只有 1e-5 ⇒ 等 `amt ≤ 0.01` 就断言，
+	# 会在 amt 落在 (8e-5, 0.01] 时假红（实测 4 次里红 1 次）。等到**真的归零**再断言。
+	while tph.hand_hover_amt(1) > 0.0001 and Time.get_ticks_msec() - t_b3b < 3000:
 		await process_frame
 	_check(hcard1.scale.is_equal_approx(Vector3.ONE)
 			and absf(hcard1.global_position.y - hy0) < 0.002,

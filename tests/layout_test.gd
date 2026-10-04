@@ -1016,6 +1016,29 @@ func _run() -> void:
 				"7 件道具 → 最多摆 5 张（实得 %d 张）" % tp4.hand_count())
 			tp4.set_hand([])
 			_check(tp4.hand_count() == 0 and vis4.call(hr) == 0, "清空 → 一张都不露")
+			# **整排手牌必须完整在屏内**（批次 12 A2b 补）。此前这条只在 `_apply_camera` 那段
+			# 注释里论证过、**没有任何断言**，而那段论证用的判据是**牌心**（"牌心在 z≈3.164"）
+			# ⇒ 牌的下半截（描述区 + 品质条）掉到屏幕下沿外也照样绿 —— 实测正是如此
+			#（`--shot` 出图里手牌被屏幕下沿切掉）。这里摆满 5 张（最宽那种），把每张
+			# `hand_rect` 的四个角**投影回屏幕坐标系**逐个量。
+			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"},
+				{"id": "共享单车"}, {"id": "饭卡"}])
+			var vr4: Rect2 = t3.get_viewport().get_visible_rect()
+			var off4 := 0
+			var lo4 := INF
+			var hi4 := -INF
+			for k4 in tp4.hand_count():
+				var r4: Rect2 = tp4.hand_rect(k4)
+				for c4 in [r4.position, r4.position + Vector2(r4.size.x, 0.0),
+						r4.position + Vector2(0.0, r4.size.y), r4.position + r4.size]:
+					var sp4: Vector2 = t3.camera.unproject_position(t3.canvas_px_to_world(c4))
+					lo4 = minf(lo4, sp4.y)
+					hi4 = maxf(hi4, sp4.y)
+					if sp4.y < vr4.position.y - 0.5 or sp4.y > vr4.position.y + vr4.size.y + 0.5:
+						off4 += 1
+			_check(off4 == 0, "整排手牌都在屏内（越界角 %d 个；屏幕 y %.1f..%.1f，视口高 %.1f）"
+				% [off4, lo4, hi4, vr4.size.y])
+			tp4.set_hand([])
 			# 幂等：池子只建一次，重复 set_hand 不重建节点（每次状态广播都会调它）
 			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
 			var pool4: int = hr.get_child_count()
