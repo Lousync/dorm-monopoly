@@ -1194,6 +1194,64 @@ func _run() -> void:
 			% [int(bar1.get_meta("peer", GameData.NO_PEER)), int(g.corner_bars[1].peer)])
 	g.player_popup.close()
 
+	print("== 弹窗关闭路径（终审 fix wave）==")
+	# 三条真链路各钉一次 —— 此前只测了直调 `close()`，而"✕ / 点外部 / Esc 都能关"
+	# 是本批写明的验收项（`hud_test.gd:1188` 那条 `gui_input` 真链路同风格）。
+	# ① 点压暗底（`_dim` 上那条 gui_input lambda，**只认左键**）→ 关。
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	_check(g.player_popup.is_open(), "重开（准备测压暗底）")
+	var left_ev := InputEventMouseButton.new()
+	left_ev.button_index = MOUSE_BUTTON_LEFT
+	left_ev.pressed = true
+	g.player_popup._dim.gui_input.emit(left_ev)
+	await process_frame
+	_check(not g.player_popup.is_open(), "点压暗底（真 gui_input 链路）→ 弹窗关闭")
+	# ② 非左键（滚轮 / 右键）**不该**关 —— 同一条 lambda 里那道按键判断。
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	var wheel_ev := InputEventMouseButton.new()
+	wheel_ev.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel_ev.pressed = true
+	g.player_popup._dim.gui_input.emit(wheel_ev)
+	await process_frame
+	_check(g.player_popup.is_open(), "滚轮点压暗底：不关（只认左键）")
+	# ③ Esc 走 `game._unhandled_input` 的**真分支**（不是直调 close）。前置：此刻没有选目标态 /
+	# 未选中牌 —— 那两个也吃 Esc，且排在同一函数里更靠前的位置。
+	_check(g._tgt_stage == "" and g.selected_slot < 0, "Esc 之前：无选目标态 / 未选中牌（前置）")
+	var esc_ev := InputEventKey.new()
+	esc_ev.keycode = KEY_ESCAPE
+	esc_ev.pressed = true
+	g._unhandled_input(esc_ev)
+	await process_frame
+	_check(not g.player_popup.is_open(), "Esc（真 _unhandled_input 链路）→ 弹窗关闭")
+
+	print("== 弹窗内容：（被动）标签（终审 fix wave）==")
+	# 「完成标准」把"被动标记"列为弹窗内容之一，但此前没有断言钉它。招财猫 `type: passive`
+	# ⇒ 它那一行后缀里应有「（被动）」。读**行内 Label 的 text**（最强可观察量），不读内部标志。
+	var s_pas: Dictionary = _state(3, false)
+	for p in s_pas.players:
+		if int(p.peer) == 1:
+			p.items = [{"id": "招财猫", "cd": 0}]
+	g.s_state(s_pas)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	_check(g.player_popup.item_count == 1, "弹窗里 1 件（招财猫，实得 %d）" % g.player_popup.item_count)
+	var has_passive := false
+	var row_texts: Array = []
+	for c in g.player_popup._body.get_children():
+		if c is HBoxContainer:
+			for l in (c as HBoxContainer).get_children():
+				if l is Label:
+					var t := String((l as Label).text)
+					row_texts.append(t)
+					if t.contains("（被动）"):
+						has_passive = true
+	_check(has_passive, "弹窗里那一行含「（被动）」（招财猫是 passive；实得 %s）" % str(row_texts))
+	g.player_popup.close()
+
 	print("== 选目标：高亮搬到四角身家条、点它 = 选中（批次 9）==")
 	# 立牌随批次 9 退场 ⇒ "此刻可选中的对手"这份高亮改画在**屏幕四角身家条**上（2px 金边 +
 	# 底色提亮，与行动者的 1px 金边分得开）。这里既钉"哪几条亮着"，也钉"点亮的那条点下去真的选中"。

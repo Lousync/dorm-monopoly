@@ -515,6 +515,28 @@ func take_shot(path: String) -> void:
 				g._grant_item(me, String(hid_v))
 		g._broadcast_state()
 		await get_tree().create_timer(0.35).timeout
+	if path.contains("popup") and g.multiplayer.is_server():
+		# 摆拍（终审 fix wave）：开一个**对手**的道具弹窗，核对"卡牌图标 / 名称 / 能量小格 /
+		# 身家现金都读得出、面板居中"。与 hand / level / target 同类 —— 只在对局里注入**局面状态**，
+		# 玩法代码一行不改。手上有道具的家才有东西看：没有就先给 TA 发几件，再广播。
+		# **走真入口** `_on_corner_bar_clicked`（与玩家点四角条走同一条路），不直调 `_open_player_popup`。
+		# 用法：`--autotest=host --rounds=6 --shot=shots/b9_popup_table_plain.png`
+		#   `table` → 停在围桌全景（不拉近、不弹格详情卡）；`plain` → 跳过抽卡与赌局浮层
+		#   （那两样会抢镜；**别**再带上 `card`）。
+		var pick := GameData.NO_PEER
+		for pp in g.st.get("players", []):
+			if int(pp.peer) != g.my_peer:
+				pick = int(pp.peer)
+				break
+		if pick != GameData.NO_PEER:
+			var opp: Dictionary = g._player_by_peer(pick)
+			if not opp.is_empty() and (opp.get("items", []) as Array).is_empty():
+				for hid_v in ["招财猫", "黑卡", "包租婆"]:
+					g._grant_item(opp, String(hid_v))
+			g._broadcast_state()
+			await get_tree().create_timer(0.35).timeout
+			g._on_corner_bar_clicked(pick)
+			await get_tree().create_timer(0.3).timeout
 	if not path.contains("plain") and not path.contains("card"):
 		# 赌局界面预览（单行假数据，验证布局用）。路径带 card 时跳过赌局，
 		# 否则弹层会盖住正在翻的抽卡

@@ -1387,8 +1387,8 @@ func _refresh_table_props() -> void:
 ## 客户端也能算的身家：与 `_refresh_players` 顶部战况面板**同一公式**，但读的是已同步的
 ## `st.tiles`，而不是房主专有的 `htiles`（客户端没有 hp / htiles）。
 ##
-## 批次 9：立牌退场后本条**暂时没有调用方** —— 下一个 Task 的玩家道具弹窗会用它做身家读数
-##（见 批次9-设计 §4.3）。**不是死代码，别顺手删掉**。
+## 调用方：`_open_player_popup`（批次 9 的道具弹窗，见 批次9-设计 §4.3）—— 立牌退场后它接手了
+## "看别人身家"那个落点。与 `_refresh_players` 里那份 `worth_map` 同式，**改公式要两处一起改**。
 func _state_worth(peer: int) -> int:
 	var v := int(_state_player(peer).get("money", 0))
 	var tiles_arr: Array = st.get("tiles", [])

@@ -484,6 +484,10 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 	# 批次 9：四角条从"只读"变"可点"（点它 = 开该玩家的道具弹窗 / 选目标态下选中 TA）。
 	# 条内的子控件**保持 IGNORE**，否则点到名字那块就不冒泡到条根。
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	# **已知且有意接受的副作用**：条根改 STOP 后，**落在条上的滚轮与右键也被它一并吞掉**
+	#（`TableView3D._unhandled_input` 里的视角推移、以及棋盘右键取消，都被这个 STOP 抢先收到）。
+	# 影响面很小、**判可接受**：四角条底下是木框 / 地板（没有可滚可点的棋盘内容），
+	# 规则说明里的"右键取消"主要也是对棋盘说的。**别当 bug 去把 STOP 改回 PASS** —— 改回就点不动了。
 	# **按 peer 找那条、别在闭包里捕获 peer**：角位是"自己打头"轮转出来的，人一换这一条就换人
 	# ⇒ 回调里现读 `root` 上的 meta（由 `game._refresh_corner_bars` 与 `bar.peer` 同处写）。
 	root.gui_input.connect(func(ev: InputEvent) -> void:
