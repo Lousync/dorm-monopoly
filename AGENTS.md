@@ -108,7 +108,9 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   `rules` → 展开规则说明；`pause` → 打开暂停菜单；`card` → 跳过赌局；
   `deckout` → **抽卡「抽出」瞬间**：在 **0.06s / 0.16s 各补一张**（常规三帧的第一帧落在翻面之后，
   拍不到"卡刚亮出来的那一刻"）—— 批次 8 起**抽卡演出已在屏幕层、相机不动**，那个"先让推近
-  生效"的旧前提没了：**不再需要 `freecam`**，只要带 `card`（跳过会盖住演出的赌局浮层），
+  生效"的旧前提没了：**不再需要 `freecam`**。**出图门是 `not path.contains("plain") or
+  path.contains("card")`**（名字里带 `plain` 就跳过演出）⇒ 文件名要么不含 `plain`、要么带
+  `card`，**有其一即可**（`card` 顺带跳过会盖住演出的赌局浮层），
   如 `--shot-game=1 --shot=shots/xx_deckout_card.png`；这个分支**不转轮**
   （转轮会把镜头焦点抢到转盘）。因为不带 `freecam`，这张图的背景**就是全景**，
   可直接与 `xx_table_plain.png`（及批次 7 的同名图）逐格比对"桌面没被放大 / 滑动"；
@@ -127,7 +129,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
   **两条都会顺带推动手牌淡出**（`view2d` 端手里牌本就看不见）：想拍"手里有牌"，文件名别带
   `tilt` / `view2d` —— 否则会拿到一张空手牌，并当成 bug 去查。
-  常拼的几个：**干净全景 `xx_table_plain.png`**、**近景＋格详情卡 `xx_plain.png`**、
+  常拼的几个：**干净全景 `xx_table_plain.png`**、**全景＋格详情卡 `xx_plain.png`**
+  （单带 `plain` 拍出来的**仍是全景**，要近景请再加 `freecam`，见上）、
   **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**、
   **看选目标态 `xx_target_plain.png`**。
 - **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
