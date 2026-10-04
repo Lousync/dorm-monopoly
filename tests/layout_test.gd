@@ -154,7 +154,7 @@ func _run() -> void:
 			# 剪影不投影：它们又大又远，投影纯是每帧白跑一张阴影图（性能是本批次点名的）
 			if mi2.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
 				casting += 1
-		_check(dark, "剪影材质近黑（亮度 ≤ 0.12 —— 自身不发光，只被台灯擦到才看得见）")
+		_check(dark, "剪影材质近黑（亮度 ≤ 0.12 —— 底色压到近黑，抬起来的是下面那条自发光底光）")
 		_check(matte, "剪影材质高粗糙（roughness ≥ 0.8，不吃镜面高光）")
 		_check(opaque, "剪影是不透明档（写深度、能彼此遮挡，不是透明队列）")
 		_check(shared, "所有剪影共用一份材质（不为每件单建 —— 本批次点名要避免的浪费）")
@@ -371,6 +371,29 @@ func _run() -> void:
 				% en.ambient_light_energy)
 		_check(en.background_color.get_luminance() < 0.03,
 			"背景色近黑（亮度 %.3f）" % en.background_color.get_luminance())
+		# ---- 批次 6 终审修复波 D：剪影**不许比背景更暗** ----
+		# 见 `table_3d.gd` 的 `ROOM_EMISSION` 那段：台灯照不到最远的床架（出图实测 1/255，
+		# 而它身后的近黑背景是 4~6/255），"剪影可辨"靠的是共用材质上那层自发光底光。
+		# 无头下渲染不出图，这里按**同一口径的数据**估一个代理式：
+		#   剪影 ≈ 自发光（不过光照、与距离无关）+ 环境光给它的那一层（albedo × 环境能量 × 环境色）
+		#   背景 = `background_color`（直出、不过光照）
+		# 两者都是"直达画面"的量，可以直接比。**台灯那一项故意不计**（保守：剪影即使一点灯都
+		# 没吃到也应当亮于背景 —— 正是"床架那一坨看不见的黑"要治的病）。这个顺序已由出图核对：
+		# 床架 18/255 > 背景 4~6/255。少了底光这一条就反过来（环境那层只有 0.006，背景是 0.014）。
+		var rmat = t3.get("room_mat") as StandardMaterial3D
+		_check(rmat != null, "剪影材质可读（room_mat）")
+		if rmat != null:
+			var e_lum := 0.0
+			if rmat.emission_enabled:
+				e_lum = rmat.emission.get_luminance() * rmat.emission_energy_multiplier
+			var a_lum: float = rmat.albedo_color.get_luminance() * en.ambient_light_energy \
+				* en.ambient_light_color.get_luminance()
+			var bg_lum: float = en.background_color.get_luminance()
+			_check(e_lum > 0.0,
+				"剪影带自发光底光（能量 %.4f —— 台灯够不到最远那件，见 ROOM_EMISSION）" % e_lum)
+			_check(e_lum + a_lum > bg_lum,
+				"剪影亮于背景（底光 %.4f + 环境 %.4f > 背景 %.4f —— 没有底光时反过来：床架实测 1/255 < 背景 4~6/255）"
+					% [e_lum, a_lum, bg_lum])
 
 	print("== 贴图窗口 = 桌垫（棋盘 + 一圈留白），不再铺满整张画布 ==")
 	# 批次 5 Task 2：座位栏换成了桌上立牌，画布不再需要为它们预留 —— 窗口从"整张画布"
@@ -1663,7 +1686,18 @@ func _run() -> void:
 		var deck_px := {}
 		for dn in deck_names:
 			deck_px[dn] = t3.board.deck_screen_pos(dn)
-		tpD.build_decks(deck_px)
+		# 脚印与中心都从 BoardView 取（修复波 F：尺寸也要跟印刷图案）——
+		# **不写死世界尺寸**：写死就等于把"摞该多大"的实现重述一遍，跟没跟取景都看不出来。
+		# 红跑（`deck_screen_size` 还没实现）时不硬调：判红后走老的一条路（同本文件
+		# `t3.get("lamp_light")` 那条的写法 —— 少一次脚本错误、后面的断言照跑）。
+		var f_ok: bool = t3.board.has_method("deck_screen_size")
+		var deck_sz := Vector2.ZERO
+		if f_ok:
+			deck_sz = t3.board.deck_screen_size("机会")
+			tpD.build_decks(deck_px, deck_sz)
+		else:
+			_check(false, "BoardView 没有 deck_screen_size（修复波 F 未实现）")
+			tpD.build_decks(deck_px)
 		var dr: Node = tpD.get_node_or_null("Decks")
 		_check(dr != null, "牌堆父节点在（build_decks 时建）")
 		if dr == null:
@@ -1705,6 +1739,18 @@ func _run() -> void:
 				var back: Vector2 = t3.world_to_canvas_px(droot.global_position)
 				_check(back.distance_to(deck_px[dn]) < 1.0,
 					"「%s」落在画布牌堆中心上（实得 %s，期望 %s）" % [dn, back, deck_px[dn]])
+				# ②b **脚印**也 = 印在桌垫上那摞卡背的整体脚印（修复波 F）。量法同轮缘那条：
+				# 把共用 mesh 的宽 / 进深折回**画布像素**再比（走真反变换，不拿"世界尺寸 × 常数"
+				# 去比 —— 那是把实现的换算重述一遍，常数错成什么值都照样绿）。
+				# 尺寸不跟取景时这里就红：全景下它本该是 `board.deck_screen_size`（= 102×147 × _zoom）。
+				var bm_f: BoxMesh = (layers[0] as MeshInstance3D).mesh as BoxMesh
+				var foot_x: float = t3.world_to_canvas_px(
+					droot.global_position + Vector3(bm_f.size.x, 0.0, 0.0)).distance_to(back)
+				var foot_z: float = t3.world_to_canvas_px(
+					droot.global_position + Vector3(0.0, 0.0, bm_f.size.z)).distance_to(back)
+				_check(absf(foot_x - deck_sz.x) < 1.0 and absf(foot_z - deck_sz.y) < 1.0,
+					"「%s」的脚印 == 印着那摞卡背的整体脚印（实得 %.1f×%.1f，期望 %.1f×%.1f 画布像素）"
+						% [dn, foot_x, foot_z, deck_sz.x, deck_sz.y])
 				# 底**就落在桌面上**（批次 6 Task 3 起：不再加 `PROPS_Y` —— 一摞牌是"躺在桌上的"，
 				# 抬起来只会让它在屏幕上相对印刷图案往远端漂，见 table_props.DECK_SIZE 那段）。
 				# 局部原点 = 这摞在地面的落点，而层 0 抬半层高 ⇒ root.y == 桌面 即"最下层躺在桌上"。
@@ -1761,6 +1807,42 @@ func _run() -> void:
 					% t3.board._deck_from.distance_to(old_from))
 			t3.board._tick_deck_card(t3.board.DECK_CARD_TIME + 0.1)   # 收尾，别把演出留进后面的断言
 			t3.board.cam_locked = false
+
+			# ②c 尺寸**跟着取景**（修复波 F 的实质）：把 2D 镜头推近（抽卡那 ≥2× 推近的**同一件事**
+			# —— 都是同一个 `_zoom`），重报脚印之后摞必须跟着胀。**只跟位置不跟尺寸时这条会红**
+			#（正是"抽卡推近下摞只盖住印刷图案约四分之一"那个病）。量法同轮缘那条
+			#「画面半径变大后轮缘跟着放大」：比的是同一个节点 / 同一份 mesh，不重建。
+			if not f_ok:
+				_check(false, "BoardView 没有 deck_screen_size，②c（尺寸跟取景）整段跳过")
+			else:
+				t3.board.fit_overview(true)
+				await process_frame
+				var px0 := {}
+				for dn2 in deck_names:
+					px0[dn2] = t3.board.deck_screen_pos(dn2)
+				tpD.build_decks(px0, deck_sz)
+				var zoom0: float = deck_sz.x
+				var deck0: Node3D = dr.get_node("Deck_机会") as Node3D
+				var w0: float = (deck0.get_child(0) as MeshInstance3D).mesh.size.x
+				t3.board.focus_grid(27, 2.0, true)      # 全景的 2 倍 —— 抽卡推近的同一档
+				await process_frame
+				var sz1: Vector2 = t3.board.deck_screen_size("机会")
+				_check(sz1.x > zoom0 * 1.5,
+					"推近之后印着的那摞卡背脚印跟着变大（%.1f → %.1f 画布像素）" % [zoom0, sz1.x])
+				var px1 := {}
+				for dn3 in deck_names:
+					px1[dn3] = t3.board.deck_screen_pos(dn3)
+				tpD.build_decks(px1, sz1)
+				var w1: float = (deck0.get_child(0) as MeshInstance3D).mesh.size.x
+				_check(w1 > w0 * 1.5,
+					"实体的尺寸跟着胀（%.3f → %.3f 世界单位，须 > 1.5 倍 —— 只跟位置不跟尺寸时它一字不变）"
+						% [w0, w1])
+				_check(deck0.get_child_count() == (dr.get_child(0) as Node3D).get_child_count(),
+					"跟取景重报尺寸也不重建节点（%d 层）" % deck0.get_child_count())
+				# 收尾：把取景与实体都放回全景（后面还有断言读这些坐标）
+				t3.board.fit_overview(true)
+				await process_frame
+				tpD.build_decks(px0, t3.board.deck_screen_size("机会"))
 
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
