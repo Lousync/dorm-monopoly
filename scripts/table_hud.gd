@@ -185,6 +185,13 @@ static func build_play_ui(g: Node) -> void:
 	g.shop_tile_l = UIKit.label("", 14, Color(0.78, 0.7, 0.58))
 	shead.add_child(g.shop_tile_l)
 
+	# 「XX 正在挑选」说明条（批次 12 C2 / 设计 §⑧）：小卖部改为**全员可见**之后，
+	# 非本人看到的是同一份货架、但**只读**（买 / 刷新 / 离开全置灰）。没有这条，
+	# 旁观者只会看到一堆点不动的按钮，不知道发生了什么。
+	g.shop_watch_l = UIKit.label("", 15, UIKit.ACCENT)
+	g.shop_watch_l.visible = false
+	spv.add_child(g.shop_watch_l)
+
 	# 三格货架：卡面 + 价格 + 买按钮
 	var sshelf := HBoxContainer.new()
 	sshelf.add_theme_constant_override("separation", 20)
@@ -375,6 +382,44 @@ static func build_play_ui(g: Node) -> void:
 	g.info_body.custom_minimum_size = Vector2(298, 0)
 	iv.add_child(g.info_body)
 
+	# ---- 决策区（批次 12 C1 / 设计 §③）：**格详情卡兼作买地/装修面板** ----
+	# 弹窗不再屏幕居中：这一块挂进格详情卡里，跟着卡锚在**该格上方**（`_place_info_panel`）。
+	# 只有「我有待决、且面板正挂着那一格」时才显示（判据唯一来源 `game._refresh_decision_area`）。
+	# ✕ 关掉面板**不等于放弃**：倒计时条（`g._prompt_bar`）的补间跑在面板之外，
+	# 关掉只是看不见；再点该格 / 点右下角「回格上决定」就回来。
+	g.decision_area = VBoxContainer.new()
+	g.decision_area.add_theme_constant_override("separation", 6)
+	g.decision_area.visible = false
+	iv.add_child(g.decision_area)
+	var dsep := ColorRect.new()
+	dsep.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7)
+	dsep.custom_minimum_size = Vector2(0, 1)
+	dsep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.decision_area.add_child(dsep)
+	g.decision_title = UIKit.label("", 15, UIKit.ACCENT)
+	g.decision_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	g.decision_area.add_child(g.decision_title)
+	g.decision_text = UIKit.label("", 12, UIKit.TEXT)
+	g.decision_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	g.decision_text.custom_minimum_size = Vector2(298, 0)
+	g.decision_area.add_child(g.decision_text)
+	g.decision_bar = UIKit.progress(UIKit.ACCENT)
+	g.decision_area.add_child(g.decision_bar)
+	# 倒计时条的（重）启动 / 到点放弃都走 `game._prompt_bar_arm` —— 与旧居中弹窗同一份逻辑、
+	# 同一个 `_prompt_bar`，只是条子换了个爹。
+	g._prompt_bar = g.decision_bar
+	var drow := HBoxContainer.new()
+	drow.add_theme_constant_override("separation", 10)
+	g.decision_area.add_child(drow)
+	g.decision_no = UIKit.button("算了", 14)
+	g.decision_no.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	drow.add_child(g.decision_no)
+	g.decision_ok = UIKit.button("买下它！", 14, "primary")
+	g.decision_ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	drow.add_child(g.decision_ok)
+	g.decision_no.pressed.connect(g._on_decision_no)
+	g.decision_ok.pressed.connect(g._on_decision_yes)
+
 	# 右上：战报 / 聊天（可折叠，保持桌面干净）
 	g.log_toggle = UIKit.with_icon(UIKit.button("战报 ▾", 13), "report", 17)
 	g.log_toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -433,7 +478,10 @@ static func build_play_ui(g: Node) -> void:
 	hud.add_child(g.action_btn)
 
 	# 抽卡演出的屏幕层大字卡（批次 8）：相机不动，卡在屏幕正中演（见 deck_reveal.gd）。
+	# 批次 12 C2 起演出停在 HOLD 等「确定」：按钮的那一下由 `game` 接手（房主直接放行 /
+	# 客户端回 `c_card_ok`），超时与机器人 / 休眠托管由 `game._await_card_confirm` 兜。
 	g.deck_reveal = DeckReveal.new()
+	g.deck_reveal.confirmed.connect(g._on_card_confirm)
 	hud.add_child(g.deck_reveal)
 
 	var hair := ColorRect.new()

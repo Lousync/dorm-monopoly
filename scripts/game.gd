@@ -42,6 +42,7 @@ var _timeout_rev := 0                # 挡位变化计数：等待中的环节�
 # 操作窗口 kind → 倒计时条上的名称（与 GameSettings.turn_seconds 的 kind 一致）
 const OP_KIND_LABELS := {
 	"roll": "掷轮", "prompt": "决定", "item": "道具", "shop": "小卖部", "black": "黑市",
+	"card": "确认",   # 抽卡演出等「确定」（批次 12 C2 / ⑧⑪）
 }
 
 # ---------------- 道具系统（host 状态，详见 doc/game-design/道具系统.md） ----------------
@@ -94,6 +95,9 @@ var shop_refresh_btn: Button
 var shop_leave_btn: Button
 var shop_tile_l: Label
 var shop_money_l: Label           # 面板里的现金读数（买按钮置灰时看得出理由）
+## 「XX 正在挑选」说明条（批次 12 C2）：小卖部全员可见后，非本人看到的是只读货架，
+## 没有这条旁观者只会看到一堆点不动的按钮。见 `_refresh_shop_ui`。
+var shop_watch_l: Label
 var shop_timer_row: HBoxContainer # 面板里的倒计时行：与四角条倒计时同一份 _op_* 数据（独立控件，不依赖座位卡）
 var shop_timer_kind: Label
 var shop_timer_track: ColorRect
@@ -139,6 +143,14 @@ var _info_tile := -1              # 格详情卡当前挂在哪一格（-1 = 没
 var info_title: Label
 var info_body: Label
 var info_sb: StyleBoxFlat
+# ---- 决策区（批次 12 C1）：格详情卡里的「买下它！/ 装修！ + 算了 + 倒计时条」 ----
+# 由 `TableHud.build_play_ui` 建；内容与显隐由 `_show_prompt` / `_refresh_decision_area` 管。
+var decision_area: VBoxContainer
+var decision_title: Label
+var decision_text: Label
+var decision_bar: ProgressBar
+var decision_no: Button
+var decision_ok: Button
 var rules_btn: Button            # 收起态：左下角「📖 规则说明」按钮
 var rules_panel: PanelContainer  # 展开态：分页规则面板（原位向上展开）
 var rules_body: RichTextLabel
@@ -220,16 +232,25 @@ var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/
 ## 控件已随批次 5 Task 2 退场，这份状态搬到对局层自己身上（语义与 row.shown 一字未改）。
 var _money_shown := {}
 var _chat_shown := 0
-var _prompt_dlg: Control
 var _prompt_tw: Tween
 var _prompt_bar: ProgressBar
 var _prompt_token := -1
+## 待决的那个决定挂在**哪一格**（批次 12 C1）：房主在 `_ask` 里按 `idx` 填；
+## 客户端没有 `_awaiting_prompt` 这类房主私有变量，由 `_pending_tile_for_me` 从快照推
+##（await=prompt 且 await_peer 是我 ⇒ 待决格 = **我棋子所在那一格**，因为 `_resolve_buy` /
+## `_resolve_upgrade` 都是 `_resolve_tile` 以 `p.pos` 为 idx 调的、`re` 那次原地结算同用一个 pos）。
+## ⇒ `s_prompt` 的签名不必带格号。
+var _prompt_tile := -1
+## 卡面确认（批次 12 C2 / ⑧⑪）：正在等谁点「确定」（0 = 没有）；他确认后 `_card_ack` 置真。
+var _awaiting_card := 0
+var _card_ack := false
 
 # ---------------- 自动化测试 ----------------
 var at_mode := ""
 var at_rounds := 3
 var at_tier := ""    # --tier= 指定的挡位（客户端 autotest 据此断言收到了正确的快照）
 var _at_roll_epoch := -1
+var _at_card_done := false     # 自动回归：本张抽卡演出的「确定」已经代点过（按钮收起时复位）
 var _at_client_done := false   # 客户端 autotest 已收尾（防 quit() 生效前重复打印）
 
 var lab_mode := false   # 道具试验场模式：建好局面但不跑回合循环
@@ -911,7 +932,8 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 			# 仿桌游：机会/命运卡从棋盘中央对应牌堆抽出展示
 			s_card.rpc(String(card.t), _card_kind(card), String(d.name))
 			_log("%s 抽到事件：%s" % [p.name, card.t])
-			await _wait(DeckReveal.CARD_TIME + 0.1)
+			# 批次 12 C2：演出停在 HOLD 等抽卡者点「确定」，**效果在确认之后才落地**。
+			await _await_card_confirm(p)
 			await _apply_card(p, card)
 		"item":
 			# 失物招领：按招领权重随机品质捡一件（品质缺货自动向下降档）
@@ -921,10 +943,14 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 				qi -= 1
 			var found := _grant_item_of_quality(p, ItemData.QUALITIES[qi], "失物招领")
 			if String(found) != "":
-				s_card.rpc("【失物招领】%s 捡到了【%s】！" % [p.name, found], "good")
+				# 批次 12 C3：演**这张道具的卡面**，与机会/命运同一段演出、同一个「确定」、
+				# 同一条超时/托管（`card_item` 非空 ⇒ DeckReveal 走道具卡面那一路）。
+				_log("【失物招领】%s 捡到了【%s】！" % [p.name, found], "#74d188")
+				s_card.rpc("【失物招领】%s 捡到了【%s】！" % [p.name, found], "good", "失物招领", found)
+				await _await_card_confirm(p)
 			else:
 				s_card.rpc("【失物招领】%s 翻了半天，一无所获" % p.name, "info")
-			await _wait(0.4)
+				await _wait(0.4)
 		"again":
 			_log("%s 在【特浓咖啡】灌了一大口，精神抖擞——本回合再行动一次！" % p.name, "#f0a0c0")
 			s_card.rpc("【特浓咖啡】%s 再行动一次！" % p.name, "good")
@@ -1434,6 +1460,8 @@ func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String,
 	_awaiting_prompt = int(p.peer)
 	_prompt_kind = kind
 	_prompt_amount = amount
+	# 待决格 = 提问者脚下那一格（两个调用点都由 `_resolve_tile` 以 `p.pos` 为 idx 调过来）
+	_prompt_tile = int(p.pos)
 	_broadcast_state()
 	if int(p.peer) == 1:
 		_show_prompt(tok, title, text, ok_text)
@@ -1443,6 +1471,8 @@ func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String,
 		func() -> bool: return int(_decision.token) != tok,
 		func(sec: float) -> void: _prompt_bar_arm(tok, sec))
 	_awaiting_prompt = 0
+	_prompt_tile = -1
+	_close_prompt()   # 窗口关掉（答了 / 超时）⇒ 决策区收起（幂等；按钮那一侧已经收过一遍）
 	if timed_out and int(_decision.token) != tok:
 		_log("%s 思考超时，放弃了" % p.name, "#8a90a5")
 	return int(_decision.token) == tok and bool(_decision.yes)
@@ -1594,6 +1624,11 @@ func s_op_timer(kind: String, left: float, total: float, owner_peer: int) -> voi
 	_op_left = left
 	_op_total = total
 	_op_owner = owner_peer
+	# 抽卡演出的「确定」按钮**只给该确认的人**（= 本窗口的归属 = 抽卡者）。观众看到同一张卡、
+	# 按钮不出镜，由抽卡者的确认统一收起（批次 12 C2）。走这条事件驱动而不是逐帧刷，
+	# 摆拍的 `dev_force_confirm` 才不会被下一帧覆写掉。
+	if deck_reveal != null and is_instance_valid(deck_reveal):
+		deck_reveal.set_can_confirm(kind == "card" and owner_peer == my_peer)
 
 ## 房主：广播当前操作窗口的剩余时间（_await_turn_window 在窗口（重）开始、
 ## 剩余整秒变化、窗口关闭时各发一次；本机经 call_local 同路径生效）
@@ -1608,6 +1643,8 @@ func _op_window_owner() -> int:
 		return _awaiting_roll
 	if _awaiting_prompt != 0:
 		return _awaiting_prompt
+	if _awaiting_card != 0:
+		return _awaiting_card
 	if _awaiting_item != 0:
 		return _awaiting_item
 	if _shop_peer != 0:
@@ -1637,6 +1674,10 @@ func _broadcast_state() -> void:
 	elif _awaiting_prompt != 0:
 		await_state = "prompt"
 		await_peer = _awaiting_prompt
+	elif _awaiting_card != 0:
+		# 抽卡演出等「确定」（批次 12 C2）：await_peer = 该点确定的人（= 抽卡者）。
+		await_state = "card"
+		await_peer = _awaiting_card
 	elif _awaiting_item != 0:
 		await_state = "item"
 		await_peer = _awaiting_item
@@ -1682,6 +1723,11 @@ func s_aberr(id: String, action: String, left: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_state(state: Dictionary) -> void:
 	st = state
+	# 决定已经不在我身上了（答了 / 超时 / 窗口被别人接手）⇒ 决策区收起（批次 12 C1）。
+	# 按钮那一侧点完就收过一遍，这条是**兜底**：房主超时时本机可能一帧都没点。
+	if _prompt_token != -1 and not (String(state.get("await", "")) == "prompt" \
+			and int(state.get("await_peer", -1)) == my_peer):
+		_close_prompt()
 	var tier := String(state.get("timeout_tier", GameSettings.TIER_CURRENT))
 	if tier != _settings.timeout_tier:
 		_settings.timeout_tier = tier
@@ -1759,15 +1805,16 @@ func s_move(peer: int, path: Array, step_time: float) -> void:
 	table3d.table_props.play_token_move(peer, path, step_time)
 
 @rpc("authority", "call_local", "reliable")
-func s_card(text: String, kind: String = "info", deck: String = "") -> void:
+func s_card(text: String, kind: String = "info", deck: String = "", card_item: String = "") -> void:
 	Fx.play("card", -4.0)
 	if deck != "":
 		# 事件卡：在屏幕层大字演出（批次 8）。相机全程不动 —— 旧版会推近 2D 镜头去读字，
 		# 那一推让桌垫图案滑动、与不跟相机的手牌错位（见 scripts/deck_reveal.gd）。
 		# 空守卫：`deck_reveal` 由 `_build_ui` 建、首个 `s_card` 之前必已就位（今天无害），
 		# 但缺了它将来一旦次序变了就会在对局中途崩 —— 宁可跳过演出，也不崩。
+		# `card_item` 非空 = 演**那张道具的卡面**（批次 12 C3 / ⑪ 失物招领），走同一段演出。
 		if deck_reveal != null:
-			deck_reveal.show_card(deck, kind, text)
+			deck_reveal.show_card(deck, kind, text, card_item)
 		if kind == "jail":
 			Fx.shake(self, 9.0, 0.35)
 			Fx.play("jail", -2.0)
@@ -1821,6 +1868,54 @@ func _push_log_toast(line: String) -> void:
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 	_show_prompt(token, title, text, ok_text)
+
+## 客户端 → 房主：本机玩家点了抽卡演出的「确定」（批次 12 C2 / ⑧⑪）。
+## 只认抽卡者本人（`_awaiting_card`），与 `c_decision` 的归属校验同一套做法。
+@rpc("any_peer", "call_remote", "reliable")
+func c_card_ok() -> void:
+	if not multiplayer.is_server():
+		return
+	if multiplayer.get_remote_sender_id() != _awaiting_card:
+		return
+	_card_ack = true
+
+## 房主 → 全员：收卡。抽卡者的确认 / 超时 / 机器人托管三条路都汇到这里，**全员一起收**。
+@rpc("authority", "call_local", "reliable")
+func s_card_close() -> void:
+	if deck_reveal != null and is_instance_valid(deck_reveal):
+		deck_reveal.request_close()
+
+## 本机玩家点了「确定」（`DeckReveal.confirmed`）：房主直接放行，客户端回 `c_card_ok`。
+func _on_card_confirm() -> void:
+	if multiplayer.is_server():
+		if _awaiting_card == my_peer:
+			_card_ack = true
+	else:
+		c_card_ok.rpc_id(1)
+
+## 等抽卡者点「确定」。**效果在确认之后才落地**（原来这里是 `await _wait(CARD_TIME + 0.1)`
+## 然后直接 `_apply_card`）。
+##
+## 超时走**既有操作限位**（`_await_turn_window` 的 "card" 挡位 ⇒ 倒计时挂在抽卡者的四角条上）；
+## 机器人 / 休眠托管 / 自动回归**短暂延时后自动确认**，不卡节奏。
+func _await_card_confirm(p: Dictionary) -> void:
+	_awaiting_card = int(p.peer)
+	_card_ack = false
+	_broadcast_state()   # 快照里 await="card" / await_peer=抽卡者（见 _broadcast_state 的等待链）
+	if _is_managed(p):
+		# 机器人 / 休眠托管：短暂延时后自动确认（不卡节奏）
+		await _wait(0.6)
+	elif at_mode != "" and int(p.peer) == my_peer:
+		# 自动回归里房主自己那张：不等真人点。**注意别把它扩成"整局都自动确认"** ——
+		# 别人（客户端）那一张要走真正的操作窗口 + `c_card_ok` 回程，联机回归才验得到协议。
+		await _wait(0.3)
+	else:
+		# `alive` 的语义是"**还**在等"（同 `_ask` 的 `_decision.token != tok`）—— 写反了
+		# 会让窗口一次都不进（`s_op_timer` 也不发、超时也不计），卡一闪而过。
+		await _await_turn_window("card", func() -> bool: return not _card_ack)
+	s_card_close.rpc()
+	_awaiting_card = 0
+	_broadcast_state()
 
 # ================= 界面刷新 =================
 
@@ -2258,6 +2353,14 @@ func _refresh_actions() -> void:
 		_at_roll_epoch = int(st.get("roll_epoch", -1))
 		_at_auto_roll()
 
+## 自动回归：等「确定」按钮亮出来之后点一下（与 `_at_auto_roll` 同类，只是触发源是演出相位）。
+func _at_auto_card_confirm() -> void:
+	await get_tree().create_timer(0.4).timeout
+	if not is_inside_tree():
+		return
+	if deck_reveal != null and is_instance_valid(deck_reveal) and deck_reveal.is_confirm_visible():
+		_on_card_confirm()
+
 ## 右下角动作按钮的状态（唯一来源是 st，客户端也准）：每次状态广播推一遍。
 ##
 ## 三态（见 批次7-设计 §5.2）：
@@ -2285,22 +2388,42 @@ func _refresh_action_button() -> void:
 		and int(st.get("turn", -1)) == my_peer
 	var my_item: bool = phase == "playing" and await_state == "item" \
 		and int(st.get("await_peer", -1)) == my_peer
-	action_btn.visible = my_roll or my_item
+	# 我有待决的买地/装修（批次 12 C1）：面板可以被 ✕ 关掉，忘了就白亏一次机会 ⇒
+	# 这枚按钮改文案「回格上决定」兜住"忘了"，点它把面板重新弹到那一格上。
+	# 判据与 `_pending_tile_for_me` 同源（这里从 st 读，房主/客户端一致）。
+	var my_prompt: bool = phase == "playing" and await_state == "prompt" \
+		and int(st.get("await_peer", -1)) == my_peer
+	action_btn.visible = my_roll or my_item or my_prompt
 	if my_roll:
 		action_btn.text = "转动转盘"
 		UIKit.restyle_button(action_btn, "primary")
 	elif my_item:
 		action_btn.text = "结束回合"
 		UIKit.restyle_button(action_btn, "normal")
+	elif my_prompt:
+		action_btn.text = "回格上决定"
+		UIKit.restyle_button(action_btn, "primary")
 
 ## 右下角动作按钮的唯一后果函数（文案与状态由 _refresh_action_button 决定）。
-## 只有"我的掷轮窗口"与"我的道具窗口"两次点击会做事，其余一律空转。
+## 只有"我的掷轮窗口 / 我的道具窗口 / 我的待决买地装修"三次点击会做事，其余一律空转。
 func _on_action_pressed() -> void:
 	match String(st.get("await", "")):
 		"roll":
 			_on_roll_pressed()
 		"item":
 			_on_skip_pressed()
+		"prompt":
+			_reopen_decision_panel()
+
+## 「回格上决定」：把待决那格的详情卡（含决策区）重新弹出来。
+## 展开着的规则说明面板与格详情卡抢同一块地方，先收掉它（否则面板会"点了没反应"）。
+func _reopen_decision_panel() -> void:
+	var tile := _pending_tile_for_me()
+	if tile < 0:
+		return
+	if rules_open:
+		_set_rules_open(false)
+	_show_info_panel(tile)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -2335,6 +2458,12 @@ func _on_tile_clicked(idx: int) -> void:
 		else:
 			_log("该格不在可选范围内", "#8a90a5")
 		return
+	_show_info_panel(idx)
+
+## 把某一格的详情填进格详情卡并弹出来。**批次 12 C1 从 `_on_tile_clicked` 里原样抽出来** ——
+## 待决的买地/装修要能自己把这张卡叫回来（✕ 关掉不算放弃，再点该格 / 点右下角
+## 「回格上决定」都走这一条），所以它不能再是点击处理器里的一段。
+func _show_info_panel(idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
 	var t := String(d.type)
 	var tiles: Array = st.get("tiles", [])
@@ -2374,6 +2503,9 @@ func _on_tile_clicked(idx: int) -> void:
 	# 规则说明展开时占着左下角，格详情卡让位（见 _set_rules_open）
 	_info_tile = idx
 	info_panel.visible = not rules_open
+	# 面板尺寸随「决策区」一起变（有决策时更高），所以位置要**先填完内容再摆**：
+	# 这里 `_refresh_decision_area` 会改高度，紧接着 `_place_info_panel` 按新高度锚上去。
+	_refresh_decision_area()
 	_place_info_panel()
 	info_panel.pivot_offset = info_panel.size * 0.5
 	info_panel.scale = Vector2(0.94, 0.94)
@@ -2504,72 +2636,75 @@ func _standings() -> Array:
 	rows.sort_custom(func(a, b) -> bool: return int(a.worth) > int(b.worth))
 	return rows
 
-## 购买/升级询问弹窗：游戏内风格面板 + 倒计时条，超时自动放弃
+## 购买/升级询问（**批次 12 C1：改成格详情卡上的决策区**）。
+##
+## 不再是屏幕居中的模态弹窗：`_arm_decision` 把问题交给 `info_panel` 里的决策区，
+## 面板由 `_place_info_panel` 锚在**那一格的上方**。旧的居中弹窗（`_prompt_dlg` 那套）已删净 ——
+## 不留第二条路径。倒计时 / 超时 / 托管的语义一字未改（都在 `_await_turn_window("prompt", …)`）。
 func _show_prompt(token: int, title: String, text: String, ok_text: String) -> void:
 	if at_mode != "":
 		await get_tree().create_timer(0.3).timeout
 		_answer(token, true)
 		return
+	_arm_decision(token, _pending_tile_for_me(), title, text, ok_text)
+
+## 把「待决」摆到格详情卡上：填内容 + 弹出该格的面板（决策区随之显出来）。
+## 房主侧由 `_ask` 调（格号来自 `_prompt_tile`）；客户端由 `s_prompt` 调（格号从快照推）。
+func _arm_decision(token: int, tile: int, title: String, text: String, ok_text: String) -> void:
 	_close_prompt()
 	_prompt_token = token
-	var layer := Control.new()
-	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	layer.z_index = 60
-	layer.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(layer)
-	_prompt_dlg = layer
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.45)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(dim)
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(center)
-	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2, 18)
-	panel.custom_minimum_size = Vector2(460, 0)
-	center.add_child(panel)
-	var pm := UIKit.margins(22, 22, 18, 18)
-	panel.add_child(pm)
-	var pv := VBoxContainer.new()
-	pv.add_theme_constant_override("separation", 12)
-	pm.add_child(pv)
-	pv.add_child(UIKit.title_label(title, 20))
-	var text_l := UIKit.label(text, 14, UIKit.TEXT)
-	text_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	pv.add_child(text_l)
-	var bar := UIKit.progress(UIKit.ACCENT)
-	pv.add_child(bar)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	pv.add_child(row)
-	var no_btn := UIKit.button("算了", 15)
-	no_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(no_btn)
-	var ok_btn := UIKit.button(ok_text, 15, "primary")
-	ok_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(ok_btn)
-	ok_btn.pressed.connect(func() -> void:
-		_answer(token, true)
-		_close_prompt()
-	)
-	no_btn.pressed.connect(func() -> void:
-		_answer(token, false)
-		_close_prompt()
-	)
-	_prompt_bar = bar
+	if tile >= 0:
+		_prompt_tile = tile
+	if decision_area != null and is_instance_valid(decision_area):
+		decision_title.text = title
+		decision_text.text = text
+		decision_ok.text = ok_text
+	if tile >= 0:
+		_show_info_panel(tile)   # 填详情 + `_refresh_decision_area` + 锚到该格上方
+	else:
+		_refresh_decision_area()
 	_prompt_bar_arm(token, GameSettings.turn_seconds(_settings.timeout_tier, "prompt"))
 
+## 决策区该不该露面：**我有待决、且面板正挂着那一格**。
+func _refresh_decision_area() -> void:
+	if decision_area == null or not is_instance_valid(decision_area):
+		return
+	decision_area.visible = _prompt_token != -1 and _info_tile >= 0 \
+		and _info_tile == _pending_tile_for_me()
+
+## 本机玩家此刻待决的是哪一格（没有则 -1）。
+## 客户端没有房主私有变量，就从快照推（见 `_prompt_tile` 那段说明）。
+func _pending_tile_for_me() -> int:
+	if multiplayer.is_server():
+		return _prompt_tile if _awaiting_prompt == my_peer else -1
+	if String(st.get("await", "")) != "prompt" or int(st.get("await_peer", -1)) != my_peer:
+		return -1
+	return int(_state_player(my_peer).get("pos", -1))
+
+## 决策区里的两枚按钮（唯一的后果函数）。**点完就把决策区收起**，与旧弹窗的按钮一致。
+func _on_decision_yes() -> void:
+	if _prompt_token == -1:
+		return
+	_answer(_prompt_token, true)
+	_close_prompt()
+
+func _on_decision_no() -> void:
+	if _prompt_token == -1:
+		return
+	_answer(_prompt_token, false)
+	_close_prompt()
+
+## 收起决策区（答了 / 超时 / 窗口关掉都走它）。**注意它与「关掉面板」是两回事**：
+## ✕ 只把 `info_panel.visible` 置假（见 table_hud 的关闭按钮），决策本身照旧在走 ——
+## 这正是设计 §③ 的「关闭 = 暂缓，不是放弃」。倒计时条的补间挂在面板之外，照跑不误。
 func _close_prompt() -> void:
 	if _prompt_tw != null and _prompt_tw.is_valid():
 		_prompt_tw.kill()
 	_prompt_tw = null
-	if _prompt_dlg != null and is_instance_valid(_prompt_dlg):
-		_prompt_dlg.queue_free()
-	_prompt_dlg = null
-	_prompt_bar = null
+	if decision_area != null and is_instance_valid(decision_area):
+		decision_area.visible = false
 	_prompt_token = -1
+	_prompt_tile = -1
 
 ## （重）启动弹窗倒计时条。sec <= 0（不限时）则只隐藏条子、不自动拒绝。
 ## 挡位中途变化时房主与客户端都会重新调用它（见 _await_turn_window / s_state）。
@@ -4249,6 +4384,11 @@ func _spawn_money_fly(peer: int, diff: int) -> void:
 func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
 	_place_token_tip()    # 悬停信息条同理（它跟着**棋子**走；悬停期间镜头也会动）
+	# 待决格描一圈脉冲高亮（批次 12 C1）：决策面板可以被 ✕ 关掉，这圈高亮是
+	# "我还有个没决定的事，就在那格"的第一眼提示；右下角那枚「回格上决定」是第二处兜底。
+	# 传 -1 = 没有待决；`set_pending_tile` 自己按"变了才改"早退，逐帧调是免费的。
+	if board != null:
+		board.set_pending_tile(_pending_tile_for_me())
 	# （原先这里有一段"抽卡演出期间逐帧重推跟图案的实体" —— 前提是抽卡会把 2D 取景推近。
 	#  批次 8 把演出搬到屏幕层、相机全程不动 ⇒ 不再有逐帧的取景变化要跟，整段删掉。）
 	# 批次 11 T1 起又回来了，但**换了判据**：自动跟随（`board._process` 的 `_pan_toward`）与
@@ -4262,10 +4402,13 @@ func _process(_delta: float) -> void:
 	# hud_test 有对应的守卫断言）。
 	var phase := String(st.get("phase", ""))
 	# 交易面板独立于视角：保证行动者一定能操作（相机可能停在棋子上而非自家座位）
-	var shop_mine: bool = phase == "playing" and int(st.get("shop_peer", 0)) == my_peer \
-		and int(st.get("shop_open", -1)) >= 0
-	shop_layer.visible = shop_mine
-	if shop_mine:
+	# **批次 12 C2：小卖部改为全员可见** —— 门槛从"正在逛的是我"改成"有人正在逛"
+	#（`shop_open >= 0`）。只有本人能操作：`_refresh_shop_ui` 按 `shop_peer` 把别人的按钮置灰，
+	# 并给旁观者一条「XX 正在挑选」说明。
+	var shop_open_now: bool = phase == "playing" and int(st.get("shop_open", -1)) >= 0 \
+		and int(st.get("shop_peer", 0)) != 0
+	shop_layer.visible = shop_open_now
+	if shop_open_now:
 		# 置顶（照 _menu_show）：build_play_ui 里后建的屏幕层控件（暂停按钮 / 格详情卡 /
 		# 战报开关与战报栏）默认按树序画在压暗底之上——亮着、看着能点，点击却被
 		# dim 的 MOUSE_FILTER_STOP 吃掉。已置顶时不重复搬。
@@ -4281,6 +4424,18 @@ func _process(_delta: float) -> void:
 		black_picker.visible = false
 		_black_sig = ""
 	_refresh_op_timer(_delta)
+	# 自动化测试：该我确认抽卡演出时自动点「确定」——**客户端那一侧的自动回归**，
+	# 让 `c_card_ok` 真的走一趟回程（房主只代自己那张，见 `_await_card_confirm`）。
+	# **必须挂在 `_process` 上、不能挂在 `_refresh_actions` 上**：抽卡窗口期间房主**不再广播
+	# `s_state`**（只有 `s_op_timer` 按秒走），而「确定」按钮要等演出走到 CARD_TIME 才出镜 ——
+	# 挂在状态广播上就永远等不到那一下（实测：客户端一直不确认，靠 25 秒超时收场）。
+	if at_mode != "" and deck_reveal != null and is_instance_valid(deck_reveal):
+		if deck_reveal.is_confirm_visible():
+			if not _at_card_done:
+				_at_card_done = true
+				_at_auto_card_confirm()
+		else:
+			_at_card_done = false
 	if dev.enabled:
 		dev.refresh_panel()
 
@@ -4412,6 +4567,9 @@ func _refresh_shop_ui() -> void:
 	var slots: Array = []
 	if shops_d.has(open):
 		slots = shops_d[open].get("slots", [])
+	# 小卖部全员可见（批次 12 C2）：本人能买，别人只读 —— 按钮一律置灰 + 一条说明。
+	var owner_peer := int(st.get("shop_peer", 0))
+	var mine_shop := owner_peer == my_peer
 	var mine: Dictionary = _state_player(my_peer)
 	var money := int(mine.get("money", 0))
 	var bag: Array = mine.get("items", [])
@@ -4421,7 +4579,8 @@ func _refresh_shop_ui() -> void:
 		if String(it.id) == "黑卡" and int(it.get("charges", 0)) > 0:
 			free_buy = true
 	var refresh := int(st.get("refresh_price", 0))
-	var sig := "%d|%s|%d|%d|%s|%d" % [open, str(slots), money, bag.size(), str(free_buy), refresh]
+	var sig := "%d|%s|%d|%d|%s|%d|%d|%d" % [open, str(slots), money, bag.size(),
+		str(free_buy), refresh, owner_peer, my_peer]
 	if sig == _shop_btn_sig:
 		return
 	_shop_btn_sig = sig
@@ -4444,7 +4603,7 @@ func _refresh_shop_ui() -> void:
 		var price := ItemData.price(String(ItemData.def(id).quality))
 		price_l.text = GameData.fmt_money(price)
 		b.visible = true
-		b.disabled = bag.size() >= 5 or (not free_buy and money < price)
+		b.disabled = (not mine_shop) or bag.size() >= 5 or (not free_buy and money < price)
 	if shop_tile_l != null:
 		shop_tile_l.text = "第 %d 号店 · 刷新费随全场次数递增" % open
 	if shop_money_l != null:
@@ -4452,7 +4611,14 @@ func _refresh_shop_ui() -> void:
 		shop_money_l.text = "现金 %s" % GameData.fmt_money(money)
 	if shop_refresh_btn != null:
 		shop_refresh_btn.text = "刷新 · %s" % GameData.fmt_money(refresh)
-		shop_refresh_btn.disabled = money < refresh
+		shop_refresh_btn.disabled = (not mine_shop) or money < refresh
+	if shop_leave_btn != null:
+		# 别人店里没有「离开」这一手：那是店主自己的动作（置灰防误点，房主侧还会再校验一次）
+		shop_leave_btn.disabled = not mine_shop
+	if shop_watch_l != null:
+		shop_watch_l.visible = not mine_shop
+		if not mine_shop:
+			shop_watch_l.text = "%s 正在挑选…（你只能旁观，货架不可操作）" % _name_by_peer(owner_peer)
 
 ## 黑市面板刷新（缓存签名，避免每帧重建）
 func _refresh_black_ui() -> void:

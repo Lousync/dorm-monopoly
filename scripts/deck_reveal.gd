@@ -10,8 +10,15 @@ extends Control
 ## 唯一失去的是"从桌上那摞抽起"的实体感（用户选的就是这一档，已接受）⇒ **本组件不依赖
 ## board / table3d**（不再需要起点供给 `deck_top_provider`，那一路已随本批删除）。
 ##
-## 四段相位与时长与旧版（`BoardView.play_deck_card`）一字不差；房主的等待
-##（`game.s_card` 里 `await _wait(DeckReveal.CARD_TIME + 0.1)`）靠 `CARD_TIME` 保持同步。
+## 四段相位与时长与旧版（`BoardView.play_deck_card`）一字不差。
+##
+## **批次 12 C2 起 HOLD 之后不再自动收回**：停在那里等「确定」（`request_close()` 才走 BACK）。
+## 因此 `CARD_TIME` 重新定义为 **前三段之和**（"演出到停住为止"），房主的等待不再挂在它上面，
+## 改走 `game._await_card_confirm()`（`_await_turn_window("card", …)`：超时 / 机器人 / 休眠托管
+## 自动确认）。`CARD_TIME` 现在只剩"何时该让「确定」按钮出镜"这一个语义，摆拍与测试仍读它。
+
+## 本机玩家按下「确定」（`game` 接手：房主直接放行 / 客户端回 `c_card_ok`）。
+signal confirmed
 
 ## 卡的屏幕尺寸（2:3 —— 与旧 `BoardView.CARD_SIZE`(260×390) 同比例，放大到"大字"档）。
 const CARD_SIZE := Vector2(320.0, 480.0)
@@ -20,18 +27,33 @@ const OUT := 0.34
 const FLIP := 0.30
 const HOLD := 1.50
 const BACK := 0.28
-## 总时长（房主结算等待与它同步）。由四相位派生 ⇒ 改相位不会忘记同步。
-const CARD_TIME := OUT + FLIP + HOLD + BACK
+## 演出到「停住等确定」为止的时长（= 前三段之和）。**BACK 只在 `request_close()` 之后走**。
+const CARD_TIME := OUT + FLIP + HOLD
+
+## 摆拍用：强制让「确定」按钮出镜（`--shot` 的 card / itemreveal 分支置真，`_close()` 复位）。
+var dev_force_confirm := false
 
 var _card: Control            # 卡片本体（正反两面铺满它；翻面 = 绕竖轴压扁再张开）
 var _back: Control            # 卡背（抽出阶段显示）
-var _front: Control           # 卡面（正文）
+var _front: Control           # 卡面（正文 / 道具卡面）
 var _t := 0.0                 # 相位计时（_process 驱动，见项目约定"持续动画手写 _process 相位"）
 var _bob := 0.0               # 停留段的上下浮动（屏幕像素）
 var _showing := false
+var _closing := false         # 已收到关闭请求，正在走 BACK 相位
+var _close_t := 0.0           # BACK 相位计时
+var _can_confirm := false     # 本机玩家是"该确认的人"（由 game 按操作窗口归属推）
+var _btn: Button              # 「确定」（停住之后才出镜；非抽卡者不给可用的按钮）
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 「确定」按钮是**本组件唯一吃点击的东西**（卡片自己全程 IGNORE，点击穿过去落到它身上）。
+	# 先建它、卡片后加 ⇒ 卡片画在按钮之上；两者位置不重叠（按钮在卡片正下方）。
+	_btn = UIKit.button("确定", 18, "primary")
+	_btn.custom_minimum_size = Vector2(150, 46)
+	_btn.size = Vector2(150, 46)
+	_btn.visible = false
+	_btn.pressed.connect(func() -> void: confirmed.emit())
+	add_child(_btn)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# 压在棋盘 / 四角身家条之上、**模态带之下**（暂停菜单 / 结算 50 / 弹问 60 / 小卖部 70）。
 	# 40 < 模态带里最低的 50 ⇒ 卡绝不压在模态面板之上（模态面板也绝不被卡盖住）。
@@ -47,18 +69,27 @@ func _process(delta: float) -> void:
 		tick(delta)
 
 ## 屏幕正中亮出一张卡。重复调用先把上一张收掉（幂等）。
-func show_card(deck: String, kind: String, text: String) -> void:
+##
+## **卡源有两种**（批次 12 C3）：`item_id` 非空 = 演**该道具的卡面**（⑪ 失物招领，直接挂一张
+## `ItemCard` —— 屏幕层是 2D，不需要手牌那套 SubViewport 纹理）；否则演牌堆（机会 / 命运）的文字卡。
+func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	_close()
+	var item_face := item_id != ""
 	var style: Array = UIKit.card_palette(kind)
+	if item_face:
+		# 道具卡面：描边 / 卡背的金色跟着**该道具的品质色**走（与货架上那张卡同一套配色）
+		var q := String(ItemData.def(item_id).get("quality", "白"))
+		style = [ItemData.QUALITY_COLORS.get(q, UIKit.TEXT), UIKit.PANEL]
 	var accent: Color = style[0]
 	var card := Control.new()
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.size = CARD_SIZE
 	card.pivot_offset = CARD_SIZE * 0.5        # 绕自己中心压扁 / 缩放
 	add_child(card)
-	_back = _card_face_back(deck, accent)
+	# 道具卡面没有牌堆名，卡背借用「机会」那套绿背（同一段演出的卡背不必再画一份）
+	_back = _card_face_back("机会" if item_face else deck, accent)
 	card.add_child(_back)
-	_front = _card_face_front(deck, text, style)
+	_front = ItemCard.make(item_id, CARD_SIZE) if item_face else _card_face_front(deck, text, style)
 	_front.visible = false
 	card.add_child(_front)
 	card.modulate = Color(1, 1, 1, 0.0)
@@ -68,15 +99,56 @@ func show_card(deck: String, kind: String, text: String) -> void:
 	_bob = 0.0
 	_t = 0.0
 	_showing = true
+	_btn.visible = false
 	visible = true
 	_place()
+
+## 请求收尾（房主广播的 `s_card_close` / 机器人托管 / 摆拍兜底）：走完 BACK 相位后自己 `_close()`。
+func request_close() -> void:
+	if not _showing or _closing:
+		return
+	_closing = true
+	_close_t = 0.0
+	_btn.visible = false
+
+## 本机玩家是不是"该点确定的人"（由 `game` 按操作窗口归属 `_op_owner` 推）。
+## 非抽卡者看到同一张卡，但**没有可用的按钮**（按钮整枚不出镜）。
+func set_can_confirm(v: bool) -> void:
+	_can_confirm = v
+	_update_btn()
+
+## 演出是否停在"等确定"上（测试与摆拍读它）。
+func is_awaiting_confirm() -> bool:
+	return _showing and not _closing and _t >= CARD_TIME
+
+## 「确定」按钮此刻是不是亮着（测试读它）。
+func is_confirm_visible() -> bool:
+	return _btn.visible
+
+## 按钮该不该出镜：停住之后、且本机是"该确认的人"（或摆拍强制）。
+func _update_btn() -> void:
+	_btn.visible = _showing and not _closing and _t >= CARD_TIME \
+		and (_can_confirm or dev_force_confirm)
 
 ## 相位推进（`_process` 每帧调；测试与摆拍可直接快进）。
 func tick(delta: float) -> void:
 	if not _showing or _card == null or not is_instance_valid(_card):
 		return
-	_t += delta
 	var c: Control = _card
+	# 收尾：`request_close()` 之后的 BACK 相位，走完自己收掉
+	if _closing:
+		_close_t += delta
+		var k4 := clampf(_close_t / BACK, 0.0, 1.0)
+		c.modulate = Color(1, 1, 1, 1.0 - k4)
+		var sc4 := 1.0 - 0.42 * k4
+		c.scale = Vector2(sc4, sc4)
+		_bob = 0.0
+		if _close_t >= BACK:
+			_close()
+			return
+		_place()
+		return
+	_t += delta
 	var t := _t
 	if t < OUT:
 		var k: float = _ease_out_back(t / OUT)
@@ -102,26 +174,34 @@ func tick(delta: float) -> void:
 		_bob = sin(h * 2.4) * 3.0
 		var breath := 1.0 + 0.03 * (0.5 + 0.5 * sin(h * 3.2))   # 呼吸微光，别像钉在屏幕上
 		c.modulate = Color(breath, breath, breath, 1.0)
-	elif t < CARD_TIME:
-		var k4 := (t - OUT - FLIP - HOLD) / BACK
-		c.modulate = Color(1, 1, 1, 1.0 - k4)
-		var sc4 := 1.0 - 0.42 * k4
-		c.scale = Vector2(sc4, sc4)
-		_bob = 0.0
 	else:
-		_close()
-		return
+		# 停住等「确定」：姿态与 HOLD 段一字不差（呼吸微光 + 上下浮动），
+		# 到点不再自动收 —— 由 `s_card_close`（或超时 / 托管）推 `request_close()`。
+		# **换面在这里兜一道**：翻面那一跳藏在 FLIP 分支里（压到最扁的一瞬才换），
+		# 只要有一跳的 delta 跨过了整段 FLIP（掉帧 / 摆拍直接 `tick` 快进到这一档），
+		# 就永远换不过来、卡背一直亮着。这一步幂等，正常路径上写的是同一个值。
+		_show_deck_face(false)
+		var h2 := t - OUT - FLIP - HOLD
+		c.scale = Vector2.ONE
+		c.rotation = 0.0
+		_bob = sin(h2 * 2.4) * 3.0
+		var breath2 := 1.0 + 0.03 * (0.5 + 0.5 * sin(h2 * 3.2))
+		c.modulate = Color(breath2, breath2, breath2, 1.0)
 	_place()
+	_update_btn()
 
 ## 演出是否进行中（`dev_tools` 的摆拍等待与测试都读它）。
 func is_showing() -> bool:
 	return _showing
 
-## 把卡摆到本层正中（+ 停留段的浮动）。本层是 FULL_RECT ⇒ 屏幕一改尺寸这里跟着重摆。
+## 把卡摆到本层正中（+ 停留段的浮动），「确定」按钮摆在卡的正下方。
+## 本层是 FULL_RECT ⇒ 屏幕一改尺寸这里跟着重摆。
 func _place() -> void:
 	if _card == null or not is_instance_valid(_card):
 		return
 	_card.position = (size - CARD_SIZE) * 0.5 + Vector2(0.0, _bob)
+	_btn.position = Vector2((size.x - _btn.size.x) * 0.5,
+		(size.y + CARD_SIZE.y) * 0.5 + 18.0)
 
 ## 收掉当前这张（重复开演 / 演出结束都走它）。
 func _close() -> void:
@@ -132,6 +212,11 @@ func _close() -> void:
 	_front = null
 	_bob = 0.0
 	_showing = false
+	_closing = false
+	_close_t = 0.0
+	_can_confirm = false
+	dev_force_confirm = false
+	_btn.visible = false
 	visible = false
 
 ## 翻面：true = 显示卡背，false = 显示卡面

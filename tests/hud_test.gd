@@ -474,12 +474,41 @@ func _run() -> void:
 		"演出期间 2D 相机缩放一动不动（实得 %.3f / 演出前 %.3f）" % [g.board._zoom, z_before])
 	_check(g.board._center.distance_to(c_before) < 0.001,
 		"演出期间 2D 相机注视点一动不动（实得 %s / 演出前 %s）" % [g.board._center, c_before])
-	# 把相位计时一次推到底（走演出自己的收尾分支）
+	# ---- 批次 12 C2：HOLD 之后**不再自动收**，停在"等确定"上 ----
+	# `CARD_TIME` 的定义也一并改了口径（= 前三段之和，"停在哪儿"的判据），这里钉住它。
+	_check(is_equal_approx(g.deck_reveal.CARD_TIME,
+			g.deck_reveal.OUT + g.deck_reveal.FLIP + g.deck_reveal.HOLD),
+		"CARD_TIME = 前三段之和（BACK 已移出，只留给收尾相位）")
 	g.deck_reveal.tick(g.deck_reveal.CARD_TIME + 0.1)
-	_check(not g.deck_reveal.is_showing(), "演出结束卡片已收回")
+	_check(g.deck_reveal.is_showing() and g.deck_reveal.is_awaiting_confirm(),
+		"推过 CARD_TIME 后**不自动收**：停在「等确定」上")
+	_check(not g.deck_reveal.is_confirm_visible(),
+		"不是该确认的人（操作窗口归属不是我）→ 「确定」按钮不出镜")
+	g.deck_reveal.set_can_confirm(true)
+	_check(g.deck_reveal.is_confirm_visible(),
+		"该确认的人 → 「确定」按钮出镜（观众看到同一张卡但没按钮）")
+	# 收卡只有一条路：房主广播的 `s_card_close`（超时 / 托管同样汇到这里）
+	g.deck_reveal.request_close()
+	_check(not g.deck_reveal.is_confirm_visible(), "收到收卡请求后按钮先收掉")
+	g.deck_reveal.tick(g.deck_reveal.BACK + 0.05)
+	_check(not g.deck_reveal.is_showing(), "收到收卡请求 → 走完 BACK 相位后收回")
 	# 设计 §6 的后半：不能只把 is_showing 置假 —— 节点要真回收、层要真隐藏。
 	_check(g.deck_reveal._card == null and not g.deck_reveal.visible,
 		"演出结束卡片已回收（不是只把 is_showing 置假：_card 已清、层已隐藏）")
+	# ---- 批次 12 C3：卡源多认一种（道具卡面），其余一字不差 ----
+	g.deck_reveal.show_card("失物招领", "good", "【失物招领】捡到了【招财猫】！", "招财猫")
+	await process_frame
+	_check(g.deck_reveal.is_showing(), "道具卡面也能演（show_card 收第 4 个参数 = 道具 id）")
+	var IC = load("res://scripts/item_card.gd")
+	var ic_found := 0
+	for n in g.deck_reveal.find_children("*", "", true, false):
+		if n.get_script() == IC:
+			ic_found += 1
+	_check(ic_found == 1, "卡面就是那张 `ItemCard`（与货架 / 手牌 / 弹窗同一张卡，实得 %d 张）" % ic_found)
+	g.deck_reveal.request_close()
+	g.deck_reveal.tick(g.deck_reveal.BACK + 0.05)
+	_check(not g.deck_reveal.is_showing(), "道具卡面同一条收尾路径")
+
 	# 反向契约：旧那套"演在画布上"的接口必须**真的没了**（不留空壳）
 	_check(not g.board.has_method("play_deck_card"), "BoardView.play_deck_card 已退场")
 	_check(not g.board.has_method("is_showing_deck_card"), "BoardView.is_showing_deck_card 已退场")
@@ -512,6 +541,11 @@ func _run() -> void:
 		"stamina": 3, "items": [], "item_used": false})
 	g.s_state(hs)
 	await process_frame
+	# **已知竞态（实测偶发，本批两次）**：房主开局那次定时广播（`_host_setup` 的 `await _wait(1.5)`）
+	# 落在这一段时会把 `st` / `_peers_info` 换成房主自己的真实局面，紧接着这几条就全红。
+	# `await process_frame` 正是广播能挤进来的那一格 ⇒ 取引用前**再喂一次**（`s_state` 是同步的，
+	# 与下一行之间没有 await，广播挤不进来）。断言本身一字未改。
+	g.s_state(hs)
 	var pinfo: Dictionary = g.board._peers_info
 	_check(pinfo.has(1) and String(pinfo[1].get("name", "")) == "甲",
 		"悬停信息的数据源 `board._peers_info` 仍在（Task 3 读它）")
@@ -553,7 +587,15 @@ func _run() -> void:
 	_check(g.token_tip.visible, "悬停到棋子上 ⇒ 条浮出")
 	_check(String(g._tip_name.text) == "甲",
 		"条上的昵称与数据源同源（实得 %s）" % g._tip_name.text)
-	var want_sub := "身家 %s · 第 %d 名" % [GameData.fmt_money(int(pinfo[1].worth)), int(pinfo[1].rank)]
+	# 同一条竞态：`pinfo` 是上面那一步取的，两条 `await process_frame` 之间可能来过广播 ——
+	# 那样条上写的是**旧**那份（悬停时读的），而 `pinfo` 是更早的一份，比出来是假红。
+	# ⇒ 重喂状态 + **同 peer 再悬停一次**（会重读内容，见 R10-2）+ 当场读 `_peers_info`，
+	# 三句之间没有 await。断言本身一字未改。
+	g.s_state(hs)
+	_check(g.table3d.on_table_hover.call(want_c) == 1, "（重取）仍悬停甲那枚棋子")
+	var pinfo_now: Dictionary = g.board._peers_info
+	var want_sub := "身家 %s · 第 %d 名" % [
+		GameData.fmt_money(int(pinfo_now[1].worth)), int(pinfo_now[1].rank)]
 	_check(String(g._tip_sub.text) == want_sub,
 		"条上的身家 / 名次与 `_peers_info` 同源（实得 %s / 期望 %s）" % [g._tip_sub.text, want_sub])
 	# 位置 = 棋子**屏幕坐标**的正上方（"屏幕层天然面向镜头"那条的可执行判据：条的位置是**屏幕**像素，
@@ -1811,6 +1853,204 @@ func _run() -> void:
 				_check(g.table3d.world_to_canvas_px(h3c.global_position).is_equal_approx(h1c),
 					"镜头静止时房子也不重摆（与棋子走同一条早退）")
 		g.board.fit_overview(true)
+
+	print("== 格详情卡兼作买地/装修面板（批次 12 C1 / ③）==")
+	g.board.cam_locked = false
+	g.board.fit_overview(true)
+	await process_frame
+	# 选**离屏幕中心最近**的那块地（与 dev_tools 的 `decision` 摆拍同一套挑法）：靠边的格子
+	# 会被 `_place_info_panel` 的夹位推回来，那样"横向居中于该格"这条就量不准了。
+	var prop_t := -1
+	var best_pc := 1e18
+	var first_prop := -1
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) != "property":
+			continue
+		if first_prop < 0:
+			first_prop = i
+		var sp_c = g.table3d.viewport_to_screen(g.board.tile_screen_pos(i))
+		if sp_c == null:
+			continue
+		var dc_c: float = (sp_c as Vector2).distance_to(g.size * 0.5)
+		if dc_c < best_pc:
+			best_pc = dc_c
+			prop_t = i
+	if prop_t < 0:
+		prop_t = first_prop
+	_check(prop_t >= 0, "（前置）找得到一块地产格（实得 %d）" % prop_t)
+	var st_p: Dictionary = _state(2, false)
+	for i in st_p.players.size():
+		if int(st_p.players[i].peer) == 2:
+			st_p.players[i].pos = prop_t
+	st_p.await = "prompt"
+	st_p.await_peer = 2
+	g.my_peer = 2
+	g._awaiting_prompt = 2          # 房主侧私有状态：提问对象是我
+	g._prompt_tile = prop_t
+	g.s_state(st_p)
+	await process_frame
+	# 走**真入口**：`s_prompt` → `_show_prompt` → `_arm_decision`（这条路上没有居中弹窗了）
+	g.s_prompt(9001, "购买地产",
+		"要买下【%s】吗？" % String(GameData.TILES[prop_t].name), "买下它！")
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	_check(g.info_panel.visible, "有待决 → 格详情卡自己弹出来")
+	_check(g.decision_area.visible, "决策区露面（买下它！/ 算了 + 倒计时条）")
+	_check(String(g.decision_ok.text) == "买下它！" and String(g.decision_no.text) == "算了",
+		"两枚按钮的文案来自询问内容（实得「%s」/「%s」）"
+			% [String(g.decision_ok.text), String(g.decision_no.text)])
+	_check(String(g.info_title.text).contains(String(GameData.TILES[prop_t].name)),
+		"面板上同时有该格详情（标题「%s」）" % String(g.info_title.text))
+	_check(g._prompt_token == 9001, "倒计时条已武装（token 记下了）")
+	_check(g._prompt_bar != null and is_instance_valid(g._prompt_bar) and g._prompt_bar.visible,
+		"倒计时条就在**这一块**里（不是第二个弹窗）")
+	# 锚在该格上方：与「点格子」那条同一条换算（画布坐标 → 屏幕坐标）
+	var raw_p: Vector2 = g.board.tile_screen_pos(prop_t)
+	var anch = g.table3d.viewport_to_screen(raw_p)
+	_check(anch != null, "（前置）该格可解算到屏幕坐标")
+	var tcp: Vector2 = anch if anch != null else Vector2(-9999.0, -9999.0)
+	var pcp: Vector2 = g.info_panel.position
+	_check(absf((pcp.x + g.info_panel.size.x * 0.5) - tcp.x) < 4.0,
+		"面板横向居中于**该格**（卡中心 %.0f / 格 %.0f）"
+			% [pcp.x + g.info_panel.size.x * 0.5, tcp.x])
+	_check(g.info_panel.size.y > 170.5,
+		"决策区把面板撑高了（实得 %.0f > 170）—— 不是只换了个位置的空壳" % g.info_panel.size.y)
+	_check(g.info_panel.size.x < g.size.x - 20.0,
+		"面板**不是**屏幕居中的模态（宽 %.0f ≪ 屏宽 %.0f）" % [g.info_panel.size.x, g.size.x])
+	_check(g.board.pending_tile() == prop_t,
+		"待决格描着那圈脉冲高亮（实得 %d）" % g.board.pending_tile())
+	_check(g.action_btn.visible and String(g.action_btn.text) == "回格上决定",
+		"右下角动作按钮变「回格上决定」（实得「%s」）" % String(g.action_btn.text))
+	# ✕ 关掉 = 暂缓，**不是放弃**
+	var close_btn: Button = null
+	for n in g.info_panel.find_children("*", "Button", true, false):
+		if String((n as Button).text) == "✕":
+			close_btn = n
+	_check(close_btn != null, "（前置）找得到面板上的 ✕")
+	if close_btn != null:
+		close_btn.pressed.emit()
+	_check(not g.info_panel.visible, "✕ 能把面板关掉")
+	await process_frame
+	g._process(0.0)
+	_check(g._prompt_token == 9001, "**关掉面板不等于放弃**：决定仍在（token 未清）")
+	_check(g.board.pending_tile() == prop_t, "关掉后待决格那圈高亮照旧亮着")
+	_check(g.decision_area.visible, "决策区本身没被销毁（面板藏起来而已）")
+	# 再点该格 → 面板回来
+	g._on_tile_clicked(prop_t)
+	await process_frame
+	_check(g.info_panel.visible and g.decision_area.visible, "再点该格 → 面板与决策区都回来")
+	# 点右下角动作按钮 → 同样把面板叫回来
+	g.info_panel.visible = false
+	g._on_action_pressed()
+	await process_frame
+	_check(g.info_panel.visible and g.decision_area.visible,
+		"点「回格上决定」→ 面板与决策区都回来")
+	# 作答：决策区收起、决定经既有的 _answer 落地
+	g._on_decision_yes()
+	_check(g._prompt_token == -1 and not g.decision_area.visible,
+		"点「买下它！」→ 决策区收起、token 清掉")
+	_check(int(g._decision.get("token", -1)) == 9001 and bool(g._decision.get("yes", false)),
+		"走的是既有的 _answer 应答路径（房主侧直接记进 _decision）")
+	_check(g._pending_tile_for_me() == -1, "决定落地后没人还待决")
+	# 反向契约：旧的居中弹窗必须**真的没了**（不留第二条路径）
+	_check(g.get("_prompt_dlg") == null, "旧居中弹窗的句柄 `_prompt_dlg` 已从 game 上删净")
+	g._awaiting_prompt = 0
+	g._prompt_tile = -1
+
+	print("== 小卖部全员可见（批次 12 C2 / ⑧）：别人在逛，我看只读 ==")
+	g.my_peer = 2
+	var shop_i := _shop_tile()
+	_check(shop_i >= 0, "（前置）找得到小卖部格")
+	var st_w: Dictionary = _state(2, true)
+	st_w.shop_peer = 3             # 正在逛的是丙，不是我
+	g.s_state(st_w)
+	g._process(0.0)
+	await process_frame
+	_check(g.shop_layer.visible, "**别人在逛，我也看得到小卖部**（门槛改成了 shop_open >= 0）")
+	_check(String(g.shop_tile_l.text).contains(str(shop_i)),
+		"看到的是那一家的货架（实得「%s」）" % String(g.shop_tile_l.text))
+	_check(g.shop_watch_l.visible and String(g.shop_watch_l.text).contains("丙"),
+		"旁观说明条写着「谁在挑」（实得「%s」）" % String(g.shop_watch_l.text))
+	var all_disabled := true
+	for b2 in g.shop_btns:
+		if (b2 as Button).visible and not (b2 as Button).disabled:
+			all_disabled = false
+	_check(all_disabled, "别人在逛时买按钮全灰（只读）")
+	_check(g.shop_refresh_btn.disabled and g.shop_leave_btn.disabled,
+		"刷新 / 离开也一并置灰（只有本人能操作）")
+	st_w.shop_peer = 2             # 换成我自己在逛
+	g.s_state(st_w)
+	g._process(0.0)
+	await process_frame
+	_check(not g.shop_watch_l.visible, "自己逛时没有那条旁观说明")
+	_check(not g.shop_refresh_btn.disabled, "自己逛时刷新按钮恢复可用（钱够就点亮）")
+	_check(not g.shop_leave_btn.disabled, "自己逛时「离开」可用")
+	g.s_state(_state(2, false))    # shop_open = -1 ⇒ 没人逛
+	g._process(0.0)
+	await process_frame
+	_check(not g.shop_layer.visible, "没人逛 ⇒ 小卖部收起（与主人是不是我无关）")
+
+	print("== 抽卡确认：房主侧（超时/托管 / 归属校验 / 两个新 RPC）==")
+	# 机器人 / 休眠托管：不等人点，短暂延时后自己收卡（`_await_card_confirm` 里的托管分支）
+	var bot_p := {"peer": -1, "name": "机器人A", "bot": true, "sleep": 0}
+	g.deck_reveal.show_card("机会", "good", "测试：托管自动确认")
+	await process_frame
+	_check(g.deck_reveal.is_showing(), "（前置）演出已开演")
+	await g._await_card_confirm(bot_p)
+	_check(g._awaiting_card == 0, "托管（机器人）→ 走完就把等待归属清掉")
+	_check(not g._card_ack, "托管路径不依赖 _card_ack（根本没人点）")
+	_check(g.deck_reveal._closing or not g.deck_reveal.is_showing(),
+		"托管也照样广播收卡（s_card_close → request_close，不是把卡晾在那儿）")
+	_check(not g.deck_reveal.is_awaiting_confirm() or g.deck_reveal._closing,
+		"托管路径不会把卡永久停在「等确定」上")
+	_check(String(g.st.get("await", "")) != "card", "确认之后快照不再卡在 await=card")
+	# 真人那一张走**真正的操作窗口**（不是托管分支）。这一条正是联机回归抓到过的那个 bug：
+	# `alive` 谓词的极性写反（传了"已确认"而不是"还在等"）⇒ 窗口一次都不进 ——
+	# `s_op_timer` 不发、超时不计、卡一闪而过，而托管分支照样是绿的，本地看不出来。
+	var human_p := {"peer": 42, "name": "丙", "bot": false, "sleep": 0}
+	g.deck_reveal.show_card("机会", "good", "测试：真人确认")
+	g._card_ack = false
+	g._op_kind = ""
+	# `_await_turn_window` 的外圈是 `while running and …` —— 本套件开头把 `running` 关了，
+	# 不打开它窗口一次都不进（会同步跑完、看起来"卡直接收了"）。这一步只影响本条断言：
+	# `_run_game` 早在 `running == false` 时就返回了，之后不会再被这个标志唤起。
+	g.running = true
+	g._await_card_confirm(human_p)     # 不 await：跑到窗口那一句就挂住（同 `_at_auto_roll` 的写法）
+	await process_frame
+	_check(g._awaiting_card == 42, "等的是抽卡者本人（实得 %d）" % g._awaiting_card)
+	_check(g._op_kind == "card" and g._op_owner == 42,
+		"**操作窗口真开出来了**（s_op_timer kind=card / owner=42，实得 %s / %d）"
+			% [g._op_kind, g._op_owner])
+	_check(g._prompt_token == -1, "（不串台）抽卡窗口不会去动买地那个决策区")
+	g._card_ack = true                 # 等价于抽卡者点了「确定」（房主侧就是这一句）
+	await create_timer(0.4).timeout
+	_check(g._awaiting_card == 0, "确认之后归属清掉（窗口关掉，实得 %d）" % g._awaiting_card)
+	_check(g.deck_reveal._closing or not g.deck_reveal.is_showing(), "确认之后卡开始收")
+	g.running = false                  # 还原（本套件本来就不跑回合循环）
+	# 归属校验：只认抽卡者本人（与 `c_decision` 同一套做法）。headless 下本机不是任何人的
+	# "远端"（`get_remote_sender_id()` = 0）⇒ 冒充他人的那一下必须被丢掉。
+	g._awaiting_card = 999        # 假装正等着别人
+	g._card_ack = false
+	g.c_card_ok()
+	_check(not g._card_ack, "不是抽卡者本人 → c_card_ok 被丢掉（与 c_decision 同款归属校验）")
+	g._awaiting_card = 0
+	g._card_ack = false
+	# 两个新 RPC 的登记（方向是协议的一部分：c_* 必须是 any_peer，s_* 必须 authority + call_local）。
+	# `Node.get_node_rpc_config()` 在这版上返回 null，RPC 表要**问脚本**（`Script.get_rpc_config()`）。
+	var rcfg: Dictionary = g.get_script().get_rpc_config()
+	_check(not rcfg.is_empty(), "（前置）拿得到 RPC 配置表（实得 %d 项）" % rcfg.size())
+	var ck := StringName("c_card_ok")
+	var sk := StringName("s_card_close")
+	_check(rcfg.has(ck) and rcfg.has(sk), "c_card_ok / s_card_close 都登记在册")
+	if rcfg.has(ck):
+		_check(int((rcfg[ck] as Dictionary).get("rpc_mode", -1)) == MultiplayerAPI.RPC_MODE_ANY_PEER,
+			"c_card_ok 是 any_peer（客户端 → 房主）")
+	if rcfg.has(sk):
+		var sc: Dictionary = rcfg[sk]
+		_check(int(sc.get("rpc_mode", -1)) == MultiplayerAPI.RPC_MODE_AUTHORITY
+			and bool(sc.get("call_local", false)),
+			"s_card_close 是 authority + call_local（房主 → 全员，房主自己也收）")
 
 	g.get_tree().paused = false
 	g.free()

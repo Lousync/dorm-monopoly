@@ -37,6 +37,8 @@ const GAP := 5.0
 const MIN_ZOOM_FACTOR := 0.55   # 下限（全景附近）
 const MAX_ZOOM_FACTOR := 3.1    # 上限（明显更近）
 const SELECT_COLOR := Color(1.0, 0.86, 0.35)   # 指向性道具「可选中」高亮（金）
+## 「我还有待决的买地/装修」高亮（批次 12 C1）：琥珀偏橙，与上一条的金色分得开
+const PENDING_COLOR := Color(1.0, 0.62, 0.20)
 ## 抽卡演出（`DECK_PUSH_FACTOR` / `DECK_*` / `CARD_SIZE` / 相位动画那一整套）已随批次 8
 ## 整段搬到屏幕层的 `DeckReveal`（scripts/deck_reveal.gd）：演出不再把 2D 相机推近，
 ## 所以这里不再需要推近倍数、相位时长与卡尺寸。要改演出节奏改 `DeckReveal` 里的常量。
@@ -106,6 +108,11 @@ var _strip_cols: Array = []    # 每格顶带当前颜色（避免悬停时反�
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
 var _tile_hl: Array = []       # 每格「可选中」高亮叠层（选地块/两段式时显示）
+## 每格「我还有待决的买地/装修」高亮叠层（批次 12 C1，见 `set_pending_tile`）。
+## 与 `_tile_hl` **分开两份**：那一份归"选目标态"，两边各有各的收口，混用会被互相熄灭。
+var _tile_hl_pend: Array = []
+var _pend_tile := -1           # 待决格（-1 = 没有）；脉冲相位由 `_process` 推
+var _pend_phase := 0.0
 var _tile_tw := {}             # 每格进行中的补间
 ## 每 peer 的**棋子落点**（画布像素）：格心 + 槽位偏移。**棋子本身住在 `TableProps`**（批次 11
 ## Task 1 搬进 3D，见 scripts/table_props.gd「棋子（小人）」那一段），画布里已经没有它了；
@@ -277,6 +284,19 @@ func _build_tiles() -> void:
 			UIKit.stylebox(Color(0, 0, 0, 0), 7, SELECT_COLOR, 3, 0))
 		_world.add_child(hl)
 		_tile_hl.append(hl)
+
+		# 「我还有待决的买地/装修」那一圈（批次 12 C1）：琥珀色、比选中圈粗一档，
+		# 免得玩家把它看成"选目标"。默认全隐藏，脉冲相位在 `_process` 里手写。
+		var phl := Panel.new()
+		phl.position = p.position
+		phl.size = p.size
+		phl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		phl.visible = false
+		phl.modulate.a = 0.0
+		phl.add_theme_stylebox_override("panel",
+			UIKit.stylebox(Color(0, 0, 0, 0), 7, PENDING_COLOR, 4, 0))
+		_world.add_child(phl)
+		_tile_hl_pend.append(phl)
 
 		# 顶带 = 唯一的归属标记：只有「已售出的地产」才显示，颜色即拥有者颜色。
 		# 无主地产、以及所有非卖的活动格（小卖部 / 赌场 / 四角等）一律不显示。
@@ -686,6 +706,14 @@ func _process(delta: float) -> void:
 			if not follow_drives:
 				_center = _center_target
 			_rotating = false
+	# 待决格那一圈的脉冲（批次 12 C1）：手写相位（持续动画走 `_process` 的项目约定），
+	# 1.3 秒一个来回、透明度 0.35↔1.0。没有待决格时一分钱不花（`_pend_tile < 0` 直接跳过）。
+	if _pend_tile >= 0 and _pend_tile < _tile_hl_pend.size():
+		_pend_phase = fmod(_pend_phase + delta / 1.3, 1.0)
+		var a := 0.35 + 0.65 * (0.5 + 0.5 * sin(_pend_phase * TAU))
+		var phl = _tile_hl_pend[_pend_tile]
+		if phl != null and is_instance_valid(phl):
+			(phl as Panel).modulate.a = a
 	# （原先这里逐帧把 2D 光环摆到棋子中心上。批次 11 Task 1 起光环是 `TableProps` 里的一条
 	#  3D 环、由它自己的 `_process` 跟着棋子走 —— 画布这一层不再有任何逐帧跟随。）
 	if _wheel_wait > 0.0:
@@ -894,6 +922,30 @@ func clear_select() -> void:
 	_set_hl_peers([])
 	_set_hl_tiles([])
 	_pulse_select(false)
+
+## 「我还有待决的买地/装修」那一格的高亮（批次 12 C1 / 设计 §③）。
+##
+## **为什么另起一圈、不复用 `set_select_tiles`**：那一圈是"选目标态"的（`_hl_tiles`），
+## 选目标与买地决策虽然不会同时发生，但两套语义混用一个数组之后，任一边的 `clear_select()`
+## 都会把另一边熄灭 —— 高亮是给"玩家忘了"兜底的，不能被别处的清理顺手抹掉。
+##
+## 形态：**琥珀色的一圈 + 逐帧脉冲**（`_process` 手写相位，符合同一约定；`_pulse_select`
+## 那套是批次 9 留下的循环 Tween，新代码不跟）。传 -1 = 收掉。
+func set_pending_tile(idx: int) -> void:
+	if idx == _pend_tile:
+		return
+	_pend_tile = idx
+	if idx < 0:
+		_pend_phase = 0.0
+	for i in _tile_hl_pend.size():
+		var hl = _tile_hl_pend[i]
+		if hl != null and is_instance_valid(hl):
+			(hl as Panel).visible = i == idx
+			(hl as Panel).modulate.a = 1.0 if i == idx else 0.0
+
+## 本机是否有待决格（测试读它）。
+func pending_tile() -> int:
+	return _pend_tile
 
 ## 「哪些玩家此刻可被选中」的高亮：**画布里没有落点了**（座位卡与桌上立牌都已退场）。
 ## **保留接口不删**（`game._begin_peer_target` 仍在调）。

@@ -37,7 +37,7 @@ func copy() -> GameSettings:
 	return s
 
 ## 某环节的操作窗口秒数；<= 0 表示不限时。
-## kind: roll / prompt / item / shop / black
+## kind: roll / prompt / item / shop / black / card
 # 未知挡位会掉到最后一段、按「现状」取值（回落，见 §三之一）
 static func turn_seconds(tier: String, kind: String) -> float:
 	match tier:
@@ -48,6 +48,8 @@ static func turn_seconds(tier: String, kind: String) -> float:
 	match kind:
 		"roll": return GameData.ROLL_TIMEOUT
 		"prompt": return GameData.PROMPT_TIMEOUT
+		# 抽卡演出的「确定」（批次 12 C2）：与「决定」同一份秒数（两者都是"要点一下的确认"）
+		"card": return GameData.PROMPT_TIMEOUT
 		"item": return ItemData.ITEM_TIMEOUT
 		"shop": return ItemData.SHOP_TIMEOUT
 		"black": return ItemData.BLACK_TIMEOUT

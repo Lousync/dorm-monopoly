@@ -470,8 +470,15 @@ func fps_probe_run() -> void:
 
 func take_shot(path: String) -> void:
 	await get_tree().create_timer(0.4).timeout
-	while g.deck_reveal != null and g.deck_reveal.is_showing():
+	# 批次 12 C2 起演出**停在 HOLD 等「确定」**（`request_close()` 才收）⇒ 这里不能无限等：
+	# 抽卡者是真人而摆拍里没人点按钮时它会一直亮着，把整张摆拍卡死。等到上限就替它收掉。
+	var wait_guard := 0
+	while g.deck_reveal != null and g.deck_reveal.is_showing() and wait_guard < 24:
 		await get_tree().create_timer(0.25).timeout
+		wait_guard += 1
+	if g.deck_reveal != null and g.deck_reveal.is_showing():
+		g.deck_reveal.request_close()
+		await get_tree().create_timer(0.4).timeout
 	g.board.fit_overview()
 	await get_tree().create_timer(0.2).timeout
 	# 摆拍期间默认锁住自动镜头（避免对局推进拽走视角）；文件名带 freecam 时不锁，
@@ -511,10 +518,26 @@ func take_shot(path: String) -> void:
 		await get_tree().create_timer(0.2).timeout
 	if not path.contains("plain") or path.contains("card"):
 		g.deck_reveal.show_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+		# 批次 12 C2 起演出**停在 HOLD 等「确定」**：按钮要 CARD_TIME（2.14s）之后才出镜，
+		# 而下面那三帧连拍落在 0.6/1.2/1.8s ⇒ 不处理的话一张都拍不到按钮。
+		# 这里用**真接口**（`dev_force_confirm` + `tick` 快进）把它推到"停住等确定"那一档；
+		# `deckout` 要的正是"刚抽出"那一瞬，不动它。
+		if not path.contains("deckout"):
+			g.deck_reveal.dev_force_confirm = true
+			g.deck_reveal.set_can_confirm(true)
+			g.deck_reveal.tick(DeckReveal.CARD_TIME + 0.01)
 		# deckout **不转轮**：`spin_wheel` 会把镜头焦点改到转盘（`focus_point`），
 		# 演出一开始镜头就往转盘跑（牌堆 / 桌面被挪开），拍不到抽卡这一幕。
 		if not path.contains("deckout"):
 			g.board.spin_wheel(12)
+	if path.contains("itemreveal"):
+		# 摆拍（批次 12 C3 / ⑪ 失物招领）：演出**道具卡面**（覆盖上面那张机会卡）——
+		# 同一段四相位、同一个「确定」。用法：`--autotest=host --rounds=6
+		# --shot=shots/b12_c_itemreveal_card.png`（文件名含 `card` ⇒ 走上面那条出图门）。
+		g.deck_reveal.show_card("失物招领", "good", "【失物招领】捡到了【招财猫】！", "招财猫")
+		g.deck_reveal.dev_force_confirm = true
+		g.deck_reveal.set_can_confirm(true)
+		g.deck_reveal.tick(DeckReveal.CARD_TIME + 0.01)
 	if path.contains("level") and g.multiplayer.is_server():
 		# 摆拍：给前几块地各设一个装修等级（1..MAX_LEVEL），
 		# 方便核对格子上的房子图标与等级配色——机器人要很久才会主动装修，抓不到
@@ -625,6 +648,69 @@ func take_shot(path: String) -> void:
 				g.table3d.table_props.set_hand_selected(slot_t)
 			g._begin_peer_target(slot_t, false, true)
 			await get_tree().create_timer(0.25).timeout
+	if path.contains("decision") and g.multiplayer.is_server():
+		# 摆拍（批次 12 C1 / ③）：**格详情卡兼作买地/装修面板** —— 面板锚在该格上方、
+		# 带「买下它！」/「算了」与倒计时条，右下角动作按钮同时变「回格上决定」。
+		# 走**真接口** `_arm_decision`（`_show_prompt` 的另一半），只伪造"我有待决"这件事，
+		# 玩法代码一行不改（同 level / hand / tip / target 那些注入分支）。
+		# 用法：`--autotest=host --rounds=6 --shot=shots/b12_c_decision_table_plain.png`
+		#（文件名必须含 `plain` —— 否则会先演一张机会卡，把面板盖住；也要含 `table`
+		#  免得 `focus_grid(27)` 弹出来的格详情卡跟它打架）。
+		await get_tree().create_timer(0.2).timeout
+		var prop := -1
+		var best_c := 1e18
+		for i in g.htiles.size():
+			if String(GameData.TILES[i].get("type", "")) != "property":
+				continue
+			var sp_i = g.table3d.viewport_to_screen(g.board.tile_screen_pos(i))
+			if sp_i == null:
+				continue
+			# 挑**离屏幕中心最近**的那块地：面板锚在它上方，中心附近一定放得下（不会被夹到屏边）
+			var dc: float = (sp_i as Vector2).distance_to(g.size * 0.5)
+			if dc < best_c:
+				best_c = dc
+				prop = i
+		if prop >= 0:
+			var me_d: Dictionary = g._player_by_peer(g.my_peer)
+			if not me_d.is_empty():
+				me_d.pos = prop        # 本机棋子挪到那格 —— 面板锚的就是"我脚下这一格"
+			g._awaiting_prompt = g.my_peer
+			g._prompt_tile = prop
+			g._broadcast_state()   # ⇒ await="prompt"/await_peer=我，动作按钮变「回格上决定」
+			await get_tree().create_timer(0.3).timeout
+			g._arm_decision(1, prop, "购买地产",
+				"要买下【%s】吗？\n售价 %s · 基础租金 %s\n你的现金 %s" % [
+					String(GameData.TILES[prop].name),
+					GameData.fmt_money(int(GameData.TILES[prop].price)),
+					GameData.fmt_money(int(GameData.TILES[prop].rent)),
+					GameData.fmt_money(int(me_d.get("money", 0)))], "买下它！")
+			await get_tree().create_timer(0.3).timeout
+			# 冻住树：倒计时条别在出图那几帧里跑掉，自动对局也别再推进（把这张图钉成可复现）
+			get_tree().paused = true
+	if path.contains("shopwatch") and g.multiplayer.is_server():
+		# 摆拍（批次 12 C2 / ⑧）：**非本人**看到的小卖部（只读：按钮全灰 + 「XX 正在挑选」）。
+		# 借真接口开一间店的货架（`_stock_shop`），再把「正在逛的人」指到别的玩家身上 ——
+		# 本机于是成了旁观视角。用法：
+		# `--autotest=host --rounds=6 --shot=shots/b12_c_shopwatch_table_plain.png`
+		var idx_s := -1
+		for i in GameData.TILES.size():
+			if String(GameData.TILES[i].get("type", "")) == "shop":
+				idx_s = i
+				break
+		var other: Dictionary = {}
+		for x in g.hp:
+			if int(x.peer) != g.my_peer:
+				other = x
+				break
+		if idx_s >= 0 and not other.is_empty():
+			g._shop_tile = idx_s
+			if not g.shops.has(idx_s):
+				g.shops[idx_s] = {"slots": ["", "", ""]}
+			g._stock_shop(idx_s)
+			g._shop_peer = int(other.peer)
+			g._broadcast_state()
+			await get_tree().create_timer(0.35).timeout
+			get_tree().paused = true   # 冻住：自动对局下一拍会把 _shop_peer 改掉
 	# 文件名带 deckout：抽卡「抽出」只有 `DeckReveal.OUT` = 0.34s，常规三帧的第一帧（0.6s）
 	# 已经落在翻面之后 —— 拍不到"卡刚亮出来的那一刻"。这里按两个时间点各补一张（**不等 0.6s**）：
 	#   0.06s（卡片刚起）与 0.16s（快到位）。批次 8 起演出在屏幕层、相机不参与 ⇒ 不再需要
