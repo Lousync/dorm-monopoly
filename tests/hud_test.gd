@@ -1299,6 +1299,16 @@ func _run() -> void:
 		_check(false, "TableProps 没有 play_token_move（棋子动画未接），本段整段跳过")
 	else:
 		await create_timer(0.5).timeout      # 等首次弹入（scale 0→1）落定
+		# peer 3 的棋子节点（读世界位置与材质模式）：与 layout_test 同一条取法（节点池按 peer 命名）
+		# 按 **meta("peer")** 找那枚棋子的节点（位置 / 材质模式）——**不按节点名**：同帧重建时
+		# Godot 会把重名的子节点自动改名（table_props 已用 remove_child 规避，但测试不该依赖名字）。
+		var trootA: Node = tpA.get_node_or_null("Tokens")
+		var tk3: Node3D = null
+		if trootA != null:
+			for ch in trootA.get_children():
+				if (ch as Node).has_meta("peer") and int((ch as Node).get_meta("peer")) == 3:
+					tk3 = ch as Node3D
+		_check(tk3 != null, "peer 3 的棋子节点在（下面几条要读它）")
 		var p3 := int(g._state_player(3).get("pos", 0))
 		var base_y: float = tpA.token_world_pos(3).y
 		_check(base_y > 0.0, "棋子在桌面上（基准 y=%.3f）" % base_y)
@@ -1329,6 +1339,91 @@ func _run() -> void:
 		_check(tpA.token_alpha(3) > 0.95, "传送完毕回到不透明（%.3f）" % tpA.token_alpha(3))
 		_check(tpA.token_world_pos(3).distance_to(before_tp) > 0.1,
 			"传送落点真的变了（%s → %s）" % [before_tp, tpA.token_world_pos(3)])
+		# 材质**模式**也要恢复（批次 11 T1 审查 Minor #4）：只把 alpha 写回 1、模式留在 ALPHA 的
+		# 实现照样能过上面那条 `token_alpha` —— 但那样的牌在**透明队列**里：不写深度、不投影
+		# （批次 8/9 那条先例）。照 `hand` 那组既有断言（读材质、不读标志）。
+		var pmat3: StandardMaterial3D = null
+		var fmat3: StandardMaterial3D = null
+		if tk3 != null:
+			pmat3 = (tk3.get_node("Plate") as MeshInstance3D).material_override as StandardMaterial3D
+			fmat3 = (tk3.get_node("Face") as MeshInstance3D).material_override as StandardMaterial3D
+		_check(pmat3 != null and pmat3.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+			"传送后牌身回到**不透明档**（实得 %s）" % str(pmat3.transparency if pmat3 != null else -1))
+		_check(fmat3 != null and fmat3.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
+			"传送后正面回到 ALPHA_SCISSOR（实得 %s）" % str(fmat3.transparency if fmat3 != null else -1))
+
+		print("== 传送被打断：材质与模式必须一并恢复（T1 审查 Important #2）==")
+		# 走子补间只写 `global_position`/`scale` —— 它**不会**重新置位材质。所以走子若落在传送的
+		# 0.38s 窗内（淡出中），被打断的传送会把牌留在**半透明 + 透明队列**（无深度写入、无影子）
+		# 直到下一次传送。`_kill_token_tw` 现在无条件把材质恢复成不透明。
+		g.s_tp(3, 13)                        # 开始传送：淡出 0.16s → 瞬移 → 淡入 0.22s
+		await create_timer(0.08).timeout      # 停在**淡出中**
+		_check(tpA.token_alpha(3) < 0.9, "（前置）此刻确实在淡出中（alpha %.3f）" % tpA.token_alpha(3))
+		g.s_move(3, [14], 0.3)               # 打断：走子落在传送窗内
+		await create_timer(0.5).timeout
+		_check(tpA.token_alpha(3) > 0.95,
+			"被打断的传送把棋子留回了不透明（alpha %.3f）" % tpA.token_alpha(3))
+		if pmat3 != null:
+			_check(pmat3.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+				"被打断后牌身回到不透明档（实得 %s）" % str(pmat3.transparency))
+		if fmat3 != null:
+			_check(fmat3.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
+				"被打断后正面回到 ALPHA_SCISSOR（实得 %s）" % str(fmat3.transparency))
+
+		print("== 走子进行中收到广播：棋子不被瞬回（T1 审查 Minor #7）==")
+		# `set_tokens` 对正在走子的棋子**不抢位置**（`_moving` 那道闸，同 2D 的 `_animating`）。
+		# 少了它，动画中途到达的状态广播会把棋子瞬回起点/落点。
+		var p3b := int(g._state_player(3).get("pos", 0))
+		g.s_move(3, [p3b + 1, p3b + 2], 0.5)
+		await create_timer(0.2).timeout
+		_check(tpA.token_moving(3), "走子期间 `token_moving` 为真（闸是开着的）")
+		var mid_px := Vector2.ZERO
+		if tk3 != null:
+			mid_px = g.table3d.world_to_canvas_px(tk3.global_position)
+		g.s_state(_state(2, false))          # 中途来一次完整广播（状态里的 pos 还是老格号）
+		await process_frame
+		if tk3 != null:
+			var after_px: Vector2 = g.table3d.world_to_canvas_px(tk3.global_position)
+			# 广播若抢了位置会瞬移到某格的落点上（≥ 几十画布像素）；这里只允许"补间又走了一帧"
+			_check(after_px.distance_to(mid_px) < 20.0,
+				"广播没把走子中的棋子瞬回（%s → %s，瞬回会是几十像素的跳）" % [mid_px, after_px])
+		# 走完仍要落在**目的地**（闸不能把收尾也挡掉）
+		await create_timer(1.0).timeout
+		_check(not tpA.token_moving(3), "走完后 `token_moving` 落回假")
+		if tk3 != null:
+			var dest_px: Vector2 = g.table3d.world_to_canvas_px(tk3.global_position)
+			var want_dest: Vector2 = g.board.token_screen_pos(p3b + 2, int(g._state_player(3).get("color", 0)))
+			_check(dest_px.distance_to(want_dest) < 1.0,
+				"走完落在目的地的印刷落点上（实得 %s / 期望 %s）" % [dest_px, want_dest])
+
+		print("== 镜头平移（无广播）时，棋子跟着印刷图案走（T1 审查 Important #1）==")
+		# 2D 相机**逐帧**在动（`board._process` 的自动跟随 / 取景），而"跟图案"的实物原先只挂状态广播
+		# ⇒ 镜头动过但没广播的那一段里，印在 `_world` 里的格子会滑动、实物不动（实测约半格、~1s 衰减；
+		# 对旧 2D 棋子来说——它活在 `_world` 里、任何时刻都钉在格子上——那是**回归**）。
+		# `game._process` 现在按"取景键"补推一次（`_refresh_followers_if_cam_moved`）。
+		g.board.cam_locked = false
+		g.s_state(_state(2, false))          # 回一份干净状态：peer 3 落在老格号上
+		await process_frame
+		var pcam := int(g._state_player(3).get("pos", 0))
+		var slot3 := int(g._state_player(3).get("color", 0))
+		if tk3 != null:
+			var w0: Vector2 = g.table3d.world_to_canvas_px(tk3.global_position)
+			_check(w0.distance_to(g.board.token_screen_pos(pcam, slot3)) < 1.0,
+				"（前置）广播推送后棋子已在印刷落点上")
+			g.board.focus_grid(pcam, 2.0, true)        # 只动 2D 镜头（**不广播**）
+			await process_frame
+			var want1: Vector2 = g.board.token_screen_pos(pcam, slot3)
+			_check(want1.distance_to(w0) > 8.0,
+				"（前置）镜头动过之后印刷落点确实移了（%.1f 画布像素）" % want1.distance_to(w0))
+			g._process(0.0)                            # 真入口：game 的逐帧补推
+			var w1: Vector2 = g.table3d.world_to_canvas_px(tk3.global_position)
+			_check(w1.distance_to(want1) < 1.0,
+				"镜头平移后棋子跟着印刷图案重推（实得 %s / 期望 %s）" % [w1, want1])
+			g._process(0.0)
+			g._process(0.0)
+			_check(g.table3d.world_to_canvas_px(tk3.global_position).is_equal_approx(w1),
+				"镜头静止时补推早退（位置一字不变 —— 每帧只比三个浮点数）")
+		g.board.fit_overview(true)
 
 	g.get_tree().paused = false
 	g.free()

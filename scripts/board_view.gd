@@ -618,6 +618,13 @@ func _deck_back_tex(deck: String) -> Texture2D:
 	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
 		else "res://assets/cards/atlas_back_blue_brown.svg")
 
+## 2D 镜头的「取景键」（缩放 + 注视点）—— 给"跟图案的实体"判**镜头动过没有**用
+##（`game._process` 按它补推：镜头逐帧在动、而那条重推原先只挂在状态广播上）。
+## 只读、不触发任何变换重算（`_apply_cam` 才是摆相机那一条）。
+## 与 `_view_from_world` 用的是同一对量（`_zoom` / `_center`）—— 它们就是"印刷图案在哪"的全部输入。
+func cam_key() -> Vector3:
+	return Vector3(_zoom, _center.x, _center.y)
+
 ## 当前行动者光环在**画布像素**下的半径。光环压着格子 ⇒ 与转盘轮缘 / 两摞牌堆同一条口径
 ##（位置与尺寸都跟 2D 相机：`_world` 局部尺寸 32 是原来那枚 64×64 Panel 的半径，
 ##  过一遍镜头变换就是它在画布上的半径）—— 3D 侧拿它量真变换换算成世界半径

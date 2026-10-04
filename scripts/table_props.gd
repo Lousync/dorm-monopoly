@@ -853,9 +853,23 @@ func set_tokens(rows: Array) -> void:
 			_place_token(tk, idx, slot)
 	for peer in _tokens.keys():
 		if not seen.has(peer):
-			(_tokens[peer]["root"] as Node3D).queue_free()
+			# 先掐补间（否则被 kill 掉的那条 lambda 还会往已释放的实例上写，刷引擎报错），
+			# 顺带把材质恢复成不透明（`_kill_token_tw` 里那一笔）
+			_kill_token_tw(int(peer))
+			var root: Node3D = _tokens[peer]["root"]
+			# **先摘出父节点再 queue_free**：queue_free 是延迟的，同帧重建同名棋子会被 Godot
+			# 自动改名（实测变成 `@Node3D@979` 这种）—— 名字就废了，测试与调试都得靠猜。
+			# `remove_child` 立刻腾出名字，队列里的那次释放照旧发生。
+			_tokens_root.remove_child(root)
+			root.queue_free()
 			_tokens.erase(peer)
 			_moving.erase(peer)
+			# 行动者从名册里消失（掉线 / 出局）：光环不能留在原地 —— `_process` 找不到那枚棋子
+			# 会早退，环就此挂在桌上没人收（此后没人再调 `set_ring` 的话）。
+			if int(peer) == _ring_peer:
+				_ring_peer = GameData.NO_PEER
+				if _ring != null:
+					_ring.visible = false
 
 ## 这枚棋子此刻在不在（悬停链路要它来降级：拿不到就别显信息条）。没建过的 peer 给 false。
 func has_token(peer: int) -> bool:
@@ -870,6 +884,9 @@ func token_moving(peer: int) -> bool:
 func _make_token(peer: int) -> Dictionary:
 	var root := Node3D.new()
 	root.name = "Token_p%d" % peer
+	# 把 peer 记进 meta：调用方（含测试）要读那枚棋子的**节点**（位置 / 材质模式）时按它找，
+	# 而不是按节点名 —— 名字可能因同帧重建被 Godot 自动改掉（见 `set_tokens` 的移除分支）。
+	root.set_meta("peer", peer)
 	# 后倾：绕 X **负**角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头（2D 端近正俯视也看得见一块面）
 	root.rotation = Vector3(deg_to_rad(-TOKEN_LEAN_DEG), 0.0, 0.0)
 	_tokens_root.add_child(root)
@@ -958,8 +975,15 @@ func _pop_token_in(tk: Dictionary) -> void:
 	tw.tween_property(root, "scale", Vector3.ONE, TOKEN_POP_TIME) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-## 掐掉一枚棋子上正在跑的补间（弹入 / 走子 / 传送共用一条 `tw`），并把 `_moving` 松开 ——
-## 调用方（`play_token_move` / `set_token_teleport`）紧接着会重新置位，所以松开不会让它乱跑。
+## 掐掉一枚棋子上正在跑的补间（弹入 / 走子 / 传送共用一条 `tw`），把 `_moving` 松开，
+## 并**把材质恢复成不透明**。
+##
+## **材质必须在这里恢复**（批次 11 T1 审查 Important #2）：被打断的若是**传送**，此刻材质停在
+## ALPHA 混合、alpha 停在半路 —— 而 `play_token_move` **不会**重新置位材质（走子补间只写
+## `global_position` / `scale`）⇒ 走子落在传送的 0.38s 窗内会把牌留在**半透明 + 透明队列**
+## （无深度写入、不投影，正是批次 8/9 那条先例），直到下一次传送才恢复。
+## 传送那条路自己随即会调 `_set_token_alpha(tk, true, 1.0)` 切回 ALPHA 重新开始，所以这里
+## 无条件恢复是安全的（幂等、只写材质模式与 alpha）。
 func _kill_token_tw(peer: int) -> void:
 	var tk: Dictionary = _tokens.get(peer, {})
 	if tk.is_empty():
@@ -969,6 +993,7 @@ func _kill_token_tw(peer: int) -> void:
 		(old as Tween).kill()
 	tk["tw"] = null
 	_moving[peer] = false
+	_set_token_alpha(tk, false, 1.0)
 
 ## 逐格走子：每步 = 世界坐标补间 + **竖直小跳的弧** + 绕自身轴挤压 + 落地音效。
 ## `path` 为空表示"原地传送"（同 2D `play_move` 的旧语义：那时由 `set_token_teleport` 先给落点）。
@@ -1158,11 +1183,14 @@ func set_ring(peer: int) -> void:
 
 ## 把环摆到当前行动者那枚棋子的**脚下**（只取 xz —— 环是贴在桌垫上的，不跟棋子抬起来的 y）。
 ## `set_ring` 与 `_process` 共用这一条。
+##
+## 取节点池用 `.get(peer)` + **null 检查**，不写 `.get(peer, {})` —— 后者每帧都要现造一个空字典
+##（批次 11 T1 审查 Minor #6：`_process` 是每帧跑的，Task 2 的 56 块房子薄牌照着这个写法就是 56 倍）。
 func _apply_ring_pose() -> void:
-	var tk: Dictionary = _tokens.get(_ring_peer, {})
-	if tk.is_empty():
+	var tk = _tokens.get(_ring_peer)
+	if tk == null:
 		return
-	var root: Node3D = tk.get("root")
+	var root: Node3D = tk["root"]
 	if root == null or not is_instance_valid(root):
 		return
 	_ring.global_position = Vector3(root.global_position.x,
@@ -1206,7 +1234,7 @@ func _apply_ring_size() -> void:
 func _process(delta: float) -> void:
 	if _ring == null or not _ring.visible:
 		return
-	if _tokens.get(_ring_peer, {}).is_empty():
+	if _tokens.get(_ring_peer) == null:      # 见 `_apply_ring_pose` 那段：别每帧造空字典
 		return
 	_apply_ring_pose()
 	_ring_phase = fposmod(_ring_phase + delta, RING_PULSE_TIME)

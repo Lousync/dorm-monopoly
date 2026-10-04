@@ -1374,7 +1374,11 @@ func _refresh_tokens() -> void:
 		return
 	var rows: Array = []
 	for p in st.get("players", []):
-		rows.append({"peer": int(p.peer), "slot": int(p.color), "idx": int(p.pos)})
+		# 键一律用 `.get(..., 默认)`：这条路现在**也挂在 `_process` 的补推上**（镜头一动就调），
+		# 而 `st` 可能是测试手搓的、字段不全的状态（真实 `s_state` 的这三项恒在）。
+		# 少了默认值，一次缺键就是一条 SCRIPT ERROR 并让整段刷新中断（regression_test 逮到过）。
+		rows.append({"peer": int(p.get("peer", GameData.NO_PEER)),
+			"slot": int(p.get("color", 0)), "idx": int(p.get("pos", 0))})
 	table3d.table_props.set_tokens(rows)
 	var ended := String(st.get("phase", "playing")) == "ended"
 	table3d.table_props.set_ring(GameData.NO_PEER if ended else int(st.get("turn", GameData.NO_PEER)))
@@ -1392,14 +1396,43 @@ func _token_screen_pos(peer: int, idx: int = -1) -> Vector2:
 		return _board_to_screen(board.tile_screen_pos(idx))
 	return size * 0.5
 
+## 上一次把"跟图案"的实体推给 3D 时的 **2D 取景键**（`board.cam_key()` = 缩放 + 注视点）。
+## 初值 `Vector3.INF` ⇒ 第一次一定推一次（`is_equal_approx(INF)` 为假）。
+var _follow_cam_key := Vector3.INF
+
+## 镜头动过就补推一次"跟图案"的那批（轮缘 / 两摞牌堆 / 棋子 / 光环）。
+##
+## **为什么需要它**（批次 11 T1 审查 Important #1）：这四件的世界位置是按**摆放那一刻**的镜头算的
+##（它们要落在**印在桌垫上**的图案上，见 table_props 文件头"摆放约定"），而 2D 相机是**逐帧**在动的
+## —— `board._process` 的自动跟随 `_pan_toward` 每帧把 `_center` 推向行动棋子（`fit_overview` /
+## `focus_grid` 也会改取景）。只挂状态广播的话，"镜头动了但没有广播"的那一段里印在 `_world` 里的
+## 格子会整体滑动、而实物纹丝不动（实测约半格、~1s 衰减）——
+## 对旧 2D 棋子（它活在 `_world` 里、任何时刻都钉在格子上）来说是**回归**；轮缘 / 牌堆则是老毛病。
+##
+## **镜头静止时零开销**：只比三个浮点数就早退（`_process` 每帧调它）。
+## 与 `_refresh_table_props` 的关系：那边是广播路径（数据也变了），这边只补"镜头变了"这一半；
+## 两条都幂等，重叠着调没有代价。
+func _refresh_followers_if_cam_moved() -> void:
+	if not _board_follow_ready():
+		return
+	var key: Vector3 = board.cam_key()
+	if key.is_equal_approx(_follow_cam_key):
+		return
+	_follow_cam_key = key
+	_refresh_board_followers()
+	_refresh_tokens()
+
 ## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（手牌也在这里）。
 ##
 ## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那几件（轮缘 / 牌堆 / 棋子与光环）
 ## 见 `_refresh_board_followers` 与 `_refresh_tokens`；其余物件（手牌）也一律幂等，
 ## 每次广播重贴一遍没有代价。它们读的都是**已同步**的状态（客户端也能算）。
+## **镜头动了却没广播**那一段由 `_refresh_followers_if_cam_moved` 逐帧兜（见那里的注释）。
 func _refresh_table_props() -> void:
 	if not _board_follow_ready():
 		return
+	# 广播这条路上顺手认下"当前取景"：否则紧接着的那一帧会因键不同再补推一遍（无害，但白跑）
+	_follow_cam_key = board.cam_key()
 	_refresh_board_followers()
 	_refresh_tokens()
 	var mine := _state_player(my_peer)
@@ -3688,6 +3721,10 @@ func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
 	# （原先这里有一段"抽卡演出期间逐帧重推跟图案的实体" —— 前提是抽卡会把 2D 取景推近。
 	#  批次 8 把演出搬到屏幕层、相机全程不动 ⇒ 不再有逐帧的取景变化要跟，整段删掉。）
+	# 批次 11 T1 起又回来了，但**换了判据**：自动跟随（`board._process` 的 `_pan_toward`）与
+	# `focus_grid` 都会让 2D 取景逐帧动，而跟图案的实物只挂状态广播 ⇒ 镜头动了没广播时它们会脱开。
+	# 这里按"取景键是否变过"补推；镜头静止时只比三个浮点数就早退（见 `_refresh_followers_if_cam_moved`）。
+	_refresh_followers_if_cam_moved()
 	# 屏幕底部原来还有一条固定操作坞（牌垫阶段条 + 操作条 + 底板）。批次 3 Task 6 把它
 	# 整条拆了：掷轮改点桌面转盘、出牌改点手中牌（选中后点牌垫「使用道具」确认）、
 	# 现金与体力在桌上。**注意这里不能留 `if <坞成员> == null: return` 之类的提前返回** ——

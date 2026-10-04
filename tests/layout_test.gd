@@ -14,6 +14,16 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 棋子薄牌的节点（按 **meta("peer")** 找，不按节点名 —— 同帧重建时 Godot 会把重名的子节点
+## 自动改名）。找不到给 null。
+func _token_node(tokens_root: Node, peer: int) -> Node3D:
+	if tokens_root == null:
+		return null
+	for ch in tokens_root.get_children():
+		if (ch as Node).has_meta("peer") and int((ch as Node).get_meta("peer")) == peer:
+			return ch as Node3D
+	return null
+
 ## 某个距离上「能量 × 衰减」估出的相对照度（光池亮度 × 形状的**代理式**，见 C3 那段注释）。
 ## `pow` 的底夹到 0：射程之外照度为 0（Godot 的 omni 光在射程外也确实是 0）。
 func _corner_irradiance(light: OmniLight3D, dist: float) -> float:
@@ -1502,7 +1512,7 @@ func _run() -> void:
 		# 弹入（新棋子出现时 scale 0 → 1，TRANS_BACK）：先抓一帧"还在弹"，再等它落定。
 		await process_frame
 		var troot0: Node = tpT.get_node_or_null("Tokens")
-		var tk_pop: Node3D = troot0.get_node_or_null("Token_p7") as Node3D if troot0 != null else null
+		var tk_pop: Node3D = _token_node(troot0, 7)
 		if tk_pop != null:
 			_check(tk_pop.scale.x < 0.99, "新棋子是**弹入**出现的（首帧 scale %.2f < 1）" % tk_pop.scale.x)
 		await create_timer(0.5).timeout          # 弹入 0.35s：等它落定再量几何
@@ -1512,7 +1522,7 @@ func _run() -> void:
 		var plateA: MeshInstance3D = null
 		var bmA: BoxMesh = null
 		if troot != null:
-			tkA = troot.get_node_or_null("Token_p7") as Node3D
+			tkA = _token_node(troot, 7)
 			if tkA != null:
 				plateA = tkA.get_node_or_null("Plate") as MeshInstance3D
 				if plateA != null:
@@ -1535,6 +1545,16 @@ func _run() -> void:
 				var fmatA: StandardMaterial3D = faceA.material_override as StandardMaterial3D if faceA != null else null
 				_check(faceA != null and fmatA != null and fmatA.albedo_texture == want_tex,
 					"正面贴的是这个槽位的棋子贴图（UIKit.piece_tex）")
+			# 材质**模式**：3D 端必须留在**不透明队列**（写深度、投得出影子）—— 牌身 `DISABLED`、
+			# 正面 `ALPHA_SCISSOR`（贴图透明边裁掉但仍在同一队列）。同已退场立牌 / 手牌那两条先例。
+			# （只有传送淡出那 0.38s 才切 ALPHA，淡完切回 —— 见 `_set_token_alpha` 与 hud_test 那两条。）
+			var pmatA: StandardMaterial3D = plateA.material_override as StandardMaterial3D
+			var faceM: MeshInstance3D = tkA.get_node_or_null("Face") as MeshInstance3D
+			var fmatM: StandardMaterial3D = faceM.material_override as StandardMaterial3D if faceM != null else null
+			_check(pmatA != null and pmatA.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+				"牌身是**不透明档**（实得 %s）" % str(pmatA.transparency if pmatA != null else -1))
+			_check(fmatM != null and fmatM.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
+				"正面是 ALPHA_SCISSOR（实得 %s）" % str(fmatM.transparency if fmatM != null else -1))
 		# 位置 = 与**印在桌垫上的**那一格同一条链：`tile_screen_pos` / `deck_screen_pos` /
 		# `wheel_screen_pos` 的那条（`global_position + _view_from_world(局部点)`）—— 也就是
 		# `board.token_screen_pos(idx, slot)`。量法：把棋子的世界落点过真反变换折回画布像素比。
@@ -1642,6 +1662,15 @@ func _run() -> void:
 			tpT.set_ring(GameData.NO_PEER)
 			await process_frame
 			_check(not ring.visible, "set_ring(NO_PEER) 后光环收起")
+			# 行动者从名册里消失（掉线 / 出局）：光环也要被收掉（T1 审查 Minor #5）——
+			# `_process` 找不到那枚棋子会早退，环若留着就挂在桌上没人收（此后没人再调 set_ring）。
+			# 收尾写在 `set_tokens` 的移除分支里。
+			tpT.set_ring(7)
+			await process_frame
+			_check(ring.visible, "（前置）重新点亮光环")
+			tpT.set_tokens([])                 # 谁都不要了 ⇒ peer 7 的棋子被移除
+			await process_frame
+			_check(not ring.visible, "行动者的棋子被移除后光环自动收起")
 
 		# 反向契约：2D 的棋子 / 光环 / 悬停条整套必须**真的没了**（不留空壳）。
 		# 谁把它们加回来（或只加个空壳），这几条先红 —— 悬停条由 Task 3 在屏幕层重建。
