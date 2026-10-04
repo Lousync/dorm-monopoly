@@ -319,18 +319,29 @@ func _build_tiles() -> void:
 			name_c = FIND_ACCENT
 		elif d.type == "again":
 			name_c = COFFEE_ACCENT
-		var name_l := UIKit.bold_label(d.name, 18, UIKit.ACCENT if corner else name_c)
-		name_l.position = Vector2(5, 18)
-		name_l.size = Vector2(TILE - GAP * 2.0 - 10, 44)
+		# **批次 12 A2b：字号 18 → 22、盒 92×44 → 96×48**（用户「字还是有点小」）。
+		# 屏幕上的字 = **格宽 × 格内字号**：格宽那一半由相机换镜头买（见 `table_3d.CAM_FOV`），
+		# 这一半是格内字号。**上限是"四字名不许换行"**：最宽的名字都是 4 个汉字
+		#（快递驿站 / 公共澡堂 / 教学楼A…），CJK 是等宽 1em ⇒ 22px 下 ≈ 88px < 盒宽 96
+		#（18px 时是 72px）—— **24px 就会到 96px、正好顶到盒沿，所以停在这一档**。
+		# 盒子只从 92 放到 96（`-10` → `-6`）：再宽就贴到格子边了；`TILE` 仍是 112.0 未动。
+		# 位置从 (5,18) 挪到 (3,15)：字号大了、把这块在格内**居中的那一段**保住。
+		# ⚠ 换行会溢出 48px 的盒（`AUTOWRAP_WORD_SMART` 一断就是两行）—— 出图核对过
+		#（`--shot=*freecam*` 拉近看）四字名都是一行、不裁不溢。
+		var name_l := UIKit.bold_label(d.name, 22, UIKit.ACCENT if corner else name_c)
+		name_l.position = Vector2(3, 15)
+		name_l.size = Vector2(TILE - GAP * 2.0 - 6, 48)
 		name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_world_descend(name_l)
 		p.add_child(name_l)
 
-		var sub := UIKit.label("", 14, UIKit.TEXT_DIM)
-		sub.position = Vector2(5, 70)
-		sub.size = Vector2(TILE - GAP * 2.0 - 10, 17)
+		# 价格 / 状态行**同一次提档**（14 → 16、盒 92×17 → 96×20）：它是"地板价"那一眼，
+		# 与牌名一起放大才不显得头重脚轻（4 字状态如「随机道具」「再动一次」= 64px < 96）。
+		var sub := UIKit.label("", 16, UIKit.TEXT_DIM)
+		sub.position = Vector2(3, 68)
+		sub.size = Vector2(TILE - GAP * 2.0 - 6, 20)
 		sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_world_descend(sub)
 		p.add_child(sub)
