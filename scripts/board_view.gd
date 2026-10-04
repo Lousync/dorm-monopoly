@@ -1,6 +1,6 @@
 extends Control
 class_name BoardView
-## 56 格（18×12 外圈）棋盘：世界坐标渲染，自研 2D 相机（注视点 / 缩放，驱动推近演出）、
+## 56 格（18×12 外圈）棋盘：世界坐标渲染，自研 2D 相机（注视点 / 缩放，取景与近景）、
 ## 自动跟随行动棋子。
 ## 表现细节：跳格小跳+挤压、归属描边与底色渐变、装修房子弹跳、悬停高亮、
 ## 当前行动者脉冲光环、传送淡入淡出。
@@ -29,18 +29,13 @@ const GAP := 5.0
 ## 倍率区间 —— 是「基准倍率 _fit_zoom 的倍数」，不是绝对像素倍率（1.0 = 全景）。
 ## 棋盘在 2.5D 之后住进 2048² 的 SubViewport，画布尺度从屏幕（1280×800）变了，
 ## 同一个绝对倍率的含义会差约 3 倍（全景从 0.40 变成 0.97）——所以一律相对基准表达。
-## 数值按「屏幕时代 ÷ 当时的全景 0.40」折回来的：原 0.22 / 1.25 / 抽卡 0.78。
+## 数值按「屏幕时代 ÷ 当时的全景 0.40」折回来的：原 0.22 / 1.25（抽卡推近那一档已随批次 8 取消）。
 const MIN_ZOOM_FACTOR := 0.55   # 下限（全景附近）
 const MAX_ZOOM_FACTOR := 3.1    # 上限（明显更近）
-const DECK_PUSH_FACTOR := 2.0   # 抽卡推近：比全景明显更近，牌面文字才看得清
 const SELECT_COLOR := Color(1.0, 0.86, 0.35)   # 指向性道具「可选中」高亮（金）
-## 抽卡展示的四个相位：抽出 → 翻面 → 停留 → 收回
-const DECK_OUT := 0.34
-const DECK_FLIP := 0.30
-const DECK_HOLD := 1.50
-const DECK_BACK := 0.28
-## 总时长（房主结算等待与它保持同步）。由四个相位派生，改相位不会忘记同步。
-const DECK_CARD_TIME := DECK_OUT + DECK_FLIP + DECK_HOLD + DECK_BACK
+## 抽卡演出（`DECK_PUSH_FACTOR` / `DECK_*` / `CARD_SIZE` / 相位动画那一整套）已随批次 8
+## 整段搬到屏幕层的 `DeckReveal`（scripts/deck_reveal.gd）：演出不再把 2D 相机推近，
+## 所以这里不再需要推近倍数、相位时长与卡尺寸。要改演出节奏改 `DeckReveal` 里的常量。
 
 ## 棋盘在桌垫坐标系里的原点（世界坐标）：18×12 格 × 112 = 2016×1344 的那块。
 ## 批次 5 Task 2 起四条座位栏离开了画布，棋盘不再被一个方框嵌着 —— 这个偏移现在只是
@@ -73,8 +68,8 @@ var overlay_bottom := 0.0
 var _world: Control
 var _table: Node2D
 var _zoom := 0.5
-## 基准倍率：全景适配算出来的那个倍率（= 1.0 倍）。所有对外的倍率参数、上限下限、
-## 抽卡推近都以它为参照 —— 它随画布尺寸自动变，调用方不必知道画布有多大。
+## 基准倍率：全景适配算出来的那个倍率（= 1.0 倍）。所有对外的倍率参数、上限下限
+## 都以它为参照 —— 它随画布尺寸自动变，调用方不必知道画布有多大。
 var _fit_zoom := 0.5
 var _need_fit := true
 var _fitted := false         # 是否已做过首次全景取景（之后的 resized 只重算变换）
@@ -115,31 +110,14 @@ var _ring_tw: Tween
 var _select_tw: Tween          # 「可选中」高亮的呼吸补间
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
-# 镜头对点跟随（抽卡时对准牌堆）与牌堆抽卡动画
+# 镜头对点跟随（抽卡时对准牌堆）
 var _has_follow_pt := false
 var _follow_pt := Vector2.ZERO
 var _deck_pos := {}            # "机会"/"命运" -> world 中心
-var _deck_card: Control
-var _deck_back: Control        # 卡背（抽出阶段显示，翻面后隐藏）
-var _deck_front: Control       # 卡面（正文）
-var _deck_t := 0.0             # 抽卡动画相位计时（_process 驱动，不用 Tween）
-var _deck_from := Vector2.ZERO
-var _deck_shown := Vector2.ZERO
-## 「抽出」的起点取哪儿：**实体牌堆顶面在画布上的落点**（批次 6 Task 2 —— 本批次 BoardView
-## 的唯一改动的落点，见 doc/development/开发台账.md §三）。由 3D 侧的 `TableProps.deck_top_px`
-## 注入（同 `TableView3D.on_table_click` 的注入方式：BoardView 活在 2D 画布里，不该把 3D 物件层的
-## 类型拖进它的编译链）。默认无效 ⇒ 退回原来那点（画布上的扁图案），动画照常演。
-## 返回 `Vector2.ZERO` = 没有实体牌堆（同样退回原来那点）。
-##
-## **演出期间逐帧重取**（批次 6 Task 3）：起点不是"开演那一刻算一次"就够的 —— 推近之后镜头
-## 还会继续走（`auto_follow` 把 `_center` 指数逼近到牌堆），而实体摞每帧都重摆到"当下取景下
-## 印着的那块图案"上（`game._refresh_board_followers`）⇒ 起点也必须每帧跟着重取，
-## 否则卡片会从"上一帧的那一点"抽出 / 收回，推近时差好几百画布像素（见 `_refresh_deck_from`）。
-var deck_top_provider: Callable = Callable()
-## 当前正在演的那一摞的名字（`play_deck_card` 的 deck 参数）。逐帧重取起点时要用它去问 provider。
-var _deck_kind := ""
-var _deck_restore := GameData.NO_PEER
-var _deck_prev_zoom := 0.0     # 抽卡前的缩放，展示完还原（抽卡时会临时拉近看清牌面）
+## 抽卡演出的**画布内**那套（卡片 / 相位计时 / 抽出起点 / 推近与还原）已随批次 8
+## 整段搬到屏幕层的 `DeckReveal`（scripts/deck_reveal.gd）。这里不再有 `_deck_card` /
+## `_deck_t` / `_deck_from` / `deck_top_provider` 等成员：演出不再动 2D 相机，
+## 也不再需要"从实体摞顶面抽出"的起点供给。印在桌垫上的两摞卡背图案（`_build_deck`）保留。
 
 # 中央转盘（替代骰子的点数来源）
 var _wheel: WheelView
@@ -560,7 +538,7 @@ func wheel_screen_pos() -> Vector2:
 ## 转盘在画布上的**半径**（画布像素，与 wheel_screen_pos 同口径）。
 ## 转盘的尺寸是 `_world` 的局部值（_build_wheel 里 size = 400），而 `_world` 带**镜头倍率**
 ##（_apply_cam: `_world.scale = _zoom`），所以它落到画布上只有 `200 × _zoom` —— 取景、
-## 抽卡推近、人数变化都会改它（**滚轮不改**：滚轮只推 3D 视角，不碰这个 `_zoom`）。
+## 人数变化都会改它（**滚轮不改**：滚轮只推 3D 视角，不碰这个 `_zoom`）。
 ## 3D 实体（TableProps 的轮缘）得按这个半径换算成
 ## 世界单位，才能一直跟住桌垫上画出来的那个轮子。
 ## 只读查询，不碰镜头与玩法（与 Task 4 要加的手牌锚点同类）。
@@ -604,12 +582,12 @@ const DECK_CARD_OFF := 6.0
 ##（那个给"转盘在画布上的半径"，这个给"牌堆在画布上的脚印"）。
 ##
 ## 单张 90×135、3 张各错 (6,6) ⇒ 整体 **102×147**（`_world` 局部单位）；而 `_world` 带**镜头倍率**
-##（`_apply_cam`: `_world.scale = _zoom`）⇒ 落到画布上只有 `102×147 × _zoom`。取景 / 抽卡推近 /
+##（`_apply_cam`: `_world.scale = _zoom`）⇒ 落到画布上只有 `102×147 × _zoom`。取景 /
 ## 人数变化都会改 `_zoom`（**滚轮不改**：滚轮只推 3D 视角）。
 ##
 ## 为什么要有这个入口（终审修复波 F）：3D 侧的实体摞要**盖住印着的这块图案**，跟图案走的
 ## 第一件（转盘轮缘）早就在尺寸上也跟着 `_zoom` 走（`wheel_screen_radius`），第二件（牌堆）
-## 原先**只跟位置、尺寸写死世界常数** ⇒ 抽卡那 2× 推近下印刷图案整体胀大、摞不动，
+## 原先**只跟位置、尺寸写死世界常数** ⇒ 取景一变印刷图案整体胀大、摞不动，
 ## 只盖住图案的约四分之一（面积比）—— 而那一刻正是玩家盯着牌堆的时候。
 ## 两个"跟印刷"的物件从此同一条口径：位置与尺寸都由 BoardView 报，3D 侧只负责换算。
 func deck_screen_size(deck: String) -> Vector2:
@@ -618,219 +596,19 @@ func deck_screen_size(deck: String) -> Vector2:
 	return Vector2(DECK_CARD_W + DECK_CARD_OFF * 2.0,
 		DECK_CARD_H + DECK_CARD_OFF * 2.0) * _zoom
 
-## 抽卡展示的相位动画（_process 驱动的相位手写，见项目约定）：
-## 抽出（带一点回弹与倾斜）→ 绕竖轴翻面（压到 0 换面的瞬间提亮一记）→
-## 停留（轻微上下浮动 + 呼吸微光）→ 收回。
-func _tick_deck_card(delta: float) -> void:
-	if _deck_card == null or not is_instance_valid(_deck_card):
-		return
-	_deck_t += delta
-	# 起点在演出期间逐帧重取（批次 6 Task 3，理由见 `deck_top_provider` 那段）——
-	# 放在相位分发之前：四个相位都读 `_deck_from`（抽出从它出发、收回也回它）。
-	_refresh_deck_from()
-	var c: Control = _deck_card
-	var t := _deck_t
-	if t < DECK_OUT:
-		var k: float = _ease_out_back(t / DECK_OUT)
-		c.position = _deck_from.lerp(_deck_shown, k)
-		c.modulate = Color(1, 1, 1, clampf(t / 0.16, 0.0, 1.0))
-		var sc := 0.55 + 0.45 * k
-		c.scale = Vector2(sc, sc)
-		c.rotation = -0.05 * (1.0 - k)
-	elif t < DECK_OUT + DECK_FLIP:
-		var k2 := (t - DECK_OUT) / DECK_FLIP
-		c.position = _deck_shown
-		c.rotation = 0.0
-		c.scale = Vector2(maxf(1.0 - k2 * 2.0, 0.02), 1.0 + 0.06 * k2)
-		if k2 >= 0.5:
-			_show_deck_face(false)  # 压到最扁的一瞬换面，看不出来
-			var k3 := (k2 - 0.5) * 2.0
-			c.scale = Vector2(maxf(k3, 0.02), 1.06 - 0.06 * k3)
-		# 换面点附近提亮，模拟翻牌反光
-		var flash := 1.0 + 0.4 * (1.0 - absf(k2 * 2.0 - 1.0))
-		c.modulate = Color(flash, flash, flash, 1.0)
-	elif t < DECK_OUT + DECK_FLIP + DECK_HOLD:
-		var h := t - DECK_OUT - DECK_FLIP
-		c.scale = Vector2.ONE
-		c.position = _deck_shown + Vector2(0, sin(h * 2.4) * 3.0)
-		# 呼吸微光：别让卡片像钉死在画面上
-		var breath := 1.0 + 0.03 * (0.5 + 0.5 * sin(h * 3.2))
-		c.modulate = Color(breath, breath, breath, 1.0)
-	elif t < DECK_OUT + DECK_FLIP + DECK_HOLD + DECK_BACK:
-		var k4 := (t - DECK_OUT - DECK_FLIP - DECK_HOLD) / DECK_BACK
-		c.position = _deck_shown.lerp(_deck_from, k4)
-		c.modulate = Color(1, 1, 1, 1.0 - k4)
-		var sc4 := 1.0 - 0.42 * k4
-		c.scale = Vector2(sc4, sc4)
-	else:
-		var restore := _deck_restore
-		c.queue_free()
-		_deck_card = null
-		_deck_back = null
-		_deck_front = null
-		_zoom = _zoom_from_factor(_deck_prev_zoom / _fit_zoom)   # 还原抽卡前的缩放
-		_apply_cam()
-		if restore != GameData.NO_PEER:
-			focus_peer(restore)
-		else:
-			_has_follow_pt = false
+## 抽卡演出的相位动画 / 卡面构建 / 推近整段（`_tick_deck_card`、`_show_deck_face`、
+## `_ease_out_back`、`_refresh_deck_from`、`is_showing_deck_card`、`play_deck_card`、
+## `CARD_SIZE`、`_make_card_art`、`_card_face_front`、`_card_face_back`）已随批次 8
+## 搬到屏幕层的 `DeckReveal`（scripts/deck_reveal.gd）。**本类不再演抽卡**：演出不动 2D 相机，
+## 所以这里连"推近倍数 / 相位时长 / 抽出起点"都不需要了。印在桌垫上的两摞卡背图案
+##（`_build_deck`，用下面的 `_deck_back_tex`）与两摞实体牌堆（`TableProps`）都原样保留。
 
-## 翻面：true = 显示卡背，false = 显示卡面
-func _show_deck_face(back: bool) -> void:
-	if _deck_back != null and is_instance_valid(_deck_back):
-		_deck_back.visible = back
-	if _deck_front != null and is_instance_valid(_deck_front):
-		_deck_front.visible = not back
-
-func _ease_out_back(t: float) -> float:
-	var c1 := 1.70158
-	return 1.0 + (c1 + 1.0) * pow(t - 1.0, 3.0) + c1 * pow(t - 1.0, 2.0)
-
-## 重取「抽出」的起点：把 provider 报的**画布像素**折成 `_world` 局部坐标
-## （起点要的是 `_world` 局部坐标，provider 给的是画布像素 ⇒ 必须过 `_world_from_view`）。
-##
-## 幂等、便宜（一次 `unproject_position` + `screen_to_viewport`），由 `_tick_deck_card` 每帧调；
-## provider 未接 / 没有实体牌堆（返回 ZERO）时**保持原值**（退回画布上那点扁图案，动画照常演）。
-func _refresh_deck_from() -> void:
-	if _deck_card == null or not is_instance_valid(_deck_card) or not deck_top_provider.is_valid():
-		return
-	var top_px: Vector2 = deck_top_provider.call(_deck_kind)
-	if top_px == Vector2.ZERO:
-		return
-	_deck_from = _world_from_view(top_px) - (_deck_card as Control).size * 0.5
-
-## 是否正在牌堆位置展示抽卡（供对局层暂停「镜头跟棋子」抢占）
-func is_showing_deck_card() -> bool:
-	return _deck_card != null and is_instance_valid(_deck_card)
-
-## 抽卡用的卡牌尺寸：竖版 2:3，与素材（assets/cards/ 的 Atlas 牌卡背，360×540）同比例
-const CARD_SIZE := Vector2(260, 390)
-
-## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）
+## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）。
+## 现在只服务于**印在桌垫上的**那两摞卡背图案（`_build_deck`）—— 抽卡演出的那张卡
+## 由 `DeckReveal` 自己取素材（同一个来源）。
 func _deck_back_tex(deck: String) -> Texture2D:
 	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
 		else "res://assets/cards/atlas_back_blue_brown.svg")
-
-## 铺满整张牌的卡背图案。
-## 素材本身是白底彩纹，直接铺会和「深蓝 + 金」的界面打架 —— 压成低透明度的
-## 金色/紫色线纹，叠在深色卡体上，看起来就是同一族的卡背；两套牌堆仍一眼可分。
-func _make_card_art(deck: String) -> TextureRect:
-	var tr := TextureRect.new()
-	tr.texture = _deck_back_tex(deck)
-	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	tr.stretch_mode = TextureRect.STRETCH_SCALE
-	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
-	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tr.modulate = Color(1.0, 0.86, 0.55, 0.30) if deck == "机会" else Color(0.78, 0.72, 1.0, 0.30)
-	return tr
-
-## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（牌堆名 + 卡文）
-func _card_face_front(deck: String, text: String, style: Array) -> Control:
-	var card := PanelContainer.new()
-	card.set_anchors_preset(Control.PRESET_FULL_RECT)
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(style[1], 16, style[0], 2, 12))
-	# PanelContainer 会把所有子节点铺满，所以先垫一层普通 Control，内缩才生效
-	var layer := Control.new()
-	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(layer)
-	layer.add_child(_make_card_art(deck))
-	# 文字牌面：深色半透明圆角板，压在图案中央；四边留出卡牌原有的花纹
-	var plate := UIKit.panel_container(Color(0.045, 0.05, 0.078, 0.88), 12,
-		Color(style[0].r, style[0].g, style[0].b, 0.5), 1, 0)
-	plate.set_anchors_preset(Control.PRESET_FULL_RECT)
-	plate.offset_left = 34.0
-	plate.offset_right = -34.0
-	plate.offset_top = 34.0
-	plate.offset_bottom = -34.0
-	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(plate)
-	var m := UIKit.margins(16, 16, 14, 14)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	plate.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
-	m.add_child(v)
-	var title := UIKit.label(deck, 24, style[0])
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(title)
-	var rule := ColorRect.new()
-	rule.color = Color(style[0].r, style[0].g, style[0].b, 0.35)
-	rule.custom_minimum_size = Vector2(0, 1)
-	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(rule)
-	var body := UIKit.label(text, 15, UIKit.TEXT)
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)  # 锁换行宽度（扣掉板与边距）
-	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(body)
-	return card
-
-## 卡背：整张铺 CC0 的 Atlas 牌卡背图案，抽出阶段露出的就是这一面
-func _card_face_back(deck: String, accent: Color) -> Control:
-	var card := PanelContainer.new()
-	card.set_anchors_preset(Control.PRESET_FULL_RECT)
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
-		Color(0.075, 0.068, 0.045), 16, accent, 3, 12,
-		Color(accent.r, accent.g, accent.b, 0.12)))
-	var layer := Control.new()
-	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(layer)
-	layer.add_child(_make_card_art(deck))
-	return card
-
-## 仿桌游抽卡：镜头对准牌堆，卡背从堆中抽出 → 翻面亮出卡面 → 停留 → 收回；
-## 展示结束后镜头回到 restore_peer 的棋子（GameData.NO_PEER 则停在原地）。
-func play_deck_card(deck: String, kind: String, text: String, restore_peer := GameData.NO_PEER) -> void:
-	if not _deck_pos.has(deck):
-		return
-	if _deck_card != null and is_instance_valid(_deck_card):
-		_deck_card.queue_free()
-		_deck_card = null
-
-	var center: Vector2 = _deck_pos[deck]
-	var style: Array = UIKit.card_palette(kind)
-	var accent: Color = style[0]
-
-	# 卡片本体是个空 Control，正反两面都铺满它 —— 翻面就是把它绕竖轴压扁再张开
-	var card := Control.new()
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.z_index = 30
-	card.size = CARD_SIZE
-	card.pivot_offset = CARD_SIZE * 0.5
-	_world.add_child(card)
-	_deck_back = _card_face_back(deck, accent)
-	card.add_child(_deck_back)
-	_deck_front = _card_face_front(deck, text, style)
-	_deck_front.visible = false
-	card.add_child(_deck_front)
-
-	# 起点的**退化口径** = 画布上那点扁图案；真正的起点由紧接着的 `_refresh_deck_from()`
-	# 从实体摞顶面覆盖（provider 未接 / 没有实体牌堆时保持这里给的值）。
-	var start := center - card.size * 0.5 + Vector2(0, 54)
-	var shown := center - card.size * 0.5 - Vector2(0, 120)
-	shown.x = clampf(shown.x, 16.0, WORLD.x - card.size.x - 16.0)
-	card.modulate = Color(1, 1, 1, 0.0)
-	card.scale = Vector2(0.55, 0.55)
-	_deck_prev_zoom = _zoom
-	# 推近到「至少 DECK_PUSH_FACTOR 倍全景」：用倍数而不是绝对倍率，画布尺度变了也不会失效
-	# （原来写死 0.78，那是屏幕时代的值；2048² 画布下它比全景 0.97 还小，等于完全不推近）。
-	focus_point_zoom(center + Vector2(0, -110), maxf(_zoom / _fit_zoom, DECK_PUSH_FACTOR))
-
-	_deck_card = card
-	_deck_kind = deck
-	_deck_t = 0.0
-	_deck_from = start
-	# 批次 6 Task 2：**「抽出」的起点从画布上的扁图案改到实体摞的顶面**（本批次 BoardView 的
-	# 唯一改动）。四段动画的语义与节奏一字未动 —— 只换起点（"收回"也回这儿，因为收回的落点就是
-	# 它从哪儿抽出来的）。放在 `focus_point_zoom` **之后**：取起点用的 `_world_from_view`
-	# 要的是推近后的镜头（推近那一档的 `_zoom` 是立即生效的）。
-	_refresh_deck_from()
-	card.position = _deck_from
-	_deck_shown = shown
-	_deck_restore = restore_peer
 
 func _build_ring() -> void:
 	_ring = Panel.new()
@@ -877,7 +655,6 @@ func _process(delta: float) -> void:
 	if _ring_peer != GameData.NO_PEER and _tokens.has(_ring_peer):
 		var tk2: Control = _tokens[_ring_peer]
 		_ring.position = tk2.position + tk2.size * 0.5 - _ring.size * 0.5
-	_tick_deck_card(delta)
 	if _wheel_wait > 0.0:
 		_wheel_wait -= delta
 		if _wheel_wait <= 0.0 and _wheel_restore != GameData.NO_PEER:
@@ -931,21 +708,9 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 		_center_target = _center
 	_apply_cam()
 
-## 镜头对准某个世界坐标点并拉近：抽卡时用，牌面文字要看得清
-## （全景倍率下整张牌只有七八十像素宽，字是糊的）。
-## zoom 同 focus_grid：是「基准倍率（全景）的倍数」。
-func focus_point_zoom(world_pt: Vector2, zoom: float) -> void:
-	if cam_locked:
-		return  # 摆拍锁定；视角已固定在自己座位（v0.5.0 批次 1 删转视角）
-	auto_follow = true
-	_follow_peer = -1
-	_has_follow_pt = true
-	_follow_pt = world_pt
-	_rotating = false
-	_zoom = _zoom_from_factor(zoom)
-	_apply_cam()
-
 ## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
+## （`focus_point_zoom` 已随批次 8 删除：它唯一的调用方是抽卡推近，而演出已搬到屏幕层
+##  `DeckReveal`、不再动 2D 相机。要"对准某点"用 `focus_point`。）
 func focus_point(world_pt: Vector2, hard := false) -> void:
 	if cam_locked:
 		return  # 摆拍锁定；视角已固定在自己座位（v0.5.0 批次 1 删转视角）
@@ -983,7 +748,8 @@ func _gui_input(ev: InputEvent) -> void:
 		var mb := ev as InputEventMouseButton
 		# 滚轮不再自己缩放：方向已交给 3D 相机（Table3D._unhandled_input → set_view，
 		# 改的是**视角推移的目标值**，不是推拉）。
-		# 2D 相机的 _zoom 仍由掷轮/抽卡的推近演出（focus_point_zoom / focus_grid）驱动；
+		# 2D 相机的 _zoom 现在只由 `focus_grid`（摆拍 / 格详情近景）驱动；抽卡推近已随批次 8
+		# 取消（演出搬到屏幕层 `DeckReveal`，相机全程不动）。
 		# _zoom_at 现在没有调用者，按计划保留（备 2D 缩放用）。
 		if mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
 			if mb.pressed:
@@ -1043,7 +809,7 @@ func set_hover(idx: int) -> void:
 
 # ---------------- 相机缩放上限 + 开发者叠层 ----------------
 
-var _zoom_clamp_max := MAX_ZOOM_FACTOR   # 缩放倍率上限（× 基准倍率；滚轮已不碰缩放，改由取景/抽卡推近读它）
+var _zoom_clamp_max := MAX_ZOOM_FACTOR   # 缩放倍率上限（× 基准倍率；滚轮不碰缩放，改由 focus_grid 读它）
 var _tile_idx_labels: Array = []    # 开发者模式：格子编号叠层
 var dev_tile_index := false:
 	set(v):

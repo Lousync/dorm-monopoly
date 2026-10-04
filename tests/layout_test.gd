@@ -1592,7 +1592,6 @@ func _run() -> void:
 			_check(false, "牌堆父节点缺了，后半段跳过")
 		else:
 			_check(dr.get_child_count() == 2, "两摞都在（实得 %d 摞）" % dr.get_child_count())
-			var tops := {}
 			var bodies := {}
 			for dn in deck_names:
 				var droot: Node3D = dr.get_node_or_null("Deck_%s" % dn) as Node3D
@@ -1652,7 +1651,6 @@ func _run() -> void:
 				var lab := droot.get_node_or_null("Name") as Label3D
 				_check(lab != null and String(lab.text) == dn,
 					"「%s」摞上写着牌名（实得「%s」）" % [dn, String(lab.text) if lab != null else "无"])
-				tops[dn] = tpD.deck_top_px(dn)
 			# 配色分得开 = 比 **albedo_color 真的不同**（批次 6 Task 3 改）：原来比的是**材质实例
 			# 身份**，而代码每摞新建一份 `StandardMaterial3D` ⇒ 即便两个 albedo 完全相同也恒不等，
 			# 这条断言**不可能因它声称的原因失败**。再进一步：各自等于预期那一份配色条目
@@ -1666,13 +1664,6 @@ func _run() -> void:
 			_check(got_jh != got_my, "两摞的配色分得开（机会 %s / 命运 %s）" % [got_jh, got_my])
 			_check(got_jh == want_jh and got_my == want_my,
 				"两摞各用自己那一份配色（机会 %s / 命运 %s）" % [want_jh, want_my])
-			# ③ 抽卡「抽出」的起点 = 这一摞的**顶面**：
-			#    顶面比桌面高 ⇒ 屏幕投影往远端挪一截 ⇒ 画布 y 应该比落点**小**（更远）。
-			var top_c: Vector2 = tops["机会"]
-			_check(top_c.distance_to(deck_px["机会"]) < 60.0,
-				"起点在那一摞附近（离落点 %.1f 画布像素）" % top_c.distance_to(deck_px["机会"]))
-			_check(top_c.y < deck_px["机会"].y,
-				"起点（顶面）比落点更靠远端（y %.1f < %.1f）" % [top_c.y, deck_px["机会"].y])
 			# ④ 幂等：重复调用只重摆、不重建节点树
 			var first_root: Node = dr.get_child(0)
 			var first_kids: int = (first_root as Node3D).get_child_count()
@@ -1681,20 +1672,6 @@ func _run() -> void:
 				"重复调用不重建节点（实得 %d 摞）" % dr.get_child_count())
 			_check((first_root as Node3D).get_child_count() == first_kids,
 				"摞里的层数一字未变（%d）" % (first_root as Node3D).get_child_count())
-			# ⑤ 抽卡动画的「抽出」起点确实取自实体摞（BoardView 本批次唯一一处改动）。
-			#    起点是 `_world` 局部坐标，而 deck_top_px 给的是画布像素 ⇒ 中间那一跳也得钉住。
-			var card_sz: Vector2 = t3.board.CARD_SIZE
-			t3.board.cam_locked = true
-			t3.board.play_deck_card("机会", "good", "测试卡文")
-			var want_from: Vector2 = t3.board._world_from_view(tops["机会"]) - card_sz * 0.5
-			_check(t3.board._deck_from.distance_to(want_from) < 1.0,
-				"「抽出」从实体摞顶面起（实得 %s，期望 %s）" % [t3.board._deck_from, want_from])
-			var old_from: Vector2 = t3.board.deck_center("机会") - card_sz * 0.5 + Vector2(0.0, 54.0)
-			_check(t3.board._deck_from.distance_to(old_from) > 3.0,
-				"起点不再是画布上那点扁图案（离旧起点 %.1f 画布像素）"
-					% t3.board._deck_from.distance_to(old_from))
-			t3.board._tick_deck_card(t3.board.DECK_CARD_TIME + 0.1)   # 收尾，别把演出留进后面的断言
-			t3.board.cam_locked = false
 
 			# ②c 尺寸**跟着取景**（修复波 F 的实质）：把 2D 镜头推近（抽卡那 ≥2× 推近的**同一件事**
 			# —— 都是同一个 `_zoom`），重报脚印之后摞必须跟着胀。**只跟位置不跟尺寸时这条会红**

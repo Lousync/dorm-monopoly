@@ -425,34 +425,34 @@ func _run() -> void:
 	else:
 		_check(false, "同一帧产生两条金额飘字（不足以比较位置）")
 
-	print("== 抽卡：镜头拉近，牌面文字才看得清 ==")
-	# 全景倍率下整张牌只有七八十像素宽，字是糊的 —— 抽卡时要临时拉近
-	g.board.cam_locked = false
-	var z0: float = g.board._zoom
-	# 第三个参数现在是「基准倍率（全景）的倍数」，不再是屏幕时代的绝对倍率：
-	# 画布从 1280×800 换成 2048² 的 SubViewport 后，绝对字面量的含义差了约 3 倍
-	#（全景从 0.40 变成 0.97）。2.0 对应原来那个 0.78（0.78/0.40 ≈ 1.96）。
-	g.board.focus_point_zoom(Vector2(1008.0, 600.0), 2.0)
-	_check(g.board._zoom > z0 * 1.5, "focus_point_zoom 能拉近镜头（%.2f → %.2f）" % [z0, g.board._zoom])
-
-	print("== 抽卡推近：比全景明显更近，展示完还原（DECK_PUSH_FACTOR 链，triage #3）==")
-	# 这条链在批次 2 里静默坏过一次：推近值写成了绝对 0.78（屏幕时代的字面量），
-	# 在 2048² 画布下比全景的 0.97 还小 → 完全不推近，且当时没有任何测试能红。
-	# 现在钉住「抽出阶段确实推近到 ≥ DECK_PUSH_FACTOR × 全景」+「演完能还原」。
+	print("== 抽卡演出：在屏幕层大字演、**相机全程不动**（批次 8）==")
+	# 批次 8 的判据就一句：演出前后 2D 相机的缩放与注视点**完全相同**。
+	# 旧版会把 `_zoom` 推到 ≥2× 全景（DECK_PUSH_FACTOR）—— 那一推让印在桌垫上的图案整体放大滑动，
+	# 而手牌 / 立牌是不跟 2D 相机的实物 ⇒ 明显错位（用户 ① 报的就是它）。
 	g.board.cam_locked = false
 	g.board.fit_overview(true)
 	await process_frame
-	var fit_zoom: float = g.board._fit_zoom
-	g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
-	_check(g.board.is_showing_deck_card(), "抽卡演出已开始")
-	_check(g.board._zoom >= g.board.DECK_PUSH_FACTOR * fit_zoom - 0.001,
-		"抽卡把镜头推近到 ≥ %.1f × 全景（实得 %.2f / 门槛 %.2f）" % [
-			g.board.DECK_PUSH_FACTOR, g.board._zoom, g.board.DECK_PUSH_FACTOR * fit_zoom])
-	# 把相位计时一次推到底（走演出自己的收尾分支），缩放应还原到抽卡前的全景
-	g.board._tick_deck_card(g.board.DECK_CARD_TIME + 0.1)
-	_check(not g.board.is_showing_deck_card(), "演出结束卡片已收回")
-	_check(absf(g.board._zoom - fit_zoom) < 0.001,
-		"展示完还原到抽卡前的缩放（实得 %.3f / 期望 %.3f）" % [g.board._zoom, fit_zoom])
+	var z_before: float = g.board._zoom
+	var c_before: Vector2 = g.board._center
+	_check(g.deck_reveal != null, "屏幕层抽卡演出组件已建（TableHud.build_play_ui）")
+	g.deck_reveal.show_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+	await process_frame
+	_check(g.deck_reveal.is_showing(), "抽卡演出已开始")
+	g.deck_reveal.tick(g.deck_reveal.HOLD * 0.5)   # 推进到停留段中途
+	await process_frame
+	_check(absf(g.board._zoom - z_before) < 0.001,
+		"演出期间 2D 相机缩放一动不动（实得 %.3f / 演出前 %.3f）" % [g.board._zoom, z_before])
+	_check(g.board._center.distance_to(c_before) < 0.001,
+		"演出期间 2D 相机注视点一动不动（实得 %s / 演出前 %s）" % [g.board._center, c_before])
+	# 把相位计时一次推到底（走演出自己的收尾分支）
+	g.deck_reveal.tick(g.deck_reveal.CARD_TIME + 0.1)
+	_check(not g.deck_reveal.is_showing(), "演出结束卡片已收回")
+	# 反向契约：旧那套"演在画布上"的接口必须**真的没了**（不留空壳）
+	_check(not g.board.has_method("play_deck_card"), "BoardView.play_deck_card 已退场")
+	_check(not g.board.has_method("is_showing_deck_card"), "BoardView.is_showing_deck_card 已退场")
+	_check(not g.board.has_method("focus_point_zoom"), "focus_point_zoom 已退场（唯一调用方是抽卡推近）")
+	var B1 = load("res://scripts/board_view.gd")
+	_check(not B1.get_script_constant_map().has("DECK_PUSH_FACTOR"), "DECK_PUSH_FACTOR 常量已删")
 
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
 	var hs: Dictionary = _state(2, false)

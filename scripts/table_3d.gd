@@ -646,9 +646,9 @@ func _build_viewport() -> void:
 	board.overlay_left = 0.0
 	board.overlay_right = 0.0
 	viewport.add_child(board)
-	# 抽卡「抽出」的起点（批次 6 Task 2）：BoardView 不依赖 TableProps 这个类型，
-	# 由这里把 3D 侧的查询注入进去（同 on_table_click 的注入方式，见 board_view.deck_top_provider）。
-	board.deck_top_provider = table_props.deck_top_px
+	# （原先这里往 BoardView 注入抽卡「抽出」的起点供给 `deck_top_provider`。批次 8 把抽卡演出
+	#  搬到屏幕层的 `DeckReveal`、不再"从实体摞顶面抽出"，那条注入连同 `TableProps.deck_top_px`
+	#  一起删掉了。BoardView 与 TableProps 之间不再有这条依赖。）
 
 # ---------------- 屏幕层暗角（设计稿 §三 / §6.4） ----------------
 

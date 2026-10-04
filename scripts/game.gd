@@ -136,6 +136,9 @@ var corner_bars: Array = []
 ## 右下角动作按钮（批次 7）：轮到我掷轮 → 「转动转盘」，掷完进道具阶段 → 「结束回合」，
 ## 其余时候整枚隐藏。由 `TableHud.build_play_ui` 建，状态见 `_refresh_action_button`。
 var action_btn: Button
+## 抽卡演出的屏幕层大字卡（批次 8）：由 `TableHud.build_play_ui` 建、`s_card` 调它。
+## 演出不再动 2D 相机（旧 `board.play_deck_card` 那一路已删），见 scripts/deck_reveal.gd。
+var deck_reveal: DeckReveal
 var _corner_sig := ""              # 四角条的刷新签名（状态没变就不重写）
 var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
 var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，簇收起）
@@ -604,7 +607,7 @@ func _resolve_tile(p: Dictionary) -> void:
 			# 仿桌游：机会/命运卡从棋盘中央对应牌堆抽出展示
 			s_card.rpc(String(card.t), _card_kind(card), String(d.name))
 			_log("%s 抽到事件：%s" % [p.name, card.t])
-			await _wait(BoardView.DECK_CARD_TIME + 0.1)
+			await _wait(DeckReveal.CARD_TIME + 0.1)
 			await _apply_card(p, card)
 		"fine":
 			if _immune_debuff(p):
@@ -1260,8 +1263,9 @@ func s_move(peer: int, path: Array, step_time: float) -> void:
 func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 	Fx.play("card", -4.0)
 	if deck != "":
-		# 事件卡：从棋盘中央牌堆抽出，展示完镜头回到行动棋子
-		board.play_deck_card(deck, kind, text, int(st.get("turn", GameData.NO_PEER)))
+		# 事件卡：在屏幕层大字演出（批次 8）。相机全程不动 —— 旧版会推近 2D 镜头去读字，
+		# 那一推让桌垫图案滑动、与不跟相机的手牌 / 立牌错位（见 scripts/deck_reveal.gd）。
+		deck_reveal.show_card(deck, kind, text)
 		if kind == "jail":
 			Fx.shake(self, 9.0, 0.35)
 			Fx.play("jail", -2.0)
@@ -1333,13 +1337,9 @@ func _board_follow_ready() -> bool:
 ##（内部就是 `global_position + _view_from_world(...)`，见 `deck_screen_pos` 那段）。
 ##
 ## 幂等（只改 transform / mesh 尺寸，不重建节点）⇒ **每条路都能调**：
-##   * 状态广播（`_refresh_table_props`）—— 常态刷新；
-##   * **抽卡演出期间逐帧**（`_process` 里那条，批次 6 Task 3）—— 抽卡会做一次 ≥2× 的推近
-##     且**不伴随任何状态广播**，只靠广播刷新的话，图案在演出中滑动而实体纹丝不动，
-##     两者会分开几百画布像素（"牌从实体摞上抽出"于是只在全景取景下成立）。
-##     逐帧重推把轮缘那条同款待办（`table_props.gd` 文件头一直挂着的"不伴随 s_state 的镜头
-##     变化会短暂脱开"）一并结清 —— 两条是同一处升级的两半。
-##     只在**抽卡显示期间**跑（很短，`is_showing_deck_card`），不做成常态每帧。
+##   * 状态广播（`_refresh_table_props`）—— 常态刷新。
+## （批次 8 起**只剩这一条路**：原先还有一条"抽卡演出期间逐帧重推"，那是给抽卡的 ≥2× 推近兜底的；
+##  演出搬到屏幕层 `DeckReveal` 后相机全程不动，那段逐帧重推连同它的前提一起删了。）
 ##
 ## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
 ## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
@@ -1348,7 +1348,7 @@ func _board_follow_ready() -> bool:
 func _refresh_board_followers() -> void:
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
 	# 牌堆：**位置与尺寸都跟印刷图案**（`deck_screen_pos` / `deck_screen_size`，同轮缘那一套）。
-	# 尺寸是修复波 F 补的：抽卡推近 2× 时印刷卡背整体放大，只跟位置的话摞会盖不住它。
+	# 尺寸是修复波 F 补的：取景一变印刷卡背整体放大/缩小，只跟位置的话摞会盖不住它。
 	table3d.table_props.build_decks({
 		"机会": board.deck_screen_pos("机会"),
 		"命运": board.deck_screen_pos("命运")},
@@ -1606,8 +1606,7 @@ func _refresh_actions() -> void:
 	# 「该你了」改由右下角动作按钮的点亮与立牌上的操作倒计时承担，发生过的事由战报承担。
 	# 镜头对焦这半与文字无关，保留。
 	if await_state == "roll" and is_my_roll:
-		if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
-				and not board.is_rotating():
+		if not board.is_wheel_spinning() and not board.is_rotating():
 			board.focus_peer(my_peer)
 	# 自动化测试：轮到自己时自动掷骰（用 roll_epoch 区分连掷的新请求）
 	if at_mode != "" and is_my_roll and int(st.get("roll_epoch", -1)) != _at_roll_epoch:
@@ -3549,12 +3548,8 @@ func _spawn_money_fly(peer: int, diff: int) -> void:
 
 func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
-	# 抽卡演出期间**逐帧**重推「跟印刷图案走」的实体（转盘轮缘 / 两摞牌堆）：
-	# 推近（`focus_point_zoom`）不伴随任何状态广播，只靠广播刷新的话图案会在演出中滑走
-	# 而实体原地不动 —— 牌堆的「抽出」起点也跟着错（理由全文见 `_refresh_board_followers`）。
-	# 只在抽卡显示期间跑（很短），不做成常态每帧。
-	if board != null and board.is_showing_deck_card() and _board_follow_ready():
-		_refresh_board_followers()
+	# （原先这里有一段"抽卡演出期间逐帧重推跟图案的实体" —— 前提是抽卡会把 2D 取景推近。
+	#  批次 8 把演出搬到屏幕层、相机全程不动 ⇒ 不再有逐帧的取景变化要跟，整段删掉。）
 	# 屏幕底部原来还有一条固定操作坞（牌垫阶段条 + 操作条 + 底板）。批次 3 Task 6 把它
 	# 整条拆了：掷轮改点桌面转盘、出牌改点手中牌（选中后点牌垫「使用道具」确认）、
 	# 现金与体力在桌上。**注意这里不能留 `if <坞成员> == null: return` 之类的提前返回** ——

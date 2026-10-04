@@ -47,14 +47,16 @@ const PROPS_Y := 0.02
 #   其余 — 位置走**画布常量**（`HAND_BASE_PX` / `STANDEE_BASE_PX`）：
 #          它们是**自由立在桌上的实物**，不该因为"印出来的图案"变了而移动。
 #          相机推近是「你凑近看」，不是「桌子被重新排版」。
-# **代价（必须记住）**：抽卡动画会把 2D 取景推到 ≥2×（`board_view.gd` 的 `DECK_PUSH_FACTOR`），
-# 那一刻桌垫图案整体滑动、而**不跟相机的那几件**纹丝不动 ——「手牌落在自己面前那条桌垫上」
-# 这些断言**只在全景取景下成立**。批次 4 要连续移相机 ⇒ **必须继承这条决定**（实物不跟相机）。
-# **跟图案那两件不再有这个代价**（批次 6 Task 3 + 修复波 F）：抽卡演出期间 `game._process`
-# **逐帧**重推轮缘与两摞牌堆（`game._refresh_board_followers`，条件是
-# `board.is_showing_deck_card()`）⇒ 不伴随 `s_state` 的镜头变化（推近 / 聚焦 / 人数变化）里，
-# 它们也一直压在印刷图案上（位置与尺寸同一处重推）。
-# 本条原先挂的"轮缘要不要补每帧跟 `_zoom`"到这里结清：**要，而且与牌堆同一处逐帧升级**。
+# **代价**：2D 取景一变（`fit_overview` / `focus_grid` / 人数变化），桌垫图案整体滑动、而
+# **不跟相机的那几件**纹丝不动 ——「手牌落在自己面前那条桌垫上」这些断言**只在全景取景下成立**。
+# 必须继承这条决定（实物不跟相机）。
+# **批次 8 起"抽卡推近"这个变量没了**：抽卡演出搬到屏幕层（`scripts/deck_reveal.gd`）、
+# **相机全程不动** ⇒ 原先"抽卡那一刻图案滑动、实物不动"的错位从根上消失（用户 ① 报的正是它）；
+# 与之配套的那条"演出期间 `game._process` 逐帧重推"也一并删掉（不再有逐帧的取景变化要跟）。
+# 跟随本身仍在：取景 / 聚焦 / 人数变化之后，跟图案的两件由 `game._refresh_board_followers`
+# 重推（位置与尺寸一起）；那条挂在**状态广播**上（`_refresh_table_props`）—— 不伴随广播的
+# 纯镜头变化（摆拍用的 `focus_grid`）要跟着变，得自己再调一次。
+# 本条原先挂的"轮缘要不要补每帧跟 `_zoom`"到这里结清：**要，而且与牌堆同一处升级**。
 
 ## 批次 7：**筹码堆（现金）与体力件（体力）整体退场** —— 身家读数搬到屏幕四角的四角身家条
 ##（大字身家 + 小字现金，见 table_hud.CORNER_SLOTS），体力归批次 9 的玩家道具弹窗。
@@ -181,8 +183,8 @@ const DECK_LAYER_SHIFT := 0.010
 ## **底直接落在桌面上**（`_place_deck` 里 y = 桌面，不再加 `PROPS_Y`）：一摞牌是"躺在桌上的"，
 ## 抬起来只会让它相对印刷图案在屏幕上往远端漂（`PROPS_Y` 那段说的"抬得越高越漂"）。
 ## 底下 5 层叠出来的 0.05 世界高仍在 ⇒ **顶层**的屏幕投影依旧往远端偏 **14~19 画布像素**
-##（批次 6 Task 3 实测：全景取景 18.8、抽卡推近 2× 时 14.1 —— 投影是**射影**的，同一截高度在
-## 不同取景下换算出的画布位移本来就不完全相等，见 `deck_top_px` 那段）——
+##（批次 6 Task 3 实测：全景取景 18.8、另一档取景 14.1 —— 投影是**射影**的，同一截高度在
+## 不同取景下换算出的画布位移本来就不完全相等）——
 ## 但那是**顶层自己的位置**，不是"整摞要往上挪"的理由：
 ## 盖住印刷脚印靠的是**最下一层**（它就在桌面上、投影和图案同面）。
 const DECK_SIZE := Vector3(0.368, DECK_LAYER_T, 0.531)
@@ -222,12 +224,14 @@ const DECK_LABEL_COLORS := {
 ## 谁摆牌堆谁把名字传进来，多一份常量就多一处会漂开的数。
 
 var _decks_root: Node3D
-## 两摞的节点池：牌名 → {root, top_local, top_world}。
+## 两摞的节点池：牌名 → {root}。
 ## **只建一次**：之后刷新只改 root 的 global_position 与那份共用 mesh 的尺寸
 ##（层与标签的局部位置只跟层数有关）。
 ## **不存 layers / mat / label**（终审修复波 G）：它们建完就没人读过 —— 层与标签挂在 root 下、
 ## 由 root 的 transform 一起带走，材质是逐摞一份、只在 `_make_deck` 里用过一次。
 ## 存着只会让人以为"刷新时还会改它们"。
+## **批次 8 起连 `top_local` / `top_world` 也不存**：它们只服务于抽卡"从摞顶面抽出"的起点
+##（`deck_top_px`），而演出已搬到屏幕层、不再需要起点（见文件头"摆放约定"）。
 var _decks := {}
 var _deck_mesh: BoxMesh              # 两摞共用一份：牌面尺寸完全一致
 
@@ -301,7 +305,8 @@ func _make_deck(dname: String) -> Dictionary:
 		var off := (half - float(i)) * DECK_LAYER_SHIFT
 		mi.position = Vector3(off, DECK_LAYER_T * (float(i) + 0.5), off)
 		root.add_child(mi)
-	# 顶面：最上一层（i = LAYERS-1，off = -half × SHIFT）的**上表面中心** —— 抽卡的起点（deck_top_px）。
+	# 顶面：最上一层（i = LAYERS-1，off = -half × SHIFT）的**上表面中心** —— 牌名就平贴在这儿
+	#（原先它还是抽卡的「抽出」起点，那个消费者已随批次 8 删除，见文件头"摆放约定"）。
 	var top_local := Vector3(-half * DECK_LAYER_SHIFT, DECK_LAYER_T * float(DECK_LAYERS),
 		-half * DECK_LAYER_SHIFT)
 	var lab := Label3D.new()
@@ -325,10 +330,10 @@ func _make_deck(dname: String) -> Dictionary:
 	lab.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
 	lab.position = top_local + Vector3(0.0, 0.001, 0.0)      # 抬 1mm：与顶层上表面不共面（免得 z-fighting）
 	root.add_child(lab)
-	# 只留**后面真会读**的三项（修复波 G）：`_place_deck` 读 root / 写 top_world，`deck_top_px`
-	# 读 top_world，`top_local` 是算 top_world 的一半。层与标签由 root 的 transform 一起带走，
-	# 材质只在上面用过一次 —— 存进字典没人读，只会让人以为"刷新还会改它们"。
-	return {"root": root, "top_local": top_local, "top_world": Vector3.ZERO}
+	# 只留**后面真会读**的一项（修复波 G）：`_place_deck` 读 root。层与标签由 root 的 transform
+	# 一起带走、材质只在上面用过一次 —— 存进字典没人读，只会让人以为"刷新还会改它们"。
+	# 批次 8 把 `top_local` / `top_world` 也一并去掉（它们只服务于已删的抽卡起点 `deck_top_px`）。
+	return {"root": root}
 
 ## 把一摞摆到画布像素 center_px 上（层与标签的局部位置在 _make_deck 里已经摆好，这里只挪 root）。
 ##
@@ -341,27 +346,6 @@ func _place_deck(d: Dictionary, center_px: Vector2) -> void:
 	var w: Vector3 = _t3.canvas_px_to_world(center_px)
 	w.y = _t3.table_mesh.global_position.y
 	root.global_position = w
-	# 顶面中心的**世界**坐标（deck_top_px 要用）—— 走 root 的真变换算，不手搓"位置 + 高度"
-	d["top_world"] = root.global_transform * (d.top_local as Vector3)
-
-## 第 deck 摞**顶面中心**落在画布上的位置（抽卡「抽出」的起点，见 board_view.play_deck_card）。
-## **没有这摞实体时返回 `Vector2.ZERO`**（调用方按"没有起点"处理，退回它原来那点）。
-##
-## 为什么不是把顶面的世界点直接 `world_to_canvas_px`：那条链只看平面 (x, z)、**高度被丢掉**，
-## 反算出来的就是摞的**落点**（= 那摞卡背的画布中心），而不是"顶面看起来在哪"。
-## 顶面比桌面高，屏幕投影会往远端挪一截 —— 要的正是那一截，所以走
-## 「世界点 → 屏幕（unproject）→ 桌面平面 → 画布像素（screen_to_viewport）」，
-## 与 hand_rect / _standee_rect 同一条链（拿不到屏幕（相机不可用）时退回落点口径，不返回零）。
-func deck_top_px(deck: String) -> Vector2:
-	var d: Dictionary = _decks.get(deck, {})
-	if d.is_empty() or _t3 == null:
-		return Vector2.ZERO
-	var top: Vector3 = d.get("top_world", Vector3.ZERO)
-	if _t3.camera != null:
-		var px = _t3.screen_to_viewport(_t3.camera.unproject_position(top))
-		if px != null:
-			return px
-	return _t3.world_to_canvas_px(top)
 
 # ---------------- 筹码堆 / 体力件（批次 7 已整体退场） ----------------
 #

@@ -375,6 +375,10 @@ static func build_play_ui(g: Node) -> void:
 	g.action_btn.pressed.connect(g._on_action_pressed)
 	hud.add_child(g.action_btn)
 
+	# 抽卡演出的屏幕层大字卡（批次 8）：相机不动，卡在屏幕正中演（见 deck_reveal.gd）。
+	g.deck_reveal = DeckReveal.new()
+	hud.add_child(g.deck_reveal)
+
 	var hair := ColorRect.new()
 	hair.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
 	hair.custom_minimum_size = Vector2(0, 1)

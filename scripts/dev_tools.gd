@@ -447,7 +447,7 @@ func fps_probe_run() -> void:
 
 func take_shot(path: String) -> void:
 	await get_tree().create_timer(0.4).timeout
-	while g.board.is_showing_deck_card():
+	while g.deck_reveal != null and g.deck_reveal.is_showing():
 		await get_tree().create_timer(0.25).timeout
 	g.board.fit_overview()
 	await get_tree().create_timer(0.2).timeout
@@ -477,16 +477,13 @@ func take_shot(path: String) -> void:
 	if path.contains("pause"):
 		g._open_menu()           # 摆拍：打开暂停菜单
 	if path.contains("deckout"):
-		# 抽卡「抽出」摆拍（批次 6 Task 3）：**先把注视点就位**再抽 —— `play_deck_card` 的推近走
-		# `focus_point_zoom`（平滑逼近），不预先挪的话演出头几帧镜头还在往牌堆赶，
-		# 牌堆可能压根不在画面里。`hard = true` 立即居中，后面那一推就不再移动。
-		# 名字里同时带 **freecam**（= 不锁镜头，推近真的生效）与 **card**（跳过赌局浮层）。
-		g.board.focus_point(g.board.deck_center("机会") + Vector2(0, -110), true)
+		# 抽卡「抽出」摆拍（批次 8 起演出在**屏幕层**，相机不再参与）：这里不再需要先把注视点
+		# 挪到牌堆（旧版是给 `play_deck_card` 的推近兜底），只等一拍让场景稳定。
 		await get_tree().create_timer(0.2).timeout
 	if not path.contains("plain") or path.contains("card"):
-		g.board.play_deck_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+		g.deck_reveal.show_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 		# deckout **不转轮**：`spin_wheel` 会把镜头焦点改到转盘（`focus_point`），
-		# 演出一开始镜头就往转盘跑，拍不到"牌从牌堆上起来"这一幕。
+		# 演出一开始镜头就往转盘跑（牌堆 / 桌面被挪开），拍不到抽卡这一幕。
 		if not path.contains("deckout"):
 			g.board.spin_wheel(12)
 	if path.contains("level") and g.multiplayer.is_server():
@@ -551,10 +548,10 @@ func take_shot(path: String) -> void:
 				g.table3d.table_props.set_hand_selected(slot_t)
 			g._begin_peer_target(slot_t, false, true)
 			await get_tree().create_timer(0.25).timeout
-	# 文件名带 deckout：抽卡「抽出」只有 DECK_OUT = 0.34s，常规三帧的第一帧（0.6s）已经落在
-	# 翻面之后 —— 拍不到"牌从实体摞上被抽起"的那一刻。这里按两个时间点各补一张（**不等 0.6s**）：
-	#   0.06s（卡片刚离摞）与 0.16s（快到位）。配 **freecam**（= 不锁镜头、推近真的生效）用，
-	# 例如 `--shot-game=1 --shot=shots/xx_freecam_deckout_card.png`。
+	# 文件名带 deckout：抽卡「抽出」只有 `DeckReveal.OUT` = 0.34s，常规三帧的第一帧（0.6s）
+	# 已经落在翻面之后 —— 拍不到"卡刚亮出来的那一刻"。这里按两个时间点各补一张（**不等 0.6s**）：
+	#   0.06s（卡片刚起）与 0.16s（快到位）。批次 8 起演出在屏幕层、相机不参与 ⇒ 不再需要
+	#   **freecam**（那是给旧版推近用的），例如 `--shot-game=1 --shot=shots/xx_deckout_card.png`。
 	if path.contains("deckout"):
 		for tm in [["0.06", "a"], ["0.16", "b"]]:
 			await get_tree().create_timer(float(String(tm[0]))).timeout
