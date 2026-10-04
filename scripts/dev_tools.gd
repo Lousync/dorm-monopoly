@@ -26,6 +26,11 @@ var menu_probe := false
 ## `--fps=秒数`：帧率实测的采样窗口长度（批次 6 Task 3 / 设计稿 §八 风险 1）。
 ## 0 = 不测。见 `fps_probe_run`。
 var fps_probe := 0.0
+## `--fps-houses=1`：采样前把**所有地产格**灌到满级装修（批次 11 T4 加，**默认关**，与批次 6/10 的
+## 旧口径一字不差）。用途：量"**满盘装修**"这一最坏档 —— 房子薄牌是批次 11 新增的 56 个节点，
+## 而**机器人根本不会主动装修**（实测：预热 60 秒只到第 9 轮、场上 **0 块房子**），所以"打到 15 轮
+## 再采"采不到满盘，只能像 `level` 摆拍那样**在房主侧注入局面**（不动玩法代码）。见 `fps_probe_run`。
+var fps_houses := false
 
 # ---------------- 转发给宿主 ----------------
 
@@ -388,6 +393,8 @@ func menu_probe_run() -> void:
 ##   * 采样从"对局真的跑起来之后 + 2 秒"开始（跳过建场与 shader 编译那几帧）；
 ##   * 采样期间把 `Engine.time_scale` 按回 **1.0**：自动对局默认 3 倍速，那是"逻辑跑得快"
 ##     而不是"渲染更重"，按回 1.0 量到的才是玩家自己玩时的那一档节奏。
+##   * 加 `--fps-houses=1` 可先**灌满盘装修**再采（批次 11 T4 加的最坏档开关，见 `fps_houses`）——
+##     机器人从不主动装修，不注入就只能量到 round=1、0 块房子的空盘。
 ##   * 逐帧 `await RenderingServer.frame_post_draw` = 一帧一次，量的就是帧时间本身。
 ##   * 单帧 >100ms 会**额外**打一行 `FPSPROBE SLOW`（附当时的 await / phase / draw call / 物件数），
 ##     用来判断长帧是"场景内容变重了"还是别的原因 —— 正常跑不会刷屏。
@@ -403,7 +410,23 @@ func fps_probe_run() -> void:
 		await get_tree().create_timer(0.25, true, false, true).timeout
 		waited += 0.25
 	await get_tree().create_timer(2.0, true, false, true).timeout
+	# **满盘装修注入**（`--fps-houses=1`，批次 11 T4）：把每一块**地产格**灌到满级装修再采 ——
+	# 这是房子薄牌的最坏档。**为什么必须注入**：机器人**从不主动装修**（实测预热 60 秒只到第 9 轮、
+	# 场上 0 块房子），"让机器人打到 15 轮再采"采不到满盘。注入手法与 `take_shot` 的 `level` 分支
+	# **同类**：只在**房主侧**改 `htiles` 再广播，玩法代码一行不改（旧口径不传这个开关 ⇒ 一字不差）。
+	if fps_houses and g.multiplayer.is_server():
+		for i in g.htiles.size():
+			if String(GameData.TILES[i].get("type", "")) == "property":
+				g.htiles[i].owner = g.my_peer
+				g.htiles[i].level = GameData.MAX_LEVEL
+		g._broadcast_state()
+		await get_tree().create_timer(0.3, true, false, true).timeout
 	Engine.time_scale = 1.0
+	# 采样起点的**局面自述**（批次 11 T4）：帧率数字必须连着"当时场上有几块房子"一起读 ——
+	# 旧口径开采在 round=1、0 块房子，那种数字不能拿来代表"满盘装修"。
+	print("FPSPROBE state round=%d houses=%d nodes=%d" % [
+		int(g.st.get("round", 0)), (g._house_levels as Array).filter(func(x): return int(x) > 0).size(),
+		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))])
 	var t0 := Time.get_ticks_usec()
 	var last := t0
 	var frames := 0

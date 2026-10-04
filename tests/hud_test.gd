@@ -516,12 +516,17 @@ func _run() -> void:
 			% [g.deck_reveal.z_index, g.player_popup.z_index])
 	_check(not g.token_tip.visible, "还没悬停时条是收起的")
 
-	# 悬停到 peer 1（甲，pos 0 / 槽 0）那枚棋子上：走**真入口** `g._on_table_hover`
-	#（`TableView3D.on_table_hover` 的注入点直调的就是它）。
+	# **R10-1**：`game.gd` 里那句 `table3d.on_table_hover = _on_table_hover` 是让悬停真正工作的
+	# **唯一接线** —— 删掉它，全套件原先仍然全绿、而条永不出现。这里把它钉住：注入点必须非空、
+	# 且**指回 game 自己**（否则 `TableView3D` 悬停时调的是别的对象 / 空 Callable）。
+	_check(g.table3d.on_table_hover.is_valid() and g.table3d.on_table_hover.get_object() == g,
+		"悬停注入点接上了 game._on_table_hover（删掉那行接线条就永不出现）")
+	# 悬停到 peer 1（甲，pos 0 / 槽 0）那枚棋子上：走**真入口** —— 经注入点 `on_table_hover`
+	# 调用（即 `TableView3D` 悬停时真正走的那条链），而不是直调 `g._on_table_hover`。
 	g.table3d.snap_view(0.0)
 	await process_frame
 	var want_c: Vector2 = g.board.token_screen_pos(0, 0)
-	_check(g._on_table_hover(want_c) == 1, "悬停甲那枚棋子：命中 peer 1")
+	_check(g.table3d.on_table_hover.call(want_c) == 1, "悬停甲那枚棋子：命中 peer 1（走注入点）")
 	await process_frame
 	await process_frame
 	_check(g.token_tip.visible, "悬停到棋子上 ⇒ 条浮出")
@@ -571,6 +576,65 @@ func _run() -> void:
 	g._on_table_hover(Vector2(30.0, 30.0))      # 收尾：别把悬停态留给下一段
 	await process_frame
 	_check(not g.token_tip.visible, "（收尾）条已收起")
+
+	print("== 悬停信息条：R10 三条审查（内容重读 / 隐藏路径不写目标 / 相机空守卫）==")
+	# ---- R10-2：同一枚棋子上**要重读内容** ----
+	# 旧写法同 peer 分支只重摆位置、不重写内容 ⇒ 悬停期间来了状态广播改了这个人的身家 / 名次时，
+	# 条上的数字**陈旧**（要移开再回来才更新）。这里改 `_peers_info` 里的身家（广播重填的就是它）、
+	# 再走同一次悬停，条上的数字必须跟上。
+	var hc2: Vector2 = g.board.token_screen_pos(0, 0)
+	_check(g._on_table_hover(hc2) == 1, "（R10-2 前置）悬停甲那枚棋子")
+	await process_frame
+	var before_txt := String(g._tip_sub.text)
+	# `board.render` 每来一次广播就把 `_peers_info` 换成新字典 ⇒ 引用要**现取**（见 R10-3 同注）。
+	var pinfo2: Dictionary = g.board._peers_info
+	var worth_saved := int(pinfo2[1]["worth"])
+	pinfo2[1]["worth"] = worth_saved + 123456
+	_check(g._on_table_hover(hc2) == 1, "（R10-2）仍悬停同一枚（同 peer 分支）")
+	# 内容刷新是**同步**的（`_fill_token_tip` 直写 label）⇒ 这里不 await：中间若又来一次广播
+	# 会把测试手改的身家冲回原值，断言就假失败（host 有定时广播，实测偶发）。
+	var want_new := "身家 %s · 第 %d 名" % [
+		GameData.fmt_money(int(pinfo2[1]["worth"])), int(pinfo2[1]["rank"])]
+	_check(String(g._tip_sub.text) != before_txt and String(g._tip_sub.text) == want_new,
+		"同 peer 悬停期间状态变了 ⇒ 内容重读（旧 %s → 新 %s / 期望 %s）"
+			% [before_txt, g._tip_sub.text, want_new])
+	pinfo2[1]["worth"] = worth_saved                # 还原，别把加出来的身家留给后面几段
+	g._on_table_hover(Vector2(30.0, 30.0))
+	await process_frame
+
+	# ---- R10-3：peer 在池里但名册尚未同步 ⇒ 隐藏，且**不写 `_tip_peer`**；名册补上后应能自己出现 ----
+	# 旧写法在"判据不过"的分支就把 `_tip_peer` 写成这枚 peer ⇒ 名册填好了也不会自己出现（要移开再回来）。
+	# `board.render` 每来一次广播就把 `_peers_info` **整个换成新字典**（`_peers_info = pinfo`），
+	# 所以改它之前必须**重新取一次引用** —— 上面的 await 之间可能来过广播，旧引用会变成孤儿。
+	var pinfo3: Dictionary = g.board._peers_info
+	var hc3: Vector2 = g.board.token_screen_pos(3, 1)      # 乙（peer 2，pos 3 / 槽=color 1）的落点
+	var saved2 = pinfo3.get(2)
+	pinfo3.erase(2)                                       # 模拟"棋子已在池里、名册还没同步到"
+	# `_on_table_hover` 返回的是**命中**（原始射线结果）；"名册没这号人"只影响条的显隐。
+	_check(g._on_table_hover(hc3) == 2, "（R10-3）射线命中 peer 2（原始命中，不看名册）")
+	_check(not g.token_tip.visible, "（R10-3）名册没这号人 ⇒ 条收起")
+	_check(g._tip_peer == GameData.NO_PEER, "（R10-3）隐藏路径**没有**写 `_tip_peer`（写成它就卡住）")
+	pinfo3[2] = saved2                                    # 名册补上（下一次广播）
+	_check(g._on_table_hover(hc3) == 2, "（R10-3）名册补上后仍悬停同一枚（peer 2）")
+	await process_frame
+	_check(g.token_tip.visible and String(g._tip_name.text) == "乙",
+		"（R10-3）名册补上后条**自己出现**、不必移开再回来（实得可见 %s / 名 %s）"
+			% [g.token_tip.visible, g._tip_name.text])
+	g._on_table_hover(Vector2(30.0, 30.0))
+	await process_frame
+
+	# ---- R10-4：`_place_token_tip` 解引用 `table3d.camera` 的空守卫 ----
+	# 相机实际在 `TableView3D._init` 就建好、不可达空；但真为 null 时旧写法会**每帧**刷 SCRIPT ERROR
+	#（`_process` 每帧调本函数）。把相机临时置空、**不 await**（免得 `_process` 在空相机下跑一帧），
+	# 直调一次：必须安静地收起、清掉悬停目标，而不是抛。
+	_check(g._on_table_hover(hc2) == 1, "（R10-4 前置）先悬停甲，让 `_tip_peer` 非哨兵")
+	await process_frame
+	var cam_saved: Camera3D = g.table3d.camera
+	g.table3d.camera = null
+	g._place_token_tip()
+	var quiet: bool = (not g.token_tip.visible) and g._tip_peer == GameData.NO_PEER
+	g.table3d.camera = cam_saved
+	_check(quiet, "相机为 null 时 `_place_token_tip` 安静收起（不刷 SCRIPT ERROR）")
 
 	print("== 格详情卡：悬浮在被点格子的上方 ==")
 	g.board.cam_locked = false

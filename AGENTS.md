@@ -93,7 +93,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 **自动化开关**（用法与更多细节见 `doc/development/上手指南.md`）：
 `--autotest=host|client`、`--rounds=N`、`--max-rounds=N`、`--shot=`（截图）、
-`--fps=N`（帧率实测：采 N 秒后打印平均 / 分位 / 最差帧并退出）、
+`--fps=N`（帧率实测：采 N 秒后打印平均 / 分位 / 最差帧并退出；加 `--fps-houses=1` 先灌满盘装修再采）、
 `--card-gallery`（卡片图鉴）、`--menu-probe`（菜单探针）、`--dev`（开发者模式）、`--lab`（道具试验场）。
 
 **摆拍截图（改界面时自检用）**：`--shot=<路径>` 存 PNG。四个非显然的坑：
@@ -152,7 +152,10 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 > 不要分两次工具调用：代理沙箱会把不同调用隔离到各自的网络命名空间，两个进程
 > 谁也看不见谁。表现是 client 报 `NET: connection_failed`、host 那边
 > `AUTOTEST LOBBY humans=1` 直接补机器人开打——**看着像联机坏了，其实是调用方式的问题**。
-> CI（`.github/workflows/ci.yml`）在同一个 `run:` 块里跑，不受影响。
+> CI（`.github/workflows/ci.yml`）在同一个 `run:` 块里跑，不受影响 —— 它那段的等待是
+> **`sleep 4`**（2026-10-04 核对 `ci.yml` 现状）。本机 `sleep 3` 与 `sleep 4` 都通
+> （均 `humans=2` / 两侧 `OK round=3`）；**别拖到 6 秒**：房主会先带机器人开局，把迟到的
+> client 当外人 `_kick_peer` 踢掉 ⇒ client `TIMEOUT`（看着像联机坏了，其实是等太久）。
 > 本机实测：同一次调用内 host 报 `humans=2`、两侧 `OK round=3`，全程无 SCRIPT ERROR。
 >
 > **但也别把"十几套件的循环"与联机回归塞进同一条命令**（2026-10-04 实测）：先跑完 13 套件、

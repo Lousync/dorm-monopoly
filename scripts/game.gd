@@ -307,6 +307,10 @@ func _ready() -> void:
 	for a3 in OS.get_cmdline_user_args():
 		if a3.begins_with("--fps="):
 			dev.fps_probe = float(a3.substr(6))   # 帧率实测（批次 6 Task 3，见 dev_tools.fps_probe_run）
+		elif a3 == "--fps-houses=1":
+			# 帧率探针的"满盘装修"档（批次 11 T4）：采样前把地产格全灌满级装修再采，量最坏档。
+			# 不带就是关（默认，批次 6/10 的旧口径一字不变）。见 `dev_tools.fps_houses`。
+			dev.fps_houses = true
 	if dev.fps_probe > 0.0:
 		dev.fps_probe_run()
 	for a4 in OS.get_cmdline_user_args():
@@ -986,34 +990,52 @@ func _on_table_hover(canvas_px: Vector2) -> int:
 	_set_token_hover(peer)
 	return peer
 
-## 悬停目标变了才重写条的内容；**同一枚棋子时只重摆位置**（悬停期间镜头会动，每帧都要贴一次，
-## 见 `_place_token_tip`）。`GameData.NO_PEER` ⇒ 收起。
+## 悬停目标变了才重写条的内容；**同一枚棋子时也要重读内容 + 重摆位置**（悬停期间镜头会动、
+## 状态广播也会改这个人的身家 / 名次 —— 两者都得跟上，见 `_fill_token_tip` / `_place_token_tip`）。
+## `GameData.NO_PEER` ⇒ 收起。
 ##
 ## 降级：这枚棋子不在池里（已被移除 / 断线），或 `_peers_info` 里没有它（名册还没同步到）⇒ 收起，
 ## 不抛错、不漏半条（照 `_token_screen_pos` / `standee_screen_center` 那几条先例）。
+##
+## **`_tip_peer` 只在"真显出来"那条路上写**（R10-3）：若在"判据不过"的分支就把它写成这枚 peer，
+## 那 peer 已在池里、只是名册尚未同步时条被隐藏，而 `_tip_peer` 已非哨兵 ⇒ 之后 `_peers_info`
+## 填好了也不会自己出现（要移开再回来）。因此先把"显不出来"归一成 `NO_PEER` 再比 `_tip_peer`。
 func _set_token_hover(peer: int) -> void:
 	if token_tip == null or not is_instance_valid(token_tip):
 		return
+	if peer != GameData.NO_PEER:
+		var info: Dictionary = board._peers_info.get(peer, {}) if board != null else {}
+		var tp = table3d.table_props if table3d != null else null
+		if info.is_empty() or tp == null or not tp.has_token(peer):
+			peer = GameData.NO_PEER      # 显不出来 ⇒ 按"谁都没悬停"处理（收起，不写 `_tip_peer`）
 	if peer == _tip_peer:
-		if _tip_peer != GameData.NO_PEER and token_tip.visible:
-			_place_token_tip()        # 还是同一枚：镜头可能动了，重摆一下就行
+		if _tip_peer == GameData.NO_PEER:
+			return
+		# 还是同一枚：内容重读（R10-2：悬停期间来了状态广播改了他的身家 / 名次，
+		# 只重摆位置会让条上的数字陈旧）+ 重摆位置（镜头可能动了）。
+		_fill_token_tip(_tip_peer)
+		token_tip.visible = true
+		_place_token_tip()
 		return
 	_tip_peer = peer
-	var info: Dictionary = {}
-	if peer != GameData.NO_PEER and board != null:
-		info = board._peers_info.get(peer, {})
-	var tp = table3d.table_props if table3d != null else null
-	if info.is_empty() or tp == null or not tp.has_token(peer):
+	if peer == GameData.NO_PEER:
 		token_tip.visible = false
 		return
+	_fill_token_tip(peer)
+	token_tip.visible = true
+	_place_token_tip()
+
+## 把 `board._peers_info` 里这枚 peer 的昵称 / 身家 / 名次写进条上（**单一来源**，与四角身家条同源；
+## 身家公式不另取 game 那份 `standing`）。只负责**内容** —— 显隐与位置由调用方决定。
+## 判据一字未改（含「已出局」那一支），只换载体与朝向（批次 11 Task 3）。
+func _fill_token_tip(peer: int) -> void:
+	var info: Dictionary = board._peers_info.get(peer, {}) if board != null else {}
 	_tip_name.text = String(info.get("name", "?"))
 	_tip_name.add_theme_color_override("font_color", info.get("color", UIKit.TEXT))
 	_tip_sub.text = "身家 %s · 第 %d 名%s" % [
 		GameData.fmt_money(int(info.get("worth", 0))), int(info.get("rank", 0)),
 		"" if bool(info.get("alive", true)) else " · 已出局",
 	]
-	token_tip.visible = true
-	_place_token_tip()
 
 ## 把信息条摆到棋子此刻**在屏幕上的位置**正上方，并夹在屏幕内（夹取规则沿用旧画布版：
 ## 左右不越界、上下不越界）。**每帧调**（`_process`）—— 悬停期间镜头会动（自动跟随 / 滚轮推移
@@ -1023,10 +1045,13 @@ func _set_token_hover(peer: int) -> void:
 ## 而"你看到它在哪"随镜头变 —— 这正是每帧重摆的理由，也是"屏幕层天然面向镜头"那条的实现。
 ##
 ## 降级：棋子不在池里（走子途中被移除 / 断线）⇒ 收起并清掉悬停目标，不抛错。
+## `table3d.camera` 的空守卫（R10-4）与 `table_props._token_rect` 同处一样：相机实际在
+## `TableView3D._init` 就建好、不可达空，但真为 null 时这一句会**每帧刷 SCRIPT ERROR**
+##（`_process` 每帧调本函数），补进已有的隐藏判断里把它一起挡掉。
 func _place_token_tip() -> void:
 	if token_tip == null or not is_instance_valid(token_tip) or _tip_peer == GameData.NO_PEER:
 		return
-	if table3d == null or table3d.table_props == null \
+	if table3d == null or table3d.camera == null or table3d.table_props == null \
 			or not table3d.table_props.has_token(_tip_peer):
 		token_tip.visible = false
 		_tip_peer = GameData.NO_PEER
