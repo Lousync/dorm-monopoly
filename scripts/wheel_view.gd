@@ -119,9 +119,10 @@ func _draw() -> void:
 	draw_circle(c, 36.0, Color(0.30, 0.215, 0.06))
 	draw_circle(c, 30.0, UIKit.ACCENT)
 	draw_circle(c + Vector2(-6, -7), 9.0, Color(1, 1, 1, 0.30))
-	# 顶部指针（向下的三角）
-	var tip := c + Vector2(0, -(r - 14.0))
-	var left := c + Vector2(-13.0, -(r + 12.0))
-	var right := c + Vector2(13.0, -(r + 12.0))
-	draw_colored_polygon(PackedVector2Array([tip, left, right]), Color(0.42, 0.30, 0.08))
-	draw_colored_polygon(PackedVector2Array([tip, left + Vector2(3, -2), right - Vector2(3, 2)]), UIKit.ACCENT)
+	# 顶部指针**已删**（批次 12 ④）：原先它是画在**画布**上的一个 2D 三角形 —— 随桌垫一起
+	# 倾斜，3D 端读起来就是贴在桌面上的一个印刷件（与 ①②⑥ 同一族病）。改由
+	# `TableProps.build_wheel` 摆一枚**平贴桌面的 3D 金箭头**（同一位置、同一指向）：
+	# 它是与轮缘同族的实物，两端都读得出来（立着的针在 2D 俯视下反而只剩一条棱）。
+	# **别把它加回来**：layout_test 有一条反向契约钉"WheelView 不再画指针"。
+	# 注意 `_seg_under_pointer()` 的语义**一字未改** —— 中奖格仍按"盘面顶格"算，
+	# 3D 箭头只是把那件事**画**出来（指针几何与判奖公式互不影响）。

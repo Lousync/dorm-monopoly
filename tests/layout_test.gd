@@ -53,22 +53,9 @@ func _house_w_px(t3, h: Node3D, bm: BoxMesh) -> float:
 func _corner_irradiance(light: OmniLight3D, dist: float) -> float:
 	return light.light_energy * pow(maxf(1.0 - dist / light.omni_range, 0.0), light.omni_attenuation)
 
-## 灯罩在**屏幕**上的包围盒（近似：把它当成一个"底口半径 × 罩高"的盒子，八个角过 3D 相机
-## 的真投影再取包围）。灯罩本身是斜的 —— 取的是**旋转后的盒子**的角，够给"有没有被画面裁掉"用。
-func _shade_screen_bbox(t3, shade: MeshInstance3D) -> Rect2:
-	var cm := shade.mesh as CylinderMesh
-	var r: float = maxf(cm.top_radius, cm.bottom_radius) if cm != null else 0.4
-	var hh: float = cm.height * 0.5 if cm != null else 0.25
-	var mn := Vector2(INF, INF)
-	var mx := Vector2(-INF, -INF)
-	for sx in [-r, r]:
-		for sy in [-hh, hh]:
-			for sz in [-r, r]:
-				var p: Vector2 = t3.camera.unproject_position(
-					shade.global_transform * Vector3(sx, sy, sz))
-				mn = mn.min(p)
-				mx = mx.max(p)
-	return Rect2(mn, mx - mn)
+## 【批次 12 A1 删除】原先这里有个 `_shade_screen_bbox(t3, shade)`：把灯罩当成"底口半径 × 罩高"
+## 的盒子投影到屏幕，用来判"台灯还看得见吗"。灯罩已随 A1 整体删除（`Lamp` 节点不存在了），
+## 这个助手也跟着删掉 —— 留着只会在下一个读它的人那里暗示"还有灯罩可量"。
 
 ## 一格在**屏幕**上的包围盒宽度（批次 10 T2 的"字更大"判据）。
 ##
@@ -88,6 +75,14 @@ func _tile_screen_w(t3, idx: int) -> float:
 			mn = mn.min(sp)
 			mx = mx.max(sp)
 	return (mx - mn).x
+
+## 一格在**画布像素**下的脚印（`tile_pos` 过 BoardView 的取景变换，尺寸 = `TILE × _zoom`）——
+## 与 `hud_test` 里的 `cell_of` 同一条（那边量"手牌有没有压住近排格子"，这边量"薄牌躺平后
+## 还在不在自己那格里"）。
+func _cell_px(t3, idx: int) -> Rect2:
+	var p: Vector2 = t3.board._view_from_world(t3.board.tile_pos(idx))
+	var s: float = t3.board.TILE * t3.board._zoom
+	return Rect2(p, Vector2(s, s))
 
 func _run() -> void:
 	# 无头下根窗口是退化的 64×64，内容缩放 0.05 —— push_input 进去的鼠标坐标会被
@@ -214,76 +209,20 @@ func _run() -> void:
 		_check(off_table == 0, "房间剪影都落在木桌之外（压到桌子上的 %d 块）" % off_table)
 		_check(casting == 0, "剪影都不投影（开着投影的 %d 块 —— 白跑阴影图）" % casting)
 
-	print("== 批次 6：台灯 = 唯一主光源 ==")
-	var lamp_n: Node = t3.get_node_or_null("Lamp")
+	print("== 批次 6 / 批次 12 A1：唯一主光源（台灯的可见几何已整体删除） ==")
 	# 用 get("lamp_light") 而不是 t3.lamp_light：**红跑**（还没实现）时前者给 null、
 	# 后者是 "Invalid access to property" 的脚本错误，会把 _run() 打断在半路、
 	# 后面的断言一条都跑不到（红跑还会挂住不退）。
 	var lamp_l = t3.get("lamp_light")
-	_check(lamp_n != null and lamp_l != null, "容器带台灯（Lamp 节点 + lamp_light）")
-	if lamp_n == null or lamp_l == null:
-		_check(false, "台灯缺了，台灯断言整段跳过")
+	# **批次 12 A1 新增**：台灯那四件可见几何（底座 / 灯杆 / 灯臂 / 灯罩）连同只服务于它们的
+	# 常量一起删了 —— 树里不该再有名为 `Lamp` 的节点（用户 ①「台灯先去掉」）。
+	# 留的是**光**（`LampLight`）：全场唯一光源 + 唯一投影光源，删了屋子会全黑、影子全丢。
+	_check(t3.get_node_or_null("Lamp") == null,
+		"台灯的可见几何已删净（树里没有名为 Lamp 的节点）")
+	_check(lamp_l != null, "唯一主光源仍在（`lamp_light` / 节点名 LampLight）")
+	if lamp_l == null:
+		_check(false, "光源缺了，下面那组断言整段跳过")
 	else:
-		var pole := lamp_n.get_node_or_null("Pole") as MeshInstance3D
-		var shade := lamp_n.get_node_or_null("Shade") as MeshInstance3D
-		_check(pole != null and pole.mesh is CylinderMesh, "灯杆是细柱（CylinderMesh）")
-		var sm: CylinderMesh = null
-		if shade != null and shade.mesh is CylinderMesh:
-			sm = shade.mesh as CylinderMesh
-		_check(sm != null and sm.top_radius < sm.bottom_radius,
-			"灯罩是上小下大的锥（top %.3f < bottom %.3f）"
-				% [sm.top_radius if sm != null else -1.0, sm.bottom_radius if sm != null else -1.0])
-		# 台灯四件也一律**不透明档**（**固定波 C**：上面剪影那条只覆盖房间材质，管不到灯自身）。
-		# 这条比剪影那边更要紧：透明件进透明队列、不写深度之外，**还吃不到自己的逐像素光照** ——
-		# 手滑写成 ALPHA，画面上是"灯还在、光没了"，归因比剪影那个坑更难。
-		var lamp_parts: Array = []
-		var lamp_opaque := true
-		for nm in ["Base", "Pole", "Arm", "Shade"]:
-			var pnd := lamp_n.get_node_or_null(nm) as MeshInstance3D
-			lamp_parts.append(pnd)
-			var pmat: StandardMaterial3D = null
-			if pnd != null:
-				pmat = pnd.material_override as StandardMaterial3D
-			if pmat == null or pmat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
-				lamp_opaque = false
-		var parts_ok := true
-		for pnd2 in lamp_parts:
-			if pnd2 == null:
-				parts_ok = false
-		_check(parts_ok, "台灯四件都在（Base / Pole / Arm / Shade）")
-		_check(lamp_opaque, "台灯四件都是不透明档（进透明队列会静默杀死光照）")
-		# **半径**也要钉（**固定波 C**）：原来只查了各件的**中心位置**，半径写多大没人管 ——
-		# 底座半径 0.30 时外缘 = -5.20，**正好压在木桌外沿上**（`TABLE_W*0.5 + WOOD_FRAME`），
-		# 零余量。两条：① 整座灯连半径一起**站在木桌里**；② 底座外缘离木桌外沿有 ≥ 0.05 余量。
-		#
-		# **批次 10 核过 —— 计划 Step 3 要"补一条'底座外缘不越木桌外沿'"，它其实早就在这里了**
-		#（下面这两条正是那个判据：读 `Base` 的 `global_position` 与它的 `CylinderMesh.bottom_radius`，
-		#  比 `TABLE_W*0.5 + WOOD_FRAME`），所以**不重复再加一条** —— 等价的判据只该有一处。
-		# 木纹框 1.2 → 0.7 之后它是台灯这一族**最紧**的一条：实测余量 **0.11**（旧框宽下是 0.06）。
-		#（灯罩那半条同样吃紧：`LAMP_ARM_LEN` 从 0.60 收到 0.20 就是被它 + 上面那条"平面落点必须
-		#  在桌垫之外"两头夹出来的，见 `table_3d.LAMP_ARM_LEN`。）
-		var half_w_wood: float = t3.TABLE_W * 0.5 + t3.WOOD_FRAME
-		var half_d_wood: float = t3.TABLE_D * 0.5 + t3.WOOD_FRAME
-		var base_mi := lamp_parts[0] as MeshInstance3D
-		var base_r := 0.0
-		if base_mi != null and base_mi.mesh is CylinderMesh:
-			base_r = (base_mi.mesh as CylinderMesh).bottom_radius
-		var in_table := true
-		if base_mi != null and (absf(base_mi.global_position.x) + base_r > half_w_wood
-				or absf(base_mi.global_position.z) + base_r > half_d_wood):
-			in_table = false
-		if shade != null and sm != null and (absf(shade.global_position.x) + sm.bottom_radius > half_w_wood
-				or absf(shade.global_position.z) + sm.bottom_radius > half_d_wood):
-			in_table = false
-		_check(in_table, "整座灯（含底座 / 灯罩的半径）都站在木桌里")
-		# **判空再用**（批次 6 Task 3）：`Base` 缺失时上面那条 `parts_ok` 已经红过，
-		# 这里若再空访问一次，`_run()` 会**因脚本错误中止**、静默掉其后所有断言
-		#（本文件 `:135-137` 正写着这个坑）。缺失时给 -INF ⇒ 这一条也红（不留假绿）。
-		var base_gap := -INF
-		if base_mi != null:
-			base_gap = half_w_wood - (absf(base_mi.global_position.x) + base_r)
-		_check(base_gap >= 0.05,
-			"底座外缘离木桌外沿有余量（%.2f ≥ 0.05 —— 零余量时底座就悬在桌沿上）" % base_gap)
 		# 全场唯一的 Light3D：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
 		var lights: Array = []
 		for n in t3.find_children("*", "Light3D", true, false):
@@ -296,6 +235,11 @@ func _run() -> void:
 		var lp: Vector3 = lamp_l.global_position
 		_check(lp.y > t3.table_mesh.global_position.y + 1.0,
 			"主光源吊在桌面上方（实得 y=%.2f）" % lp.y)
+		# **批次 12 A1 的验收内核**：删的只是**实物**，光必须是**同一个世界点**。
+		# 位置逐位比 `LAMP_LIGHT_POS`（= 旧"灯罩里那一点"合成出来的坐标）—— 少了这一条，
+		# "删几何时顺手把光挪了半米"这种改动会静默通过，而整套光照参数都是对着那个点取的。
+		_check(lp.distance_to(t3.LAMP_LIGHT_POS) < 0.001,
+			"光源仍在删除前的那个世界点（实得 %s / 期望 %s）" % [lp, t3.LAMP_LIGHT_POS])
 		# 光池要够到棋盘（远端那半块不能是死黑、读不出字），但**不许漫到整间屋子**。
 		# 尺子用**桌垫四角**（不是木桌四角 —— 批次 10 T2 的灯位下桌垫四角到灯 3.92~9.02、
 		# 木桌四角是 4.48~9.88，别把两者混起来）。
@@ -355,75 +299,19 @@ func _run() -> void:
 		#      **都出画**，房间里看到的是**背景色**（`background_color` 直出、不过光照）。
 		# ⇒ **别用 `LAMP_RANGE` 去调房间明暗**（调不动，只会连桌子一起改）。房间的黑由本文件
 		#   「背景色近黑」那条断言 + 剪影材质近黑那条钉住，这里不再留一条假判据。
-		# 台灯是**桌上的实物**，但它不该挡棋盘：灯杆 / 灯罩落在**桌垫窗口之外**
-		#（窗口 = 棋盘 + 一圈留白；压在窗口里就是"站在棋盘上"）。
-		var on_board := 0
-		for nd in [pole, shade, lamp_l]:
-			if nd == null:
-				continue
-			if t3.TEX_WINDOW_PX.has_point(t3.world_to_canvas_px((nd as Node3D).global_position)):
-				on_board += 1
-		_check(on_board == 0, "灯杆 / 灯罩 / 光源都不在桌垫窗口内（压在棋盘上的 %d 个）" % on_board)
-		# 台灯站在木桌上（真实的桌上物），不是浮空
-		_check(absf(lamp_n.global_position.y - t3.table_mesh.global_position.y) < 0.05,
-			"台灯坐在桌面上（y=%.3f）" % lamp_n.global_position.y)
-		# 台灯要**看得见**（掉出画外就等于没有），而且**不许压在棋盘上**。
-		# 这两条只能在**屏幕**上量：50° 俯角下，"在桌垫窗口之外"（上面那条）并不自动等于
-		# "不在棋盘上" —— 灯是高处的实物，抬高 / 挪位会把它在屏幕上的落点顶进棋盘范围里。
-		# （本任务实测过：底座挪到近端桌角那个位置时，灯罩在屏幕上正好盖住棋盘左下角。）
-		t3.snap_view(0.0)
-		await process_frame
-		if shade != null:
-			var vpr: Rect2 = t3.get_viewport().get_visible_rect()
-			var sp_shade: Vector2 = t3.camera.unproject_position(shade.global_position)
-			# **查包围盒、不查中心**（批次 6 Task 3）：抬杆到 2.8 之后灯罩中心就已经很贴画面左沿
-			#（当时实测 **17px**），而灯罩的屏幕包围盒**左沿已被裁掉一大块**（当时相交占比
-			# **0.55** —— 灯罩横向 214px 里有约 97px 在画外）—— 只查中心的话它照样"在画面内"，
-			# 而注释承诺的是"掉出画外就等于没有"。改量**包围盒与视口的相交占比**：
-			# **掉出画外的部分超过一半就红**（那时它已经看不出是盏灯了）。
-			# **批次 10 重取：中心离画面左沿 38.6px（T1）→ 22.8px（T2）、相交占比 0.65 → 0.57**
-			#（T2 把相机从 5.2 收到 4.7：这一条正是 T2 **最紧的约束** —— 灯留在 z=1.0 时占比跌到
-			#  0.22、直接红；按设计 §4.5 把 `LAMP_BASE.z` 挪到 0.0 才回到 0.57，比批次 6 定案时的
-			#  0.55 还宽一点）。**别再调小 `CAM_DIST` 而不重取灯位**，先红的就是这一条。
-			# 阈值 0.5 与实测之间留的余量是**如实记的**：灯罩左沿出画是"灯座不许站上桌垫"这条
-			# 硬约束（`LAMP_BASE` 那段）的既定代价，批次 6 Task1 修复波已如实留痕
-			#（`fix-wave-report.md` §八 顾虑 2）—— 批次 10 挪灯走的是**另一条**约束（木纹带变窄 / 相机推近），
-			# 这条断言与它的阈值一个字没动。这条断言管的是**别更糟**：再抬杆 / 再往左挪 / 再推近，它就红。
-			var sbb := _shade_screen_bbox(t3, shade)
-			var inter: Rect2 = sbb.intersection(vpr)
-			var cov: float = (inter.size.x * inter.size.y) / maxf(sbb.size.x * sbb.size.y, 0.0001)
-			_check(cov >= 0.5,
-				"3D 端看得见台灯（灯罩屏幕包围盒 %s 与画面 %s 的相交占比 %.2f ≥ 0.5；中心 %s）"
-					% [sbb, vpr, cov, sp_shade])
-			# 桌垫的屏幕四边形 = 桌垫四角（`TABLE_SIZE`）投影出来的凸四边形（按环序取角）。
-			# 点在凸多边形内用"同侧"判据；灯罩的屏幕中心一旦落在里面就是"压在棋盘上"。
-			var hw_q: float = t3.TABLE_SIZE.x * 0.5
-			var hd_q: float = t3.TABLE_SIZE.y * 0.5
-			var quad: Array = []
-			for cn in [Vector2(-hw_q, -hd_q), Vector2(hw_q, -hd_q), Vector2(hw_q, hd_q),
-					Vector2(-hw_q, hd_q)]:
-				quad.append(t3.camera.unproject_position(Vector3(cn.x, 0.0, cn.y)))
-			var sgn := 0
-			var outside := false
-			for i in 4:
-				var a2: Vector2 = quad[i]
-				var b2: Vector2 = quad[(i + 1) % 4]
-				var cr := (b2.x - a2.x) * (sp_shade.y - a2.y) - (b2.y - a2.y) * (sp_shade.x - a2.x)
-				if absf(cr) < 0.0001:
-					continue
-				var s2 := 1 if cr > 0.0 else -1
-				if sgn == 0:
-					sgn = s2
-				elif sgn != s2:
-					outside = true         # 跨到了另一侧 ⇒ 在四边形之外
-			# **固定波 C：这条的名字原来叫"灯罩的投影不压在棋盘上"，名不副实** —— 灯罩
-			# `cast_shadow = OFF`，**根本没有投影**；下面查的是"灯罩的**屏幕位置**落在棋盘
-			# 屏幕四边形之外"，即**屏幕重叠**（检查本身有效，只是名字会把人带偏）。
-			# 顺带记下这个设计后果：灯罩不投影 ⇒ 光池**没有锥形边界**，池子的形状全靠
-			# `LAMP_ATTEN` 衰减铺出来（射程内是均匀外溢，不是"被罩子挡出的一个圆"）——
-			# 想改池子的软硬，改衰减，不要指望灯罩去切边。
-			_check(outside, "灯罩的屏幕位置不落在桌垫上（屏幕 %s / 桌垫四角 %s；灯罩不投影，这里查的是屏幕重叠）"
-				% [sp_shade, quad])
+		# 光**不许压在棋盘上**：它的平面落点要在**桌垫窗口之外**
+		#（窗口 = 棋盘 + 一圈留白；压在窗口里就成了"棋盘上方的灯"）。
+		# **批次 12 A1**：原先这里查的是"灯杆 / 灯罩 / 光源三个都不在窗口内"（实物已删），
+		# 今天只剩光这一个 —— 判据本身没变，只是对象少了两件。
+		_check(not t3.TEX_WINDOW_PX.has_point(t3.world_to_canvas_px(lamp_l.global_position)),
+			"光源不在桌垫窗口内（画布 %s）" % t3.world_to_canvas_px(lamp_l.global_position))
+		# 【批次 12 A1 删掉的那两条】
+		#   ① 「3D 端看得见台灯」（灯罩屏幕包围盒与画面相交占比 ≥ 0.5）—— 灯罩已删，无从量起；
+		#      它当年是 `CAM_DIST` **最紧**的一条约束（4.60 时就红），删掉它之后相机才能收到 4.15
+		#     （批次 12 A2）；
+		#   ② 「灯罩的屏幕位置不落在桌垫上」—— 同上，随灯罩一起去。
+		# 两条都不是"放宽"，是**判据的载体没了**：删掉的是**实物**，光本身的位置与参数一字未动
+		#（那条"光的位置逐位不变"的断言就钉在上面）。
 
 	print("== 批次 6：环境光与背景压到近黑 ==")
 	var wenv: WorldEnvironment = null
@@ -660,7 +548,7 @@ func _run() -> void:
 	await process_frame
 	var probe_w2: float = _tile_screen_w(t3, probe_idx)
 	t3.snap_view(0.0)
-	print("    格子屏幕宽（批次 10 T2）：3D 端 %.1fpx / 2D 端 %.1fpx（收相机前基线 34.5 / 37.9）"
+	print("    格子屏幕宽（批次 12 A2）：3D 端 %.1fpx / 2D 端 %.1fpx（批次 10 基线 37.6 / 42.8）"
 		% [probe_w3, probe_w2])
 	# **下限按实测基线修正，不是许愿值**（计划 Step 1 的注 + Ruling R3）：计划初稿写的 70px
 	# 是"许愿值"（作者估的基线 ~63px 并未实测）。量出来的起点是 **34.5px（3D）/ 37.9px（2D）**
@@ -672,16 +560,27 @@ func _run() -> void:
 	#   * **3D 端到不了**：受**台灯可见**那条（`layout_test` 台灯段：灯罩屏幕包围盒与画面
 	#     相交占比 ≥ 0.5）顶住 —— 相机再近、灯罩再往左出画就红（4.60 时已跌到 0.48）。
 	#     收完的 m = **37.6px**，比 38（= ceil(34.5×1.10)）差 0.4px ⇒ 按 R3 后半支钉 **36.8**。
+	#
+	# ---- 批次 12 A2：**两条都按新基线重取**（台灯那条闸已随 A1 删除、相机一路收到 4.30）----
+	#   * **2D 端 42.8 → 50.0px**（`VIEW_DIST_2D` 7.6 → 6.63）：**到得了设计稿的目标 50**
+	#     ⇒ 门槛钉 **49.5**（实测量到 50.0，留 0.5px 只为浮点噪声，不是为了放宽）。
+	#   * **3D 端 37.6 → 41.2px**（`CAM_DIST` 4.7 → 4.30）：**到不了设计稿说的 44px**，
+	#     且这次顶住的**不是台灯**（台灯闸已删）而是**取景**：上面那条「整条轨道 21 档余量
+	#     > 5px」——50° 俯角下**最靠相机那个桌垫角**（近左）的水平余量随推近掉得最快
+	#     （4.7 → 83.9px、4.15 → **-18.2px** 出画），`CAM_DIST ≥ 4.26` 才守得住。
+	#     4.30 下余量 **13.1px**、格宽 **41.2px** —— 这就是**距离这一味药**能换到的上限
+	#     （要 44px 得改 `CAM_FOV` / `CAM_TILT_DEG`，见 `table_3d.CAM_DIST` 那段）。
+	#     ⇒ 门槛钉 **41.0**（= 实测 41.2 的 0.995 倍；只拦回退，不假装够到 44）。
 	# **两条前提写在这里，免得后人把这条当"字的大小"本身读**：
 	#   ① 这是**代理量**：`_tile_screen_w` 量的是**格子的屏幕包围盒宽**，它只在 **`TILE` 与格内
 	#      字号都不变**时才与"屏幕上那格字"成比例（本批**两者都没动** —— 动任何一个，这条就得重取）；
 	#   ② 探针只守**远端正中**那一格（`probe_idx = grid_to_index(BOARD_COLS/2, 0)`）—— **远端
 	#      【角】格没被覆盖**（角格通常投影更宽 ⇒ 这条偏保守，宁可漏也不误红）。
-	_check(probe_w3 >= 36.8,
-		"3D 端格子屏幕宽 ≥ 36.8px（实得 %.1f；收相机前 34.5，目标 38 因台灯可见那条顶住只到 37.6）"
+	_check(probe_w3 >= 41.0,
+		"3D 端格子屏幕宽 ≥ 41.0px（实得 %.1f；批次 10 是 37.6，设计稿目标 44 被「取景余量」顶住）"
 			% probe_w3)
-	_check(probe_w2 >= 42.0,
-		"2D 端格子屏幕宽 ≥ 42px（实得 %.1f；收前 37.9，门槛 = ceil(37.9×1.10)）" % probe_w2)
+	_check(probe_w2 >= 49.5,
+		"2D 端格子屏幕宽 ≥ 49.5px（实得 %.1f；批次 10 是 42.8，目标 50）" % probe_w2)
 	# 滚轮改的是目标值，不是硬切
 	t3.snap_view(0.0)
 	t3.set_view(1.0)
@@ -991,6 +890,54 @@ func _run() -> void:
 				"画面半径变大后轮缘跟着放大（%.4f → %.4f）" % [r_before, first_mesh.outer_radius])
 			_check(t3.table_props.wheel_hit(wheel_px + Vector2(wheel_r * 1.4, 0.0)),
 				"命中半径也跟着放大（%.0f 画布像素处仍算命中）" % (wheel_r * 1.4))
+
+		# ---- 批次 12 ④：指针 3D 化（金箭头平贴桌面，立在轮盘正上方、指向轮心） ----
+		# 先按 1.0× 半径重摆一次（上面那段把它放大到 1.5× 了），量出来的才是"当前口径"。
+		print("== 批次 12 ④：指针 = 平贴桌面的 3D 金箭头（2D 三角形已删） ==")
+		t3.table_props.build_wheel(wheel_px, wheel_r)
+		var ptr: MeshInstance3D = t3.table_props.get_node_or_null("WheelRim/WheelPointer") as MeshInstance3D
+		_check(ptr != null, "3D 指针在（WheelRim/WheelPointer —— 挂在轮缘下，不打断「转盘只有一个子节点」那条契约）")
+		if ptr != null:
+			# ① **平贴桌面**：法线（局部 +Y）在世界里仍朝上 —— 立着的指针在 2D 俯视下只剩一条棱，
+			#    那正是本条要治的病（与 ②⑥ 的薄牌同一个道理）。
+			var pn: Vector3 = (ptr.global_transform.basis * Vector3(0.0, 1.0, 0.0)).normalized()
+			_check(pn.dot(Vector3.UP) > 0.99, "箭头平贴桌面（法线 %s ≈ +Y，不是立着的针）" % pn)
+			# ② **在轮盘正上方**：尖端那一点（网格局部 -z 端的顶点，缩放含在 global_transform 里）
+			#    折回画布像素，应当落在"轮心正上方一个半径"那一带（画布 y 向下 ⇒ 上方是 -y）。
+			var tip_w: Vector3 = ptr.global_transform * Vector3(0.0, 0.0, -0.5)
+			var tip_px: Vector2 = t3.world_to_canvas_px(tip_w)
+			var want_tip: Vector2 = wheel_px + Vector2(0.0, -wheel_r)
+			_check(tip_px.y < wheel_px.y and absf(tip_px.x - wheel_px.x) < 12.0
+					and absf(tip_px.distance_to(wheel_px) - wheel_r) < wheel_r * 0.25,
+				"箭头尖端落在轮盘正上方（实得 %s / 期望 ≈%s，轮心 %s）" % [tip_px, want_tip, wheel_px])
+			# ③ **指向轮心**：尖端比箭身中心更靠近轮心（局部 -z 那一端是尖的那头）。
+			var mid_px: Vector2 = t3.world_to_canvas_px(ptr.global_position)
+			_check(tip_px.distance_to(wheel_px) < mid_px.distance_to(wheel_px),
+				"箭头指向轮心（尖端 %.1f < 箭身中心 %.1f，到轮心的画布距离）"
+					% [tip_px.distance_to(wheel_px), mid_px.distance_to(wheel_px)])
+			# ④ **金 + 金属**：与轮缘同一份取色的金属材质（不是一块哑光色块）。
+			var pm: StandardMaterial3D = ptr.material_override as StandardMaterial3D
+			_check(pm != null and pm.metallic > 0.4 and pm.albedo_color.r > 0.5
+					and pm.albedo_color.r > pm.albedo_color.b + 0.2,
+				"箭头是金色金属材质（metallic %.2f / 色 %s）"
+					% [pm.metallic if pm != null else -1.0, pm.albedo_color if pm != null else Color.BLACK])
+			var rim_mat: StandardMaterial3D = (t3.table_props.get_child(0) as MeshInstance3D).material_override as StandardMaterial3D
+			_check(pm != null and rim_mat != null and pm.albedo_color.is_equal_approx(rim_mat.albedo_color),
+				"箭头与轮缘**同一份金色**（箭头 %s / 轮缘 %s）"
+					% [pm.albedo_color if pm != null else Color.BLACK,
+						rim_mat.albedo_color if rim_mat != null else Color.BLACK])
+			# ⑤ 箭头**有厚度**（是薄挤出的实物，不是一张零厚的贴片）。
+			var pm2: ArrayMesh = ptr.mesh as ArrayMesh
+			var aabb: AABB = pm2.get_aabb() if pm2 != null else AABB()
+			_check(pm2 != null and aabb.size.y > 0.0 and aabb.size.z > aabb.size.y,
+				"箭头是「薄挤出」的三角（归一化 AABB %s —— 厚度 y 小、长度 z 大）" % aabb.size)
+		# ⑥ **反向契约：2D 三角形真的没了**（画布上那个指针画在 `_draw()` 里，没有可观察的节点或
+		#    接口 ⇒ 只能查源码里那几行独有的画法还在不在。谁把它加回来，这条先红）。
+		var wsrc := FileAccess.get_file_as_string("res://scripts/wheel_view.gd")
+		_check(not wsrc.contains("-(r - 14.0)") and not wsrc.contains("var tip := c +"),
+			"WheelView 不再画那个 2D 三角形指针（源码里已无那几行画法）")
+		# `_seg_under_pointer` 的语义**一字未改**：中奖格仍按"盘面顶格"算，3D 箭头只是把它画出来。
+		_check(t3.table_props.wheel_hit(wheel_px), "（对照）转盘命中判定不受指针改动影响")
 
 	# ---- 批次 7：筹码堆与体力件整体退场（读数归四角身家条 / 批次 9 的道具弹窗） ----
 	# 反向契约：谁把这两条子系统加回来，这几条先红。
@@ -1604,7 +1551,7 @@ func _run() -> void:
 			# 顶边 = 板心沿自己的 +y 半高、板底 = 沿 -y 半高 —— 倾角方向错（或压根没倾）这条就红。
 			var top_v: Vector3 = plateA.global_transform * Vector3(0.0, bmA.size.y * 0.5, 0.0)
 			var bot_v: Vector3 = plateA.global_transform * Vector3(0.0, -bmA.size.y * 0.5, 0.0)
-			_check(top_v.z < bot_v.z, "顶边比板底更靠远端（后倾 ⇒ 2D 端近正俯视也看得见一块面）")
+			_check(top_v.z < bot_v.z, "3D 端顶边比板底更靠远端（后倾 ⇒ 正脸朝镜头）")
 			# 正面贴图：棋子贴图（Kenney CC0）。贴图缺失时退回牌身纯色（与 2D 那套同一条降级），
 			# 所以这里只钉"面片在、且它的贴图就是 UIKit 给这个槽位的那张"（拿不到就不钉）。
 			var UKt = load("res://scripts/ui_kit.gd")
@@ -1624,6 +1571,16 @@ func _run() -> void:
 				"牌身是**不透明档**（实得 %s）" % str(pmatA.transparency if pmatA != null else -1))
 			_check(fmatM != null and fmatM.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
 				"正面是 ALPHA_SCISSOR（实得 %s）" % str(fmatM.transparency if fmatM != null else -1))
+			# **批次 12 A3 新增：牌身 / 正面都带自发光**（用户 ②「小人偏暗」）——
+			# 近黑屋子里只有一盏偏在一侧的灯，只靠光照照不出对比，自发光是"小人跳得出来"的另一半。
+			# 读的是**材质上的值**（不是常量）：漏开 `emission_enabled` / 能量是 0，这条就红。
+			var emit_ok := true
+			for m in [pmatA, fmatM]:
+				if m == null or not m.emission_enabled or m.emission_energy_multiplier <= 0.0:
+					emit_ok = false
+			_check(emit_ok, "棋子牌身 / 正面都开着自发光（牌身 %.2f / 正面 %.2f）"
+				% [pmatA.emission_energy_multiplier if pmatA != null else -1.0,
+					fmatM.emission_energy_multiplier if fmatM != null else -1.0])
 		# 位置 = 与**印在桌垫上的**那一格同一条链：`tile_screen_pos` / `deck_screen_pos` /
 		# `wheel_screen_pos` 的那条（`global_position + _view_from_world(局部点)`）—— 也就是
 		# `board.token_screen_pos(idx, slot)`。量法：把棋子的世界落点过真反变换折回画布像素比。
@@ -1640,6 +1597,27 @@ func _run() -> void:
 				"棋子落在该格的「印刷口径」落点上（实得 %s / 期望 %s）" % [back_a, want_a])
 			_check(tkA.global_position.y > t3.table_mesh.global_position.y,
 				"棋子抬在桌垫之上（y=%.3f）" % tkA.global_position.y)
+			# ---- 批次 12 A3：2D 端薄牌**躺平**（`view_t` 驱动 + 中心锚定） ----
+			# ① 法线（薄牌局部 +Z）转到世界 **+Y** ⇒ 正俯视下看到的是**正脸**（老写法固定后倾
+			#    25°，2D 端只剩一条棱 —— 用户 ② 报的正是它）；
+			# ② **四角仍在**本格脚印里 —— 中心锚定保住的那条（躺平时不许从格子里甩出去）。
+			# 量完立刻回到 3D 档：下面的命中三态全在 3D 端量。
+			t3.snap_view(1.0)
+			await process_frame
+			var tn: Vector3 = (plateA.global_transform.basis * Vector3(0.0, 0.0, 1.0)).normalized()
+			_check(tn.dot(Vector3.UP) > 0.99, "2D 端棋子薄牌**平贴桌面**（面法线 %s ≈ +Y）" % tn)
+			var t_cell: Rect2 = _cell_px(t3, 20)
+			var t_out: int = 0
+			for sx_v in [-0.5, 0.5]:
+				for sy_v in [-0.5, 0.5]:
+					var cnr: Vector3 = plateA.global_transform * Vector3(
+						bmA.size.x * float(sx_v), bmA.size.y * float(sy_v), 0.0)
+					if not t_cell.has_point(t3.world_to_canvas_px(cnr)):
+						t_out += 1
+			_check(t_out == 0,
+				"2D 端棋子的四角仍落在本格脚印里（出格 %d 个角；格 %s）" % [t_out, t_cell])
+			t3.snap_view(0.0)
+			await process_frame
 
 		# 命中三态：落点上命中 / 别处 -1 / 重叠时取离相机最近。
 		# 先只留 peer 7 一枚 —— 两枚都在时它那枚的落点会被**更近**的那枚抢先命中（那是下面要钉的
@@ -1915,12 +1893,40 @@ func _run() -> void:
 				"房子落在该格那条带的「印刷口径」落点上（实得 %s / 期望 %s）" % [h_back, h_want])
 			_check(h0.global_position.y > t3.table_mesh.global_position.y,
 				"房子抬在桌垫之上（y=%.3f —— 站在桌上而不是陷进桌垫）" % h0.global_position.y)
-			# 尺寸**也跟印刷图案**（R4：房子压在格子上）：把薄牌的左右两沿（局部 ±w/2）过真反变换
-			# 折回画布像素，与 `board.house_screen_size()` 比 —— 只跟位置不跟尺寸的话这条会红。
+			# 尺寸**也跟印刷图案**（R4：房子压在格子上），**且放大 `HOUSE_SCALE` 倍**
+			#（批次 12 ⑥：用户「房子太小」）。把薄牌的左右两沿（局部 ±w/2）过真反变换折回
+			# 画布像素，与 `board.house_screen_size().x × 1.3` 比 ——
+			# ① 只跟位置不跟尺寸（老 bug）会红；② **漏乘放大倍数**也会红（下面那条就是它）。
 			var sz_px: float = _house_w_px(t3, h0, bm0)
-			_check(absf(sz_px - t3.board.house_screen_size().x) < 2.0,
-				"薄牌宽 == 该格那条带报的印刷口径宽度（%.1f vs %.1f 画布像素）"
-					% [sz_px, t3.board.house_screen_size().x])
+			var printed_px: float = t3.board.house_screen_size().x
+			_check(absf(sz_px - printed_px * 1.3) < 2.0,
+				"薄牌宽 == 印刷口径宽度 × 1.3（%.1f vs %.1f × 1.3 = %.1f 画布像素）"
+					% [sz_px, printed_px, printed_px * 1.3])
+			_check(sz_px > printed_px * 1.2,
+				"房子确实比印在桌垫上那座**大了一档**（%.1f > 印刷 %.1f × 1.2 —— 用户 ⑥ 要的正是它）"
+					% [sz_px, printed_px])
+			# ---- 批次 12 ⑥/② ：2D 端薄牌**躺平**（与棋子同一套 `view_t` 驱动 + 中心锚定） ----
+			# ① 牌面的法线（薄牌局部 +Z）转到世界 **+Y**（朝上）—— 这就是"平贴桌面、正脸朝上"的
+			#    可执行定义（老写法固定后倾 25°，2D 端只剩一条棱）；
+			# ② 四个角**仍在**本格的脚印里（中心锚定要保住的那条：躺平时不许从格子里甩出去）。
+			t3.snap_view(1.0)
+			await process_frame
+			var h_plate0: MeshInstance3D = h0.get_node("Plate") as MeshInstance3D
+			var h_n: Vector3 = (h_plate0.global_transform.basis * Vector3(0.0, 0.0, 1.0)).normalized()
+			_check(h_n.dot(Vector3.UP) > 0.99,
+				"2D 端房子薄牌**平贴桌面**（面法线 %s ≈ +Y）" % h_n)
+			var h_cell: Rect2 = _cell_px(t3, 0)
+			var h_out: int = 0
+			for sx_v in [-0.5, 0.5]:
+				for sz_v in [-0.5, 0.5]:
+					var cnr: Vector3 = h_plate0.global_transform * Vector3(
+						bm0.size.x * float(sx_v), bm0.size.y * float(sz_v), 0.0)
+					if not h_cell.has_point(t3.world_to_canvas_px(cnr)):
+						h_out += 1
+			_check(h_out == 0,
+				"2D 端房子的四角仍落在本格脚印里（出格 %d 个角；格 %s）" % [h_out, h_cell])
+			t3.snap_view(0.0)
+			await process_frame
 			# 跟取景：2D 镜头推近（取景 / 人数变化都会改 _zoom）⇒ 重推后房子要跟着胀
 			#（与"轮缘跟着画面半径放大"/"环外沿跟着胀"同一条）。
 			t3.board.focus_grid(9, 2.0, true)

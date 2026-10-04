@@ -78,11 +78,29 @@ const PROPS_Y := 0.02
 ## 理由是桌面减负（用户要求）：筹码只是"身家的量级示意"、与四角身家条重复；体力件是同一份
 ## 数据的第二个落点。**别再把它们加回来**：`layout_test` 里有"接口与节点都已退场"的反向契约。
 
+## 指针（批次 12 ④）：**平贴桌面**的金箭头，立在轮盘**正上方**、尖端指向轮心。
+##
+## 尺寸按「画出来的轮子半径」（`wheel_screen_radius`）的比例取 —— 与轮缘同一套口径，
+## 于是取景一变（`_zoom` 动）箭头跟着轮子一起胀缩，不会脱开。
+##   * `POINTER_LEN_R` 长度（沿指向）—— 0.24 轮半径 ≈ 46 画布像素（全景取景）；
+##   * `POINTER_TIP_R` 尖端到轮心的距离 —— 0.92 ⇒ 尖端落在轮缘外沿（1.02R）**之内**一点点，
+##     "指着轮盘"而不是"飘在轮盘外面"；
+##   * 宽度 = 长度（等腰三角，视觉上最稳），厚度见 `_make_pointer_mesh` 的归一化建模。
+const POINTER_LEN_R := 0.24
+const POINTER_TIP_R := 0.92
+## 轮缘（`WheelRim`）与箭头共用的金：**同一份取色**，观感上"箭头是轮子的一部分"。
+const WHEEL_GOLD := Color(0.72, 0.55, 0.24)
+
 var _t3: TableView3D
 var _wheel_px := Vector2.ZERO
 var _hit_r := 0.0                 # 命中半径（画布像素）
 var _rim: MeshInstance3D
 var _rim_mesh: TorusMesh
+## 指针的节点（**挂在 `_rim` 下**：跟着轮缘一起被摆到轮心上，少一处要维护的坐标）。
+## 为什么不做成 `TableProps` 的第二个直接子节点：`get_child_count() == 1` 这条既有契约
+##（"转盘实体只有一个节点"）与它的一串断言都会被打断 —— 挂到轮缘下面既保住那条契约，
+## 又在语义上更贴切（箭头本来就属于这个轮子）。
+var _pointer: MeshInstance3D
 
 func setup(t3: TableView3D) -> void:
 	_t3 = t3
@@ -119,11 +137,27 @@ func build_wheel(center_px: Vector2, radius_px: float) -> void:
 		_rim_mesh.ring_segments = 12
 		_rim.mesh = _rim_mesh
 		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.72, 0.55, 0.24)   # 铜金轮缘，接 WheelView 的金属外圈
+		mat.albedo_color = WHEEL_GOLD   # 铜金轮缘，接 WheelView 的金属外圈
 		mat.metallic = 0.6
 		mat.roughness = 0.35
 		_rim.material_override = mat
 		add_child(_rim)
+		# ---- 批次 12 ④：指针（平贴桌面的金箭头）----
+		# 原先这个指针画在 `WheelView._draw()` 里（画布上的一个 2D 三角形）—— 2D 端转成
+		# 近正俯视之后只剩一条棱（正是本条要治的病）。改成**与轮缘同族的 3D 实物**：
+		# 平贴桌面 ⇒ 两端（3D 50° / 2D 88°）都读得出来。
+		_pointer = MeshInstance3D.new()
+		_pointer.name = "WheelPointer"
+		_pointer.mesh = _make_pointer_mesh()
+		var pmat := StandardMaterial3D.new()
+		pmat.albedo_color = WHEEL_GOLD
+		pmat.metallic = 0.6
+		pmat.roughness = 0.35
+		# 两面都画：箭头是**薄挤出**的，底面贴着桌子本来就看不见；兜的是"相机滑到轨道另一端
+		# 时从上往下看只剩顶面"那点观感风险（与当年灯罩双面画同一条手法）。
+		pmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_pointer.material_override = pmat
+		_rim.add_child(_pointer)
 	# 尺寸：环的径向范围直接乘比例（孔洞边缘 / 外沿），单位世界。
 	_rim_mesh.inner_radius = r * RIM_INNER_R
 	_rim_mesh.outer_radius = r * RIM_OUTER_R
@@ -131,6 +165,74 @@ func build_wheel(center_px: Vector2, radius_px: float) -> void:
 	var w: Vector3 = _t3.canvas_px_to_world(center_px)
 	w.y = _t3.table_mesh.global_position.y + PROPS_Y
 	_rim.global_position = w      # canvas_px_to_world 给的是世界坐标，按世界坐标落位
+	_place_pointer(center_px, radius_px, w, r)
+
+## 把指针摆到轮盘**正上方**、尖端指向轮心（批次 12 ④）。幂等，每次刷新重算。
+##
+## **朝向走画布口径、不写死"世界 -z"**：箭头在画布上的"正上方"是 `center_px + (0, -半径)`
+## 那一点（画布 y 向下 ⇒ -y 是上方）；把它与轮心**都**过一遍 `canvas_px_to_world`，两点的
+## 连线就是"指向轮心"的世界方向 —— 于是 `BoardView` 那条 2D 镜头变换（含视角旋转）一旦动，
+## 箭头跟着转，不必在这里重述一遍坐标换算。
+## **今天 `_rot` 恒为 0**（转视角已随批次 1 删除）⇒ 这个方向实际就是世界 -z 侧、指向 +z；
+## 但上面的写法对 `_rot ≠ 0` 也成立，且没有一份"世界方向"的常数要跟着改。
+##
+## 落点：**箭头的中心**在"尖端那一点再往外挪半个身位"处 ⇒ 尖端恰好落在轮子的正上方那一点
+##（半径 `radius_px`，即轮缘外沿之内一点点）。y 与轮缘同高（`PROPS_Y`）：箭头是**平贴桌面**的，
+## 抬得越高、屏幕上相对印刷图案就越漂（见 `PROPS_Y` 那段）。
+##
+## **`look_at` 让节点的 -Z 指向目标** ⇒ 网格的尖端建在局部 **-z**（见 `_make_pointer_mesh`）。
+## up 取 +Y：方向是水平的，平贴的姿势由此保住（法线朝上）。
+func _place_pointer(center_px: Vector2, radius_px: float, hub_w: Vector3, r: float) -> void:
+	if _pointer == null:
+		return
+	var l: float = r * POINTER_LEN_R
+	_pointer.scale = Vector3.ONE * l          # 归一化网格：一个缩放同时定长 / 宽 / 厚
+	var top_w: Vector3 = _t3.canvas_px_to_world(center_px + Vector2(0.0, -radius_px * POINTER_TIP_R))
+	top_w.y = hub_w.y                          # 与轮缘同高（画布映射给的是桌面上的点，y 另取）
+	var u := hub_w - top_w
+	u.y = 0.0
+	if u.length() < 0.0001:
+		return
+	u = u.normalized()
+	_pointer.global_position = top_w - u * (l * 0.5)
+	_pointer.look_at(hub_w, Vector3.UP)
+
+## 指针的网格（**归一化建模**：长度恒为 1）—— 一枚平贴桌面的**薄挤出三角**，
+## 尖端在局部 **-z**（摆位靠 `look_at` 把 -z 指向轮心，见 `_place_pointer`）。
+##
+## 归一化而不是按世界尺寸建：摆位时**统一缩放** `r × POINTER_LEN_R` ⇒ 长 / 宽 / 厚永远同一个
+## 比例，改观感只动 `POINTER_LEN_R` 一个数（网格不必重建）。宽度取与长度同值（等腰三角）。
+##
+## 法线**显式给**（`set_normal`）：不靠缠绕方向反推 —— 推反了就正面朝下，50° 俯角下箭头
+## 变成一块黑影（这正是"用 cull_disabled 兜住"之外还想避免的那档）。
+## 厚度 0.125（= 长度的 1/8）只是"看得出是块实物、投得出一条细影"，不该厚成一块楔子。
+func _make_pointer_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var hw := 0.5                        # 半宽（长度的一半）
+	var th := 0.125                      # 厚度（向下挤出）
+	var tip := Vector3(0.0, 0.0, -0.5)
+	var bl := Vector3(-hw, 0.0, 0.5)
+	var br := Vector3(hw, 0.0, 0.5)
+	_pointer_tri(st, tip, br, bl, Vector3.UP)                       # 顶面
+	_pointer_tri(st, tip - Vector3(0.0, th, 0.0), bl - Vector3(0.0, th, 0.0),
+		br - Vector3(0.0, th, 0.0), Vector3.DOWN)                   # 底面
+	_pointer_side(st, tip, br, th)                                  # 三条侧壁
+	_pointer_side(st, br, bl, th)
+	_pointer_side(st, bl, tip, th)
+	return st.commit()
+
+## 往 `SurfaceTool` 里塞一个三角（法线显式给，缠绕方向交给 `cull_disabled` 兜底）。
+func _pointer_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, n: Vector3) -> void:
+	for v in [a, b, c]:
+		st.set_normal(n)
+		st.add_vertex(v)
+
+## 侧壁：上沿 a→b、向下挤出 `th`（法线取水平外向 —— 由这条边的方向转 90° 得到）。
+func _pointer_side(st: SurfaceTool, a: Vector3, b: Vector3, th: float) -> void:
+	var n := Vector3(b.z - a.z, 0.0, a.x - b.x).normalized()
+	_pointer_tri(st, a, b, b - Vector3(0.0, th, 0.0), n)
+	_pointer_tri(st, a, b - Vector3(0.0, th, 0.0), a - Vector3(0.0, th, 0.0), n)
 
 ## 命中判定：画布像素是否落在转盘上。
 func wheel_hit(canvas_px: Vector2) -> bool:
@@ -538,12 +640,18 @@ func set_hand_discard_pending(i: int) -> void:
 ##
 ## 注意「值没变就不用贴」的前提是**重摆手牌的那几条路会自己补贴**（`_apply_hand_layout` 末尾
 ## 统一调 `_apply_hand_alpha`）—— 少了那一笔，新建 / 重摆出来的牌会一直保持默认的不透明。
+##
+## **批次 12 A3 起它还推"薄牌躺平"**（`_apply_prop_lean`：棋子与房子的倾角 + 中心锚定的落点）。
+## 推送点仍然只有这一个（`_apply_camera` 调它，`snap_view` / 摆拍 / 测试都走那条路）——
+## 摆拍**不经过 `_process`**，所以像手牌淡出那样必须挂在这里，挂进 `_process` 会漏。
+## 池子是空的（视角推送早于棋子 / 房子建起来）也没关系：`_apply_prop_lean` 自己容空。
 func set_view_t(t: float) -> void:
 	var nt := clampf(t, 0.0, 1.0)
 	if is_equal_approx(nt, _view_t):
 		return
 	_view_t = nt
 	_apply_hand_alpha()
+	_apply_prop_lean()
 
 ## 当前手牌的不透明度：3D 端 1，2D 端 0，中间是 HAND_FADE_LO→HI 的平滑过渡。
 ## smoothstep 而不是线性：两端多一段"几乎不变"的平缓区，滚轮走到头才明显淡掉。
@@ -787,15 +895,33 @@ func hand_hit(canvas_px: Vector2) -> int:
 ## 50 同理 = **0.191** ⇒ 取 0.17 / 0.20（立起来之后要压得住格子那一小块，比贴纸略高一档）。
 ## 厚度 0.022 与手牌（0.030）一个量级：有厚度才投得出影子、看得出是"牌"而不是贴纸。
 const TOKEN_SIZE := Vector3(0.17, 0.20, 0.022)
-## 后倾角（绕 X **负**角 = 顶边往远端倒 ⇒ 面朝近端镜头）。与已退场立牌同款 **25°**：
-## 2D 端（近正俯视）与 3D 端（50° 俯角）**都能看见一块面**；直立薄板在 2D 端只剩一条线。
+## 3D 端的后倾角（绕 X **负**角 = 顶边往远端倒 ⇒ 面朝近端镜头）。**批次 12 前是死值 25°**：
+## 那时 2D 端（近正俯视）只剩一条棱（用户 ② 报的正是它）。现在它只是这条**轨道**的起点：
+## `rotation.x = lerp(-TOKEN_LEAN_DEG, -90°, view_t)`（见 `_lean_rad` / `_apply_prop_lean`）——
+## 3D 端照旧后倾 25°（正脸朝镜头），2D 端**平贴桌面、正脸朝上**（就是老 2D 棋盘上那个图案）。
+## **−90° 那一端是几何定的、别改**：那时薄牌的局部 +Z（法线）正好转到世界 +Y（朝上）。
 const TOKEN_LEAN_DEG := 25.0
+## 立牌"躺平"那一端的角度：`-90°`（正俯视下薄牌平贴桌面、图案朝上）。棋子与房子**同一档**
+##（`_lean_rad` 的第二个参数就是各自的 `*_LEAN_DEG`，终点共用这一个常数）。
+const PROP_FLAT_DEG := 90.0
 ## 牌身底色：暗底（比周围格子的底色深一档）—— 身份靠正面那张棋子贴图。
 ## 另外按 `TOKEN_BODY_TINT` 掺一点**玩家色**（见 `_place_token`）：素材在时它只是"牌边那一圈
 ## 淡淡的同色"，**素材缺失时（`UIKit.piece_tex` 拿不到）整块就只剩这个色** —— 与 2D 那套
 ## "素材缺失退回纯色圆片"的降级一致（那时它用的是 `GameData.PLAYER_COLORS`）。
-const TOKEN_BODY_COLOR := Color(0.125, 0.135, 0.185)
+##
+## **批次 12 A3：0.125/0.135/0.185 → 0.20/0.215/0.27**（用户 ②「小人偏暗」）。屋子里只有
+## 一盏灯、且它偏在左前方 ⇒ 站在远端那几枚棋子吃不到什么光，暗底牌身几乎与桌垫同色。
+## 提亮一档 + 下面那层自发光（`TOKEN_EMIT`）两条一起上，小人才"跳"得出来。
+const TOKEN_BODY_COLOR := Color(0.20, 0.215, 0.27)
 const TOKEN_BODY_TINT := 0.25
+## 牌身的**自发光**（批次 12 A3，用户 ②）：能量 0.45、颜色 = **掺过玩家色的牌身色**
+##（见 `_place_token` —— 自发光与牌身同色，"整块牌亮起来"而不是"贴了一层别的颜色"）。
+## 为什么非有不可：牌身是暗底，近黑屋子里它落在**不透明的暗桌垫**上，只靠那盏偏在一侧的灯
+## 照不出对比；自发光不过光照、与距离无关，正好把"这是谁"这条信息从暗底里捞出来。
+const TOKEN_EMIT_ENERGY := 0.45
+## 正面（棋子贴图）那层的弱自发光：只给 0.25，让"小人"那张画在暗处也读得出轮廓。
+## **比牌身那层弱**是故意的：贴图自带明暗，再亮就洗成一块白（观感成了"贴纸"而不是"立牌"）。
+const TOKEN_FACE_EMIT := 0.25
 ## 命中盒的放宽量（画布像素，**四面**各放这么多）：棋子只有 0.17×0.20 世界（≈43×46 画布像素），
 ## 手指不容易点中；原 2D `_token_at_view` 也有 (10,14) 的容差 —— "好点中"这条一字未改。
 ## 它同时让"同一格两枚棋子的命中盒有交叠"，`token_hit` 的"取最近"那条判据才有用武之地。
@@ -906,16 +1032,19 @@ func has_token(peer: int) -> bool:
 func token_moving(peer: int) -> bool:
 	return bool(_moving.get(int(peer), false))
 
-## 造一块棋子薄牌（节点只造一次）。局部坐标：原点 = **板的下沿中点**（棋子"站"在桌上），
-## x 向右、y 向上、z 朝近端镜头 —— 与已退场的立牌同一套局部约定。
+## 造一块棋子薄牌（节点只造一次）。局部坐标：原点 = **薄牌的中心**
+##（**批次 12 A3 起是中心锚定**，原先在**下沿中点** —— 那时薄牌绕底边转，躺平会从格子里甩出去，
+## 见 `_plate_pos`）。x 向右、y 向上、z 朝近端镜头。
 func _make_token(peer: int) -> Dictionary:
 	var root := Node3D.new()
 	root.name = "Token_p%d" % peer
 	# 把 peer 记进 meta：调用方（含测试）要读那枚棋子的**节点**（位置 / 材质模式）时按它找，
 	# 而不是按节点名 —— 名字可能因同帧重建被 Godot 自动改掉（见 `set_tokens` 的移除分支）。
 	root.set_meta("peer", peer)
-	# 后倾：绕 X **负**角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头（2D 端近正俯视也看得见一块面）
-	root.rotation = Vector3(deg_to_rad(-TOKEN_LEAN_DEG), 0.0, 0.0)
+	# 后倾：绕 X **负**角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头（2D 端近正俯视也看得见一块面）。
+	# 角度**由 view_t 驱动**（批次 12 A3）：这里只贴当前值，之后每次视角变都重贴
+	#（见 `_apply_prop_lean`）。
+	root.rotation = Vector3(_lean_rad(TOKEN_LEAN_DEG), 0.0, 0.0)
 	_tokens_root.add_child(root)
 	if _token_mesh == null:
 		_token_mesh = BoxMesh.new()
@@ -923,13 +1052,17 @@ func _make_token(peer: int) -> Dictionary:
 	var plate := MeshInstance3D.new()
 	plate.name = "Plate"
 	plate.mesh = _token_mesh
-	plate.position = Vector3(0.0, TOKEN_SIZE.y * 0.5, 0.0)   # 板心抬半高 ⇒ 下沿落在原点
+	plate.position = Vector3.ZERO     # 中心锚定：板心就在 root 原点（摆放见 `_plate_pos`）
 	var pmat := StandardMaterial3D.new()
 	pmat.albedo_color = TOKEN_BODY_COLOR
 	pmat.roughness = 0.62
 	# 显式写死**不透明档**：3D 端留在不透明队列才有深度写入与投影（批次 4 的教训）。
 	# 只有传送淡出的那 0.38s 切成 ALPHA，淡完切回（见 `_set_token_alpha`）。
 	pmat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	# 自发光（批次 12 A3）：颜色在 `_place_token` 里跟着"掺过玩家色的牌身色"一起贴。
+	pmat.emission_enabled = true
+	pmat.emission = TOKEN_BODY_COLOR
+	pmat.emission_energy_multiplier = TOKEN_EMIT_ENERGY
 	plate.material_override = pmat
 	root.add_child(plate)
 	# 正面：棋子贴图（Kenney CC0 / `UIKit.piece_tex` 按槽位取色）。贴图带透明边 ⇒ 用
@@ -946,32 +1079,103 @@ func _make_token(peer: int) -> Dictionary:
 	# `PlaneMesh` 躺在 XZ 平面（法线 +Y）：绕 X **+90°** ⇒ 法线朝 +Z（朝着近端镜头）、
 	# 贴图的上方朝 +Y。别用 -90°：那面朝下、从镜头这一侧看不见。
 	face.rotation = Vector3(deg_to_rad(90.0), 0.0, 0.0)
-	face.position = Vector3(0.0, TOKEN_SIZE.y * 0.5, TOKEN_SIZE.z * 0.5 + 0.001)
+	face.position = Vector3(0.0, 0.0, TOKEN_SIZE.z * 0.5 + 0.001)   # 贴在牌面正中（中心锚定）
 	var fmat := StandardMaterial3D.new()
 	fmat.albedo_color = Color.WHITE
 	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	fmat.roughness = 0.8
+	# 正面那层弱自发光（批次 12 A3）：贴图在暗处也读得出轮廓（见 TOKEN_FACE_EMIT）。
+	# **不能给它染色**（`albedo_color` 是乘到贴图上的）：自发光取白，只抬亮度不改色相。
+	fmat.emission_enabled = true
+	fmat.emission = Color.WHITE
+	fmat.emission_energy_multiplier = TOKEN_FACE_EMIT
 	face.material_override = fmat
 	root.add_child(face)
 	return {"root": root, "plate": plate, "plate_mat": pmat, "face": face, "face_mat": fmat,
 		"idx": 0, "slot": 0, "tw": null}
 
 ## 把一块棋子的落点与正面贴图刷一遍（幂等，每次广播都走）。
-## 落点 = 「格心 + 槽位偏移」→ 世界（`_token_world`），y **落在桌面上**（+ `PROPS_Y` 那点小抬）：
-## 局部原点就在下沿 ⇒ 棋子是"站"在桌上，而不是插进桌垫或浮在空中。
+##
+## 落点 = 「格心 + 槽位偏移」→ 世界（`_token_world`），再按**中心锚定**折成 root 的位置
+##（`_plate_pos`）：薄牌的中心落在落点的水平位置上，y 抬到"下沿刚好踩在落点上"那一档 ——
+## 于是 3D 端与改动前**一样高**、2D 端平贴桌面、两者之间连续插值。
 func _place_token(tk: Dictionary, idx: int, slot: int) -> void:
 	tk["idx"] = idx
 	tk["slot"] = slot
-	(tk["root"] as Node3D).global_position = _token_world(idx, slot)
-	# 牌身掺一点玩家色（见 TOKEN_BODY_COLOR 那段）：贴图在时是"牌边一圈同色"，贴图缺时是全部身份
-	(tk["plate_mat"] as StandardMaterial3D).albedo_color = \
-		TOKEN_BODY_COLOR.lerp(GameData.PLAYER_COLORS[slot % 4], TOKEN_BODY_TINT)
+	var rad := _lean_rad(TOKEN_LEAN_DEG)
+	(tk["root"] as Node3D).rotation = Vector3(rad, 0.0, 0.0)
+	(tk["root"] as Node3D).global_position = _plate_pos(_token_world(idx, slot),
+		rad, TOKEN_SIZE.y * 0.5)
+	# 牌身掺一点玩家色（见 TOKEN_BODY_COLOR 那段）：贴图在时是"牌边一圈同色"，贴图缺时是全部身份。
+	# **自发光跟着同一份颜色**（批次 12 A3）：整块牌一起亮，而不是叠一层异色的光。
+	var body: Color = TOKEN_BODY_COLOR.lerp(GameData.PLAYER_COLORS[slot % 4], TOKEN_BODY_TINT)
+	var pmat: StandardMaterial3D = tk["plate_mat"]
+	pmat.albedo_color = body
+	pmat.emission = body
 	var tex := UIKit.piece_tex(slot)
 	var face: MeshInstance3D = tk["face"]
 	face.visible = tex != null
 	if tex != null:
 		(tk["face_mat"] as StandardMaterial3D).albedo_texture = tex
+
+# ---------------- 薄牌随视角"躺平"（批次 12 A3：棋子与房子共用这一套） ----------------
+
+## 当前倾角（弧度）：`view_t = 0` ⇒ `-lean_deg`（3D 端后倾、正脸朝镜头）、
+## `view_t = 1` ⇒ `-PROP_FLAT_DEG`（2D 端平贴桌面、正脸朝上）。
+##
+## **为什么必须随视角走**（用户 ②⑥）：薄牌固定后倾 25° 时，2D 端（近正俯视）只剩一条棱 ——
+## 转成平贴之后，2D 端看到的就是**棋盘上原来那个图案**（老 2D 版的画法），字与图案都读得出。
+## 两端都是"看得见一块面"，中间连续插值（相机本来就是连续推移的，薄牌跟着转才不"跳"）。
+func _lean_rad(lean_deg: float) -> float:
+	return deg_to_rad(lerpf(-lean_deg, -PROP_FLAT_DEG, _view_t))
+
+## 中心锚定：把「薄牌中心该去的那个落点」折成 **root 的位置**（root 的局部原点 = 薄牌中心）。
+##
+## 落点 `a` = 印在桌上那一点（格心 / 格子那条带）**抬高 `PROPS_Y`** 之后的世界坐标。
+## 折法：中心落点的 **x/z 就用 `a`**（这才是"从格子里甩出去"那条病的解药 ——
+## 薄牌绕自身中心摆，转到哪一档都关于落点对称），**y 抬 `half_h × cos(θ)`** ——
+## 那一项恰好等于"薄牌下沿相对中心的竖直偏移"，于是**下沿恒好踩在落点上**：
+##   * 3D 端（θ=-25°）：y 抬 0.906×半高 ⇒ 与老代码（底边锚定）**一样高**，
+##     3D 观感一字未变（设计稿预期的"3D 端会略低一点点"因此**没有发生**：底边锚定的 y
+##     本来就是"中心在落点上方半个身位"，这里把它显式还原了）；
+##   * 2D 端（θ=-90°）：cos = 0 ⇒ 中心就落在落点上、薄牌平贴桌面。
+## **别把 x/z 也按 sin(θ) 挪**：中心锚定的全部意义就是"中心对着落点"，
+## 再挪一次反而把中心推出格子（那正是老写法躺平时会干的事）。
+func _plate_pos(a: Vector3, rad: float, half_h: float) -> Vector3:
+	return Vector3(a.x, a.y + half_h * cos(rad), a.z)
+
+## 视角变了就把所有薄牌（棋子 + 房子）的**倾角与位置**重贴一遍（幂等；`set_view_t` 调它）。
+##
+## **池子可能是空的**（视角推送发生在棋子 / 房子建起来之前 —— `_apply_camera` 在 `_init` 里
+## 就会走一次）：所以两个循环都自己容空，且逐项判 `is_instance_valid`（节点池里可能有刚被
+## `queue_free` 摘出去的那一枚）。
+## **正在走子 / 传送的棋子跳过重摆**（`_moving`）：它的位置由补间逐帧写，
+## 这里插一手会被下一帧覆盖，反而让"落点"闪一下（同 `set_tokens` 里那条跳过的理由）。
+## 倾角**还是要贴**（补间只写位置与缩放）—— 走子过程中转视角，牌面朝向不该落后。
+func _apply_prop_lean() -> void:
+	if _t3 == null or _t3.board == null:
+		return          # 棋盘还没就绪：落点算不出来（`_token_world` / `house_screen_pos` 都要它）
+	var trad := _lean_rad(TOKEN_LEAN_DEG)
+	for peer in _tokens:
+		var tk: Dictionary = _tokens[peer]
+		var root: Node3D = tk.get("root")
+		if root == null or not is_instance_valid(root):
+			continue
+		root.rotation = Vector3(trad, 0.0, 0.0)
+		if not bool(_moving.get(peer, false)):
+			root.global_position = _plate_pos(
+				_token_world(int(tk.get("idx", 0)), int(tk.get("slot", 0))),
+				trad, TOKEN_SIZE.y * 0.5)
+	var hrad := _lean_rad(HOUSE_LEAN_DEG)
+	for d in _houses:
+		var hroot: Node3D = d.get("root")
+		if hroot == null or not is_instance_valid(hroot):
+			continue
+		hroot.rotation = Vector3(hrad, 0.0, 0.0)
+		if hroot.visible:      # 收起（未装修）那几块不贴位置 —— 与 `_set_house_plate` 同一支
+			hroot.global_position = _plate_pos(
+				_house_anchor_world(int(hroot.get_meta("tile"))), hrad, _house_h * 0.5)
 
 ## 某格 + 某槽位的**棋子落点**（画布像素，**已过 2D 镜头变换**）。公式归 BoardView
 ##（`board.token_screen_pos` = `global_position + _view_from_world(slot_anchor(idx, slot))`），
@@ -1045,8 +1249,11 @@ func play_token_move(peer: int, path: Array, step_time: float) -> void:
 	var slot := int(tk.get("slot", 0))
 	var dur := maxf(float(step_time), 0.01)
 	var prev := root.global_position
+	# 每步的落点同样走**中心锚定**（批次 12 A3）：不然走子动画会把牌拉回"底边锚定"的落点，
+	# 与状态广播摆出来的位置差半个身位（屏幕上就是"走一步、跳一下"）。
+	var rad := _lean_rad(TOKEN_LEAN_DEG)
 	for step in path:
-		var target := _token_world(int(step), slot)
+		var target := _plate_pos(_token_world(int(step), slot), rad, TOKEN_SIZE.y * 0.5)
 		var from := prev
 		# 一步写成一个 `tween_method` 的闭包：`from` / `target` 都是循环体内的局部量，
 		# GDScript 的 lambda **按值捕获**，所以每一步各自记住自己的起终点。
@@ -1084,7 +1291,8 @@ func _token_teleport_anim(p: int, tk: Dictionary, target_idx: int) -> void:
 		tw.tween_interval(0.1)
 		tw.finished.connect(func() -> void: _moving[p] = false)
 		return
-	var target := _token_world(target_idx, int(tk.get("slot", 0)))
+	var target := _plate_pos(_token_world(target_idx, int(tk.get("slot", 0))),
+		_lean_rad(TOKEN_LEAN_DEG), TOKEN_SIZE.y * 0.5)
 	_set_token_alpha(tk, true, 1.0)
 	tw.tween_method(func(a: float) -> void: _set_token_alpha(tk, true, a), 1.0, 0.0, TOKEN_TP_OUT)
 	tw.parallel().tween_property(root, "scale", Vector3.ONE * 1.5, TOKEN_TP_OUT) \
@@ -1304,15 +1512,27 @@ func _process(delta: float) -> void:
 # 材质引用（等级没变就不碰材质）。每帧只重贴位置，而"镜头动过"的那一帧由
 # `game._refresh_followers_if_cam_moved` 补推（与棋子 / 光环 / 轮缘 / 牌堆同一批）。
 
-## 后倾角（绕 X **负**角 = 顶边往远端倒 ⇒ 面朝近端镜头）。与棋子 `TOKEN_LEAN_DEG` 同款 **25°**：
-## 2D 端（近正俯视）与 3D 端（50° 俯角）**都能看见一块面**；直立薄板在 2D 端只剩一条线。
+## 3D 端的后倾角（绕 X **负**角 = 顶边往远端倒 ⇒ 面朝近端镜头）。与棋子 `TOKEN_LEAN_DEG`
+## 同款 **25°** —— 且**与棋子一样由 `view_t` 驱动**（批次 12 A3/⑥：2D 端平贴桌面、正脸朝上）。
 const HOUSE_LEAN_DEG := 25.0
 ## 薄牌厚度（世界单位）。宽高**不写死**（跟印刷图案，见上面那段）；厚度只取"看得出是块牌子"的值：
 ## 0.014 ≈ 3.5 画布像素（全景取景），与棋子牌身（0.022）/ 手牌（0.030）同量级。
 const HOUSE_T := 0.014
+## **放大倍数**（批次 12 ⑥，用户「房子太小」）：宽高从"跟着印刷图案"改成 **印刷图案 × 它**。
+## 取 1.3（设计 §一⑥ 的定值）：再大就开始盖住格子里的字（那块带子只有格的五分之一高，
+## 房子本来只是"这条带上的一枚标记"）；1.3 下薄牌约占格宽 29%、格高 20% —— 一眼看得见，
+## 又不至于把价格字压住。**它不是"跟印刷图案"的例外**：位置与尺寸仍然逐帧跟着 2D 取景走，
+## 只是量出来的尺寸乘这个数（见 `_apply_house_size`）。
+const HOUSE_SCALE := 1.3
 ## 牌身底色：暗底（接棋子牌身 `TOKEN_BODY_COLOR` 那一族，两块立牌观感一致）。
-## 身份靠正面那张等级纹理；纹理烘不出来时正面仍是一块**等级色**（降级，见 `_build_house_mats`）。
-const HOUSE_BODY_COLOR := Color(0.145, 0.155, 0.20)
+## **批次 12 A3/⑥ 一起提亮**（0.145/0.155/0.20 → 0.21/0.23/0.29）：理由与棋子那条同一个
+##（近黑屋子里只有一盏偏在一侧的灯），再配一层自发光（`HOUSE_EMIT_ENERGY`）。
+const HOUSE_BODY_COLOR := Color(0.21, 0.23, 0.29)
+## 牌身自发光能量（批次 12 ⑥，用户「房子太暗」）。0.35：与棋子的 0.45 有意错开一档 ——
+## 房子小、数量多（56 块），太亮会在桌面上铺成一片"发光的小方块"，把格子本身的光影压平。
+const HOUSE_EMIT_ENERGY := 0.35
+## 等级纹理那层（正面）的弱自发光能量：0.3 —— 让等级配色在暗处仍读得出。
+const HOUSE_FACE_EMIT := 0.30
 ## 烘纹理用的画布尺寸 = 印刷图案（26×18）的**整 2 倍**。
 ## 为什么不是设计稿里写的"约 64×48"：64×48 是 4:3，而印刷那块是 26:18 = 13:9 ——
 ## 贴到"按印刷宽高做的"方片上会把房子**横向压窄约 8%**（与桌垫上那座房子对不齐）。
@@ -1380,15 +1600,16 @@ func _make_house_plate(idx: int) -> Dictionary:
 	# 把格号记进 meta：调用方（含测试）读某格的节点时按它找 —— 名字可能在重建时被 Godot 改掉
 	#（同棋子 `meta("peer")` 那条约定）。
 	root.set_meta("tile", idx)
-	# 后倾：绕 X 负角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头
-	root.rotation = Vector3(deg_to_rad(-HOUSE_LEAN_DEG), 0.0, 0.0)
+	# 后倾：绕 X 负角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头。角度由 `view_t` 驱动（批次 12 ⑥），
+	# 这里只贴当前值（视角一变由 `_apply_prop_lean` 重贴）。
+	root.rotation = Vector3(_lean_rad(HOUSE_LEAN_DEG), 0.0, 0.0)
 	root.visible = false            # 未装修：默认收起（位置/尺寸在刷新里贴，见 `_set_house_plate`）
 	_houses_root.add_child(root)
 	var plate := MeshInstance3D.new()
 	plate.name = "Plate"
 	plate.mesh = _house_mesh
 	plate.material_override = _house_body_mat
-	root.add_child(plate)
+	root.add_child(plate)                       # 局部位置恒为 0：中心锚定（板心 = root 原点）
 	# 正面：等级纹理（烘出来的那张）。贴图带透明边 ⇒ **ALPHA_SCISSOR**（透明区裁掉、仍在
 	# **不透明队列**里写深度、投得出影子）—— 同棋子正面 / 手牌牌面那条。
 	var face := MeshInstance3D.new()
@@ -1397,15 +1618,25 @@ func _make_house_plate(idx: int) -> Dictionary:
 	# `PlaneMesh` 躺在 XZ 平面（法线 +Y）：绕 X **+90°** ⇒ 法线朝 +Z（朝着近端镜头）、贴图上方朝 +Y。
 	# 别用 -90°：那面朝下、从镜头这一侧看不见（同棋子正面那条）。
 	face.rotation = Vector3(deg_to_rad(90.0), 0.0, 0.0)
+	# 贴在牌面正中、抬 1mm（与牌面不共面，免得 z-fighting）。中心锚定之后这一项是**常量**
+	#（不再随半高变）—— 所以从 `_apply_house_size` 挪到了这里。
+	face.position = Vector3(0.0, 0.0, HOUSE_T * 0.5 + 0.001)
 	face.material_override = _house_mats[0]     # 建好先挂着 Lv1 那份（节点默认隐藏，露不出来）
 	root.add_child(face)
 	return {"root": root, "plate": plate, "face": face}
 
-## 按**印刷图案**重算薄牌的宽高（幂等；`set_houses` 每次都调 —— 取景 / 人数变化都会改 `_zoom`）。
+## 按**印刷图案 × `HOUSE_SCALE`** 重算薄牌的宽高（幂等；`set_houses` 每次都调 ——
+## 取景 / 人数变化都会改 `_zoom`）。
 ##
 ## 为什么**量真变换**：同 `build_wheel` 量半径 / `_apply_deck_footprint` —— `canvas_px_to_world`
 ## 走的是 `TEX_WINDOW_PX`（贴图窗口），窗口与画布尺寸是两个独立旋钮，"像素 ÷ 常数"会静默失配。
-## 宽高真的变了才重写 mesh 与 56 块牌的局部位置（局部位置只跟"半高"有关）。
+## **乘 `HOUSE_SCALE` 是在量完之后**（批次 12 ⑥）：缩放是"观感放大"，不该混进"跟印刷图案"
+## 那条链里 —— 那条链一变（窗口 / 取景），这里跟着重算出来的仍是"印刷尺寸 × 1.3"。
+## 宽高真的变了才重写 mesh（幂等，别每帧白改资源）。
+##
+## 局部位置**不在这里贴**（批次 12 A3）：薄牌改成中心锚定之后 plate / face 的局部位置恒为
+## `(0,0,0)` / `(0,0,T/2)`，与宽高无关（见 `_make_house_plate`）；56 块的位置由
+## `_set_house_plate` → `_place_house` 逐格贴。
 func _apply_house_size() -> void:
 	if _t3.board == null:
 		return
@@ -1413,18 +1644,14 @@ func _apply_house_size() -> void:
 	if size_px.x <= 0.0 or size_px.y <= 0.0:
 		return
 	var o: Vector3 = _t3.canvas_px_to_world(Vector2.ZERO)
-	var w: float = (_t3.canvas_px_to_world(Vector2(size_px.x, 0.0)) - o).length()
-	var h: float = (_t3.canvas_px_to_world(Vector2(0.0, size_px.y)) - o).length()
+	var w: float = (_t3.canvas_px_to_world(Vector2(size_px.x, 0.0)) - o).length() * HOUSE_SCALE
+	var h: float = (_t3.canvas_px_to_world(Vector2(0.0, size_px.y)) - o).length() * HOUSE_SCALE
 	if is_equal_approx(w, _house_w) and is_equal_approx(h, _house_h):
 		return                      # 取景没变：连 mesh 都不碰（幂等刷新，别白改资源）
 	_house_w = w
 	_house_h = h
 	_house_mesh.size = Vector3(w, h, HOUSE_T)
 	_house_face_mesh.size = Vector2(w, h)
-	# 块心抬半高 ⇒ 下沿落在原点（房子"站"在桌上）；正面再抬 1mm（与牌面不共面，免得 z-fighting）
-	for d in _houses:
-		(d["plate"] as MeshInstance3D).position = Vector3(0.0, h * 0.5, 0.0)
-		(d["face"] as MeshInstance3D).position = Vector3(0.0, h * 0.5, HOUSE_T * 0.5 + 0.001)
 
 ## 贴一格：等级 → 可见性 / 正面材质；位置每次重贴（幂等）。
 ##
@@ -1445,17 +1672,25 @@ func _set_house_plate(i: int, lv: int) -> void:
 		if lv > 0:
 			_place_house(d, i)
 
-## 把一块房子薄牌摆到**印在桌垫上的**那座房子上：落点 = `board.house_screen_pos(idx)`
-## （已过 2D 镜头变换的**印刷口径**）→ 世界，y 落在桌面 + `PROPS_Y`（与棋子同一条：站在桌上）。
+## 一座房子**印在桌上那一点**的世界坐标（`board.house_screen_pos(idx)` 那条印刷口径 → 世界，
+## y 落在桌面 + `PROPS_Y`）。`_place_house` 与 `_apply_prop_lean` 共用这一条。
 ##
 ## **必须走印刷口径**（不是 `house_anchor` 那份 `_world` 局部坐标）：房子要压住印在桌垫上的图案，
 ## 而图案随 2D 镜头走 —— 用局部坐标摆会整体偏开（批次 11 T1 的棋子就这么偏过一整格）。
-func _place_house(d: Dictionary, idx: int) -> void:
+func _house_anchor_world(idx: int) -> Vector3:
 	if _t3.board == null:
-		return
+		return Vector3.ZERO
 	var w: Vector3 = _t3.canvas_px_to_world(_t3.board.house_screen_pos(idx))
 	w.y = _t3.table_mesh.global_position.y + PROPS_Y
-	(d["root"] as Node3D).global_position = w
+	return w
+
+## 把一块房子薄牌摆到**印在桌垫上的**那座房子上（中心锚定，批次 12 A3 —— 与棋子同一条
+## `_plate_pos`：3D 端后倾 25°、2D 端平贴桌面、两端都关于落点对称）。
+func _place_house(d: Dictionary, idx: int) -> void:
+	var rad := _lean_rad(HOUSE_LEAN_DEG)
+	var root: Node3D = d["root"]
+	root.rotation = Vector3(rad, 0.0, 0.0)
+	root.global_position = _plate_pos(_house_anchor_world(idx), rad, _house_h * 0.5)
 
 ## 装修成功弹一下：scale 1.9 → 1（一次性过渡 ⇒ Tween）。只在等级**变了**时调。
 ## 局部原点在薄牌下沿 ⇒ 是"从格子上长出来"的那一下，不是从中心炸开。
@@ -1509,6 +1744,10 @@ func _build_house_mats() -> void:
 	_house_body_mat.roughness = 0.62
 	# 显式写死**不透明档**：3D 端留在不透明队列才有深度写入与投影（批次 4 的教训，同棋子牌身）。
 	_house_body_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	# 自发光（批次 12 ⑥，用户「房子太暗」）：与牌身同色 —— 整块牌一起亮，不叠异色的光。
+	_house_body_mat.emission_enabled = true
+	_house_body_mat.emission = HOUSE_BODY_COLOR
+	_house_body_mat.emission_energy_multiplier = HOUSE_EMIT_ENERGY
 	for lv in range(1, GameData.MAX_LEVEL + 1):
 		var m := StandardMaterial3D.new()
 		var tex: Texture2D = _house_texs[lv - 1]
@@ -1523,6 +1762,11 @@ func _build_house_mats() -> void:
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		m.roughness = 0.75
+		# 正面那层弱自发光（批次 12 ⑥）：等级配色在暗处也读得出。
+		# **取白**（等级色已经烘在贴图里，再染一层会把色相推歪，同 `albedo_color` 那条理由）。
+		m.emission_enabled = true
+		m.emission = Color.WHITE
+		m.emission_energy_multiplier = HOUSE_FACE_EMIT
 		_house_mats.append(m)
 
 ## 某等级的**房子正面纹理**（`_bake_house_texs` 烘的那一张）。**只读量**，给测试用：
