@@ -1440,6 +1440,8 @@ func _refresh_players() -> void:
 		# 身家 = 现金 + 名下地皮（地价 + 装修），与房主 `_net_worth` 同一公式。
 		# 消费方：四角身家条（`_refresh_corner_bars` 的 standing）与悬停棋子的信息条
 		#（后者在 board.render 里另算一份、同为这个公式）。
+		# **这里不是唯一一处**：同式的还有 `_state_worth(peer)`（喂玩家道具弹窗，批次 9 接上）
+		# 与房主 `_net_worth`（喂结算）—— **改公式要几处一起改**，别只改这里。
 		var worth := int(p.money)
 		for i in tiles_arr.size():
 			var td: Dictionary = tiles_arr[i]
@@ -1468,7 +1470,8 @@ func _refresh_players() -> void:
 	var order: Array = worth_map.keys()
 	order.sort_custom(func(a, b) -> bool: return int(worth_map[a]) > int(worth_map[b]))
 
-	# 四角身家条复用上面刚算出的身家/排名（公式只留这一处，避免两套算法悄悄跑偏）
+	# 四角身家条复用上面刚算出的身家/排名（这份 `worth_map` 只喂四角条；
+	# **同式的另有 `_state_worth` 喂道具弹窗** —— 改公式要一起改，别只改这里）
 	var standing: Array = []
 	for i in order.size():
 		var rp := int(order[i])

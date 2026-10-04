@@ -9,7 +9,12 @@ extends Control
 ## **数据全取已同步的 `st`**（由 game 组装成 `data` 传进来）⇒ 客户端也准；本组件不碰 `hp`。
 ## **单一来源仍是 game**：这里只负责"长什么样"，`data` 由 `game._open_player_popup` 一处组装。
 ##
-## z 档：**65** —— 高于棋盘 / 四角条 / 动作按钮 / 抽卡大字卡（40），低于小卖部（70）与暂停菜单（80）。
+## z 档：**45** —— 高于棋盘 / 四角条 / 动作按钮 / 抽卡大字卡（40），
+## **低于整个模态带**：结算 50 / 弹问 60 / 小卖部·赌场 70 / 暂停菜单 80。
+##
+## **为什么必须低于"整个"模态带（不只 70/80）**：弹窗的压暗底是 `STOP`。若它盖住**弹问面板**
+##（z 60，460 宽的购买询问），那条链就断了 —— 掷轮窗口里开着弹窗 → 超时被系统代掷 →
+## 落在可买格弹询问 → 询问被盖住且点不到 ⇒ 静默超时放弃。所以 45 要压在 50 之下。
 ## **写这一档前核对过目标层现有 z**（批次 8 的 `menu_layer` 教训：它当时根本没设 z）。
 
 ## 屏幕上弹窗面板的最大宽度（内容超出时内部滚动/换行；今天最多 7 件，够用）。
@@ -26,7 +31,7 @@ var stamina_text := ""
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE          # 本层不吃点击，只有压暗底吃
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	z_index = 65
+	z_index = 45
 	visible = false
 
 ## 打开某玩家的弹窗。`data` 形如：
@@ -59,8 +64,10 @@ func _build() -> void:
 	_dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_dim.color = Color(0.03, 0.035, 0.062, 0.62)
 	_dim.mouse_filter = Control.MOUSE_FILTER_STOP        # 模态：点它 = 关闭
+	# **只认左键**（与四角条那边同一写法）：不判按键的话滚轮上/下、右键也会把弹窗关掉。
 	_dim.gui_input.connect(func(ev: InputEvent) -> void:
-		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			close()
 	)
 	add_child(_dim)
@@ -68,6 +75,8 @@ func _build() -> void:
 	cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(cc)
+	# **面板本体有意保持 STOP**（`panel_container` 不设 `mouse_filter` ⇒ Godot 默认 STOP）：
+	# 点面板的空白处**不**关闭 —— 关闭只有三条路：压暗底 / ✕ / Esc。别当成漏设去改成 IGNORE。
 	_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
 	_panel.custom_minimum_size = Vector2(PANEL_W, 0)

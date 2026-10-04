@@ -1134,6 +1134,28 @@ func _run() -> void:
 	# 反向：不可见的那条不该开（人少了 / 自己不在名册时不崩）
 	g._on_corner_bar_clicked(999)
 	_check(not g.player_popup.is_open(), "点一个不存在的玩家：不开弹窗、也不崩")
+	# 真链路：**从条根发一次 gui_input**（走 `_make_corner_bar` 那条 lambda + `get_meta("peer")`），
+	# 而不是直调 `_on_corner_bar_clicked` —— 谁哪天把 lambda 改成闭包捕获 peer（dispatch 里点名的
+	# 坑），直调那条路照样绿。这里**先换 my_peer 让角位真重排**（seats 从 [2,3,4,1] 变成 [3,4,1,2]），
+	# 再点重排后的 bar[1] —— 若 lambda 捕获的是那一刻的旧 peer，就会点错人、这条红。
+	g.my_peer = 3
+	g.s_state(_state(3, false))
+	await process_frame
+	await process_frame
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	var bar1: Control = g.corner_bars[1].root
+	bar1.gui_input.emit(ev)
+	await process_frame
+	_check(g.player_popup.is_open() and g.player_popup.open_peer() == int(g.corner_bars[1].peer),
+		"经 gui_input 真链路：开在**该条当前挂的那个 peer** 上（meta 路径没被闭包捕获顶掉）")
+	# 支撑断言：条根 meta 与 bar.peer 同源（meta 路径万一失效，上面那条会以"点错人"的形式红，
+	# 这条则直接指出是 meta 没跟上重排）。
+	_check(int(bar1.get_meta("peer", GameData.NO_PEER)) == int(g.corner_bars[1].peer),
+		"条根 meta 与 bar.peer 同源（实得 meta=%d / bar=%d）"
+			% [int(bar1.get_meta("peer", GameData.NO_PEER)), int(g.corner_bars[1].peer)])
+	g.player_popup.close()
 
 	g.get_tree().paused = false
 	g.free()

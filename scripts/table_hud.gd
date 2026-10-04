@@ -379,8 +379,9 @@ static func build_play_ui(g: Node) -> void:
 	g.deck_reveal = DeckReveal.new()
 	hud.add_child(g.deck_reveal)
 
-	# 玩家道具弹窗（批次 9）：点四角身家条打开（卡牌 / 能量 / 身家现金；z 65，见 player_popup.gd）。
-	# 挂在 hud 上、显式 z 高于四角条与动作按钮 —— 别靠树序（`z_as_relative` 为真）。
+	# 玩家道具弹窗（批次 9）：点四角身家条打开（卡牌 / 能量 / 身家现金；**z 45**，见 player_popup.gd）。
+	# 挂在 hud 上、显式 z 高于四角条与动作按钮、但**低于整个模态带**（结算 50 / 弹问 60 / 70 / 80）
+	# —— 它自己的压暗底是 STOP，盖住弹问面板就会把那条链点死。别靠树序（`z_as_relative` 为真）。
 	g.player_popup = PlayerPopup.new()
 	hud.add_child(g.player_popup)
 
