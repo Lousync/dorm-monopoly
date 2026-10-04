@@ -552,6 +552,16 @@ func take_shot(path: String) -> void:
 			g._on_table_hover(g.board.token_screen_pos(
 				int(me_tip.get("pos", 0)), int(me_tip.get("color", 0))))
 			await get_tree().create_timer(0.2).timeout
+	if path.contains("handhover") and g.multiplayer.is_server():
+		# 摆拍（批次 12 B3）：把**手牌悬停放大**拍出来 —— 静态截图里没有鼠标 ⇒ 走**真入口**
+		# `g._on_table_hover(那张牌的画布落点)` 注入这一次悬停（与 tip / popup 同类：只注入表现状态，
+		# 玩法代码一行不改）。文件名同时带 `hand` ⇒ 上面那段会先发几张牌（空手没得悬停）。
+		# 等 0.12s 的补间走完再出图。用法：`--autotest=host --rounds=6 --shot=shots/xx_handhover_table_plain.png`
+		await get_tree().create_timer(0.2).timeout
+		var tp_h = g.table3d.table_props
+		if tp_h != null and tp_h.hand_count() > 1:
+			g._on_table_hover(tp_h.hand_rect(1).get_center())
+			await get_tree().create_timer(0.4).timeout
 	if path.contains("popup") and g.multiplayer.is_server():
 		# 摆拍（终审 fix wave）：开一个**对手**的道具弹窗，核对"卡牌图标 / 名称 / 能量小格 /
 		# 身家现金都读得出、面板居中"。与 hand / level / target 同类 —— 只在对局里注入**局面状态**，

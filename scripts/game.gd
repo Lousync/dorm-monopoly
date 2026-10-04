@@ -1260,7 +1260,7 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 	#    原先的"点桌上立牌"那一支随立牌一起删掉了（立牌命中链已不存在）。
 	return false
 
-# ================= 悬停棋子的信息条（批次 11 Task 3） =================
+# ================= 悬停棋子的信息条（批次 11 Task 3）+ 悬停手牌放大（批次 12 B3） =================
 
 ## 鼠标在桌面上移动（画布像素）：命中**棋子**就浮出屏幕层的信息条，返回被悬停的 peer
 ## （`GameData.NO_PEER` = 谁都没悬停）。**不消费输入** —— 悬停照旧转发进 SubViewport
@@ -1271,17 +1271,27 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 ## **内容与判据一字未改**（昵称 / 身家 / 名次 / 已出局），数据源仍是 **`board._peers_info`**
 ##（`board.render` 每次广播重填，身家公式与四角条同源）—— **单一来源**，不另取 game 那份 `standing`。
 ##
+## **批次 12 B3：手牌也进这条链**。同一次移动里再问一句 `TableProps.hand_hit`，
+## 命中的那一张走 `set_hand_hover(i)`（放大 + 抬起，见那里的注释）。
+## **同一时刻只有一个悬停目标**：棋子**优先** —— 两样都命中时（棋子站在自己这排牌后面那种边角）
+## 棋子赢，手牌那一问直接跳过（传 -1 收回去）。这与点击那条链的顺序**相反**是有意的：
+## 点击时手牌排在棋盘之前（`_on_table_click` 先问 hand_hit），而悬停里棋子才是"有信息可给"的那一个。
+##
 ## 降级：实体层还没就位 ⇒ 谁都不悬停（照 `_on_table_click` 的同一道守卫）。
 ## 拿不到画布点（射线打不到桌面，`TableView3D` 传 `Vector2.INF`）⇒ 谁都不悬停 ——
-## 悬停是"每一动都重算"的语义，漏掉这一动会让条留在上一枚棋子上不掉。
+## 悬停是"每一动都重算"的语义，漏掉这一动会让条留在上一枚棋子上不掉（手牌同理，一起收回去）。
 func _on_table_hover(canvas_px: Vector2) -> int:
 	if table3d == null or table3d.table_props == null:
 		return GameData.NO_PEER
 	if not (is_finite(canvas_px.x) and is_finite(canvas_px.y)):
 		_set_token_hover(GameData.NO_PEER)
+		table3d.table_props.set_hand_hover(-1)
 		return GameData.NO_PEER
-	var peer: int = table3d.table_props.token_hit(canvas_px)
+	var tp = table3d.table_props
+	var peer: int = tp.token_hit(canvas_px)
 	_set_token_hover(peer)
+	# 手牌：棋子优先（两样都命中时棋子赢），没命中棋子才轮到牌。
+	tp.set_hand_hover(-1 if peer != GameData.NO_PEER else tp.hand_hit(canvas_px))
 	return peer
 
 ## 悬停目标变了才重写条的内容；**同一枚棋子时也要重读内容 + 重摆位置**（悬停期间镜头会动、

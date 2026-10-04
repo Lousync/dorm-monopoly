@@ -1123,10 +1123,97 @@ func _run() -> void:
 			# 位置：整排落在**自己面前那条木纹留白**上（批次 5 Task 3 起）—— 在桌垫**之外**、
 			# 木桌之内、桌面的近端半幅；不与自己那排格子错位。
 			#（批次 3 时代的"不与筹码堆 / 体力件重叠"那两条随两条子系统退场一并作废，见上。）
-			print("== 手中牌：落在桌垫前沿的木纹留白上 ==")
+			print("== 手中牌：正面贴的就是商店那张卡（批次 12 B1）==")
+			# 手牌正面从"品质色块 + 一个图标 PNG"改成**一张完整的 `ItemCard`**（与商店货架 / 黑市
+			# 同一份画法）。做法 = 每槽一个 `SubViewport`，里面挂一张 `ItemCard.make(id, 150×210)`，
+			# 正面那个 `PlaneMesh` 贴它的 `ViewportTexture`（与批次 11 烘房子纹理同源）。
+			# 断言一律走**可观察量**：牌的网格 → 材质 → 贴图 → 视口 → 视口里的那棵控件树。
+			# **别把实现里的推导再写一遍**（那样写成什么样都过）。
+			var FACE4 = load("res://scripts/table_props.gd")
+			var face_consts: Dictionary = FACE4.get_script_constant_map()
+			var want_face: Vector2 = face_consts["HAND_FACE_CARD"]
+			var want_vp: Vector2i = face_consts["HAND_FACE_VP"]
+			# **`ItemCard` 一律走运行时 `load`**：静态写类名会把 item_card.gd（→ ui_kit.gd，里面引用了
+			# autoload `Fx`）拽进本脚本的静态依赖链，而 `--script` 入口下此时 autoload 还没注册 ⇒
+			# 整链「Identifier not found: Fx」编译失败（同本文件顶部与 hud_test 里那条既有约定）。
+			var ICARD4 = load("res://scripts/item_card.gd")
+			tp4.set_hand([{"id": "招财猫"}, {"id": "黑卡"}])
+			await process_frame
+			var face_ok := true
+			var live_ok := true
+			var one_ok := true
+			var id_ok := true
+			var aspect_ok := true
+			var slot_tex: Array = []
+			var want_ids := ["招财猫", "黑卡"]
+			for i in 2:
+				var mi_f := hr.get_child(i) as MeshInstance3D
+				var fc_f := mi_f.get_node_or_null("Face") as MeshInstance3D
+				var fm_f := fc_f.material_override as StandardMaterial3D if fc_f != null else null
+				var vp_f = tp4.hand_face_viewport(i)
+				if fm_f == null or vp_f == null:
+					face_ok = false
+					continue
+				# ① 正面贴的**就是这一槽的视口**（活引用：换牌不会换掉它，见 `_make_card`）
+				if fm_f.albedo_texture != vp_f.get_texture():
+					live_ok = false
+				slot_tex.append(fm_f.albedo_texture)
+				# ② 视口里只有一张 `ItemCard`，id 就是这件道具，尺寸就是手牌卡面尺寸
+				var cards: Array = []
+				for ch in vp_f.get_children():
+					if ch.get_script() == ICARD4:      # 同一份画法（不是"手牌专用卡"）
+						cards.append(ch)
+				if cards.size() != 1:
+					one_ok = false
+					continue
+				var ic_f = cards[0]
+				if String(ic_f.id) != String(want_ids[i]):
+					id_ok = false
+				if not Vector2(ic_f.size).is_equal_approx(want_face):
+					face_ok = false
+				# ③ 卡面没被拉扁：正面贴片的宽高比 == 视口（含留白）的宽高比
+				var pm_f := fc_f.mesh as PlaneMesh
+				if pm_f != null:
+					var pa_f: float = pm_f.size.x / pm_f.size.y
+					var va_f: float = float(vp_f.size.x) / float(vp_f.size.y)
+					if absf(pa_f - va_f) > 0.01:
+						aspect_ok = false
+			_check(face_ok, "两张牌正面都是**该槽视口里那张 `ItemCard`**（尺寸 %s，实得 %s）"
+				% [want_face, "?" if tp4.hand_face_card(0) == null else tp4.hand_face_card(0).size])
+			_check(live_ok, "正面材质贴的是**该槽视口的 `ViewportTexture`**（活引用，不是烘出来的图）")
+			_check(one_ok, "每槽视口里恰好一张 `ItemCard`（5 张牌 = 5 个视口，各烘一张）")
+			_check(id_ok, "视口里那张卡的 id 就是该槽的道具 id（招财猫 / 黑卡）")
+			_check(aspect_ok, "卡面没被拉扁：正面贴片宽高比 == 视口宽高比（%s 对 0.748）" % str(want_vp))
+			_check(slot_tex.size() == 2 and slot_tex[0] != slot_tex[1],
+				"两张牌贴的是**两张不同的纹理**（同一个视口的话会共用一张 —— 房子那 4 级同款坑）")
+			# 同一份画法：卡面节点的脚本就是商店那份 `item_card.gd`（不是另写一个"手牌专用卡"）
+			var ic0 = tp4.hand_face_card(0)
+			_check(ic0 != null and ic0.get_script() == ICARD4,
+				"手牌卡面与商店货架**同一份画法**（item_card.gd）")
+			# 换牌：视口里的卡跟着换（id 变了就重画 + 重置更新模式，否则永远停在上一次的画面）
+			var vp0 = tp4.hand_face_viewport(0)
+			tp4.set_hand([{"id": "包租婆"}, {"id": "黑卡"}])
+			_check(tp4.hand_face_card(0) != null and String(tp4.hand_face_card(0).id) == "包租婆",
+				"换牌后卡面跟着换（实得 %s）"
+					% ("?" if tp4.hand_face_card(0) == null else tp4.hand_face_card(0).id))
+			_check(vp0 != null and vp0.render_target_update_mode == SubViewport.UPDATE_ONCE,
+				"换牌后把该槽视口的更新模式重置成 UPDATE_ONCE（不然换完还停在旧画面）")
+			_check(vp0 != null and tp4.hand_face_viewport(0) == vp0,
+				"换牌**复用同一个视口**（每槽一个，不是每次新建）")
+			var fresh_n := 0
+			var same_id_ok := true
+			for ch in vp0.get_children():
+				if ch.get_script() == ICARD4:
+					fresh_n += 1
+					if String(ch.id) != "包租婆":
+						same_id_ok = false
+			_check(same_id_ok and fresh_n == 1,
+				"旧卡没有留在视口里（同一槽只留一张，实得 %d 张）" % fresh_n)
 			tp4.set_hand([{"id": "招财猫"}, {"id": "作弊器"}, {"id": "黑卡"}])
 			await process_frame
-			# 批次 5 Task 3 把整排**放大 1.5 倍并下移到桌垫下沿之外**（木桌之内那条木纹留白），
+			print("== 手中牌：落在桌垫前沿的木纹留白上 ==")
+			await process_frame
+				# 批次 5 Task 3 把整排**放大 1.5 倍并下移到桌垫下沿之外**（木桌之内那条木纹留白），
 			# 所以"落在桌垫之内"这条老断言反过来成真：牌**在桌垫之外**、还在**木桌之内**。
 			# 为什么必须这样：放大后整排的屏幕包围盒高 174 画布像素，而桌垫下沿那两条空档
 			# （格子下沿→原阶段按钮上沿、原按钮下沿→桌垫下沿）各只有 72 像素 —— 塞不下（见 HAND_BASE_PX）。

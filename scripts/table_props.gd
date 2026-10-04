@@ -499,11 +499,21 @@ const HAND_MAX := 5
 ## 上沿在**桌垫下沿**（1734.3）之上 9.7 画布像素（牌是抬起来 + 倾斜的实物，投影必然往布边上
 ## 糊一点；批次 9 同口径是 47.0）、下沿离画布底（2048）还有 **148.6** 画布像素 ——
 ## 两条都是**量出来的**，不是估的（改尺寸 / 改桌垫必须重取）。
-const HAND_CARD_W := 0.46        # 卡宽（世界单位；≈ 116 画布像素）
-const HAND_CARD_D := 0.54        # 卡进深
+## **批次 12 B1 重取：0.46 → 0.404（进深 0.54 一字未动）**。手牌正面从"品质色块 + 一个图标"
+## 换成**商店那张完整的卡**（见下面 `HAND_FACE_*` 那一段）⇒ 牌身宽高比必须跟着**卡面**走
+##（`HAND_FACE_VP` = 178×238 = 0.748），否则卡面会被拉扁。
+## **为什么是"收宽"而不是"加进深"**：进深是**唯一**会往桌沿外顶的那一维 —— 实测（见 `HAND_BASE_PX`）
+## 满手 5 张的脚印画布 y ∈ [1745.2, 1902.8]，而下沿那条木纹带的外沿在 **1902.6**：
+## **进深一个像素都加不得**（加 0.01 世界就飞出去）。收宽则完全不动进深脚印。
+## 代价（如实留痕）：牌身比批次 5 那档**窄 12%**（可见卡面宽 0.404×150/178 = 0.340 世界 ≈ 86 画布像素，
+## 与旧的图标贴片 0.46×0.78 = 0.359 基本同宽 —— 卡面没变小，只是牌身那圈边框收窄了）。
+const HAND_CARD_W := 0.404       # 卡宽（世界单位；≈ 102 画布像素）
+const HAND_CARD_D := 0.54        # 卡进深（**卡面比例的基准**，批次 12 B1 起不再动 —— 见上）
 const HAND_CARD_T := 0.030       # 卡厚：有厚度才投得出影子、看得出是"卡"而不是贴纸
-## 相邻两张牌中心的画布间距。略大于卡宽（0.46 / 8 世界 × 2020 ≈ 116 画布像素）+ 扇形岔开的
-## 投影增量：相邻两张几乎相接但不叠压 —— 叠压会让命中盒互相压住（点一张选到另一张）。
+## 相邻两张牌中心的画布间距。略大于卡宽（0.404 / 8 世界 × 2020 ≈ 102 画布像素；批次 12 B1 收宽前是
+## 116）+ 扇形岔开的投影增量：相邻两张**不叠压** —— 叠压会让命中盒互相压住（点一张选到另一张）。
+## **批次 12 B1 不动它**：卡宽收了 12% 后缝宽了些，但扇形（±16°）仍让相邻两张的角几乎相接；
+## 动它会改整排的 x 脚印（`hud_test` / 截图都得重取），而本条目要的是卡面、不是摆位。
 const HAND_STEP_PX := 138.0
 ## 扇形是**弧**不是直线：每远离中心一张，牌位往远端挪一点（外侧靠后，像摊开的一叠）。
 const HAND_ARC_PX := 5.0
@@ -552,6 +562,47 @@ const HAND_SEL_LIFT := 0.13
 ## 红色要压得住品质色（白/绿/蓝/紫/橙都染得红），所以饱和度取高、值取中上。
 const HAND_DISCARD_COLOR := Color(0.86, 0.28, 0.26)
 
+# ---- 批次 12 B1：手牌正面 = 商店那张卡（每槽一个 SubViewport） ----
+#
+# 手牌正面从"品质色块 + 一个图标 PNG"改成**一张完整的 `ItemCard`**（与商店货架 / 黑市 / 抽卡
+# 同一份画法）。做法与批次 11 烘房子纹理同源：**每槽一个 `SubViewport`**（手牌上限 5 ⇒ 最多 5 个），
+# 里面挂一张 `ItemCard.make(id, HAND_FACE_CARD)`，手牌正面那个 `PlaneMesh` 直接贴它的
+# `ViewportTexture`（见 `_make_card` / `_set_hand_face_card`）。
+#
+# **为什么是"活 ViewportTexture"而不是"烘成 ImageTexture"**（设计稿 B1 写明）：烘焙要 `await` 一帧
+# 才拿得到图，而 headless（dummy 渲染器）下 `get_image()` 拿到的是空图 ⇒ 测试与实机两条路会分叉。
+# 活引用不依赖 `await`，两边一致（同 `_bake_house_texs` 那段）。
+#
+# **为什么每槽一个视口、不复用**：`ViewportTexture` 是"指向那个视口"的活引用，5 张牌共用一个视口
+# 会全部跟着最后一次绘制变（就是房子那 4 个等级各建一个视口的同一条理由）。**换牌才重画**：
+# item id 变了才换掉视口里的 `ItemCard`，随后把 `render_target_update_mode` 重置成 `UPDATE_ONCE`
+#（渲染一帧后 Godot 自己把它改回 `UPDATE_DISABLED` ⇒ 平时零每帧开销）。
+#
+# **尺寸怎么定的**（三件事互相咬合，改一个就得重算另外两个）：
+#   ① 卡面用 **`ItemCard.SIZE_MEDIUM`（150×210，与商店货架字面同尺寸）**，卡面本身不做任何缩放；
+#   ② 四周留 `HAND_FACE_PAD` 的透明边 —— `ItemCard` 的两个角徽章（⚡消耗 / 被动 / 计数）是
+#      **半出卡外**画的（`_badge` 那两处 `position`），不留边就会被 SubViewport 裁掉半个圆；
+#      留白在牌上落到**牌身色**上 ⇒ 顺带成了"卡外面那圈品质色边框"（选中提亮 / 待丢弃染红看的就是它）；
+#   ③ 视口尺寸（含留白）= **178×238**，所以牌身宽高比要跟它走：0.404 / 0.54 = 0.7481（见 `HAND_CARD_W`）。
+const HAND_FACE_CARD := Vector2(150.0, 210.0)   # 卡面渲染尺寸（= 商店 `ItemCard.SIZE_MEDIUM`）
+const HAND_FACE_PAD := 14.0                     # 四周透明留白（> 角徽章半出卡外的 13.2px）
+const HAND_FACE_VP := Vector2i(178, 238)        # 视口尺寸 = HAND_FACE_CARD + 2×HAND_FACE_PAD
+## 正面贴片相对牌身的占幅（四边等比内收一点，免得与牌顶面共面闪）。
+## **等比**是关键：它不改变贴片的宽高比，卡面不会被拉扁。
+const HAND_FACE_INSET := 0.98
+
+# ---- 批次 12 B3：鼠标经过手牌放大 ----
+#
+# 悬停链（`TableView3D.on_table_hover` → `game._on_table_hover`）原先只看棋子；现在也看手牌
+#（棋子优先，两样都命中时棋子赢）。悬停的那张：**放大 1.12 + 抬起 0.06 世界单位**。
+## 悬停放大倍数（绕牌自身中心：MeshInstance3D 的原点就在卡心 ⇒ 均匀缩放即可）。
+const HAND_HOVER_SCALE := 1.12
+## 悬停抬起的高度（世界单位）。比 `HAND_SEL_LIFT`（0.13）小一档：悬停只是"我指着它"，
+## 不该读成"选中了"。方向与选中那条相反地安全 —— 抬起来只会更远离桌沿那条约束。
+const HAND_HOVER_LIFT := 0.06
+## 悬停过渡时长（一次性过渡 ⇒ `Tween`，见 AGENTS §四）。
+const HAND_HOVER_TIME := 0.12
+
 # ---- 批次 4 Task 2：手牌随视角淡出（看不见就点不到） ----
 #
 # 视角量 `view_t`（见 table_3d.gd）是**纯本地表现**：0 = 3D 第一人称（手里有牌、能出牌），
@@ -584,13 +635,21 @@ var _view_t := 0.0               # 当前视角量（由 TableView3D 推过来�
 var _hand_root: Node3D
 var _hand: Array[MeshInstance3D] = []
 var _hand_body_mats: Array[StandardMaterial3D] = []   # 牌身品质色：逐张一份
-var _hand_face_mats: Array[StandardMaterial3D] = []   # 牌面图标：逐张一份（贴图不同）
+var _hand_face_mats: Array[StandardMaterial3D] = []   # 牌面：逐张一份（各贴自己那槽的视口纹理）
 var _hand_mesh: BoxMesh
 var _hand_face_mesh: PlaneMesh
 var _hand_n := 0
 var _hand_items: Array = []      # 最近一次 set_hand 的背包（重摆位置时要用，见 set_hand_selected）
 var _hand_sel := -1              # 选中的那张（-1 = 都不选）；由 game.gd 同步过来
 var _hand_disc := -1             # 待确认丢弃的那张（-1 = 无）；由 game.gd 同步过来
+## 批次 12 B1：逐槽的卡面视口 / 视口里那张 `ItemCard` / 该槽**当前烘的是哪件道具**（id 没变就不重画）。
+var _hand_face_vps: Array[SubViewport] = []
+var _hand_face_cards: Array = []
+var _hand_face_ids: Array[String] = []
+## 批次 12 B3：悬停的那一槽（-1 = 没有）+ 逐槽的悬停补间量（0..1，> 0 就是放大/抬起中）。
+var _hand_hover := -1
+var _hand_hover_amt: Array[float] = []
+var _hand_hover_tw: Tween
 
 ## 按背包摆手牌；items 每项形如 {"id": "招财猫", "charges": 3, "cd": 0}。
 ## 读的是**已同步**的状态（game.gd 用 _state_player(my_peer)），客户端同样可用。
@@ -604,6 +663,8 @@ func set_hand(items: Array) -> void:
 		_hand_sel = -1               # 牌变少了：原先选中的那张已经不在了
 	if _hand_disc >= n:
 		_hand_disc = -1              # 同理：原先待丢弃的那张已经不在了
+	if _hand_hover >= n:
+		_hand_hover = -1             # 同理：原先悬停的那张已经不在了（B3）
 	if n <= 0 and _hand.is_empty():
 		return                                  # 一直空手：连池子都不必建
 	if _hand_root == null:
@@ -612,6 +673,8 @@ func set_hand(items: Array) -> void:
 		add_child(_hand_root)
 	while _hand.size() < n:
 		_hand.append(_make_card())
+	while _hand_hover_amt.size() < _hand.size():
+		_hand_hover_amt.append(0.0)
 	_apply_hand_layout()
 	# 透明度由 `_apply_hand_layout` 末尾统一补贴（见那里的注释）—— 新建 / 重摆的牌不会以
 	# 默认的不透明露到下一次状态广播之前。
@@ -632,6 +695,45 @@ func set_hand_selected(i: int) -> void:
 func set_hand_discard_pending(i: int) -> void:
 	_hand_disc = i if (i >= 0 and i < _hand_n) else -1
 	_apply_hand_layout()
+
+## 悬停第 i 张手牌（i = -1 / 越界 = 都不悬停）：那张**放大 `HAND_HOVER_SCALE` + 抬起 `HAND_HOVER_LIFT`**，
+## 其余还原。由 `game._on_table_hover` 推过来（与 `set_hand_selected` 同一条"表现量，单一来源在 game"）。
+##
+## **幂等**：同一张重复调用直接早退（悬停是"每一动都重算"的语义，鼠标在牌上抖一下就会连调几十次，
+## 每次都重建补间会让放大一直停在起点、看起来像没动）。
+##
+## **过渡用 `Tween`**（一次性过渡，AGENTS §四）：逐槽记一个 0..1 的补间量（`_hand_hover_amt`），
+## 补间只改这些量、每帧再让 `_apply_hand_layout` 按它们重摆 —— **不直接补间 transform**，
+## 因为每次状态广播都会重算一遍 transform（直接补间位置会被广播那一笔覆盖掉，牌会"跳回去"）。
+## 换目标时从**当前量**接着补（不是从 0 重来）：鼠标从一张滑到另一张，前一张是收回去、后一张是涨起来。
+func set_hand_hover(i: int) -> void:
+	var ni := i if (i >= 0 and i < _hand_n) else -1
+	if ni == _hand_hover:
+		return
+	_hand_hover = ni
+	while _hand_hover_amt.size() < _hand.size():
+		_hand_hover_amt.append(0.0)
+	var from: Array = _hand_hover_amt.duplicate()
+	var to: Array = []
+	for k in _hand.size():
+		to.append(1.0 if k == ni else 0.0)
+	if _hand_hover_tw != null and _hand_hover_tw.is_valid():
+		_hand_hover_tw.kill()
+	_hand_hover_tw = create_tween()
+	_hand_hover_tw.tween_method(func(t: float) -> void:
+		for k in _hand_hover_amt.size():
+			_hand_hover_amt[k] = lerpf(float(from[k]), float(to[k]), t)
+		_apply_hand_layout()
+	, 0.0, 1.0, HAND_HOVER_TIME)
+
+## 某槽的悬停补间量（0..1）。池子还没铺到这一槽时给 0（`_hand_hover_amt` 与 `_hand` 同步增长，
+## 但广播与补间可能各差一拍 —— 越界读会直接崩）。
+func hand_hover_amt(i: int) -> float:
+	return _hand_hover_amt[i] if (i >= 0 and i < _hand_hover_amt.size()) else 0.0
+
+## 此刻悬停的那一槽（-1 = 没有）。
+func hand_hover() -> int:
+	return _hand_hover
 
 ## 设当前视角量（由 `TableView3D._apply_camera` 推过来，见那里的注释）。
 ##
@@ -718,13 +820,10 @@ func _apply_hand_layout() -> void:
 			_hand_body_mats[i].albedo_color = HAND_DISCARD_COLOR
 		else:
 			_hand_body_mats[i].albedo_color = q.lightened(0.35) if i == _hand_sel else q
-		# 牌面：有图标素材就贴上（近端那点尺寸下，图标是"这是哪件道具"的唯一线索）；没有就只剩品质色
-		var face := card.get_node_or_null("Face") as MeshInstance3D
-		if face != null:
-			var tex := _item_icon(String(d.get("icon", "")))
-			face.visible = tex != null
-			if tex != null:
-				_hand_face_mats[i].albedo_texture = tex
+		# 牌面（批次 12 B1）：这一槽挂的是**商店那张卡**（`_set_hand_face_card` 按 id 懒建 / 换牌才重画）。
+		# 贴图是那张卡的 `ViewportTexture`，在 `_make_card` 里就贴好、之后不再动 ——
+		# **这里只换视口里的内容**（换 id），不碰材质，免得把活引用换掉。
+		_set_hand_face_card(i, id)
 		# 摆位：扇形（外侧岔开）+ 弧（外侧靠后）+ 朝自己倾斜
 		var k := float(i) - float(_hand_n - 1) * 0.5
 		var px := HAND_BASE_PX + Vector2(HAND_STEP_PX * k, -HAND_ARC_PX * absf(k))
@@ -732,25 +831,65 @@ func _apply_hand_layout() -> void:
 		# 卡心抬到"近边正好坐在桌面上"的高度：抬不够的话，倾斜后近边会切进桌子
 		# （方块沉一半就只剩薄片：轮缘是管子、沉一半看不出来，牌是方块、不行）。选中的再额外抬 HAND_SEL_LIFT。
 		# （批次 5 Task 3 起这一排落在**木桌**上而不是桌垫上，但"坐在桌面上"这条一字未改。）
+		# 悬停（批次 12 B3）再抬 HAND_HOVER_LIFT × 补间量 —— 与选中那条一样只**往上**抬。
+		var hov := hand_hover_amt(i)
 		w.y = _t3.table_mesh.global_position.y + PROPS_Y + HAND_CARD_T * 0.5 \
 			+ (HAND_CARD_D * 0.5) * sin(deg_to_rad(HAND_TILT_DEG)) \
-			+ (HAND_SEL_LIFT if i == _hand_sel else 0.0)
+			+ (HAND_SEL_LIFT if i == _hand_sel else 0.0) \
+			+ HAND_HOVER_LIFT * hov
 		card.global_position = w
 		# 欧拉序是默认的 YXZ：先绕自己的 X 倾斜、再绕世界 Y 岔开，正是"摊成扇形还都朝着我"
 		card.rotation = Vector3(deg_to_rad(HAND_TILT_DEG), deg_to_rad(-k * HAND_FAN_DEG), 0.0)
+		# 悬停放大：绕牌自身中心（MeshInstance3D 的原点就在卡心）⇒ 均匀缩放即可。
+		# 命中盒（hand_rect）把 scale 一并算进去，放大的那张照样点得中。
+		card.scale = Vector3.ONE * lerpf(1.0, HAND_HOVER_SCALE, hov)
 	# 末尾统一补贴透明度（批次 4 Task 2）：本函数上面那一笔 `albedo_color = 品质色` 是**整份覆盖**，
 	# 会把 alpha 写回 1.0 —— 半透明的牌于是会在视角不动时"弹"回不透明（选中、待确认丢弃、
 	# 每次状态广播重摆都是这条路径）。放在这里而不是各调用点：重摆的每条路（set_hand /
 	# set_hand_selected / set_hand_discard_pending）都经过本函数，一处收口最不容易漏。
 	_apply_hand_alpha()
 
-func _item_icon(icon: String) -> Texture2D:
-	if icon == "":
+## 把第 i 槽的卡面换成 `id` 那件道具的 `ItemCard`（**同一 id 不重画**；越界容错）。
+##
+## 换牌那一步是"把旧卡摘出视口 + `queue_free`、挂上新卡、最后把 `render_target_update_mode`
+## 重置成 `UPDATE_ONCE`"—— 重置那一笔**必须有**：`UPDATE_ONCE` 渲染一帧后 Godot 自己会把它改成
+## `UPDATE_DISABLED`，不重置的话换了牌也永远停在上一次的画面上。
+##
+## 位置与尺寸在 `add_child` **之后**再写一遍：`ItemCard.make` 里已经设过，但挂进 SubViewport 时
+## 它是"视口的根控件"，布局可能按视口尺寸重算一次 —— 这里补一遍，卡面尺寸就与 `HAND_FACE_CARD`
+## 严格一致（测试里那条"卡面宽高比 == 牌身宽高比"依赖它）。
+func _set_hand_face_card(i: int, id: String) -> void:
+	if i < 0 or i >= _hand_face_vps.size() or i >= _hand_face_ids.size():
+		return
+	if _hand_face_ids[i] == id:
+		return
+	_hand_face_ids[i] = id
+	var vp: SubViewport = _hand_face_vps[i]
+	var old = _hand_face_cards[i]
+	if old != null and is_instance_valid(old):
+		# **先摘出视口再 `queue_free`**：`queue_free` 要到本帧末才真删，而视口这一帧就要重画
+		#（`UPDATE_ONCE`）—— 不摘的话新卡会与旧卡同框画一帧（观感上是"旧图闪一下"）。
+		vp.remove_child(old)
+		(old as Node).queue_free()
+	var card := ItemCard.make(id, HAND_FACE_CARD, {})
+	vp.add_child(card)
+	card.position = Vector2(HAND_FACE_PAD, HAND_FACE_PAD)
+	card.size = HAND_FACE_CARD
+	_hand_face_cards[i] = card
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+## 第 i 槽的**卡面视口**（批次 12 B1 的可观察量，给测试用）：里面挂着一张 `ItemCard`，
+## 手牌正面贴的就是它的 `ViewportTexture`。越界给 null。
+func hand_face_viewport(i: int) -> SubViewport:
+	if i < 0 or i >= _hand_face_vps.size():
 		return null
-	var path := "res://assets/icons/%s.png" % icon
-	if not ResourceLoader.exists(path):
+	return _hand_face_vps[i]
+
+## 第 i 槽卡面视口里那张 `ItemCard`（还没铺过牌时是 null）。
+func hand_face_card(i: int) -> ItemCard:
+	if i < 0 or i >= _hand_face_cards.size():
 		return null
-	return load(path) as Texture2D
+	return _hand_face_cards[i] as ItemCard
 
 func _make_card() -> MeshInstance3D:
 	if _hand_mesh == null:
@@ -765,25 +904,40 @@ func _make_card() -> MeshInstance3D:
 	mat.roughness = 0.62
 	card.material_override = mat
 	_hand_body_mats.append(mat)
-	# 牌面图标：贴在顶面上的薄片。与牌身**分成两个材质** —— 图标要原色，
-	# 而 albedo_color 是乘到 albedo_texture 上的，同一份材质会把图标也染成品质色。
+	# 牌面：贴在顶面上的薄片，贴的是**商店那张卡**（批次 12 B1，见上面 `HAND_FACE_*` 那段）。
+	# 与牌身**分成两个材质** —— 卡面要原色，而 albedo_color 是乘到 albedo_texture 上的，
+	# 同一份材质会把卡面也染成品质色。
 	var face := MeshInstance3D.new()
 	face.name = "Face"
 	if _hand_face_mesh == null:
 		_hand_face_mesh = PlaneMesh.new()
 		# PlaneMesh 躺在 XZ 平面（法线 +Y），正是一张平放在牌顶上的贴片
-		_hand_face_mesh.size = Vector2(HAND_CARD_W, HAND_CARD_D) * 0.78
+		_hand_face_mesh.size = Vector2(HAND_CARD_W, HAND_CARD_D) * HAND_FACE_INSET
 	face.mesh = _hand_face_mesh
 	# 抬 0.8mm：与牌顶面不共面（否则 z-fighting 闪）
 	face.position = Vector3(0.0, HAND_CARD_T * 0.5 + 0.0008, 0.0)
 	# 朝向不用动：PlaneMesh 自己的 UV 就是对的 —— 探针实测（get_mesh_arrays 逐顶点）：
 	# 局部 (x, z) = (+0.5, -0.5) → uv=(1, 0)，即 z 为 **-0.5（远端）** 那条边是 v=0。
-	# 远端在屏幕上就是"上"，贴图第一行也在上 ⇒ 图标正着；u 同样 +x → +u，不镜像。
-	# （别凭印象给它转 180°：那样图标才是倒的。）
+	# 远端在屏幕上就是"上"，贴图第一行也在上 ⇒ 卡面正着；u 同样 +x → +u，不镜像。
+	# （别凭印象给它转 180°：那样卡面才是倒的。）
 	var fmat := StandardMaterial3D.new()
 	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	fmat.roughness = 0.75
+	# 逐槽的卡面视口（本张牌自己的那一槽）。**活引用**：贴的是 `ViewportTexture`，
+	# 不烘成 `ImageTexture`（理由见 `HAND_FACE_*` 那段）。视口与牌同序号建，
+	# 所以下面几个数组按下标一一对应。
+	var slot := _hand.size()
+	var vp := SubViewport.new()
+	vp.name = "HandFace%d" % slot
+	vp.size = HAND_FACE_VP
+	vp.transparent_bg = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(vp)
+	_hand_face_vps.append(vp)
+	_hand_face_cards.append(null)
+	_hand_face_ids.append("")
+	fmat.albedo_texture = vp.get_texture()
 	face.material_override = fmat
 	_hand_face_mats.append(fmat)
 	card.add_child(face)
@@ -821,9 +975,12 @@ func hand_rect(i: int) -> Rect2:
 	for sx_v in [-0.5, 0.5]:
 		for sy_v in [-0.5, 0.5]:
 			for sz_v in [-0.5, 0.5]:
-				# 局部角点 → 世界：牌自己的倾斜 / 扇形都在 global_transform 里
-				var corner: Vector3 = card.global_transform * Vector3(
-					HAND_CARD_W * float(sx_v), HAND_CARD_T * float(sy_v), HAND_CARD_D * float(sz_v))
+				# 局部角点 → 世界：牌自己的倾斜 / 扇形都在 global_transform 里；
+				# **悬停放大（批次 12 B3）也在 scale 里** ⇒ 一并乘进去，放大的那张照样量得准
+				#（不乘的话，悬停中那张的可见部分会比命中盒大一圈，边缘点上去落空）。
+				var corner: Vector3 = card.global_transform * (Vector3(
+					HAND_CARD_W * float(sx_v), HAND_CARD_T * float(sy_v),
+					HAND_CARD_D * float(sz_v)) * card.scale)
 				var px = _t3.screen_to_viewport(_t3.camera.unproject_position(corner))
 				if px == null:
 					continue
@@ -842,8 +999,8 @@ func _hand_mat_rect(i: int) -> Rect2:
 	var mx := Vector2(-INF, -INF)
 	for sx_v in [-0.5, 0.5]:
 		for sz_v in [-0.5, 0.5]:
-			var p: Vector2 = _t3.world_to_canvas_px(card.global_transform * Vector3(
-				HAND_CARD_W * float(sx_v), -HAND_CARD_T * 0.5, HAND_CARD_D * float(sz_v)))
+			var p: Vector2 = _t3.world_to_canvas_px(card.global_transform * (Vector3(
+				HAND_CARD_W * float(sx_v), -HAND_CARD_T * 0.5, HAND_CARD_D * float(sz_v)) * card.scale))
 			mn = mn.min(p)
 			mx = mx.max(p)
 	return Rect2(mn, mx - mn)

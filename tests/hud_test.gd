@@ -32,6 +32,27 @@ func _house_face(houses_root: Node, idx: int) -> MeshInstance3D:
 	var h := _house_node(houses_root, idx)
 	return h.get_node_or_null("Face") as MeshInstance3D if h != null else null
 
+## 玩家弹窗里**渲染出来的 `ItemCard`**（批次 12 B2：背包一件 = 一张卡）。按**前序**返回，与背包顺序一致。
+## `ic_script` 由调用方**运行时 `load`** 传进来 —— 静态写 `ItemCard` 会把 item_card.gd（→ ui_kit.gd，
+## 引用了 autoload `Fx`）拽进本脚本的静态依赖链，在 `--script` 入口下整链编译失败（见上面那段说明）。
+func _popup_item_cards(popup: Node, ic_script: GDScript) -> Array:
+	var out: Array = []
+	if popup == null:
+		return out
+	for n in popup._body.find_children("*", "", true, false):
+		if n.get_script() == ic_script:
+			out.append(n)
+	return out
+
+## 弹窗里所有 Label 的 text（前序）—— 找"名字 / 标签"这类文字的最强可观察量。
+func _popup_labels(popup: Node) -> Array:
+	var out: Array = []
+	if popup == null:
+		return out
+	for n in popup._body.find_children("*", "Label", true, false):
+		out.append(String((n as Label).text))
+	return out
+
 func _fresh_tiles() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
@@ -1066,6 +1087,10 @@ func _run() -> void:
 	#    相机更近 ⇒ 牌的**投影盒更大**（+11% 量级）、近排格子的画布下沿也往下走了一点，
 	#    两头一起把缝收窄了 12.9 / 11.3 画布像素。**仍然是可点的条带**（远大于 0），
 	#    但比批次 10 薄了一档 —— 想再宽回来只能收手牌尺寸（不属于批次 A 的范围）。
+	#    **批次 12 B1 重取：69.1 / 58.8**（手牌宽 0.46 → **0.404**）—— 缝反而**宽了 2.1 / 2.1**：
+	#    牌窄了 12% ⇒ 扇形（±8°/±16°）每张的**进深脚印**小了一截（`W×sin(16°)` 那一项），
+	#    整排的投影盒上沿往下走（离近排格子更远）。**方向是"变安全"的那一边**，
+	#    所以 B1 收宽这条既保住了木纹带（进深 0.54 一字未动）、又没吃掉这条缝。
 	#    ⚠ 这两个数**跟着 3D 相机走**：改手牌尺寸 / 摆位 / **`CAM_DIST`** 都得回来重取，
 	#    改不动就红。这两个数**钉进断言**（不只写在注释里）。
 	#    **批次 7 起点击 = 直出**，一次点击不再**留在**选中态（抬起只在那一瞬间发生），
@@ -1087,8 +1112,8 @@ func _run() -> void:
 	g._cancel_target()
 	_check(gap_plain > 0.0 and gap_sel > 0.0,
 		"选中 / 未选中两档下，近排格子都还有可点的条带（%.1f / %.1f 画布像素）" % [gap_plain, gap_sel])
-	_check(absf(gap_plain - 67.0) <= 1.0 and absf(gap_sel - 56.7) <= 1.0,
-		"满手 5 张 + 选中外侧那张，实测值就是注释里那两个数（%.1f / %.1f，期望 67.0 / 56.7）"
+	_check(absf(gap_plain - 69.1) <= 1.0 and absf(gap_sel - 58.8) <= 1.0,
+		"满手 5 张 + 选中外侧那张，实测值就是注释里那两个数（%.1f / %.1f，期望 69.1 / 58.8）"
 			% [gap_plain, gap_sel])
 
 	# ③ 下沿：近排**每一格**（不再需要"找没被盖住的那一格"—— 今天一格都没被盖住）的下沿都必须
@@ -1131,6 +1156,60 @@ func _run() -> void:
 			% [tph.hand_rect(1).get_center().y, y1_plain])
 	g._cancel_target()
 	_check(g.selected_slot == -1, "收尾：选中态清空（实得 %d）" % g.selected_slot)
+
+	print("== 悬停手牌：放大 + 抬起（批次 12 B3）==")
+	# 悬停链（`TableView3D.on_table_hover` → `game._on_table_hover`）原先只看棋子，现在**手牌也进链**
+	#（棋子优先）。悬停的那张：放大 1.12 + 抬起 0.06 世界单位，过渡是 0.12s 的 `Tween`（一次性过渡）。
+	# 断言一律走**可观察量**：牌节点的 scale / 世界 y，以及 `hand_hover()` / `hand_hover_amt()`。
+	# 走**真入口**（注入点 `on_table_hover`），不是直调 `g._on_table_hover`。
+	g.table3d.snap_view(0.0)
+	await process_frame
+	g.s_state(s_hand)
+	await process_frame
+	g._process(0.0)
+	var hcard1 := tph.get_node("Hand").get_child(1) as MeshInstance3D
+	var hy0: float = hcard1.global_position.y
+	_check(tph.hand_hover() == -1 and tph.hand_hover_amt(1) < 0.01,
+		"（前提）还没悬停（实得 %d / %.2f）" % [tph.hand_hover(), tph.hand_hover_amt(1)])
+	var hov_pt: Vector2 = tph.hand_rect(1).get_center()
+	_check(int(g.table3d.on_table_hover.call(hov_pt)) == GameData.NO_PEER,
+		"悬停在手牌上：它不是棋子（返回哨兵 NO_PEER，信息条不该为它冒出来）")
+	_check(tph.hand_hover() == 1, "悬停链认出手牌那一张（实得 %d）" % tph.hand_hover())
+	_check(not g.token_tip.visible, "悬停手牌不会让棋子信息条冒出来")
+	# 幂等：同一张再来一次不重建补间（鼠标在牌上抖一下会连调几十次；重建会让放大停在起点）
+	var htw1 = tph._hand_hover_tw
+	g.table3d.on_table_hover.call(hov_pt)
+	_check(tph._hand_hover_tw == htw1, "同一张重复悬停不重建补间（幂等）")
+	# 等这 0.12s 的补间走完
+	var t_b3 := Time.get_ticks_msec()
+	while tph.hand_hover_amt(1) < 0.99 and Time.get_ticks_msec() - t_b3 < 3000:
+		await process_frame
+	_check(tph.hand_hover_amt(1) > 0.99, "悬停补间走完（实得 %.2f）" % tph.hand_hover_amt(1))
+	_check(hcard1.scale.x > 1.10 and hcard1.scale.x < 1.14,
+		"悬停那张**放大了**（scale %.3f，期望 1.12）" % hcard1.scale.x)
+	_check(hcard1.global_position.y > hy0 + 0.04,
+		"悬停那张**抬起来了**（世界 y %.3f → %.3f，期望 +0.06）" % [hy0, hcard1.global_position.y])
+	# 邻居不受影响（放大只发生在悬停那一张身上）
+	var hcard0 := tph.get_node("Hand").get_child(0) as MeshInstance3D
+	_check(absf(hcard0.scale.x - 1.0) < 0.001 and tph.hand_hover_amt(0) < 0.01,
+		"没悬停的那张纹丝不动（scale %.3f）" % hcard0.scale.x)
+	# 移开：收回原状
+	g.table3d.on_table_hover.call(Vector2.INF)      # 射线打不到桌面那一路 —— 悬停全清
+	_check(tph.hand_hover() == -1, "移开后悬停目标清掉（实得 %d）" % tph.hand_hover())
+	var t_b3b := Time.get_ticks_msec()
+	while tph.hand_hover_amt(1) > 0.01 and Time.get_ticks_msec() - t_b3b < 3000:
+		await process_frame
+	_check(hcard1.scale.is_equal_approx(Vector3.ONE)
+			and absf(hcard1.global_position.y - hy0) < 0.002,
+		"移开后收回原状（scale %.3f / 世界 y %.3f，原 %.3f）"
+			% [hcard1.scale.x, hcard1.global_position.y, hy0])
+	# **别把棋子的信息条改坏**：悬停棋子照旧出条，且同一次悬停里手牌不参与（棋子优先）
+	var tok_pt: Vector2 = g.board.token_screen_pos(0, 0)
+	_check(int(g.table3d.on_table_hover.call(tok_pt)) == 1, "悬停棋子照旧命中 peer 1")
+	await process_frame
+	_check(g.token_tip.visible, "棋子信息条照旧浮出（悬停链没被手牌改坏）")
+	_check(tph.hand_hover() == -1, "棋子优先：这一动里手牌没被悬停（实得 %d）" % tph.hand_hover())
+	g.table3d.on_table_hover.call(Vector2.INF)
 
 	print("== 丢弃入口已回补：手牌右键 = 丢弃（两步确认，走既有 _discard_item）==")
 	# 座位卡「✕」随牌位拆除后 `_on_discard_clicked` 一度**没有发射方**（终审 R1）；
@@ -1414,6 +1493,9 @@ func _run() -> void:
 	print("== 弹窗内容：（被动）标签（终审 fix wave）==")
 	# 「完成标准」把"被动标记"列为弹窗内容之一，但此前没有断言钉它。招财猫 `type: passive`
 	# ⇒ 它那一行后缀里应有「（被动）」。读**行内 Label 的 text**（最强可观察量），不读内部标志。
+	# **批次 12 B2 改结构**：一行一件的"小图标 + 名字"换成**一整张 `ItemCard`**
+	#（+ 卡下面的名字 / 标签），所以这里改成遍历**整棵弹窗控件树**找 Label
+	#（不再假设"HBoxContainer 行"这种内部结构 —— 那个假设正是被本条目改掉的东西）。
 	var s_pas: Dictionary = _state(3, false)
 	for p in s_pas.players:
 		if int(p.peer) == 1:
@@ -1424,18 +1506,88 @@ func _run() -> void:
 	g._on_corner_bar_clicked(1)
 	await process_frame
 	_check(g.player_popup.item_count == 1, "弹窗里 1 件（招财猫，实得 %d）" % g.player_popup.item_count)
+	var row_texts := _popup_labels(g.player_popup)
 	var has_passive := false
-	var row_texts: Array = []
-	for c in g.player_popup._body.get_children():
-		if c is HBoxContainer:
-			for l in (c as HBoxContainer).get_children():
-				if l is Label:
-					var t := String((l as Label).text)
-					row_texts.append(t)
-					if t.contains("（被动）"):
-						has_passive = true
-	_check(has_passive, "弹窗里那一行含「（被动）」（招财猫是 passive；实得 %s）" % str(row_texts))
+	for t in row_texts:
+		if String(t).contains("（被动）"):
+			has_passive = true
+	_check(has_passive, "弹窗里那张卡下面含「（被动）」（招财猫是 passive；实得 %s）" % str(row_texts))
 	g.player_popup.close()
+
+	print("== 弹窗：道具是**一整张卡**（批次 12 B2）==")
+	# 从"30×30 图标 + 名字"改成**真的 `ItemCard` 节点**（与商店货架同一份画法，弹窗本来就是 Control 树
+	# ⇒ 直接挂，没有烘焙）+ 换行排布（`FlowContainer`）+ 超高滚动（`ScrollContainer`）。
+	# 断言的强可观察量：**渲染出来的 `ItemCard` 节点数 == 道具数**、每张卡的 id/名字对得上。
+	var IC_POP = load("res://scripts/item_card.gd")     # 静态写类名会拽进 ui_kit（引用 autoload Fx）
+	var s_bag: Dictionary = _state(3, false)
+	var bag_ids := ["招财猫", "作弊器", "黑卡", "包租婆", "共享单车"]
+	for p in s_bag.players:
+		if int(p.peer) == 1:
+			p.stamina = 4
+			p.items = []
+			for bid in bag_ids:
+				p.items.append({"id": String(bid), "cd": 0})
+	g.s_state(s_bag)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	_check(g.player_popup.item_count == bag_ids.size(),
+		"弹窗记下 5 件（实得 %d）" % g.player_popup.item_count)
+	var icards := _popup_item_cards(g.player_popup, IC_POP)
+	_check(icards.size() == bag_ids.size(),
+		"渲染出来的 `ItemCard` 数 == 道具数（%d 张，期望 %d）" % [icards.size(), bag_ids.size()])
+	var ids_ok := true
+	for k in mini(icards.size(), bag_ids.size()):
+		if String(icards[k].id) != String(bag_ids[k]):
+			ids_ok = false
+	_check(ids_ok, "每张卡的 id 与该件道具一致（%s）"
+		% str(icards.map(func(c): return String(c.id))))
+	# 名字：卡**下面**那行大字（`_item_row` 补的那条）+ 卡面自带的名称条 —— 两条都要有名字。
+	var labels := _popup_labels(g.player_popup)
+	var names_ok := true
+	for bid in bag_ids:
+		var hit := false
+		for t in labels:
+			if String(t) == String(bid):
+				hit = true
+		if not hit:
+			names_ok = false
+	_check(names_ok, "5 件道具的名字都在弹窗里读得到（实测标签：%s）" % str(labels))
+	# 布局容器：`FlowContainer` 装在 `ScrollContainer` 里（大背包换行 + 滚动，不把面板顶出屏幕）
+	var sc_bag: Node = g.player_popup.find_child("BagScroll", true, false)
+	var flow_bag: Node = g.player_popup.find_child("BagFlow", true, false)
+	_check(sc_bag != null and flow_bag != null and (flow_bag as Control).get_parent() == sc_bag,
+		"背包区是 `ScrollContainer` > `FlowContainer`（换行 + 超高滚动）")
+	_check(sc_bag != null and (sc_bag as ScrollContainer).vertical_scroll_mode \
+			== ScrollContainer.SCROLL_MODE_AUTO
+			and (sc_bag as ScrollContainer).horizontal_scroll_mode \
+			== ScrollContainer.SCROLL_MODE_DISABLED,
+		"背包区只滚纵向（横向关掉，子节点才按容器宽度换行）")
+	# 面板没有被 5 件道具顶出屏幕（滚动的意义就在这条）
+	_check(g.player_popup._panel.size.y <= g.size.y - 40.0,
+		"5 件道具时面板仍在屏幕内（高 %.0f / 屏幕 %.0f）"
+			% [g.player_popup._panel.size.y, g.size.y])
+	# 高度公式要把**卡下面那行名字 / 标签**也算进去：只按卡高算的话 `ScrollContainer` 会矮一截、
+	# 名字那一行被裁掉（出图逮到过）。判据：**一行装得下**时内容高度 ≤ 容器高度（根本不用滚）。
+	var s_one: Dictionary = _state(3, false)
+	for p in s_one.players:
+		if int(p.peer) == 1:
+			p.items = [{"id": "招财猫", "cd": 2}]
+	g.s_state(s_one)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	var sc1: Node = g.player_popup.find_child("BagScroll", true, false)
+	var flow1: Node = g.player_popup.find_child("BagFlow", true, false)
+	_check(sc1 != null and flow1 != null and (flow1 as Control).size.y <= (sc1 as Control).size.y + 1.0,
+		"一件道具时背包区**不用滚**（内容高 %.0f ≤ 容器高 %.0f）—— 卡下面那行名字也算进了高度"
+			% [(flow1 as Control).size.y if flow1 != null else -1.0,
+				(sc1 as Control).size.y if sc1 != null else -1.0])
+	g.player_popup.close()
+	await process_frame                              # `close()` 是 `queue_free`，本帧末才真删
+	_check(g.player_popup._body.get_child_count() == 0, "关闭后背包区（含卡）整体清掉")
 
 	print("== 选目标：高亮搬到四角身家条、点它 = 选中（批次 9）==")
 	# 立牌随批次 9 退场 ⇒ "此刻可选中的对手"这份高亮改画在**屏幕四角身家条**上（2px 金边 +
