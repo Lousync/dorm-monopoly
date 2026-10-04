@@ -98,8 +98,8 @@ func _run() -> void:
 		all_text += String(p.body)
 	_check(basic_page.contains("身家条") and basic_page.contains("选中"),
 		"基础操作页把选目标的入口说成「点屏幕四角的对手身家条」（立牌已随批次 9 退场）")
-	_check(not basic_page.contains("立牌"),
-		"基础操作页不再教已退场的「立牌」（反向契约，同「滚轮缩放」那条）")
+	_check(not all_text.contains("立牌"),
+		"全部页都不再出现已退场的「立牌」（反向契约，同「滚轮缩放」那条；查 all_text 与下面「座位卡」那条对齐）")
 	_check(not all_text.contains("座位卡"),
 		"全部页都不再出现已删除的「座位卡」（任何一页都不许教它）")
 	# 手牌右键丢弃（M7）：批次 3 起这条入口就存在，规则说明里却从没写过。

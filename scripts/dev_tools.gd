@@ -521,8 +521,9 @@ func take_shot(path: String) -> void:
 		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
 		g.casino.s_casino_roll.rpc({g.my_peer: 5})
 	if path.contains("target") and g.multiplayer.is_server() and not g.htiles.is_empty():
-		# 摆拍（批次 9）：进**选目标态**，核对"可选中的四角条亮着、其余不亮"（立牌已退场，
-		# 落点从桌上立牌换到屏幕四角条；四角条那份高亮在批次 9 Task 3 接上）。
+		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**四角身家条**亮着、其余不亮"
+		#（立牌已退场，落点从桌上立牌换成屏幕四角条；高亮由 `_refresh_corner_highlight`
+		# 在批次 9 Task 3 接上，出图名 `xx_target_plain.png`）。
 		# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出
 		# "有的亮、有的不亮"，正是这条反馈要展示的对比（跑腿券那种"谁都能选"的拍不出对比）。
 		# 为了让这张图**可复现**：先把地皮归属清干净、只给**最后一家**两块地

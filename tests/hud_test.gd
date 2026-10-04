@@ -81,6 +81,31 @@ func _host_roster() -> Array:
 		})
 	return out
 
+## 按 peer 找四角条（角位是"自己打头"轮转出来的，**不能按下标找**）。找不到返回空字典。
+func _bar_of(g, peer: int) -> Dictionary:
+	for b in g.corner_bars:
+		if int((b as Dictionary).get("peer", GameData.NO_PEER)) == peer:
+			return b
+	return {}
+
+## 第 bar 条四角身家条此刻"亮着"（可被选中）吗：读它**真的贴上去的那张样式盒**，判据是
+## "这张描边图是不是 UIKit 按『可选中』那套参数（2px 金边 + 底色提亮一档）生成的那张"。
+## `UIKit._rounded_tex` 按**参数**缓存 ⇒ 同参必得**同一个 Texture2D 实例**，所以身份比较成立。
+## **不读任何内部标志**（那会在"高亮坏了但标志还对"时骗过断言），也不按文字 / 位置反推 ——
+## 行动者那条（1px 金边）与它参数不同、纹理不同，不会被误判成亮着。
+func _corner_bar_hot(_g, bar: Dictionary) -> bool:
+	var root: Control = bar.get("root")
+	if root == null or not is_instance_valid(root):
+		return false
+	var sb := root.get_theme_stylebox("panel")
+	if not (sb is StyleBoxTexture):
+		return false
+	var UK = load("res://scripts/ui_kit.gd")
+	var bg := Color(0.085, 0.095, 0.138, 0.82).lightened(0.10)
+	var border := Color(UK.ACCENT.r, UK.ACCENT.g, UK.ACCENT.b, 0.9)
+	var hot_sb: StyleBoxTexture = UK.card_stylebox(bg, 10, border, 2, 4)
+	return (sb as StyleBoxTexture).texture == hot_sb.texture
+
 func _run() -> void:
 	root.size = Vector2i(1280, 800)
 	var net = root.get_node_or_null("Net")
@@ -216,6 +241,18 @@ func _run() -> void:
 	_check(quad_hit.size() == 4, "四条各占一个角（实得 %d 个角）" % quad_hit.size())
 	_check(off_screen == 0, "四条都完整落在屏幕内（出屏 %d 条）" % off_screen)
 	_check(overlap_bad == 0, "四条都没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
+	# 两两不相交：上面"四条各占一个角"是从**中心象限**推的 —— 两条真叠在一起、而中心恰落在
+	# 不同象限时照样通过。四角条自批次 9 起是"点它选人 / 开弹窗"的入口，叠在一起就有一条永远点不到
+	#（立牌时代那条"整条视角轨道上都看得见 / 贴桌沿"的守卫随立牌退场，本条是它在屏幕层的对应物）。
+	var quad_rects: Array = []
+	for b in vis_bars:
+		quad_rects.append((b.root as Control).get_global_rect())
+	var quad_cross := 0
+	for i in quad_rects.size():
+		for j in range(i + 1, quad_rects.size()):
+			if (quad_rects[i] as Rect2).intersects(quad_rects[j] as Rect2):
+				quad_cross += 1
+	_check(quad_cross == 0, "四条两两不相交（相交 %d 对）" % quad_cross)
 	g.table3d.snap_view(0.0)
 	await process_frame
 
@@ -1156,6 +1193,37 @@ func _run() -> void:
 		"条根 meta 与 bar.peer 同源（实得 meta=%d / bar=%d）"
 			% [int(bar1.get_meta("peer", GameData.NO_PEER)), int(g.corner_bars[1].peer)])
 	g.player_popup.close()
+
+	print("== 选目标：高亮搬到四角身家条、点它 = 选中（批次 9）==")
+	# 立牌随批次 9 退场 ⇒ "此刻可选中的对手"这份高亮改画在**屏幕四角身家条**上（2px 金边 +
+	# 底色提亮，与行动者的 1px 金边分得开）。这里既钉"哪几条亮着"，也钉"点亮的那条点下去真的选中"。
+	# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出"有的亮、有的不亮"。
+	g.my_peer = 2
+	var s_tg: Dictionary = _state(2, false)
+	for p in s_tg.players:
+		if int(p.peer) == 2:
+			p.items = [{"id": "强拆令", "cd": 0}]   # 给"我"一张两段式牌（`_target_item_id` 读的就是它）
+	g.s_state(s_tg)
+	await process_frame
+	await process_frame
+	g._begin_peer_target(0, false, true)           # 直接走入口：进入选玩家态
+	await process_frame
+	var hot: Array = []
+	for b in g.corner_bars:
+		if _corner_bar_hot(g, b):
+			hot.append(int((b as Dictionary).get("peer", GameData.NO_PEER)))
+	# fixture：`_state()` 的四家是 [1 甲(有一号楼) / 2 乙(我) / 3 丙(无地) / 4 丁(已出局)]，
+	# `then_prop=true` 只留下"名下有地"的 ⇒ 可选目标**只有 peer 1 一个**。
+	_check(hot.size() == 1 and hot[0] == 1,
+		"选目标态下**只有** peer 1 那条亮着（实得 %s）" % str(hot))
+	# 点那条 → 真的进"选定后"的后果（走既有 _on_seat_clicked）
+	g._on_corner_bar_clicked(1)                    # 强拆令这类需要再选一块地 ⇒ 转进选地块段
+	_check(String(g._tgt_stage) == "tile" and int(g._tgt_peer) == 1,
+		"点亮的条被点 → 走既有选目标链（tgt_stage=「%s」/ tgt_peer=%d）" % [g._tgt_stage, g._tgt_peer])
+	g._cancel_target()
+	await process_frame
+	_check(hot.size() > 0 and not _corner_bar_hot(g, _bar_of(g, 1)),
+		"取消选目标后四角条高亮熄灭")
 
 	g.get_tree().paused = false
 	g.free()

@@ -1581,13 +1581,13 @@ func _refresh_corner_bars(standing: Array) -> void:
 		var money_l: Label = bar.money_l
 		money_l.text = "" if not alive else "现金 %s" % GameData.fmt_money(int(e.get("money", 0)))
 		# 轮到谁行动：那一条描金边（与这一条上的倒计时是同一件事）。
-		# 只在真变化时换样式盒（每次换都是一次九宫格纹理查找）。
-		if bool(bar.border_active) != active:
+		# 只在真变化时换样式盒（每次换都是一次九宫格纹理查找）。样式本身走**同一个**合成函数
+		#（`_apply_corner_style`）—— "本条正亮着（可选中）"也带进条件：行动者一变、而本条又亮着时，
+		# 必须重贴（否则会绕过合成、把高亮那张盖掉）。
+		var hot: bool = bool(bar.get("hot", false))
+		if bool(bar.border_active) != active or hot:
 			bar.border_active = active
-			root.add_theme_stylebox_override("panel", UIKit.card_stylebox(
-				Color(0.085, 0.095, 0.138, 0.82), 10,
-				Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.9) if active
-					else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4))
+			_apply_corner_style(bar, active, hot)
 
 ## 把「此刻可被选中的玩家」（`_hl_peers`）那份高亮贴到四角条上 —— **每次状态广播末尾重放一遍**。
 ##
@@ -1595,12 +1595,41 @@ func _refresh_corner_bars(standing: Array) -> void:
 ## 而"只变高亮"的广播（`_push_peer_highlight` 不伴随状态变化）会在那里被早退掉；并且广播会重排
 ## 角位，只贴"变化的那一次"会漏。所以留一处独立落点、每次广播都重放。
 ##
-## **批次 9 Task 2 刻意只落接口、不落可见反馈**（批内过渡态 R3）：现在选目标态仍**没有**可见反馈 ——
-## 条根 `STOP` 只让"点它"这件事成立（`_on_corner_bar_clicked`），"哪条亮着"的样式
-##（2px 金边 + 底色提亮，与行动者的 1px 金边分得开）由 **Task 3 的 `_apply_corner_style`** 补上。
-## **别在这里自己写一套高亮**：会与 Task 3 的样式合成打架（尤其是 `bar["hot"]` 这个缓存位）。
+## 条根 `STOP` 只让"点它"这件事成立（`_on_corner_bar_clicked`），"哪条亮着"由这里贴：
+## **2px 金边 + 底色提亮**，与行动者的 1px 金边分得开（两件事合成在同一张样式盒里，
+## 见 `_apply_corner_style`）。
+##
+## `bar["hot"]` 是这一条的**样式缓存位**（"现在贴的是不是高亮那张"）：常态早退省一次九宫格
+## 纹理查找，而**点亮那一次一定重贴**（条件里带了 `not hot`）。
 func _refresh_corner_highlight() -> void:
-	pass
+	for b in corner_bars:
+		var bar: Dictionary = b
+		var root: Control = bar.root
+		if root == null or not is_instance_valid(root):
+			continue
+		var hot: bool = _hl_peers.has(int(bar.get("peer", GameData.NO_PEER)))
+		if bool(bar.get("hot", false)) == hot and not hot:
+			continue                     # 常态早退；点亮那一次一定重贴
+		bar["hot"] = hot
+		_apply_corner_style(bar, bool(bar.get("border_active", false)), hot)
+
+## 四角条的一条样式（行动者 / 可选中两件事合成一张样式盒）。
+## 行动者 = 1px 金边；**可选中 = 2px 金边 + 底色提亮一档**（两者可叠加：选中态若正好轮到 TA 行动，
+## 就是 2px 金边 + 提亮）。
+## **两处调用共用这一份**（`_refresh_corner_bars` 的"行动者变了"与 `_refresh_corner_highlight`
+## 的"亮/灭变了"）—— 样式只有一处，免得两边各贴一套、互相盖掉。
+func _apply_corner_style(bar: Dictionary, active: bool, hot: bool) -> void:
+	var root: Control = bar.root
+	var bg := Color(0.085, 0.095, 0.138, 0.82)
+	if hot:
+		bg = bg.lightened(0.10)
+	var border := Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7)
+	var bw := 1
+	if hot or active:
+		border = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.9)
+	if hot:
+		bw = 2
+	root.add_theme_stylebox_override("panel", UIKit.card_stylebox(bg, 10, border, bw, 4))
 
 func _refresh_actions() -> void:
 	var await_state := String(st.get("await", ""))
@@ -3326,18 +3355,23 @@ func _selectable_props(peer: int) -> Array:
 			out.append(i)
 	return out
 
-## 把「此刻可被选中的玩家」高亮**一次推给一处**：画布（`board.set_select_peers` —— 座位卡上的
-## 金框，座位卡随批次 5 Task 2 退场后它空转、接口保留）。
+## 把「此刻可被选中的玩家」高亮**一次推给两处**：
+##   * 画布（`board.set_select_peers` —— 座位卡的金框，座位卡随批次 5 Task 2 退场后它空转、接口保留）；
+##   * **屏幕四角身家条**（`_refresh_corner_highlight`，批次 9 补的可见反馈；条亮着 = 能点）。
 ##
 ## **判据只有一份**：可选玩家由调用方（`_begin_peer_target`）算出，本函数只做转发 ——
-## 于是"谁亮着"与"点谁真的有反应"（`_on_seat_clicked` 的第一行）永远同源。
+## 于是"哪几条亮着"与"点谁真的有反应"（`_on_corner_bar_clicked` → `_on_seat_clicked` 第一行）永远同源。
 ## 传空数组 = 全部熄灭；换阶段（peer → tile）与取消都走它。
 ##
-## 批次 9：立牌退场，原先"推给立牌"那一路随之删掉。**高亮改画在四角条上，见
-## `_refresh_corner_highlight`（批次 9 Task 3）** —— 本步只删不补（批内过渡态）。
+## 批次 9：立牌退场，原先"推给立牌"那一路随之删掉；高亮改画在四角条上（见
+## `_refresh_corner_highlight`）。`_hl_peers` 是这份高亮的**单一来源**（广播末尾按它重放）。
 func _push_peer_highlight(peers: Array) -> void:
 	if board != null:
 		board.set_select_peers(peers)
+	_hl_peers = []
+	for p in peers:
+		_hl_peers.append(int(p))
+	_refresh_corner_highlight()
 
 ## 进入「选玩家」阶段。only_with_items=交换生（目标须持有道具）；then_prop=两段式（目标须有地）
 func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> void:
@@ -3355,9 +3389,10 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_stage = "peer"
 	_tgt_peer = -1
 	_tgt_tiles = []
-	# 入口是**桌上那块立牌**（座位卡已随批次 5 Task 2 退场）—— 与规则说明同源口径，
-	# 别再说"玩家卡"（玩家会照着找一张已经不存在的东西）。
-	_show_target_hint("点桌上对手的立牌选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
+	# 入口是**屏幕上的四角身家条**（座位卡随批次 5 Task 2 退场、桌上立牌随批次 9 退场）——
+	# 与规则说明（`rules_text.gd` 基础操作页）同源口径，别再说"立牌 / 玩家卡"
+	#（玩家会照着找一块 / 一张已经不存在的东西）。
+	_show_target_hint("点屏幕上的对手身家条选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
 	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）
