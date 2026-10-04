@@ -34,7 +34,7 @@ func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# 压在棋盘 / 四角身家条之上、**模态带之下**（暂停菜单 / 结算 50 / 弹问 60 / 小卖部 70）。
-	# 40 < 模态带里最低的 50 ⇒ 卡绝不被模态面板盖在下面，也绝不反压在它们之上。
+	# 40 < 模态带里最低的 50 ⇒ 卡绝不压在模态面板之上（模态面板也绝不被卡盖住）。
 	# **不能只靠树序**：`z_as_relative` 默认为真，本组件挂在 `hud`(z 0) 里 ⇒ 实效 z 就是 40；
 	# 而 `menu_layer` 挂在 `game` 下（也是 0）—— 靠树序时谁在上取决于建/搬节点的顺序，
 	# 所以模态层自己也**显式**设了 z（见 `table_hud.build_menu_ui` 的 `menu_layer.z_index`）。

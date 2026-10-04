@@ -447,6 +447,9 @@ func _run() -> void:
 	# 把相位计时一次推到底（走演出自己的收尾分支）
 	g.deck_reveal.tick(g.deck_reveal.CARD_TIME + 0.1)
 	_check(not g.deck_reveal.is_showing(), "演出结束卡片已收回")
+	# 设计 §6 的后半：不能只把 is_showing 置假 —— 节点要真回收、层要真隐藏。
+	_check(g.deck_reveal._card == null and not g.deck_reveal.visible,
+		"演出结束卡片已回收（不是只把 is_showing 置假：_card 已清、层已隐藏）")
 	# 反向契约：旧那套"演在画布上"的接口必须**真的没了**（不留空壳）
 	_check(not g.board.has_method("play_deck_card"), "BoardView.play_deck_card 已退场")
 	_check(not g.board.has_method("is_showing_deck_card"), "BoardView.is_showing_deck_card 已退场")
@@ -462,6 +465,9 @@ func _run() -> void:
 	# 客户机被房主暂停时卡会冻住 ⇒ 遮罩必须同样压在卡之上，否则那句提示被冻住的卡盖住。
 	_check(g.deck_reveal.z_index < g.pause_mask.z_index,
 		"抽卡大字卡在「房主已暂停」遮罩之下（z %d < %d）" % [g.deck_reveal.z_index, g.pause_mask.z_index])
+	# 把"卡在**所有**模态层之下"钉住（不止菜单与暂停遮罩）：小卖部·赌场层(70) 也必须压住卡。
+	_check(g.deck_reveal.z_index < g.shop_layer.z_index,
+		"抽卡大字卡在小卖部·赌场层之下（z %d < %d）" % [g.deck_reveal.z_index, g.shop_layer.z_index])
 
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
 	var hs: Dictionary = _state(2, false)

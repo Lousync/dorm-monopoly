@@ -1265,7 +1265,10 @@ func s_card(text: String, kind: String = "info", deck: String = "") -> void:
 	if deck != "":
 		# 事件卡：在屏幕层大字演出（批次 8）。相机全程不动 —— 旧版会推近 2D 镜头去读字，
 		# 那一推让桌垫图案滑动、与不跟相机的手牌 / 立牌错位（见 scripts/deck_reveal.gd）。
-		deck_reveal.show_card(deck, kind, text)
+		# 空守卫：`deck_reveal` 由 `_build_ui` 建、首个 `s_card` 之前必已就位（今天无害），
+		# 但缺了它将来一旦次序变了就会在对局中途崩 —— 宁可跳过演出，也不崩。
+		if deck_reveal != null:
+			deck_reveal.show_card(deck, kind, text)
 		if kind == "jail":
 			Fx.shake(self, 9.0, 0.35)
 			Fx.play("jail", -2.0)
