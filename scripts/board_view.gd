@@ -496,6 +496,9 @@ func _build_interior() -> void:
 	_build_wheel(c)
 
 ## 一个牌堆：区域底板 + 三层错位卡背 + 牌名 + 小字说明
+##
+## 卡背尺寸与错缝量是**常量**（`DECK_CARD_*`）：`deck_screen_size` 要用同一份数算"整体脚印"，
+## 两处各写一个 90/135/6 就是两处会漂开的数。
 func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 	_deck_pos[dname] = center
 	var zone := Panel.new()
@@ -513,8 +516,12 @@ func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
 		card.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		card.stretch_mode = TextureRect.STRETCH_SCALE
 		card.modulate = Color(1, 1, 1, 0.55 + 0.22 * float(i))   # 越靠上越实，做出堆叠感
-		card.position = center - Vector2(45, 66) + Vector2(6, 6) * float(2 - i)
-		card.size = Vector2(90, 135)
+		# 落点 = center 左上再错缝。x 取半张宽（45 = DECK_CARD_W / 2）；**y 写 66 而不是 67.5**
+		#（= 半张高）—— 那 1.5 像素是既有的、没写理由的偏移，**本波不动它**：改它会动印刷图案，
+		# 而印刷图案一动，`deck_screen_size` 的口径与 3D 侧的贴合都得跟着重核。
+		card.position = center - Vector2(DECK_CARD_W * 0.5, 66.0) \
+			+ Vector2(DECK_CARD_OFF, DECK_CARD_OFF) * float(2 - i)
+		card.size = Vector2(DECK_CARD_W, DECK_CARD_H)
 		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_world.add_child(card)
 
@@ -591,6 +598,31 @@ func deck_center(deck: String) -> Vector2:
 ## 换个位置（或谁把这条链复制到别处）就会静默漂开。**跟图案走的物件一律走这个入口**。
 func deck_screen_pos(deck: String) -> Vector2:
 	return global_position + _view_from_world(deck_center(deck))
+
+## 一摞牌堆里**单张卡背**的尺寸与三张之间错开的量（`_world` 局部单位，见 `_build_deck`）。
+## 只在这里写一次：`_build_deck` 画它、`deck_screen_size` 用它算"整体脚印"，两处各写一个
+## 90/135/6 就是两处会悄悄漂开的数。
+const DECK_CARD_W := 90.0
+const DECK_CARD_H := 135.0
+const DECK_CARD_OFF := 6.0
+
+## 印在桌垫上那摞卡背的**整体脚印**（画布像素：宽 × 进深）—— 与 `wheel_screen_radius` 同形
+##（那个给"转盘在画布上的半径"，这个给"牌堆在画布上的脚印"）。
+##
+## 单张 90×135、3 张各错 (6,6) ⇒ 整体 **102×147**（`_world` 局部单位）；而 `_world` 带**镜头倍率**
+##（`_apply_cam`: `_world.scale = _zoom`）⇒ 落到画布上只有 `102×147 × _zoom`。取景 / 抽卡推近 /
+## 人数变化都会改 `_zoom`（**滚轮不改**：滚轮只推 3D 视角）。
+##
+## 为什么要有这个入口（终审修复波 F）：3D 侧的实体摞要**盖住印着的这块图案**，跟图案走的
+## 第一件（转盘轮缘）早就在尺寸上也跟着 `_zoom` 走（`wheel_screen_radius`），第二件（牌堆）
+## 原先**只跟位置、尺寸写死世界常数** ⇒ 抽卡那 2× 推近下印刷图案整体胀大、摞不动，
+## 只盖住图案的约四分之一（面积比）—— 而那一刻正是玩家盯着牌堆的时候。
+## 两个"跟印刷"的物件从此同一条口径：位置与尺寸都由 BoardView 报，3D 侧只负责换算。
+func deck_screen_size(deck: String) -> Vector2:
+	if not _deck_pos.has(deck):
+		return Vector2.ZERO
+	return Vector2(DECK_CARD_W + DECK_CARD_OFF * 2.0,
+		DECK_CARD_H + DECK_CARD_OFF * 2.0) * _zoom
 
 ## 抽卡展示的相位动画（_process 驱动的相位手写，见项目约定）：
 ## 抽出（带一点回弹与倾斜）→ 绕竖轴翻面（压到 0 换面的瞬间提亮一记）→

@@ -25,28 +25,35 @@ const PROPS_Y := 0.02
 
 # 尺寸口径：**实物是世界常数，图案才跟 `_zoom`** —— 这条区别是故意的，不是漏改。
 #
-# 唯一的例外是转盘轮缘（`build_wheel` 里量真变换、随 `_zoom` 变）：它必须与
-# **印在桌垫上的**那个轮子重合，而桌垫图案随 2D 镜头缩放，不跟就会脱开。
-# 筹码 / 体力件 / 手牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
+# **例外是"压在印刷图案上"的那两件：转盘轮缘与两摞牌堆**（`build_wheel` / `build_decks` 里
+# 量真变换、随 `_zoom` 变）：它们必须与**印在桌垫上的**那块图案重合，而桌垫图案随 2D 镜头
+# 缩放，不跟就会脱开 —— 所以**位置与尺寸都要跟**（牌堆的尺寸那一半是修复波 F 补的）。
+# 筹码 / 体力件 / 手牌 / 立牌都是**自由立在桌上的实物**：相机推近是"你凑近看"，
 # 不是"桌子变大了"，实物不该跟着长 —— 所以它们的尺寸写死在世界单位里。
 #
 # 手牌还多一层：它的**命中矩形**必须跟玩家看到的位置一致，那要过相机
 #（`hand_rect` 是量真投影，不是常数）—— 尺寸是世界常数与命中盒跟相机，
 # 这两件事互不矛盾：一个说"牌多大"，一个说"你在屏幕上点哪儿算点到它"。
 #
-# 摆放约定（物件 vs 2D 相机，2026-10-03 终审 I1 定案）：
-# **只有转盘轮缘跟 2D 相机，筹码 / 体力件 / 手牌一律不跟**。
-#   轮缘 — 位置来自 `board.wheel_screen_pos()` / 半径来自 `200 × _zoom`（量真变换）：它必须贴
-#           **印在桌垫上的**那个轮盘，而桌垫图案随 2D 取景缩放 ⇒ 跟着走。
-#   其余 — 位置走**画布常量**（`CHIP_BASE_PX` / `PIP_BASE_PX` / `HAND_BASE_PX`）：它们是
-#           **自由立在桌上的实物**，不该因为"印出来的图案"变了而移动。相机推近是「你凑近看」，
-#           不是「桌子被重新排版」。
+# 摆放约定（物件 vs 2D 相机，2026-10-03 终审 I1 定案；批次 6 Task 3 + 修复波 F 修订）：
+# **跟 2D 相机的只有"压在印刷图案上"的那两件 —— 转盘轮缘与两摞牌堆；
+#   筹码 / 体力件 / 手牌 / 立牌一律不跟**。
+#   轮缘 — 位置来自 `board.wheel_screen_pos()` / 半径来自 `board.wheel_screen_radius()`
+#          （量真变换）：它必须贴**印在桌垫上的**那个轮盘，而桌垫图案随 2D 取景缩放 ⇒ 跟着走。
+#   牌堆 — 位置来自 `board.deck_screen_pos()` / 尺寸来自 `board.deck_screen_size()`（同形）：
+#          **同一个理由**（它要盖住印着的那摞卡背）⇒ 位置与尺寸都跟。修复波 F 补的正是尺寸
+#          那一半 —— 原先只跟位置，抽卡推近 2× 时印刷图案整体胀大而摞不动，**只盖住图案的
+#          约四分之一**（面积比），而那正是玩家盯着牌堆的那一刻。
+#   其余 — 位置走**画布常量**（`CHIP_BASE_PX` / `PIP_BASE_PX` / `HAND_BASE_PX` /
+#          `STANDEE_BASE_PX`）：它们是**自由立在桌上的实物**，不该因为"印出来的图案"变了而移动。
+#          相机推近是「你凑近看」，不是「桌子被重新排版」。
 # **代价（必须记住）**：抽卡动画会把 2D 取景推到 ≥2×（`board_view.gd` 的 `DECK_PUSH_FACTOR`），
-# 那一刻桌垫图案整体滑动、而实物纹丝不动 ——「手牌落在自己面前那条桌垫上」这些断言
-# **只在全景取景下成立**。批次 4 要连续移相机 ⇒ **必须继承这条决定**（实物不跟相机）。
-# **跟图案那两件不再有这个代价**（批次 6 Task 3）：抽卡演出期间 `game._process` **逐帧**
-# 重推轮缘与两摞牌堆（`game._refresh_board_followers`，条件是 `board.is_showing_deck_card()`）
-# ⇒ 不伴随 `s_state` 的镜头变化（推近 / 聚焦 / 人数变化）里，它们也一直压在印刷图案上。
+# 那一刻桌垫图案整体滑动、而**不跟相机的那几件**纹丝不动 ——「手牌落在自己面前那条桌垫上」
+# 这些断言**只在全景取景下成立**。批次 4 要连续移相机 ⇒ **必须继承这条决定**（实物不跟相机）。
+# **跟图案那两件不再有这个代价**（批次 6 Task 3 + 修复波 F）：抽卡演出期间 `game._process`
+# **逐帧**重推轮缘与两摞牌堆（`game._refresh_board_followers`，条件是
+# `board.is_showing_deck_card()`）⇒ 不伴随 `s_state` 的镜头变化（推近 / 聚焦 / 人数变化）里，
+# 它们也一直压在印刷图案上（位置与尺寸同一处重推）。
 # 本条原先挂的"轮缘要不要补每帧跟 `_zoom`"到这里结清：**要，而且与牌堆同一处逐帧升级**。
 
 ## 每 ¥5,000 一枚筹码。对着出图定：开局 ¥20,000 → 4 枚（正好半摞，一眼看出起始身家几何）；
@@ -171,13 +178,15 @@ func wheel_hit(canvas_px: Vector2) -> bool:
 # 50° 俯角下只是一坨有影子的色块。错缝量对着出图定：每上一层往"远左"收一点（方向与量级同
 # 画布上那 3 张错位卡背），叠出来的轮廓正好接住印着的那摞卡背。
 #
-# **位置跟印着的那块图案走**（`build_decks` 每次收到的是**当下取景**下的画布像素），与转盘轮缘
-# 同一个理由：它要接住的正是那块印刷图案（见文件头"摆放约定"里轮缘那一条），所以
-# `game._refresh_board_followers` 在每次广播、**以及抽卡演出期间每帧**都重算一遍
+# **位置与尺寸都跟印着的那块图案走**（`build_decks` 每次收到的是**当下取景**下的画布像素与
+# 脚印），与转盘轮缘同一个理由：它要接住的正是那块印刷图案（见文件头"摆放约定"里那一条），
+# 所以 `game._refresh_board_followers` 在每次广播、**以及抽卡演出期间每帧**都重算一遍
 #（牌堆的"招牌效果"就是抽卡时从这摞上把牌抽起来 —— 只在广播刷新的话，推近的演出中图案滑走、
-# 摞原地不动，那一幕就不成立了）。尺寸则与其他实物一样是**世界常数**
-# —— 摞是实物，不会因为 2D 取景被推近而变大（代价同 `_apply_hand_alpha` 那条：
-# 抽卡推近时印着的图案会胀大 2×、摞只跟着走不跟着胀，于是盖不住放大后的图案）。
+# 摞原地不动，那一幕就不成立了）。
+# **尺寸那一半是终审修复波 F 补的**：原先只有位置跟图案、尺寸写死世界常数，于是抽卡那 2× 推近
+# 下印刷图案整体胀大而摞不动、**只盖住图案的约四分之一**（面积比），而那正是玩家盯着牌堆的一刻。
+# 现在两个"跟印刷"的物件（轮缘 / 牌堆）口径一致：**位置 + 尺寸都从 BoardView 取**
+#（`deck_screen_pos` / `deck_screen_size`），3D 侧只把画布像素换算成世界单位（量真变换）。
 #
 # **身份不能丢**（brief 第 2 条）：实体摞盖住的正是画布上印着的卡面图案**与压在它正中的那块
 # 牌名小牌**（`board_view._build_deck` 的 tplate 就在牌堆正中）。"只盖卡背、留住标签"这条路
@@ -196,19 +205,24 @@ const DECK_LAYER_T := 0.010
 ## 与画布上那 3 张错位卡背的 (6,6) 同一方向（下层偏近右、顶层偏远左）。
 ## 4 层错开共 0.04 世界 ≈ 12 画布像素 —— 与印着的那摞（3 张错 12 像素）正好一个量级。
 const DECK_LAYER_SHIFT := 0.010
-## 单张牌的尺寸（世界单位，宽 × 厚 × 进深）。
+## 单张牌的尺寸（世界单位，宽 × 厚 × 进深）—— **只在"没报脚印"时兜底**（见下）；
+## 建 mesh 时的初值也用它，真正的尺寸在 `build_decks` 里当帧就被 `_apply_deck_footprint` 覆盖。
 ##
-## **它 = 印在桌垫上那 3 张错缝卡背的整体脚印**，不是随手加的余量：单张 90×135 画布像素、
-## 3 张各错 (6,6) ⇒ 整体 102×147 画布像素；画布像素 → 世界的换算式见 `board_view` 的
-## MAT_WINDOW_W / MAT_RECT（2020 画布像素 = TABLE_W 8 世界）⇒ 102/252.5 = 0.40、147/252.5 = 0.58。
-## **对得上脚印，摞才盖得住图案**（原来这里写"基准 0.37×0.53 再加 ≈+8% 余量"，
-## 那套说法是把它当成"余量"而不是"脚印"；批次 6 Task 3 改准）。
+## **宽 / 进深不是准数**（终审修复波 F）：它们由 `board.deck_screen_size(deck)` 报的**画布像素
+## 脚印**经真变换换算而来 ⇒ **跟着 2D 取景缩放**，与转盘轮缘同一条口径（`build_wheel` 量半径那套）。
+## 这里这一份只留给"调用方没报脚印"（`size_px` 为空：旧调用 / 红跑）那一条路。
+##
+## 它的值 = 印在桌垫上那 3 张错缝卡背的整体脚印在**全景取景**下的世界尺寸：
+## 单张 90×135、3 张各错 (6,6) ⇒ 整体 102×147（`_world` 局部单位）× 全景 `_zoom`(0.9116)
+## ÷ 252.5（2020 画布像素 = TABLE_W 8 世界）⇒ **0.368 × 0.531**。
+##（旧值 0.40×0.58 **少乘了那个 `_zoom`**（大了约 8.7%）—— 那正是"抽卡推近下盖不住图案"
+##  的一半成因，另一半是"尺寸根本没跟取景"（修复波 F 一起治了）。）
 ##
 ## **只剩一处对不齐，是既有的、核过的**：3 张错缝卡背是往 **+x / +y** 堆的（`center + (6,6)*(2-i)`），
-## 所以那个脚印的**中心比 `deck_center` 偏 (6,6) 画布像素**，而摞关于 `deck_center` 对称 ⇒
-## **近右那两条边各露约 6 画布像素印刷图案**（"从摞的近边露出来一条"，出图里就是它）。
-## 要消掉得把 3 张卡背改成关于 `deck_center` 对称 —— 那是 `board_view._build_deck` 的改动
-##（本批次不允许），所以留着。
+## 所以那个脚印的**中心比 `deck_center` 偏 (6,6) 画布像素**（纵向再多 1.5，见 `_build_deck` 里那个 66），
+## 而摞关于 `deck_center` 对称 ⇒ **近右那两条边各露约 6 画布像素印刷图案**（"从摞的近边露出来一条"，
+## 出图里就是它）。要消掉得把 3 张卡背改成关于 `deck_center` 对称 —— 那是 `board_view._build_deck`
+## 的改动（`BoardView` 本批次只准动"跟印刷图案"那两处查询），所以留着。
 ##
 ## **底直接落在桌面上**（`_place_deck` 里 y = 桌面，不再加 `PROPS_Y`）：一摞牌是"躺在桌上的"，
 ## 抬起来只会让它相对印刷图案在屏幕上往远端漂（`PROPS_Y` 那段说的"抬得越高越漂"）。
@@ -217,9 +231,7 @@ const DECK_LAYER_SHIFT := 0.010
 ## 不同取景下换算出的画布位移本来就不完全相等，见 `deck_top_px` 那段）——
 ## 但那是**顶层自己的位置**，不是"整摞要往上挪"的理由：
 ## 盖住印刷脚印靠的是**最下一层**（它就在桌面上、投影和图案同面）。
-##
-## **按世界单位写死**：实物不跟 2D 相机（同筹码 / 手牌 / 立牌），只有"位置"跟图案。
-const DECK_SIZE := Vector3(0.40, DECK_LAYER_T, 0.58)
+const DECK_SIZE := Vector3(0.368, DECK_LAYER_T, 0.531)
 ## 牌堆顶面那块牌名要不要**吃光**（`Label3D.shaded`）。默认 `false`（全亮、不吃光），
 ## 「读得出，但略像贴上去的」；旁边被台灯照着的筹码 / 立牌都有明暗。
 ##
@@ -235,9 +247,10 @@ const DECK_SIZE := Vector3(0.40, DECK_LAYER_T, 0.58)
 ## 吃光之后这两块仍读得出。真要再评估，改这一个常量即可。
 const DECK_LABEL_SHADED := false
 ## 牌面文字的量法（Label3D）：pixel_size × font_size = 一个字的边长（世界单位）。
-## 0.0020 × 64 = 0.128：两个汉字并排 0.256 世界，占牌宽（`DECK_SIZE.x` = **0.40**）的 **64%**。
-##（旧注释写"占牌宽（0.33）的 78%、已经是上限"—— 那个 0.33 与今天的 `DECK_SIZE.x` 对不上，
-##  批次 6 Task 3 按当前值重算。字号是**对着出图**定的，要改它得连牌名与牌面的比例一起重核。）
+## 0.0020 × 64 = 0.128：两个汉字并排 0.256 世界，占牌宽（全景取景下 0.368，见 `DECK_SIZE`）的 **70%**。
+##（旧注释写"占牌宽（0.33）的 78%"、"（0.40）的 64%"—— 那两个数分别对应更早的两种口径；
+##  修复波 F 把牌宽改成由 `deck_screen_size` 派生（全景 0.368）后按当前值重算。
+##  字号是**对着出图**定的，要改它得连牌名与牌面的比例一起重核。）
 const DECK_FONT_PS := 0.0020
 ## 两摞的**牌身**颜色：暗底、色相分明（远看一眼分得开）—— 机会 = 暗金（接 UIKit.ACCENT）、
 ## 命运 = 暗紫（接 board_view._build_deck 那个紫色 accent）。都压得够暗，不会在近黑的屋子里发亮。
@@ -255,16 +268,25 @@ const DECK_LABEL_COLORS := {
 ## 谁摆牌堆谁把名字传进来，多一份常量就多一处会漂开的数。
 
 var _decks_root: Node3D
-## 两摞的节点池：牌名 → {root, layers, mat, label, top_local, top_world}。
-## **只建一次**：之后刷新只改 root 的 global_position（层与标签的局部位置只跟层数有关）。
+## 两摞的节点池：牌名 → {root, top_local, top_world}。
+## **只建一次**：之后刷新只改 root 的 global_position 与那份共用 mesh 的尺寸
+##（层与标签的局部位置只跟层数有关）。
+## **不存 layers / mat / label**（终审修复波 G）：它们建完就没人读过 —— 层与标签挂在 root 下、
+## 由 root 的 transform 一起带走，材质是逐摞一份、只在 `_make_deck` 里用过一次。
+## 存着只会让人以为"刷新时还会改它们"。
 var _decks := {}
 var _deck_mesh: BoxMesh              # 两摞共用一份：牌面尺寸完全一致
 
-## 按 `decks`（**牌名 → 画布像素**中心，调用方从 `board.deck_center` 折出来）摆两摞实体牌堆。
+## 按 `decks`（**牌名 → 画布像素**中心，调用方从 `board.deck_screen_pos` 取）摆两摞实体牌堆；
+## `size_px` 是这摞卡背在画布上的**整体脚印**（宽 × 进深，调用方从 `board.deck_screen_size` 取）。
 ##
-## **幂等**：节点池只建一次，之后每次调用只**重算 root 的位置**（每次状态广播都会调它）。
-## 为什么位置每次都要重算：印在桌垫上那块图案随 2D 取景（`_view_from_world`）走，摞要接住它。
-func build_decks(decks: Dictionary) -> void:
+## **幂等**：节点池只建一次，之后每次调用只**重算 root 的位置与牌面尺寸**（每次状态广播都会调它）。
+## 为什么两者每次都要重算：印在桌垫上那块图案随 2D 取景（`_view_from_world`，含 `_zoom`）走，
+## 摞要**盖住**它 —— 位置与尺寸都得跟（见文件头"摆放约定"与 `DECK_SIZE` 那段）。
+##
+## `size_px` 为空（`Vector2.ZERO`）时**保留 `DECK_SIZE` 那份世界常数**：那是没有脚印可跟的
+## 兜底路（旧调用 / 红跑），不是正常路径 —— 正常路径 `game._refresh_board_followers` 每次都报脚印。
+func build_decks(decks: Dictionary, size_px: Vector2 = Vector2.ZERO) -> void:
 	if _t3 == null or decks.is_empty():
 		return
 	if _decks_root == null:
@@ -278,6 +300,24 @@ func build_decks(decks: Dictionary) -> void:
 			d = _make_deck(dname)
 			_decks[dname] = d
 		_place_deck(d, decks[key] as Vector2)
+	if size_px != Vector2.ZERO:
+		_apply_deck_footprint(size_px, decks.values()[0])
+
+## 把画布像素脚印折成世界尺寸、贴到两摞共用的那份牌面上（幂等，每次刷新都重算）。
+##
+## 为什么**量真变换**而不是"画布像素 ÷ 某个常数"：同 `build_wheel` 量半径那条 ——
+## `canvas_px_to_world` 走的是 `TEX_WINDOW_PX`（贴图窗口），窗口一改，除常数就静默失配
+##（窗口是裁出来的桌垫区，2020×1553 与画布 2048² 从来就是两个旋钮）。
+##
+## 两摞共用**一份 mesh / 一份尺寸**：它们的脚印在画布上本来就是同一个（同尺寸卡背、同错缝量），
+## 所以只量一次；参考点取第一摞的中心（映射是等比的，取哪一点都一样）。
+func _apply_deck_footprint(size_px: Vector2, ref_px: Vector2) -> void:
+	if _deck_mesh == null:
+		return
+	var o: Vector3 = _t3.canvas_px_to_world(ref_px)
+	var dx: float = (_t3.canvas_px_to_world(ref_px + Vector2(size_px.x, 0.0)) - o).length()
+	var dz: float = (_t3.canvas_px_to_world(ref_px + Vector2(0.0, size_px.y)) - o).length()
+	_deck_mesh.size = Vector3(dx, DECK_LAYER_T, dz)
 
 ## 造一摞（节点只造一次）：5 层薄板 + 顶面平贴的牌名。
 ## 局部坐标原点 = **这摞牌堆的中心在地面的落点**（见 _place_deck）：层 0（最下）抬半层高，
@@ -296,7 +336,6 @@ func _make_deck(dname: String) -> Dictionary:
 	# 显式写死**不透明档**：批次 4 的教训 —— ALPHA 混合会进透明队列、不写深度、投影就废了，
 	# 而 Task 1 刚把光照与阴影调到位（牌堆必须投得出影子）。别手滑改成透明。
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-	var layers: Array = []
 	var half := float(DECK_LAYERS - 1) * 0.5
 	for i in DECK_LAYERS:
 		var mi := MeshInstance3D.new()
@@ -308,7 +347,6 @@ func _make_deck(dname: String) -> Dictionary:
 		var off := (half - float(i)) * DECK_LAYER_SHIFT
 		mi.position = Vector3(off, DECK_LAYER_T * (float(i) + 0.5), off)
 		root.add_child(mi)
-		layers.append(mi)
 	# 顶面：最上一层（i = LAYERS-1，off = -half × SHIFT）的**上表面中心** —— 抽卡的起点（deck_top_px）。
 	var top_local := Vector3(-half * DECK_LAYER_SHIFT, DECK_LAYER_T * float(DECK_LAYERS),
 		-half * DECK_LAYER_SHIFT)
@@ -333,8 +371,10 @@ func _make_deck(dname: String) -> Dictionary:
 	lab.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
 	lab.position = top_local + Vector3(0.0, 0.001, 0.0)      # 抬 1mm：与顶层上表面不共面（免得 z-fighting）
 	root.add_child(lab)
-	return {"root": root, "layers": layers, "mat": mat, "label": lab,
-		"top_local": top_local, "top_world": Vector3.ZERO}
+	# 只留**后面真会读**的三项（修复波 G）：`_place_deck` 读 root / 写 top_world，`deck_top_px`
+	# 读 top_world，`top_local` 是算 top_world 的一半。层与标签由 root 的 transform 一起带走，
+	# 材质只在上面用过一次 —— 存进字典没人读，只会让人以为"刷新还会改它们"。
+	return {"root": root, "top_local": top_local, "top_world": Vector3.ZERO}
 
 ## 把一摞摆到画布像素 center_px 上（层与标签的局部位置在 _make_deck 里已经摆好，这里只挪 root）。
 ##

@@ -1346,9 +1346,12 @@ func _board_follow_ready() -> bool:
 ## table_props.gd 文件头的摆放约定：只有这两件跟 2D 相机，筹码 / 体力件 / 手牌是画布常量的实物、不跟。
 func _refresh_board_followers() -> void:
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
+	# 牌堆：**位置与尺寸都跟印刷图案**（`deck_screen_pos` / `deck_screen_size`，同轮缘那一套）。
+	# 尺寸是修复波 F 补的：抽卡推近 2× 时印刷卡背整体放大，只跟位置的话摞会盖不住它。
 	table3d.table_props.build_decks({
 		"机会": board.deck_screen_pos("机会"),
-		"命运": board.deck_screen_pos("命运")})
+		"命运": board.deck_screen_pos("命运")},
+		board.deck_screen_size("机会"))
 
 ## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（筹码堆 / 体力件 / 手牌也在这里）。
 ##
