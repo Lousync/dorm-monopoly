@@ -101,9 +101,7 @@ var _tile_sb: Array = []       # 每格 StyleBoxFlat
 var _sub_labels: Array = []
 var _strips: Array = []        # 每格顶带 Panel（有主时显示拥有者颜色）
 var _strip_cols: Array = []    # 每格顶带当前颜色（避免悬停时反复重建 stylebox）
-var _house_icons: Array = []   # 每格一个程序绘制的「房子」图标（装修等级）
 var _owners: Array = []        # 上一次渲染的归属（用于渐变过渡）
-var _levels: Array = []        # 上一次渲染的等级（用于房子弹跳）
 var _soils: Array = []         # 上一次渲染的焦土状态（用于废墟配色切换）
 var _tile_hl: Array = []       # 每格「可选中」高亮叠层（选地块/两段式时显示）
 var _tile_tw := {}             # 每格进行中的补间
@@ -329,49 +327,17 @@ func _build_tiles() -> void:
 		p.add_child(sub)
 		_sub_labels.append(sub)
 
-		# 装修等级：程序绘制的房子图标 + 等级配色（原先是右对齐的 ★ 星级文本）。
-		# 放右下角 y88-106 这条带：色带(3-15)/图标水印(20-56)/名称(18-62)/副标题(70-87)
-		# 都已占位，只有这条底带是空的，且副标题居中、右侧不会被压到。
-		var house := HouseIcon.new()
-		house.position = Vector2(TILE - GAP * 2.0 - 30, 84)
-		house.size = Vector2(26, 18)
-		_world_descend(house)
-		p.add_child(house)
-		_house_icons.append(house)
+		# 装修等级的房子**已搬进 3D**（批次 11 Task 2）：画布里不再有 `HouseIcon` Control
+		#（原先是右下角 y84-102 那条带里程序绘制的小房子），改由 `TableProps` 在桌面上立一块
+		# **薄牌**贴同一份画法烘出来的纹理（见 scripts/table_props.gd「装修房子」那一段，
+		# 与 `house_anchor` / `house_screen_pos` / `house_screen_size` 三个只读查询）。
+		# 本行留空是有意的：**别再把 2D 房子加回来**（layout_test 有"整套已删净"的反向契约）。
 
 		_owners.append(-2)
-		_levels.append(-1)
 		_soils.append(false)
 
 func _world_descend(c: Control) -> void:
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-class HouseIcon extends Control:
-	## 格子上的「房子」：程序绘制（墙体 + 屋顶 + 门），颜色 = 装修等级色。
-	## 1~4 级分别是绿 / 蓝 / 紫 / 金，见 GameData.LEVEL_COLORS。
-	var level := 0
-
-	func _init() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	func set_level(l: int) -> void:
-		level = l
-		queue_redraw()
-
-	func _draw() -> void:
-		if level <= 0:
-			return
-		var c: Color = GameData.level_color(level)
-		var w := size.x
-		var h := size.y
-		# 墙体
-		draw_rect(Rect2(w * 0.18, h * 0.44, w * 0.64, h * 0.54), c.darkened(0.22), true)
-		# 屋顶（三角）
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(w * 0.04, h * 0.46), Vector2(w * 0.5, h * 0.02), Vector2(w * 0.96, h * 0.46),
-		]), c)
-		# 门
-		draw_rect(Rect2(w * 0.42, h * 0.68, w * 0.16, h * 0.30), c.lightened(0.40), true)
 
 class TableDecor extends Control:
 	## 内区装饰（程序绘制，无需素材）：四角金色括号 + 同心圆 + 一圈刻度点。
@@ -636,6 +602,39 @@ const RING_R_WORLD := 32.0      # `_world` 局部半径（原 2D 光环 Panel �
 func token_ring_radius_px() -> float:
 	return _view_from_world(Vector2(RING_R_WORLD, 0.0)) \
 		.distance_to(_view_from_world(Vector2.ZERO))
+
+# ---------------- 装修房子（批次 11 Task 2） ----------------
+#
+# 每格右下那条带里原先画着的那座房子（`HouseIcon`，见 `_build_tiles` —— **那份 2D 绘制已随本
+# 任务删掉**，现在房子只有 3D 薄牌这一份）。这里报的是它**该在哪儿、该有多大**：R4 裁定房子
+# 压在格子上 ⇒ 位置与尺寸都跟印刷口径（与转盘轮缘 / 两摞牌堆 / 行动光环同一条）。
+# **改这两条常量就得连房子薄牌的观感一起重核。**
+
+## 房子在**格子内**的相对位置与尺寸（`_world` 局部像素；与 `_build_tiles` 里那个
+## `Vector2(TILE - GAP * 2.0 - 30, 84)` + `Vector2(26, 18)` 一字不差 —— 搬进 3D 时照抄，
+## 「格内相对位置不变」是设计 §8 的不变量）。放右下 y84-102 那条带：色带(3-15)/图标水印(20-56)/
+## 名称(18-62)/副标题(70-87) 都已占位，只有这条底带是空的。
+const HOUSE_LOCAL_POS := Vector2(TILE - GAP * 2.0 - 30.0, 84.0)
+const HOUSE_LOCAL_SIZE := Vector2(26.0, 18.0)
+
+## 某格那条带里**印着的**房子图案的**中心**（画布像素）= 格心（`tile_pos` + GAP）+ 格内相对位置
+## + 半尺寸。**这是 `_world` 局部坐标**：`_clamp_center` 那一系用的就是它，**不是**印刷口径。
+func house_anchor(idx: int) -> Vector2:
+	return tile_pos(idx) + Vector2(GAP, GAP) + HOUSE_LOCAL_POS + HOUSE_LOCAL_SIZE * 0.5
+
+## 房子图案在**画布**上的落点（中心）—— `house_anchor` 过一遍 2D 镜头变换，与
+## `tile_screen_pos` / `deck_screen_pos` / `wheel_screen_pos` / `token_screen_pos` **同一条链**
+##（`global_position + _view_from_world(局部点)`）。3D 侧摆房子用**它**，不用 `house_anchor` ——
+## 房子画在 `_world` 里、带着镜头变换，拿局部坐标摆会整体偏开（T1 的棋子就那么偏过一格）。
+func house_screen_pos(idx: int) -> Vector2:
+	return global_position + _view_from_world(house_anchor(idx))
+
+## 房子图案在**画布**上的尺寸（宽 × 高）—— 与 `deck_screen_size` 同形：
+## `_world` 局部尺寸 × `_zoom`（`_apply_cam` 给 `_world.scale` 的就是它）。
+## 3D 侧的薄牌要**盖住**这块图案 ⇒ 尺寸也得跟（只跟位置不跟尺寸的话，取景一变就盖不住）。
+## 3D 侧仍走「量真变换」把这两个画布像素折成世界单位（见 `table_props._apply_house_size`）。
+func house_screen_size() -> Vector2:
+	return HOUSE_LOCAL_SIZE * _zoom
 
 # ---------------- 视口：缩放 / 平移 / 跟随 ----------------
 
@@ -957,19 +956,16 @@ func render(state: Dictionary) -> void:
 
 	for i in _tile_sb.size():
 		var owner_id := GameData.NO_OWNER
-		var level := 0
 		var soil := false
 		if i < tiles.size():
 			owner_id = int(tiles[i].get("owner", GameData.NO_OWNER))
-			level = int(tiles[i].get("level", 0))
 			soil = bool(tiles[i].get("soil", false))
 		if owner_id != _owners[i] or soil != _soils[i]:
 			_owners[i] = owner_id
 			_soils[i] = soil
 			_animate_tile(i, _hover == i)
-		if level != _levels[i]:
-			_levels[i] = level
-			_set_house(i, level)
+		# 装修等级（`tiles[i].level`）**本类不再消费**：房子是 3D 的薄牌，由 `game._refresh_houses`
+		# 喂给 `table_props.set_houses`（批次 11 Task 2）。画布里那套 `_levels` / `_set_house` 已删净。
 
 		var d: Dictionary = GameData.TILES[i]
 		var sub: Label = _sub_labels[i]
@@ -1062,16 +1058,14 @@ func _animate_tile(i: int, hovered: bool) -> void:
 	tw.tween_property(sb, "border_width_bottom", border_w, 0.15)
 	tw.set_parallel(false)
 
-func _set_house(i: int, level: int) -> void:
-	var house: HouseIcon = _house_icons[i]
-	house.set_level(level)
-	if level <= 0:
-		return
-	# 装修成功时弹一下（原 ★ 星级弹跳的同一套手感）
-	house.pivot_offset = house.size * 0.5
-	house.scale = Vector2(1.9, 1.9)
-	var tw := house.create_tween()
-	tw.tween_property(house, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+## 装修房子（`HouseIcon` / `_house_icons` / `_levels` / `_set_house`）**已随批次 11 Task 2
+## 搬进 3D**（`TableProps` 的「装修房子」那一段）。原先这里住着：`_build_tiles` 里每格建一个
+## 程序绘制的 `HouseIcon` Control、`render` 里按等级差调 `_set_house`（含"装修成功弹一下"的
+## 2D 缩放补间）——**整段删除，接口不留空壳**：3D 侧的能力是
+## `TableProps.set_houses(levels)`（等级 → 烘好的等级纹理，`0` = 不摆），
+## 位置与尺寸取自下面三个只读查询（**压在印着的那座房子上** ⇒ 与轮缘 / 牌堆 / 光环同一条口径）。
+## **画法只留一份**：`HouseIcon` 这个类搬到 `TableProps` 里去了（烘纹理要跑它的 `_draw`，
+## 复制一份就会与桌垫上原来的形状/配色漂开）—— `layout_test` 有"本类不再带 HouseIcon"的反向契约。
 
 ## 当前行动者光环 / 2D 棋子整套**已随批次 11 Task 1 搬进 3D**（`TableProps` 的
 ## 「棋子（小人）与当前行动者光环」那一段）。原先这里住着 `_set_ring`（2D Panel 逐帧跟随 +

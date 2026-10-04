@@ -24,6 +24,30 @@ func _token_node(tokens_root: Node, peer: int) -> Node3D:
 			return ch as Node3D
 	return null
 
+## 房子薄牌的节点（按 **meta("tile")** 找，不按节点名 —— 同棋子的 `meta("peer")` 约定）。
+func _house_node(houses_root: Node, idx: int) -> Node3D:
+	if houses_root == null:
+		return null
+	for ch in houses_root.get_children():
+		if (ch as Node).has_meta("tile") and int((ch as Node).get_meta("tile")) == idx:
+			return ch as Node3D
+	return null
+
+## 房子薄牌的**正面**（贴等级纹理的那张方片）。
+func _house_face(houses_root: Node, idx: int) -> MeshInstance3D:
+	var h := _house_node(houses_root, idx)
+	return h.get_node_or_null("Face") as MeshInstance3D if h != null else null
+
+## 房子薄牌在**画布像素**下的宽度：把薄牌的左右两沿（局部 ±w/2）过真反变换折回画布像素量距离。
+## 薄牌只绕 X 后倾 ⇒ 局部 x 仍是世界 x，两点只差一个 x ⇒ 这个距离就是它在画布上的宽。
+func _house_w_px(t3, h: Node3D, bm: BoxMesh) -> float:
+	if h == null or bm == null:
+		return 0.0
+	var plate: MeshInstance3D = h.get_node("Plate")
+	var l: Vector2 = t3.world_to_canvas_px(plate.global_transform * Vector3(-bm.size.x * 0.5, 0.0, 0.0))
+	var r: Vector2 = t3.world_to_canvas_px(plate.global_transform * Vector3(bm.size.x * 0.5, 0.0, 0.0))
+	return l.distance_to(r)
+
 ## 某个距离上「能量 × 衰减」估出的相对照度（光池亮度 × 形状的**代理式**，见 C3 那段注释）。
 ## `pow` 的底夹到 0：射程之外照度为 0（Godot 的 omni 光在射程外也确实是 0）。
 func _corner_irradiance(light: OmniLight3D, dist: float) -> float:
@@ -1696,6 +1720,139 @@ func _run() -> void:
 			if not bv.has_method(m):
 				kept.append(m)
 		_check(kept.is_empty(), "slot_offset / slot_anchor / tile_screen_pos / token_screen_pos 保留（缺 %s）" % str(kept))
+
+	# ---- 批次 11 Task 2：装修房子（56 格各一块薄牌，压在印着的那座房子上） ----
+	# 桌垫上每格右下那条带里**印着**的房子图案，做成**立在格上的薄牌**（原先是 2D `HouseIcon`）。
+	# 判据一律走可观察量：几何读节点自己的 BoxMesh、等级读**贴上去的材质/纹理**（不读内部标志）、
+	# 位置与尺寸走真反变换（`world_to_canvas_px`）折回画布像素与 `board.house_*` 比 ——
+	# 不把实现的推导再写一遍（那样写成什么样都过）。
+	print("== 房子：56 格各一块薄牌（池子只建一次 / level 0 不露 / 跟印刷图案） ==")
+	var tpH = t3.table_props
+	if tpH == null or not tpH.has_method("set_houses"):
+		_check(false, "TableProps 没有 set_houses（房子还没搬进来），本段整段跳过")
+	else:
+		t3.board.fit_overview(true)     # 全景取景：印刷口径与局部坐标差得最开（下面那条前提要用）
+		t3.snap_view(0.0)
+		await process_frame
+		var zero_lv: Array = []
+		for i in GameData.TILES.size():
+			zero_lv.append(0)
+		tpH.set_houses(zero_lv)
+		await process_frame
+		var hroot: Node = tpH.get_node_or_null("Houses")
+		_check(hroot != null, "房子的父节点在（set_houses 时建）")
+		var hcount: int = 0 if hroot == null else hroot.get_child_count()
+		_check(hcount == GameData.TILES.size(), "56 格各一块薄牌（实得 %d）" % hcount)
+		# 池子只建一次：再刷一遍，节点数不变、且**还是那个节点**（不是重建 —— 56 块，禁节点 churn）
+		var h_node0: Node3D = _house_node(hroot, 0)
+		tpH.set_houses(zero_lv)
+		await process_frame
+		_check(hroot != null and hroot.get_child_count() == hcount,
+			"重刷不会多建节点（实得 %d）" % (0 if hroot == null else hroot.get_child_count()))
+		_check(h_node0 != null and is_same(h_node0, _house_node(hroot, 0)),
+			"重刷时用的是**同一批节点**（池子只建一次）")
+		# level == 0 ⇒ 整块不露（全 0 等级时一块都不该露）
+		var shown0: int = 0
+		if hroot != null:
+			for ch in hroot.get_children():
+				if (ch as Node3D).visible:
+					shown0 += 1
+		_check(shown0 == 0, "全 0 等级时一块都不露（实得 %d 块露着）" % shown0)
+		# 等级 → 贴图 / 材质：读**贴上去的那份材质**（0 与 5 同级、9 另一级）
+		var lv_pick := {0: 3, 5: 3, 9: 1}
+		var lvs: Array = []
+		for i in GameData.TILES.size():
+			lvs.append(int(lv_pick.get(i, 0)))
+		tpH.set_houses(lvs)
+		await create_timer(0.5).timeout          # 等弹入（0.32s）落定再量几何
+		var h0: Node3D = _house_node(hroot, 0)
+		var h5: Node3D = _house_node(hroot, 5)
+		var h9: Node3D = _house_node(hroot, 9)
+		_check(h0 != null and h0.visible and h5 != null and h5.visible,
+			"有等级的格子立起了房子薄牌（0 号 %s / 5 号 %s）"
+				% [str(h0 != null and h0.visible), str(h5 != null and h5.visible)])
+		var h_hidden := 0
+		if hroot != null:
+			for i in GameData.TILES.size():
+				var ch2: Node3D = _house_node(hroot, i)
+				if ch2 != null and ch2.visible and not lv_pick.has(i):
+					h_hidden += 1
+		_check(h_hidden == 0, "没写等级的格子一块都不露（实得 %d 块）" % h_hidden)
+		var tex1 = tpH.house_tex(1)
+		var tex3 = tpH.house_tex(3)
+		_check(tex1 != null and tex3 != null, "（前提）4 张等级纹理烘出来了（1 级 %s / 3 级 %s）" % [tex1, tex3])
+		_check(tex1 != tex3, "（前提）不同等级的纹理**不是同一张**（等级信号才立得住）")
+		var f0: MeshInstance3D = _house_face(hroot, 0)
+		var f5: MeshInstance3D = _house_face(hroot, 5)
+		var f9: MeshInstance3D = _house_face(hroot, 9)
+		var m0: StandardMaterial3D = f0.material_override as StandardMaterial3D if f0 != null else null
+		var m5: StandardMaterial3D = f5.material_override as StandardMaterial3D if f5 != null else null
+		var m9: StandardMaterial3D = f9.material_override as StandardMaterial3D if f9 != null else null
+		_check(m0 != null and m0.albedo_texture == tex3,
+			"3 级的房子正面贴的是 3 级那张纹理（读贴上去的，实得 %s）" % (m0.albedo_texture if m0 != null else null))
+		_check(m9 != null and m9.albedo_texture == tex1, "1 级的房子贴的是 1 级那张纹理")
+		_check(m0 != null and m9 != null and m0 != m9, "不同等级用的是**不同的材质**")
+		_check(m0 != null and is_same(m0, m5),
+			"同等级共用**同一份材质**（不是一格格新建 —— 4 份材质摊到 56 格上）")
+		if h0 != null and h5 != null and h9 != null:
+			var bm0 := (h0.get_node("Plate") as MeshInstance3D).mesh as BoxMesh
+			var bm5 := (h5.get_node("Plate") as MeshInstance3D).mesh as BoxMesh
+			_check(bm0 != null and bm5 != null, "房子薄牌是 BoxMesh")
+			if bm0 != null:
+				_check(bm0.size.y > 0.02, "薄牌**有高度**（%.3f > 0.02，不是平面贴纸）" % bm0.size.y)
+				_check(bm0.size.z < bm0.size.y * 0.5, "薄牌是「薄」的（厚 %.3f 世界单位）" % bm0.size.z)
+				# 「后倾」的可执行定义（同棋子那条）：牌面**顶边比板底更靠远端**（z 更小）
+				var hb_top: Vector3 = h0.get_node("Plate").global_transform * Vector3(0.0, bm0.size.y * 0.5, 0.0)
+				var hb_bot: Vector3 = h0.get_node("Plate").global_transform * Vector3(0.0, -bm0.size.y * 0.5, 0.0)
+				_check(hb_top.z < hb_bot.z, "顶边比板底更靠远端（后倾 ⇒ 2D 端近正俯视也看得见一块面）")
+				_check(is_same(bm0, bm5), "56 格共用**一份 BoxMesh**（不是一格格新建 mesh）")
+			# 位置 = 与**印在桌垫上的**那座房子同一条链（`tile_screen_pos` / `deck_screen_pos` /
+			# `wheel_screen_pos` 那条：`global_position + _view_from_world(局部点)`）。
+			# **不能拿格内局部坐标比**：那是"镜头在原点、倍率 1"那一档的位置（T1 的棋子照字面
+			# 实现就偏了整整一格）—— 下面第一条前提就是钉这个。
+			var h_want: Vector2 = t3.board.house_screen_pos(0)
+			var h_local: Vector2 = t3.board.house_anchor(0)
+			_check(h_want.distance_to(h_local) > 8.0,
+				"（前提）房子的印刷口径与格内局部坐标确实不同（差 %.1f 画布像素 —— 少了镜头变换就会偏开）"
+					% h_want.distance_to(h_local))
+			var h_back: Vector2 = t3.world_to_canvas_px(h0.global_position)
+			_check(h_back.distance_to(h_want) < 1.0,
+				"房子落在该格那条带的「印刷口径」落点上（实得 %s / 期望 %s）" % [h_back, h_want])
+			_check(h0.global_position.y > t3.table_mesh.global_position.y,
+				"房子抬在桌垫之上（y=%.3f —— 站在桌上而不是陷进桌垫）" % h0.global_position.y)
+			# 尺寸**也跟印刷图案**（R4：房子压在格子上）：把薄牌的左右两沿（局部 ±w/2）过真反变换
+			# 折回画布像素，与 `board.house_screen_size()` 比 —— 只跟位置不跟尺寸的话这条会红。
+			var sz_px: float = _house_w_px(t3, h0, bm0)
+			_check(absf(sz_px - t3.board.house_screen_size().x) < 2.0,
+				"薄牌宽 == 该格那条带报的印刷口径宽度（%.1f vs %.1f 画布像素）"
+					% [sz_px, t3.board.house_screen_size().x])
+			# 跟取景：2D 镜头推近（取景 / 人数变化都会改 _zoom）⇒ 重推后房子要跟着胀
+			#（与"轮缘跟着画面半径放大"/"环外沿跟着胀"同一条）。
+			t3.board.focus_grid(9, 2.0, true)
+			await process_frame
+			tpH.set_houses(lvs)
+			await process_frame
+			var sz_px1: float = _house_w_px(t3, h9, (h9.get_node("Plate") as MeshInstance3D).mesh as BoxMesh)
+			_check(sz_px1 > sz_px * 1.5, "取景推近后房子跟着胀（%.1f → %.1f 画布像素）" % [sz_px, sz_px1])
+			t3.board.fit_overview(true)
+			await process_frame
+
+		# 反向契约：2D 的房子图标整套必须**真的没了**（不留空壳）。谁把它们加回来（或只加个空壳），
+		# 这几条先红。画法只留一份 —— 留在 `TableProps` 里（烘纹理要用它）。
+		print("== 反向契约：2D 房子图标整套已从 BoardView 删净 ==")
+		var bvh = t3.board
+		_check(bvh.get("_house_icons") == null, "BoardView._house_icons 已删净")
+		_check(bvh.get("_levels") == null, "BoardView._levels（房子弹跳的等级缓存）已删净")
+		_check(not bvh.has_method("_set_house"), "BoardView._set_house 已删净")
+		_check(not bvh.has_method("_make_house"), "BoardView 没有留下建房壳子")
+		var hcm: Dictionary = bvh.get_script().get_script_constant_map()
+		_check(hcm.get("HouseIcon") == null, "BoardView 不再带 HouseIcon 类（画法只留在 TableProps）")
+		# 保留的查询（3D 侧摆房子要用；谁顺手删了这条先红）
+		var hkept: Array = []
+		for m in ["house_anchor", "house_screen_pos", "house_screen_size"]:
+			if not bvh.has_method(m):
+				hkept.append(m)
+		_check(hkept.is_empty(), "house_anchor / house_screen_pos / house_screen_size 保留（缺 %s）" % str(hkept))
 
 	t3.queue_free()
 

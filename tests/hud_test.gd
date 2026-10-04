@@ -18,6 +18,20 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 房子薄牌的节点（按 **meta("tile")** 找，不按节点名 —— 同棋子的 `meta("peer")` 约定）。
+func _house_node(houses_root: Node, idx: int) -> Node3D:
+	if houses_root == null:
+		return null
+	for ch in houses_root.get_children():
+		if (ch as Node).has_meta("tile") and int((ch as Node).get_meta("tile")) == idx:
+			return ch as Node3D
+	return null
+
+## 房子薄牌的**正面**（贴等级纹理的那张方片）。
+func _house_face(houses_root: Node, idx: int) -> MeshInstance3D:
+	var h := _house_node(houses_root, idx)
+	return h.get_node_or_null("Face") as MeshInstance3D if h != null else null
+
 func _fresh_tiles() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
@@ -349,7 +363,7 @@ func _run() -> void:
 	_check(g.log_toast.get_child_count() == 4,
 		"连发刷屏时最多只留 4 条（实得 %d）" % g.log_toast.get_child_count())
 
-	print("== 装修房子：4 级 + 等级配色 ==")
+	print("== 装修房子：4 级 + 等级配色 + 3D 薄牌（批次 11 Task 2） ==")
 	_check(GameData.MAX_LEVEL == 4, "装修上限 4 级（实得 %d）" % GameData.MAX_LEVEL)
 	_check(GameData.level_color(1) == Color(0.42, 0.80, 0.45), "1 级 = 绿")
 	_check(GameData.level_color(2) == Color(0.36, 0.63, 0.94), "2 级 = 蓝")
@@ -358,14 +372,39 @@ func _run() -> void:
 	_check(GameData.level_name(0) == "未装修" and GameData.level_name(4) == "金",
 		"格详情卡的装修文案跟着等级走")
 	_check(GameData.level_color(9) == GameData.level_color(4), "越界等级钳到 4 级（不越界崩）")
-	_check(g.board._house_icons.size() == GameData.TILES.size(),
-		"每格一个房子图标位（实得 %d）" % g.board._house_icons.size())
-	g.board._set_house(0, 3)
-	_check(g.board._house_icons[0].level == 3, "房子图标接得住等级（实得 %d）" % g.board._house_icons[0].level)
-	_check(g.board._house_icons[0].size.x > 10.0,
-		"房子图标有实际尺寸（实得 %.0f）" % g.board._house_icons[0].size.x)
-	g.board._set_house(0, 0)
-	_check(g.board._house_icons[0].level == 0, "等级归零后房子收起（无主/未装修不上房子）")
+	# 2D 的 `HouseIcon` 整套已删（批次 11 Task 2 搬进 3D 的 `TableProps`）——这里改读**桌面上那块
+	# 薄牌**：走真入口（`s_state` → 广播 → `_refresh_houses`），判据是"贴上去的材质/纹理"。
+	var tpH = g.table3d.table_props
+	if tpH == null or not tpH.has_method("set_houses"):
+		_check(false, "TableProps 没有 set_houses（房子还没搬进来），本段整段跳过")
+	else:
+		var tiles_h: Array = _fresh_tiles()
+		tiles_h[3].level = 3
+		var st_h: Dictionary = _state(2, false)
+		st_h.tiles = tiles_h
+		g.s_state(st_h)
+		await process_frame
+		var hroot_h: Node = tpH.get_node_or_null("Houses")
+		_check(hroot_h != null and hroot_h.get_child_count() == GameData.TILES.size(),
+			"每格一块房子薄牌（实得 %d）"
+				% (0 if hroot_h == null else hroot_h.get_child_count()))
+		var h3: Node3D = _house_node(hroot_h, 3)
+		var f3: MeshInstance3D = _house_face(hroot_h, 3)
+		_check(h3 != null and h3.visible, "有等级的那格立起了房子薄牌")
+		var m3: StandardMaterial3D = f3.material_override as StandardMaterial3D if f3 != null else null
+		_check(m3 != null and m3.albedo_texture != null,
+			"房子正面贴的是**烘出来的等级纹理**（读贴上去的材质，不是内部标志）")
+		_check(m3 != null and m3.albedo_texture == tpH.house_tex(3),
+			"贴的正是 3 级那一张（与 house_tex(3) 同源）")
+		_check(m3 != null and m3.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
+			"房子正面是 ALPHA_SCISSOR（透明边裁掉、仍在不透明队列里写深度/投影，实得 %s）"
+				% str(m3.transparency if m3 != null else -1))
+		# 等级归零 ⇒ 收起（无主 / 未装修不上房子）
+		tiles_h[3].level = 0
+		st_h.tiles = tiles_h
+		g.s_state(st_h)
+		await process_frame
+		_check(h3 != null and not h3.visible, "等级归零后房子收起（无主/未装修不上房子）")
 
 	print("== 收租飘字：红/绿两条不能叠在一起 ==")
 	# 先把四位玩家的金额刷成基线（与 _state 一致），保证下一步的 diff 只来自这两家
@@ -1396,33 +1435,62 @@ func _run() -> void:
 			_check(dest_px.distance_to(want_dest) < 1.0,
 				"走完落在目的地的印刷落点上（实得 %s / 期望 %s）" % [dest_px, want_dest])
 
-		print("== 镜头平移（无广播）时，棋子跟着印刷图案走（T1 审查 Important #1）==")
+		print("== 镜头平移（无广播）时，棋子与房子跟着印刷图案走（T1 审查 Important #1 / T2）==")
 		# 2D 相机**逐帧**在动（`board._process` 的自动跟随 / 取景），而"跟图案"的实物原先只挂状态广播
 		# ⇒ 镜头动过但没广播的那一段里，印在 `_world` 里的格子会滑动、实物不动（实测约半格、~1s 衰减；
 		# 对旧 2D 棋子来说——它活在 `_world` 里、任何时刻都钉在格子上——那是**回归**）。
 		# `game._process` 现在按"取景键"补推一次（`_refresh_followers_if_cam_moved`）。
+		# **批次 11 Task 2 把房子也并进了这同一批**（房子压在格子上 ⇒ 同一条口径）——
+		# 下面这段同时钉棋子与房子，就是"纳入逐帧补推"的可执行证据。
 		g.board.cam_locked = false
-		g.s_state(_state(2, false))          # 回一份干净状态：peer 3 落在老格号上
+		var st_cam: Dictionary = _state(2, false)    # 回一份干净状态：peer 3 落在老格号上
+		var tiles_cam: Array = st_cam.tiles
+		tiles_cam[3].level = 2                       # 顺带给 3 号格一棵房子（下面那条要用）
+		g.s_state(st_cam)
 		await process_frame
 		var pcam := int(g._state_player(3).get("pos", 0))
 		var slot3 := int(g._state_player(3).get("color", 0))
+		var h3c: Node3D = null
+		var h0c := Vector2.ZERO
+		var h1c := Vector2.ZERO
+		var h_want_c := Vector2.ZERO
+		if tpH != null and tpH.has_method("set_houses"):
+			h3c = _house_node(tpH.get_node_or_null("Houses"), 3)
+			if h3c != null:
+				h0c = g.table3d.world_to_canvas_px(h3c.global_position)
+				h_want_c = g.board.house_screen_pos(3)
+		_check(h3c != null and h3c.visible, "（前置）3 号格立着房子薄牌（下面那条要读它）")
 		if tk3 != null:
 			var w0: Vector2 = g.table3d.world_to_canvas_px(tk3.global_position)
 			_check(w0.distance_to(g.board.token_screen_pos(pcam, slot3)) < 1.0,
 				"（前置）广播推送后棋子已在印刷落点上")
+			if h3c != null:
+				_check(h0c.distance_to(h_want_c) < 1.0,
+					"（前置）广播推送后房子也在它那条带的印刷落点上")
 			g.board.focus_grid(pcam, 2.0, true)        # 只动 2D 镜头（**不广播**）
 			await process_frame
 			var want1: Vector2 = g.board.token_screen_pos(pcam, slot3)
 			_check(want1.distance_to(w0) > 8.0,
 				"（前置）镜头动过之后印刷落点确实移了（%.1f 画布像素）" % want1.distance_to(w0))
+			if h3c != null:
+				h_want_c = g.board.house_screen_pos(3)
+				_check(h_want_c.distance_to(h0c) > 8.0,
+					"（前置）镜头动过之后房子的印刷落点也移了（%.1f 画布像素）" % h_want_c.distance_to(h0c))
 			g._process(0.0)                            # 真入口：game 的逐帧补推
 			var w1: Vector2 = g.table3d.world_to_canvas_px(tk3.global_position)
 			_check(w1.distance_to(want1) < 1.0,
 				"镜头平移后棋子跟着印刷图案重推（实得 %s / 期望 %s）" % [w1, want1])
+			if h3c != null:
+				h1c = g.table3d.world_to_canvas_px(h3c.global_position)
+				_check(h1c.distance_to(h_want_c) < 1.0,
+					"**同一批补推里房子也重推了**（实得 %s / 期望 %s）" % [h1c, h_want_c])
 			g._process(0.0)
 			g._process(0.0)
 			_check(g.table3d.world_to_canvas_px(tk3.global_position).is_equal_approx(w1),
 				"镜头静止时补推早退（位置一字不变 —— 每帧只比三个浮点数）")
+			if h3c != null:
+				_check(g.table3d.world_to_canvas_px(h3c.global_position).is_equal_approx(h1c),
+					"镜头静止时房子也不重摆（与棋子走同一条早退）")
 		g.board.fit_overview(true)
 
 	g.get_tree().paused = false

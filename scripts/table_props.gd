@@ -35,15 +35,22 @@ const PROPS_Y := 0.02
 #（`hand_rect` 是量真投影，不是常数）—— 尺寸是世界常数与命中盒跟相机，
 # 这两件事互不矛盾：一个说"牌多大"，一个说"你在屏幕上点哪儿算点到它"。
 #
-# 摆放约定（物件 vs 2D 相机，2026-10-03 终审 I1 定案；批次 6 Task 3 + 修复波 F 修订）：
-# **跟 2D 相机的只有"压在印刷图案上"的那两件 —— 转盘轮缘与两摞牌堆；
-#   手牌一律不跟**。
+# 摆放约定（物件 vs 2D 相机，2026-10-03 终审 I1 定案；批次 6 Task 3 + 修复波 F
+#          + 批次 11 T1/T2 修订）：
+# **跟 2D 相机的只有"压在印刷图案上"的那几件 —— 转盘轮缘 / 两摞牌堆 / 行动光环 / 装修房子
+#   （位置与尺寸都跟）；棋子**位置跟、尺寸写死**；手牌一律不跟**。
 #   轮缘 — 位置来自 `board.wheel_screen_pos()` / 半径来自 `board.wheel_screen_radius()`
 #          （量真变换）：它必须贴**印在桌垫上的**那个轮盘，而桌垫图案随 2D 取景缩放 ⇒ 跟着走。
 #   牌堆 — 位置来自 `board.deck_screen_pos()` / 尺寸来自 `board.deck_screen_size()`（同形）：
 #          **同一个理由**（它要盖住印着的那摞卡背）⇒ 位置与尺寸都跟。修复波 F 补的正是尺寸
 #          那一半 —— 原先只跟位置，抽卡推近 2× 时印刷图案整体胀大而摞不动，**只盖住图案的
 #          约四分之一**（面积比），而那正是玩家盯着牌堆的那一刻。
+#   光环 / 房子（批次 11 T1 / T2）— 也都**压在格子图案上**（格子上画着的那圈光环 / 那座房子）
+#          ⇒ 与轮缘同一条：位置与尺寸都跟（`board.token_ring_radius_px` /
+#          `board.house_screen_pos` + `house_screen_size`）。
+#   棋子（批次 11 T1）— **位置跟**（`board.token_screen_pos`：它要站在印着的那一格上）、
+#          **尺寸不跟**（它是自由立在桌上的实物，与手牌同一条约定）。两件事不矛盾 ——
+#          同上面"尺寸口径"那段：一个说"牌多大"，一个说"它站在哪儿"。
 #   手牌 — 位置走**画布常量**（`HAND_BASE_PX`）：它是**自由立在桌上的实物**，
 #          不该因为"印出来的图案"变了而移动。相机推近是「你凑近看」，
 #          不是「桌子被重新排版」。
@@ -53,9 +60,14 @@ const PROPS_Y := 0.02
 # **批次 8 起"抽卡推近"这个变量没了**：抽卡演出搬到屏幕层（`scripts/deck_reveal.gd`）、
 # **相机全程不动** ⇒ 原先"抽卡那一刻图案滑动、实物不动"的错位从根上消失（用户 ① 报的正是它）；
 # 与之配套的那条"演出期间 `game._process` 逐帧重推"也一并删掉（不再有逐帧的取景变化要跟）。
-# 跟随本身仍在：取景 / 聚焦 / 人数变化之后，跟图案的两件由 `game._refresh_board_followers`
-# 重推（位置与尺寸一起）；那条挂在**状态广播**上（`_refresh_table_props`）—— 不伴随广播的
-# 纯镜头变化（摆拍用的 `focus_grid`）要跟着变，得自己再调一次。
+# 跟随本身仍在，而且**不止一条路**（批次 11 T1 审查 Important #1 修订，原先这里写的是
+# "纯镜头变化得自己再调一次"—— 那句已被新代码证伪）：
+#   * 状态广播（`game._refresh_table_props`）—— 数据变了的那一条；
+#   * **逐帧自动补推**（`game._refresh_followers_if_cam_moved`，比"取景键"= `board.cam_key()`）：
+#     自动跟随（`board._process` 的 `_pan_toward`）与 `focus_grid` 都会让 2D 取景**逐帧**动，
+#     只挂广播的话"镜头动了但没广播"的那一段里印刷图案滑动、实物纹丝不动（实测约半格、~1s 衰减）。
+#     镜头静止时只比三个浮点数就早退 ⇒ 零开销。**谁新加一件"压在印刷图案上"的实物，
+#     就一并加进这批补推**（T1 的棋子 / 光环、T2 的房子都是这么进来的）。
 # 本条原先挂的"轮缘要不要补每帧跟 `_zoom`"到这里结清：**要，而且与牌堆同一处升级**。
 
 ## 批次 7：**筹码堆（现金）与体力件（体力）整体退场** —— 身家读数搬到屏幕四角的四角身家条
@@ -134,13 +146,19 @@ func wheel_hit(canvas_px: Vector2) -> bool:
 #
 # **位置与尺寸都跟印着的那块图案走**（`build_decks` 每次收到的是**当下取景**下的画布像素与
 # 脚印），与转盘轮缘同一个理由：它要接住的正是那块印刷图案（见文件头"摆放约定"里那一条）。
-# **唯一的刷新路径是状态广播**（`game._refresh_table_props` → `game._refresh_board_followers`）。
-# 原先还有一条"抽卡演出期间逐帧重推"（批次 8 起删掉）：它兜的是抽卡那次 ≥2× 推近，
-# 而演出已搬到屏幕层 `DeckReveal`、相机全程不动 ⇒ 前提消失，逐帧路已从 `game._process` 移除。
+# **刷新有两条路、都幂等**（批次 11 T1 审查 Important #1 修订，原先这里写的是"唯一的刷新路径
+# 是状态广播"—— 那句已被新代码证伪）：
+#   * 状态广播（`game._refresh_table_props` → `game._refresh_board_followers`）—— 常态；
+#   * **镜头逐帧动过就补推**（`game._refresh_followers_if_cam_moved` → 同一个
+#     `_refresh_board_followers`）—— 自动跟随 / `focus_grid` 会让 2D 取景逐帧动。
+# （更早还有一条"抽卡演出期间逐帧重推"：批次 8 删掉 —— 它兜的是抽卡那次 ≥2× 推近，
+#  而演出已搬到屏幕层 `DeckReveal`、相机全程不动 ⇒ 前提消失。后来 T1 以另一条判据把逐帧
+#  这条接了回来。）
 # **尺寸那一半是终审修复波 F 补的**：原先只有位置跟图案、尺寸写死世界常数，于是取景一变
 # 印刷图案整体胀大 / 缩小而摞不动、**只盖住图案的约四分之一**（面积比），而那一刻正是玩家盯着牌堆。
-# 现在两个"跟印刷"的物件（轮缘 / 牌堆）口径一致：**位置 + 尺寸都从 BoardView 取**
-#（`deck_screen_pos` / `deck_screen_size`），3D 侧只把画布像素换算成世界单位（量真变换）。
+# 现在四件"跟印刷"的实物（轮缘 / 牌堆 / 行动光环 / 装修房子）口径一致：**位置 + 尺寸都从
+# BoardView 取**（`deck_screen_pos` / `deck_screen_size` 等同形入口），3D 侧只把画布像素换算成
+# 世界单位（量真变换）。
 #
 # **身份不能丢**（brief 第 2 条）：实体摞盖住的正是画布上印着的卡面图案**与压在它正中的那块
 # 牌名小牌**（`board_view._build_deck` 的 tplate 就在牌堆正中）。"只盖卡背、留住标签"这条路
@@ -1240,6 +1258,290 @@ func _process(delta: float) -> void:
 	_ring_phase = fposmod(_ring_phase + delta, RING_PULSE_TIME)
 	var k := 0.5 - 0.5 * cos(TAU * _ring_phase / RING_PULSE_TIME)
 	_ring_mat.emission_energy_multiplier = lerpf(RING_GLOW_LO, RING_GLOW_HI, k)
+
+# ---------------- 装修房子（批次 11 Task 2） ----------------
+#
+# 桌垫上每格右下那条带里**印着**的房子图案（墙体 + 屋顶三角 + 门，颜色 = 装修等级色）的实体化。
+# 原先它是画布里的一个 2D Control（`board_view.HouseIcon`：每格一个、按等级差重画一下 + 弹一下），
+# 摆位跟着桌垫、**随桌垫一起倾斜** ⇒ 3D 下看着就是贴纸。现在：每格一块**立在格上的薄牌**，
+# 正面贴一张**烘出来的等级纹理**（4 个等级各一张，建池的时候烘一次）。
+#
+# **画法只有一份**：`HouseIcon`（本文件里的内层类，**原先住在 board_view.gd**）就是那份画法 ——
+# 烘纹理时把它挂进一个透明底的 `SubViewport` 里跑一次 `_draw`，`get_texture()` 得到的就是与
+# 桌垫上原来的形状 / 配色**同源**的贴图。**别把这几行 draw 复制一份**：复制出来的形状与配色
+# 会与桌垫上那套慢慢漂开，而"格内相对位置不变"正是本批的不变量（设计 §8）。
+#
+# **位置与尺寸都跟印刷图案**（R4 裁定，见文件头"摆放约定"）：房子压在格子上 ⇒ 与转盘轮缘 /
+# 两摞牌堆 / 行动光环同一条口径 —— 位置走 `board.house_screen_pos(idx)`、尺寸走
+# `board.house_screen_size()`，这里只把画布像素**量真变换**换算成世界单位（别写"像素 ÷ 常数"，
+# 那隔着贴图窗口与桌面尺寸两个旋钮）。后倾 25° 与棋子同款（绕 X 负角：顶边往远端倒 ⇒
+# 2D 端近正俯视也看得见一块面）。
+#
+# **56 块 ⇒ 禁每帧分配 / 节点 churn**（T1 审查 Minor #6 立的榜样）：共用**一份 BoxMesh**、
+# 一张共用方片、按等级分**4 份正面材质**、一块共用牌身材质；刷新只写 transform / 可见性 /
+# 材质引用（等级没变就不碰材质）。每帧只重贴位置，而"镜头动过"的那一帧由
+# `game._refresh_followers_if_cam_moved` 补推（与棋子 / 光环 / 轮缘 / 牌堆同一批）。
+
+## 后倾角（绕 X **负**角 = 顶边往远端倒 ⇒ 面朝近端镜头）。与棋子 `TOKEN_LEAN_DEG` 同款 **25°**：
+## 2D 端（近正俯视）与 3D 端（50° 俯角）**都能看见一块面**；直立薄板在 2D 端只剩一条线。
+const HOUSE_LEAN_DEG := 25.0
+## 薄牌厚度（世界单位）。宽高**不写死**（跟印刷图案，见上面那段）；厚度只取"看得出是块牌子"的值：
+## 0.014 ≈ 3.5 画布像素（全景取景），与棋子牌身（0.022）/ 手牌（0.030）同量级。
+const HOUSE_T := 0.014
+## 牌身底色：暗底（接棋子牌身 `TOKEN_BODY_COLOR` 那一族，两块立牌观感一致）。
+## 身份靠正面那张等级纹理；纹理烘不出来时正面仍是一块**等级色**（降级，见 `_build_house_mats`）。
+const HOUSE_BODY_COLOR := Color(0.145, 0.155, 0.20)
+## 烘纹理用的画布尺寸 = 印刷图案（26×18）的**整 2 倍**。
+## 为什么不是设计稿里写的"约 64×48"：64×48 是 4:3，而印刷那块是 26:18 = 13:9 ——
+## 贴到"按印刷宽高做的"方片上会把房子**横向压窄约 8%**（与桌垫上那座房子对不齐）。
+## 52×36 既同比例，又比它在屏幕上那 ~40×28 画布像素大得多（够清晰）。
+const HOUSE_BAKE_SIZE := Vector2i(52, 36)
+## 装修成功时弹一下：scale 1.9 → 1（原 2D `_set_house` 的同一手感，`TRANS_BACK`/`EASE_OUT`，0.32s）。
+## 一次性过渡 ⇒ Tween（既有约定）；持续动画才手写 `_process`（房子没有持续动画）。
+const HOUSE_POP_SCALE := 1.9
+const HOUSE_POP_TIME := 0.32
+
+var _houses_root: Node3D
+## 每格一项 `{root, plate, face}`。**只建一次**（56 格 × 1 块，见上面"禁节点 churn"）。
+## 根节点带 `meta("tile")`：调用方（含测试）要读某格的节点时按它找，不按节点名。
+var _houses: Array = []
+## 每格**当前等级**（判"要不要重贴材质 / 切换可见性"）。`-1` = 还没设过。
+var _house_levels: Array = []
+var _house_texs: Array = []          # 等级 1..4 的烘焙纹理（`_house_texs[等级 - 1]`）
+var _house_mats: Array = []          # 等级 1..4 的**正面材质**（4 份，56 格共用）
+var _house_body_mat: StandardMaterial3D
+var _house_mesh: BoxMesh
+var _house_face_mesh: PlaneMesh
+var _house_w := 0.0                  # 当前薄牌宽（世界单位；跟印刷图案，每次刷新重算）
+var _house_h := 0.0                  # 当前薄牌高
+
+## 按 `levels`（**每格一个装修等级**；`0` = 不摆，即无主 / 未装修）摆 56 块房子薄牌。
+##
+## **幂等**：节点池只建一次，之后每次调用只改落点 / 可见性 / 材质引用。它被两条路调：
+##   * 状态广播（`game._refresh_table_props`）；
+##   * **镜头动过的每一帧**（`game._refresh_followers_if_cam_moved`）—— 房子压在格子上，
+##     镜头一动印刷图案就滑，房子必须跟着重贴（与棋子 / 光环 / 轮缘 / 牌堆同一批）。
+## 所以这里一**不许新建**节点 / 材质 / 数组，二**不许每帧造数组**：等级表由调用方缓存好
+##（`game._house_levels`，逐帧那条路直接把它重推下来）。
+func set_houses(levels: Array) -> void:
+	if _t3 == null or not is_inside_tree():
+		return          # SubViewport 的贴图必须在树内取（见 `_bake_house_texs` 那段）
+	var n: int = GameData.TILES.size()
+	if _houses.is_empty():
+		_build_house_pool(n)
+	_apply_house_size()
+	for i in n:
+		var lv := 0
+		if i < levels.size():
+			lv = clampi(int(levels[i]), 0, GameData.MAX_LEVEL)
+		_set_house_plate(i, lv)
+
+## 建池（**只跑一次**）：56 个节点 + 一块共用 BoxMesh / 一张共用方片 + 4 份等级材质
+## + 4 张烘焙纹理（`_bake_house_texs` 里那 4 个 SubViewport）。
+func _build_house_pool(n: int) -> void:
+	_houses_root = Node3D.new()
+	_houses_root.name = "Houses"
+	add_child(_houses_root)
+	_bake_house_texs()
+	_build_house_mats()
+	_house_mesh = BoxMesh.new()
+	_house_face_mesh = PlaneMesh.new()
+	for i in n:
+		_houses.append(_make_house_plate(i))
+		_house_levels.append(-1)
+
+## 造一块房子薄牌（节点只造一次）。局部坐标：原点 = **薄牌下沿中点**（房子"站"在格上），
+## x 向右、y 向上、z 朝近端镜头 —— 与棋子薄牌同一套局部约定。
+func _make_house_plate(idx: int) -> Dictionary:
+	var root := Node3D.new()
+	root.name = "House_%d" % idx
+	# 把格号记进 meta：调用方（含测试）读某格的节点时按它找 —— 名字可能在重建时被 Godot 改掉
+	#（同棋子 `meta("peer")` 那条约定）。
+	root.set_meta("tile", idx)
+	# 后倾：绕 X 负角 = 顶边往远端倒 ⇒ 牌面朝着近端镜头
+	root.rotation = Vector3(deg_to_rad(-HOUSE_LEAN_DEG), 0.0, 0.0)
+	root.visible = false            # 未装修：默认收起（位置/尺寸在刷新里贴，见 `_set_house_plate`）
+	_houses_root.add_child(root)
+	var plate := MeshInstance3D.new()
+	plate.name = "Plate"
+	plate.mesh = _house_mesh
+	plate.material_override = _house_body_mat
+	root.add_child(plate)
+	# 正面：等级纹理（烘出来的那张）。贴图带透明边 ⇒ **ALPHA_SCISSOR**（透明区裁掉、仍在
+	# **不透明队列**里写深度、投得出影子）—— 同棋子正面 / 手牌牌面那条。
+	var face := MeshInstance3D.new()
+	face.name = "Face"
+	face.mesh = _house_face_mesh
+	# `PlaneMesh` 躺在 XZ 平面（法线 +Y）：绕 X **+90°** ⇒ 法线朝 +Z（朝着近端镜头）、贴图上方朝 +Y。
+	# 别用 -90°：那面朝下、从镜头这一侧看不见（同棋子正面那条）。
+	face.rotation = Vector3(deg_to_rad(90.0), 0.0, 0.0)
+	face.material_override = _house_mats[0]     # 建好先挂着 Lv1 那份（节点默认隐藏，露不出来）
+	root.add_child(face)
+	return {"root": root, "plate": plate, "face": face}
+
+## 按**印刷图案**重算薄牌的宽高（幂等；`set_houses` 每次都调 —— 取景 / 人数变化都会改 `_zoom`）。
+##
+## 为什么**量真变换**：同 `build_wheel` 量半径 / `_apply_deck_footprint` —— `canvas_px_to_world`
+## 走的是 `TEX_WINDOW_PX`（贴图窗口），窗口与画布尺寸是两个独立旋钮，"像素 ÷ 常数"会静默失配。
+## 宽高真的变了才重写 mesh 与 56 块牌的局部位置（局部位置只跟"半高"有关）。
+func _apply_house_size() -> void:
+	if _t3.board == null:
+		return
+	var size_px: Vector2 = _t3.board.house_screen_size()
+	if size_px.x <= 0.0 or size_px.y <= 0.0:
+		return
+	var o: Vector3 = _t3.canvas_px_to_world(Vector2.ZERO)
+	var w: float = (_t3.canvas_px_to_world(Vector2(size_px.x, 0.0)) - o).length()
+	var h: float = (_t3.canvas_px_to_world(Vector2(0.0, size_px.y)) - o).length()
+	if is_equal_approx(w, _house_w) and is_equal_approx(h, _house_h):
+		return                      # 取景没变：连 mesh 都不碰（幂等刷新，别白改资源）
+	_house_w = w
+	_house_h = h
+	_house_mesh.size = Vector3(w, h, HOUSE_T)
+	_house_face_mesh.size = Vector2(w, h)
+	# 块心抬半高 ⇒ 下沿落在原点（房子"站"在桌上）；正面再抬 1mm（与牌面不共面，免得 z-fighting）
+	for d in _houses:
+		(d["plate"] as MeshInstance3D).position = Vector3(0.0, h * 0.5, 0.0)
+		(d["face"] as MeshInstance3D).position = Vector3(0.0, h * 0.5, HOUSE_T * 0.5 + 0.001)
+
+## 贴一格：等级 → 可见性 / 正面材质；位置每次重贴（幂等）。
+##
+## 等级**没变**时只重贴位置（不碰材质、不重算可见性）—— 逐帧那条路（镜头动过）走的就是这一支，
+## 56 块牌每帧只写一次 `global_position`。等级变了（装修了 / 无主了 / 掉级）才换材质并弹一下。
+func _set_house_plate(i: int, lv: int) -> void:
+	var d: Dictionary = _houses[i]
+	var root: Node3D = d["root"]
+	if lv != int(_house_levels[i]):
+		_house_levels[i] = lv
+		root.visible = lv > 0
+		if lv <= 0:
+			return                  # 收起：位置都不必贴（下次露出来时会贴）
+		(d["face"] as MeshInstance3D).material_override = _house_mats[lv - 1]
+		_place_house(d, i)
+		_pop_house_in(d)            # 装修成功弹一下（原 2D `_set_house` 的同一手感）
+	else:
+		if lv > 0:
+			_place_house(d, i)
+
+## 把一块房子薄牌摆到**印在桌垫上的**那座房子上：落点 = `board.house_screen_pos(idx)`
+## （已过 2D 镜头变换的**印刷口径**）→ 世界，y 落在桌面 + `PROPS_Y`（与棋子同一条：站在桌上）。
+##
+## **必须走印刷口径**（不是 `house_anchor` 那份 `_world` 局部坐标）：房子要压住印在桌垫上的图案，
+## 而图案随 2D 镜头走 —— 用局部坐标摆会整体偏开（批次 11 T1 的棋子就这么偏过一整格）。
+func _place_house(d: Dictionary, idx: int) -> void:
+	if _t3.board == null:
+		return
+	var w: Vector3 = _t3.canvas_px_to_world(_t3.board.house_screen_pos(idx))
+	w.y = _t3.table_mesh.global_position.y + PROPS_Y
+	(d["root"] as Node3D).global_position = w
+
+## 装修成功弹一下：scale 1.9 → 1（一次性过渡 ⇒ Tween）。只在等级**变了**时调。
+## 局部原点在薄牌下沿 ⇒ 是"从格子上长出来"的那一下，不是从中心炸开。
+func _pop_house_in(d: Dictionary) -> void:
+	var root: Node3D = d["root"]
+	root.scale = Vector3.ONE * HOUSE_POP_SCALE
+	var tw := create_tween()
+	tw.tween_property(root, "scale", Vector3.ONE, HOUSE_POP_TIME) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+## 烘 4 张等级纹理（**建池时一次**，不是每帧）。
+##
+## 做法（设计 §4.2）：每个等级一个 `SubViewport`（`HOUSE_BAKE_SIZE`、透明底），里面挂一个
+## `HouseIcon`（**就是原先画在格子上的那份画法**，一行不改）、设好等级，`get_texture()` 拿到纹理。
+## 4 个等级各一个视口 —— **不能只用一个视口烘 4 次**：`ViewportTexture` 是"指向那个视口"的活引用，
+## 4 个等级会共用同一张、全部跟着最后一次绘制变。
+##
+## `render_target_update_mode = UPDATE_ONCE`：渲染一帧后 Godot 自己把它改成 `UPDATE_DISABLED`
+## ⇒ 烘完就不再花渲染开销（4 个小视口常驻，但每帧零成本）。
+##
+## **为什么不是"直接画进 `Image`"**（设计 §4.2 允许换）：`draw_colored_polygon`（屋顶那个三角）
+## 在 `Image` 上没有对应物 —— 得自己写一遍扫描线填充，等于把画法**复制**成第二份（形状与抗锯齿
+## 都会与桌垫上那套漂开），还要自己处理 `darkened` / `lightened` 的取色。用 `SubViewport` 跑
+## 同一份 `_draw` 既只有一份画法、又是逐像素同源。代价只是 4 个常驻小视口（零每帧开销）。
+##
+## 无头模式（`--headless`）下 dummy 渲染器不出像素（`get_image()` 会报 null），但
+## **`get_texture()` 照样给一个合法的 `ViewportTexture`**（探针实测）⇒ 测试能钉"等级→纹理"
+## 这条链；真跑时像素正常。真拿不到时 `_build_house_mats` 有纯色降级。
+func _bake_house_texs() -> void:
+	if not _house_texs.is_empty():
+		return
+	for lv in range(1, GameData.MAX_LEVEL + 1):
+		var vp := SubViewport.new()
+		vp.name = "HouseBake%d" % lv
+		vp.size = HOUSE_BAKE_SIZE
+		vp.transparent_bg = true
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		add_child(vp)
+		var icon := HouseIcon.new()
+		icon.size = Vector2(HOUSE_BAKE_SIZE)
+		icon.set_level(lv)
+		vp.add_child(icon)
+		_house_texs.append(vp.get_texture())
+
+## 4 份等级材质（正面）+ 一块共用牌身材质。**只建一次**，56 格按等级引用其中一份。
+func _build_house_mats() -> void:
+	if not _house_mats.is_empty():
+		return
+	_house_body_mat = StandardMaterial3D.new()
+	_house_body_mat.albedo_color = HOUSE_BODY_COLOR
+	_house_body_mat.roughness = 0.62
+	# 显式写死**不透明档**：3D 端留在不透明队列才有深度写入与投影（批次 4 的教训，同棋子牌身）。
+	_house_body_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	for lv in range(1, GameData.MAX_LEVEL + 1):
+		var m := StandardMaterial3D.new()
+		var tex: Texture2D = _house_texs[lv - 1]
+		if tex != null:
+			# `albedo_color` 用**白色**：贴图自己就带着等级配色（同 `HouseIcon` 的绘制），
+			# 再乘一遍等级色会把它压暗（手牌牌面用白也是这个理）。
+			m.albedo_color = Color.WHITE
+			m.albedo_texture = tex
+		else:
+			# 降级（烘不出纹理，理论上不会）：退回**纯等级色**的一块面 —— 同 2D "素材缺失退回纯色"
+			m.albedo_color = GameData.level_color(lv)
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		m.roughness = 0.75
+		_house_mats.append(m)
+
+## 某等级的**房子正面纹理**（`_bake_house_texs` 烘的那一张）。**只读量**，给测试用：
+## "等级 → 贴上去的贴图"这条链没有别的可观察量（材质是按等级共用的那 4 份）。
+## 越界一律钳到 1..MAX_LEVEL（与 `GameData.level_color` 同一条钳法）。
+func house_tex(level: int) -> Texture2D:
+	var i: int = clampi(level, 1, GameData.MAX_LEVEL) - 1
+	if i < 0 or i >= _house_texs.size():
+		return null
+	return _house_texs[i]
+
+## 装修房子那块立牌的画法（**唯一一份**）。原先住在 `board_view.gd`（每格一个 Control 画在格子上），
+## 批次 11 Task 2 随房子搬进 3D 时挪到这里 —— 2D 那份已整段删除，本类只被 `_bake_house_texs`
+## 挂进 SubViewport 跑一次 `_draw` 来烘纹理。**改这里的形状 / 取色 = 同时改桌垫上的观感**
+##（两者同源正是搬过来要保住的东西）。
+class HouseIcon extends Control:
+	## 格子上的「房子」：程序绘制（墙体 + 屋顶 + 门），颜色 = 装修等级色。
+	## 1~4 级分别是绿 / 蓝 / 紫 / 金，见 GameData.LEVEL_COLORS。
+	var level := 0
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func set_level(l: int) -> void:
+		level = l
+		queue_redraw()
+
+	func _draw() -> void:
+		if level <= 0:
+			return
+		var c: Color = GameData.level_color(level)
+		var w := size.x
+		var h := size.y
+		# 墙体
+		draw_rect(Rect2(w * 0.18, h * 0.44, w * 0.64, h * 0.54), c.darkened(0.22), true)
+		# 屋顶（三角）
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(w * 0.04, h * 0.46), Vector2(w * 0.5, h * 0.02), Vector2(w * 0.96, h * 0.46),
+		]), c)
+		# 门
+		draw_rect(Rect2(w * 0.42, h * 0.68, w * 0.16, h * 0.30), c.lightened(0.40), true)
 
 # ---------------- 四块立牌：批次 9 已整体退场 ----------------
 # 名字 / 身家 / 公开背包 / 倒计时 / "可被选中"高亮**全都有更稳的落点**：前两者与倒计时在

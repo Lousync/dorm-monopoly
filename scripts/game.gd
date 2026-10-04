@@ -1342,9 +1342,12 @@ func _board_follow_ready() -> bool:
 ##（内部就是 `global_position + _view_from_world(...)`，见 `deck_screen_pos` 那段）。
 ##
 ## 幂等（只改 transform / mesh 尺寸，不重建节点）⇒ **每条路都能调**：
-##   * 状态广播（`_refresh_table_props`）—— 常态刷新。
-## （批次 8 起**只剩这一条路**：原先还有一条"抽卡演出期间逐帧重推"，那是给抽卡的 ≥2× 推近兜底的；
-##  演出搬到屏幕层 `DeckReveal` 后相机全程不动，那段逐帧重推连同它的前提一起删了。）
+##   * 状态广播（`_refresh_table_props`）—— 数据变了的那一条（常态）；
+##   * 逐帧补推（`_refresh_followers_if_cam_moved`）—— 只动镜头、没有广播的那一条。
+## （原先还有一条"抽卡演出期间逐帧重推"，那是给抽卡的 ≥2× 推近兜底的；演出搬到屏幕层
+##  `DeckReveal` 后相机全程不动，那段连同它的前提一起删了。**批次 11 T1 审查 Important #1
+##  又以另一条判据（"取景键变没变"）把逐帧这条接回来了** —— 自动跟随 / `focus_grid` 都会让
+##  2D 取景逐帧动，只挂广播的话跟图案的实物会脱开。）
 ##
 ## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
 ## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
@@ -1383,6 +1386,35 @@ func _refresh_tokens() -> void:
 	var ended := String(st.get("phase", "playing")) == "ended"
 	table3d.table_props.set_ring(GameData.NO_PEER if ended else int(st.get("turn", GameData.NO_PEER)))
 
+## 装修房子：**也住在 3D 的 `TableProps` 里**（批次 11 Task 2 搬进去的，原先由 `board.render`
+## 在画布上建 2D `HouseIcon` —— 那份已整段删除，见 `board_view` 里那段退场说明）。
+##
+## 数据来源与判据一字未改：`st.tiles[i].level`（`0` = 未装修 / 无主 ⇒ 不摆）。
+## 房子**压在格子上** ⇒ 位置与尺寸都跟印刷图案（`board.house_screen_pos` / `house_screen_size`），
+## 与轮缘 / 牌堆 / 光环同一条口径 —— 所以它也必须在**镜头动过的那一帧**被重推
+##（`_refresh_followers_if_cam_moved` 里与棋子同一批，见那里的注释）。
+##
+## **等级表缓存在本节点**（`_house_levels`）：逐帧那条路每帧都会走这里，每帧现造一个 56 元素的
+## 数组是白白分配（T1 审查 Minor #6 那条"别每帧造东西"的教训，56 格会被放大成 56 倍）——
+## 只在**广播**时重建（`_cache_house_levels`），逐帧这条只把缓存重推下去
+##（`TableProps.set_houses` 幂等：等级没变就只重贴位置，不碰材质 / 可见性）。
+var _house_levels: Array = []
+
+func _refresh_houses() -> void:
+	if not _board_follow_ready():
+		return
+	table3d.table_props.set_houses(_house_levels)
+
+## 广播路径专用的那一半：把 `st.tiles` 的等级读进缓存（原地改，常态**不分配**新数组）。
+func _cache_house_levels() -> void:
+	var tiles: Array = st.get("tiles", [])
+	if _house_levels.size() != tiles.size():
+		_house_levels.resize(tiles.size())   # 只在尺寸真的变了时动一次（对局里不会发生）
+	for i in tiles.size():
+		# 键一律用 `.get(..., 默认)`：这条路与棋子那条一样也挂在逐帧补推上，
+		# 手搓的不全状态（测试）会缺键 —— 少了默认值就是一条 SCRIPT ERROR 并中断整段刷新。
+		_house_levels[i] = int((tiles[i] as Dictionary).get("level", 0))
+
 ## 某枚棋子此刻在**屏幕**上的位置 —— 棋子住在 3D 层（`TableProps`），所以走
 ## "世界点 → 相机投影"（`camera.unproject_position` 给的就是屏幕/窗口坐标，正是飘字与飞钞要的）。
 ##
@@ -1420,13 +1452,15 @@ func _refresh_followers_if_cam_moved() -> void:
 		return
 	_follow_cam_key = key
 	_refresh_board_followers()
-	_refresh_tokens()
+	_refresh_tokens()       # 棋子 + 光环
+	_refresh_houses()       # 装修房子（批次 11 Task 2 并进这同一批：房子也压在格子上）
 
 ## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（手牌也在这里）。
 ##
-## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那几件（轮缘 / 牌堆 / 棋子与光环）
-## 见 `_refresh_board_followers` 与 `_refresh_tokens`；其余物件（手牌）也一律幂等，
-## 每次广播重贴一遍没有代价。它们读的都是**已同步**的状态（客户端也能算）。
+## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那几件（轮缘 / 牌堆 / 棋子与光环 /
+## 装修房子）见 `_refresh_board_followers` / `_refresh_tokens` / `_refresh_houses`；
+## 其余物件（手牌）也一律幂等，每次广播重贴一遍没有代价。它们读的都是**已同步**的状态
+##（客户端也能算）。
 ## **镜头动了却没广播**那一段由 `_refresh_followers_if_cam_moved` 逐帧兜（见那里的注释）。
 func _refresh_table_props() -> void:
 	if not _board_follow_ready():
@@ -1435,6 +1469,8 @@ func _refresh_table_props() -> void:
 	_follow_cam_key = board.cam_key()
 	_refresh_board_followers()
 	_refresh_tokens()
+	_cache_house_levels()   # 等级表只在广播这条路上重建（逐帧那条只重推缓存，见 `_refresh_houses`）
+	_refresh_houses()
 	var mine := _state_player(my_peer)
 	if mine.is_empty():
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
