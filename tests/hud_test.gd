@@ -296,12 +296,12 @@ func _run() -> void:
 		if g.get(n) != null:
 			gone.append(n)
 	_check(gone.is_empty(), "底部操作坞的成员已删净（残留：%s）" % str(gone))
-	# 另一半：坞拆了，**玩法入口**必须还在 —— 牌垫上的两个阶段按钮是掷轮与出牌确认的落点
-	#（坞里的 roll_btn / use_phase_btn 早就 visible=false，真正管事的一直是这两枚）。
-	_check(g.board._phase_spin != null and g.board._phase_spin.is_visible_in_tree(),
-		"牌垫上的「转转盘」仍在（掷轮入口）")
-	_check(g.board._phase_use != null and String(g.board._phase_use.text) != "",
-		"牌垫上的「使用道具」仍在（出牌确认的唯一落点，实得「%s」）" % String(g.board._phase_use.text))
+	# 另一半：坞拆了，**玩法入口**必须还在 —— 批次 7 起掷轮的落点是右下角动作按钮
+	#（坞里的 roll_btn / use_phase_btn 早就 visible=false，牌垫上那两枚也已在批次 7 退场）。
+	_check(g.action_btn != null and g.action_btn.visible \
+			and String(g.action_btn.text) == "转动转盘",
+		"右下角动作按钮仍在（掷轮入口，实得「%s」）"
+			% ("无" if g.action_btn == null else String(g.action_btn.text)))
 	# 陷阱：`_process` 原有一句 `if mat_bar == null: return` 的**提前返回**。只删构建、不删守卫的话，
 	# `_process` 后半段（小卖部 / 黑市 / 操作倒计时 / 开发者面板）会**静默**不再执行。
 	# 这里用「倒计时簇仍被推进」把后半段钉住（簇的推送在 `_process` 最末）。
@@ -655,6 +655,47 @@ func _run() -> void:
 	_check(rolls[0] == 2, "不是我的回合：不掷轮（实得 %d 次）" % rolls[0])
 	g.roll_received.disconnect(on_roll)
 
+	print("== 右下角动作按钮（批次 7）：转动转盘 ↔ 结束回合 ↔ 隐藏 ==")
+	_check(g.action_btn != null, "右下角动作按钮已建（TableHud.build_play_ui）")
+	g.my_peer = 2
+	g.s_state(_state(2, false))            # await="roll"、turn=2=我 ⇒ 我的掷轮窗口
+	await process_frame
+	g._process(0.0)
+	_check(g.action_btn.visible and String(g.action_btn.text) == "转动转盘",
+		"轮到我掷轮 → 按钮是「转动转盘」且可见（实得「%s」）" % String(g.action_btn.text))
+	# 点它 = 掷轮（走既有的 _on_roll_pressed；本机是"服务端"路径，见文件头那段说明）
+	var acted := [0]
+	var on_act := func() -> void: acted[0] += 1
+	g.roll_received.connect(on_act)
+	g._awaiting_roll = 2
+	g._on_action_pressed()
+	_check(acted[0] == 1, "点「转动转盘」→ 走既有的掷轮入口（实得 %d 次）" % acted[0])
+	g.roll_received.disconnect(on_act)
+	# 掷完进道具阶段 → 变「结束回合」，点它 = 收尾道具阶段（_on_skip_pressed）
+	var s_item2: Dictionary = _state(2, false)
+	s_item2.await = "item"
+	s_item2.await_peer = 2
+	g._item_epoch = 7
+	g.s_state(s_item2)
+	await process_frame
+	g._process(0.0)
+	_check(g.action_btn.visible and String(g.action_btn.text) == "结束回合",
+		"道具阶段 → 按钮变「结束回合」（实得「%s」）" % String(g.action_btn.text))
+	g._on_action_pressed()
+	_check(String(g._item_action.get("action", "")) == "skip",
+		"点「结束回合」→ 走既有的跳过入口（实得「%s」）" % String(g._item_action.get("action", "")))
+	# 不是我的窗口 → 隐藏
+	g.s_state(_state(1, false))            # turn=1 ≠ 我
+	await process_frame
+	g._process(0.0)
+	_check(not g.action_btn.visible, "不是我的回合 → 按钮隐藏")
+	# 落位：在右下角身家条（上沿 offset -160）之上，两者不打架
+	_check(g.action_btn.offset_bottom <= -160.0,
+		"动作按钮落在右下角身家条之上（offset_bottom=%.0f ≤ -160）" % g.action_btn.offset_bottom)
+	# 牌垫阶段按钮那一套必须**真的没了**（不是留成不可见空壳）
+	_check(g.board.get_node_or_null("PhaseButtons") == null, "牌垫阶段按钮层已拆净")
+	_check(not g.board.has_method("set_phase_buttons"), "set_phase_buttons 接口已退场")
+
 	print("== 点手中牌：选中 / 取消（批次 3 Task 5）==")
 	# 走**真实**的 `_on_table_click`（table_3d 命中实体那条链路），命中点取 `hand_rect` 的中心。
 	# 证据一律挑底栏拆掉之后还活着的可观察量：`selected_slot`（玩法侧的选中态，单一来源）、
@@ -754,14 +795,8 @@ func _run() -> void:
 			if cell.intersects(tph.hand_rect(k)):
 				cell_hits += 1
 	_check(cell_hits == 0, "没有一格与任何一张牌相交（相交 %d 处）—— 批次 3 的 R38/R40 就此消失" % cell_hits)
-	# 与牌垫阶段按钮也不许交叠（这是"放大"之后的另一条硬约束：按钮是出牌确认的唯一落点）
-	var pb := Rect2(g.board._phase_box.position, g.board._phase_box.size)
-	var hand_u := Rect2(Vector2(hand_x0, hand_top), Vector2(hand_x1 - hand_x0, hand_bot - hand_top))
-	_check(not hand_u.intersects(pb),
-		"手牌整排不与牌垫阶段按钮交叠（牌上沿 %.1f / 按钮下沿 %.1f，间距 %.1f 画布像素）"
-			% [hand_top, pb.end.y, hand_top - pb.end.y])
-	print("    [实测] 近排格区下沿 %.1f / 阶段按钮下沿 %.1f / 牌上沿 %.1f / 牌下沿 %.1f"
-		% [lowest_cell, pb.end.y, hand_top, hand_bot])
+	# 批次 7：牌垫上的两枚阶段按钮已退场 ⇒ 原来这条"手牌不与按钮交叠"作废。
+	# 手牌与近排格子不相交那条（上面 `cell_hits == 0`）仍在，落位硬约束由它守着。
 
 	# ① 手牌只在道具阶段吃点击：牌是常驻显示的（每次广播都摆一遍），但别的阶段点它没有意义，
 	#    吃下点击就等于把本该落到格子上的一次点击吞成「什么都没发生」——那才是真正的死区。
@@ -1179,7 +1214,7 @@ func _run() -> void:
 		# 选目标态：点对手立牌 = 选定目标，走的仍是既有的 _on_seat_clicked
 		# （强拆令是两段式：选完玩家要再点他名下的一块地）。
 		# 手上那张要从**已同步的 st** 里读（`_target_item_id` 读的是 st.players）——只改 hp 不够。
-		# `await = "item"` / `await_peer = 我` 是**必须的**：`_refresh_item_buttons` 对"不是在
+		# `await = "item"` / `await_peer = 我` 是**必须的**：`_refresh_action_button` 对"不是在
 		# 道具阶段的我家"会顺手 `_cancel_target()`（既有行为，与本任务无关）。用掷轮窗口喂广播，
 		# 选目标态会被那次广播取消掉 —— 那验的就不是"高亮重放"而是别的东西了。
 		var s_tgt: Dictionary = _state(2, false)

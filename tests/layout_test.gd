@@ -1760,7 +1760,8 @@ func _run() -> void:
 	var vp4 := Rect2(Vector2.ZERO, Vector2(t4.viewport.size))
 	var b4 = t4.board
 	# ① 反向契约
-	_check(b4.get_node_or_null("PhaseButtons") != null, "画布上有一条独立的阶段按钮层（不挂在座位卡上）")
+	_check(b4.get_node_or_null("PhaseButtons") == null,
+		"牌垫阶段按钮层已随批次 7 退场（谁把它加回来，这条先红）")
 	_check(b4.get("_seats") == null and b4.get("_seat_of_peer") == null,
 		"座位卡的表（_seats / _seat_of_peer）已从 BoardView 上删净")
 	# ② 棋盘 + 两摞牌堆都得在窗口内（画布口径），且窗口在画布内

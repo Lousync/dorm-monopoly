@@ -156,7 +156,7 @@ func _test_round_counter(g) -> void:
 	_check(g.round_no == 1, "0 号位破产后三人一圈仍记一轮（实得 %d）" % g.round_no)
 
 func _test_client_item_bar(g) -> void:
-	print("== 选中道具 → 「使用道具」按钮三态（玩法侧 selected_slot） ==")
+	print("== 我的道具阶段 → 右下角动作按钮「结束回合」（玩法侧 selected_slot） ==")
 	var pls := [
 		{"peer": 2, "name": "我", "color": 1, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false,
@@ -167,20 +167,25 @@ func _test_client_item_bar(g) -> void:
 	g.hp = []          # 客户端没有房主的 hp（hp 只在 _host_setup 里填充）
 	g.my_peer = 2
 	g.st = {"phase": "playing", "turn": 2, "await": "item", "await_peer": 2, "players": pls}
-	# 座位卡已随批次 5 Task 2 退场：不再需要 set_self_peer / 建座位 —— 牌垫阶段按钮
-	# 由 BoardView._ready 自己建（见 _test_roll_button_off_home_view 那条反向契约）。
-	g._refresh_item_buttons(true, "item")
-	_check(g.board._phase_use != null, "牌垫上有「使用道具」按钮")
-	_check(String(g.board._phase_use.text) == "跳过" and not g.board._phase_use.disabled,
-		"未选卡时该按钮为「跳过」（可点）")
+	# 座位卡已随批次 5 Task 2 退场；牌垫上的「使用道具」三态按钮又随批次 7 退场。
+	# 道具阶段的可观察量改到**右下角动作按钮**（道具阶段恒为「结束回合」，见
+	# `_refresh_action_button`）；选中态仍看玩法侧单一来源 `selected_slot`。
+	g._refresh_actions()
+	_check(g.action_btn != null and g.action_btn.visible \
+			and String(g.action_btn.text) == "结束回合",
+		"我的道具阶段：右下角动作按钮是「结束回合」且可见")
 	# 选中「交换生」（槽 1）—— 走**玩法侧唯一入口** `_on_item_slot_clicked`（桌上手牌点击最终也落到它）。
 	# 证据取 `g.selected_slot`（玩法侧单一来源）：座位卡牌位已随批次 3 Task 6 拆除后，
 	# `board.item_selected` 不再有任何可见效果（`set_item_selected` 遍历的是恒空的 slots），
 	# 拿它当证据的话「选择坏了」也会通过。选中的**可见**反馈在桌上那张手牌自己身上（抬起 + 提亮）。
 	g._on_item_slot_clicked(2, 1)
 	_check(g.selected_slot == 1, "选中「交换生」→ 玩法侧 selected_slot = 1（实得 %d）" % g.selected_slot)
-	_check(not g.board._phase_use.disabled and String(g.board._phase_use.text).contains("交换生"),
-		"选中后按钮变可用并显示道具名（形态二）")
+	# 批次 7 的 R2：那条"非道具阶段 → 收掉选中态 / 未完成的选目标态"的清理从
+	# `_refresh_item_buttons` 搬进了 `_refresh_action_button`。这里钉住它没被弄丢：
+	# 切到掷轮窗口（不再是道具阶段）→ 选中态必须被收掉。
+	g.st = {"phase": "playing", "turn": 2, "await": "roll", "await_peer": 2, "players": pls}
+	g._refresh_actions()
+	_check(g.selected_slot == -1, "非道具阶段 → 选中态被收掉（实得 %d）" % g.selected_slot)
 
 func _test_shop_buttons(g) -> void:
 	print("== 小卖部购买按钮 ==")
@@ -470,7 +475,7 @@ func _test_camera_window_resize(g) -> void:
 	_check(absf(g.board._rot) < 0.001, "镜头旋转恒为 0（实得 %.4f rad）" % g.board._rot)
 
 func _test_roll_button_off_home_view(g) -> void:
-	print("== 阶段按钮在牌垫上（画布层；本人掷轮时可点） ==")
+	print("== 右下角动作按钮（批次 7；本人掷轮时是「转动转盘」） ==")
 	var pls := [
 		{"peer": 1, "name": "我", "color": 0, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": []},
@@ -484,34 +489,16 @@ func _test_roll_button_off_home_view(g) -> void:
 		"round": 1, "max_rounds": 30, "players": pls, "tiles": _fresh_tiles(),
 		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
 	}
-	g._refresh_actions()              # 阶段按钮的状态由状态决定
+	g._refresh_actions()              # 动作按钮的状态由状态决定
 	await process_frame
 	await process_frame               # 等容器布局算出真实尺寸
 	g._process(0.0)
-	_check(g.board._phase_spin != null and g.board._phase_spin.is_visible_in_tree(),
-		"牌垫上有「转转盘」按钮")
-	_check(not g.board._phase_spin.disabled, "轮到我掷轮时「转转盘」可点")
-	# 底栏已随批次 3 Task 6 拆除：这里不再有"状态条仍显示"这回事，改成反向契约 + 出牌落点。
+	_check(g.action_btn != null and g.action_btn.visible \
+			and String(g.action_btn.text) == "转动转盘",
+		"轮到我掷轮：右下角按钮是「转动转盘」且可见")
 	_check(g.get("mat_bar") == null, "底栏成员已删净（不会留成一块不可见的空壳）")
-	_check(g.board._phase_use != null and g.board._phase_use.is_visible_in_tree(),
-		"牌垫上「使用道具」也在 —— 拆掉底栏后它是出牌确认的唯一落点")
-	# 批次 5 Task 2 的反向契约：这两枚**不再**依赖座位卡（座位卡整体退场，它们搬去了
-	# 一个独立的画布层），且那个层真的在画布里、没压在棋盘上。
-	_check(g.board.get_node_or_null("PhaseButtons") != null,
-		"阶段按钮住在一个**独立画布层**里（不是挂在座位卡上）")
-	# 「不压棋盘内容」= 按钮的下沿要落在棋盘下沿之外（桌垫下缘那条留白里）。
-	# **先把镜头拉回全景**：按钮是画布层的固定坐标，而棋盘画在哪随镜头走 ——
-	# 不回到全景的话，量的是"某个推近镜头下棋盘在哪"，与按钮位置不可比（前面的用例
-	# 改过 _zoom / _center）。两个量都从画布口径现算，不写死坐标。
-	g.board.fit_overview(true)
-	var pbox: Control = g.board._phase_box
-	var chest_bottom: float = g.board._view_from_world(g.board.BOARD_OFFSET + g.board.WORLD).y
-	var pbox_end: float = 0.0 if pbox == null else Rect2(pbox.position, pbox.size).end.y
-	_check(pbox != null and pbox_end <= g.board.mat_rect_px().end.y,
-		"按钮落在桌垫之内（下沿 %.0f ≤ 桌垫下沿 %.0f）" % [pbox_end, g.board.mat_rect_px().end.y])
-	_check(pbox != null and Rect2(pbox.position, pbox.size).position.y >= chest_bottom,
-		"按钮不压棋盘内容（上沿 %.0f ≥ 棋盘下沿 %.0f）"
-			% [0.0 if pbox == null else pbox.position.y, chest_bottom])
+	# 批次 5 Task 2 的牌垫阶段按钮层，批次 7 已整体退场 —— 反向契约：谁加回来，这条先红。
+	_check(g.board.get_node_or_null("PhaseButtons") == null, "牌垫阶段按钮层已拆净（不留空壳）")
 	# 座位卡那一套 API 必须**真的没了**（不是留着空壳）：谁把它加回来，这条先红。
 	var seat_api: Array = ["build_seats", "seat_count", "seat", "set_op_timer", "set_self_peer",
 		"update_seat_stats", "_make_seat", "_seat_bar"]

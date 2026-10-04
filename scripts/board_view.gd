@@ -21,8 +21,6 @@ signal seat_clicked(peer: int)
 ## 仍在，接口别动。
 signal item_slot_clicked(peer: int, slot: int)   # 见上方说明：已无发射方，接口保留
 signal item_discard_clicked(peer: int, slot: int) # 见上方说明：已无发射方，接口保留
-signal phase_spin_clicked()          # 牌垫上的「转转盘」
-signal phase_use_clicked()           # 牌垫上的「使用道具」
 signal cancel_clicked()              # 右键单击（未拖拽平移）：取消当前选择
 
 const TILE := 112.0
@@ -50,8 +48,8 @@ const DECK_CARD_TIME := DECK_OUT + DECK_FLIP + DECK_HOLD + DECK_BACK
 const BOARD_OFFSET := Vector2(16.0, 226.0)
 
 ## 桌垫（印在木桌上的那块"布"）在**世界坐标**里的矩形 = 棋盘 + 一圈留白。
-## 左右/上等宽、**下边最厚**：那一条正是"玩家面前"（本地玩家坐近端），
-## 牌垫阶段按钮就落在那里（见 _place_phase_buttons）——留白是刻意的、不是随手取的边距。
+## 左右/上等宽、**下边最厚**：那一条正是"玩家面前"（本地玩家坐近端，桌上手牌就摆在那里）
+## ——留白是刻意的、不是随手取的边距。
 ## 这块矩形就是桌面上看得见的那块桌垫：TableView3D 的 `TEX_WINDOW_PX`（画布口径）
 ## 与它是**同一块地方的同一比例**，改一边必须改另一边（layout_test 有断言钉住两者一致）。
 const MAT_MX := 100.0
@@ -163,7 +161,6 @@ func _ready() -> void:
 	_build_tiles()
 	_build_interior()
 	_build_ring()
-	_build_phase_buttons()
 	resized.connect(func() -> void: _need_fit = true)
 	mouse_exited.connect(func() -> void: set_hover(-1))
 
@@ -195,9 +192,6 @@ func _apply_cam() -> void:
 	_world.scale = Vector2.ONE * _zoom
 	_table.rotation = _rot
 	_world.position = _visible_center().rotated(-_rot) - _center * _zoom
-	# 阶段按钮住在**画布层**（不跟 _world）：位置只由桌垫矩形与可视区中心决定，与镜头无关，
-	# 但可视区（窗口尺寸）会变，所以随每次摆相机一起重摆一次（很便宜）。
-	_place_phase_buttons()
 
 ## 注视点限制在桌垫内（旋转 90° 倍数时可视宽高互换）。
 ## rot 省略时用当前 _rot；但算「正要转去的那个视角」的目标时必须显式传 _rot_target，
@@ -909,7 +903,7 @@ func _zoom_from_factor(factor: float) -> float:
 ##
 ## 为什么不再按"可视区大小自适应"：窗口是一块**写死的**画布矩形（`TEX_WINDOW_PX`），
 ## 若取景按可视区自适应，两者就会脱钩（画布一变，桌垫内容就滑出窗口）。
-## 这条把窗口与取景锁成同一个比例关系，`_place_phase_buttons` 也跟着它走。
+## 这条把窗口与取景锁成同一个比例关系，`mat_rect_px()`（桌垫的画布口径）也跟着它走。
 func fit_overview(hard := false) -> void:
 	auto_follow = false
 	_follow_peer = -1
@@ -1042,7 +1036,7 @@ func set_hover(idx: int) -> void:
 	# 座位卡（四条操作栏 + 内容件 + 倒计时簇 + 道具牌位）已随批次 5 Task 2 **整体退场**：
 	# 名字 / 身家 / 公开背包 / 操作倒计时 / 点选目标全部改由**桌上的 3D 立牌**承担
 	#（scripts/table_props.gd 的 standees 子层，数据由 game._refresh_standees 驱动）。
-	# 画布里从此只剩棋盘与两摞牌堆；阶段按钮搬去了独立的画布层（_build_phase_buttons）。
+	# 画布里从此只剩棋盘与两摞牌堆（牌垫阶段按钮也已在批次 7 退场：画布里再无按钮）。
 	#
 	# 注意下面几条**保留的接口**：它们今天没有座位卡可落点了，但玩法侧仍在调，
 	# 按批次 3 的先例「保留接口 + 加注说明」，不删。
@@ -1064,38 +1058,11 @@ const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部格名：菜绿
 var item_selected := {"peer": -1, "slot": -1}
 var _discard_hl := {"peer": -1, "slot": -1}
 
-# ---------------- 牌垫阶段按钮（画布上的独立层，批次 5 Task 2 改址） ----------------
-#
-# **为什么必须改址**：这两枚以前建在 `_make_seat` 的 `e == 0` 分支里、挂在"自己那条座位栏"上，
-# 而它们是**出牌确认（`_on_use_pressed`）的唯一落点**、也是掷轮的入口之一 —— 座位卡一拆，
-# 跟着消失就是"漏了就坏玩法"。现在它们住在一个与座位无关的独立画布层里，
-# 位置由桌垫矩形推导（见 `_place_phase_buttons`）：**玩家面前、不压棋盘内容**。
-# `set_phase_buttons(...)` 的签名与语义一字未动（regression_test 的两条断言替它站岗）。
-var _phase_layer: Control             # 独立画布层（不吃鼠标，只有按钮本身吃）
-var _phase_box: HBoxContainer         # 两枚按钮并排
-var _phase_spin: Button               # 牌垫上的「转转盘」
-var _phase_use: Button                # 牌垫上的「使用道具」
-
-## 建这两枚按钮（`_ready` 里建一次，此后只由 `set_phase_buttons` 改文案/配色/可用）。
-func _build_phase_buttons() -> void:
-	_phase_layer = Control.new()
-	_phase_layer.name = "PhaseButtons"
-	_phase_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 只有按钮本身吃点击
-	_phase_layer.z_index = 70        # 压在棋子 / 光环 / 格详情卡（15~60）之上，与旧座位卡同位阶
-	add_child(_phase_layer)
-	_phase_box = HBoxContainer.new()
-	_phase_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_phase_box.add_theme_constant_override("separation", 16)
-	_phase_layer.add_child(_phase_box)
-	_phase_spin = UIKit.button("转转盘", 22, "primary")
-	_phase_spin.custom_minimum_size = Vector2(184, 92)
-	_phase_spin.pressed.connect(func() -> void: phase_spin_clicked.emit())
-	_phase_box.add_child(_phase_spin)
-	_phase_use = UIKit.button("使用道具", 22)
-	_phase_use.custom_minimum_size = Vector2(184, 92)
-	_phase_use.pressed.connect(func() -> void: phase_use_clicked.emit())
-	_phase_box.add_child(_phase_use)
-	_place_phase_buttons()
+# ---------------- 牌垫阶段按钮：批次 7 已退场 ----------------
+# 原来桌垫下缘那两枚「转转盘 / 使用道具」整体拆掉（用户要求：按钮不画在桌面上）。
+# 掷轮改为**桌面转盘实体**（仍在，`table_props.wheel_hit`）与**屏幕右下角动作按钮**两条入口；
+# 出牌改为点手中牌直出（见 game._on_hand_clicked）。`mat_rect_px()` 保留：它是桌垫在画布上的
+# 矩形口径，取景与测试按它量，与按钮无关。
 
 ## 桌垫在**画布**上的矩形（px）：`MAT_RECT × 基准倍率`，中心恒在可视区中心
 ##（取景就是这么定的）。它与 `TableView3D.TEX_WINDOW_PX` 是同一块地方 —— 一边是画布口径、
@@ -1104,31 +1071,6 @@ func mat_rect_px() -> Rect2:
 	var r := Rect2(Vector2.ZERO, MAT_RECT.size * _fit_zoom)
 	r.position = _visible_center() - r.size * 0.5
 	return r
-
-## 把按钮层摆到**桌垫下缘那条留白**正中（本地玩家坐近端，那里正是"玩家面前"）。
-##
-## 位置一律由 `mat_rect_px()` 推出来，**不新增任何硬编码的画布坐标**。
-## 放在**画布层**（不挂 `_world`）是刻意的：不跟 `_zoom`，掷轮 / 抽卡推近时按钮不会被放大或推出窗口。
-func _place_phase_buttons() -> void:
-	if _phase_box == null:
-		return
-	var mat_px := mat_rect_px()
-	var s: Vector2 = _phase_box.get_combined_minimum_size()
-	_phase_box.size = s
-	_phase_box.position = Vector2(mat_px.get_center().x - s.x * 0.5,
-		mat_px.end.y - (MAT_MB * _fit_zoom + s.y) * 0.5)
-
-## 更新牌垫阶段按钮的文案/配色/可用（style: primary=黄 normal=灰 good=绿）
-func set_phase_buttons(spin_text: String, spin_style: String, spin_disabled: bool,
-		use_text: String, use_style: String, use_disabled: bool) -> void:
-	if _phase_spin != null and is_instance_valid(_phase_spin):
-		_phase_spin.text = spin_text
-		_phase_spin.disabled = spin_disabled
-		UIKit.restyle_button(_phase_spin, spin_style)
-	if _phase_use != null and is_instance_valid(_phase_use):
-		_phase_use.text = use_text
-		_phase_use.disabled = use_disabled
-		UIKit.restyle_button(_phase_use, use_style)
 
 ## 指向性道具：高亮可选格子 / 可选玩家（两者互斥）。**座位卡退场后前者仍是画布上的金框、
 ## 后者在画布里已无落点** —— "哪些玩家可被选中"改由**桌上立牌**点亮

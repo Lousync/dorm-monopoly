@@ -133,6 +133,9 @@ var rules_tab := ""
 ## 四角身家条（批次 5 Task 3）：四条一起建、只显示有人的那几条（见 `_refresh_corner_bars`）。
 ## 取代了原先的右侧名册栏（`roster_box` / `roster_rows` 已删，理由见 table_hud.gd 里那段）。
 var corner_bars: Array = []
+## 右下角动作按钮（批次 7）：轮到我掷轮 → 「转动转盘」，掷完进道具阶段 → 「结束回合」，
+## 其余时候整枚隐藏。由 `TableHud.build_play_ui` 建，状态见 `_refresh_action_button`。
+var action_btn: Button
 var _corner_sig := ""              # 四角条的刷新签名（状态没变就不重写）
 var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
 var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，簇收起）
@@ -252,8 +255,6 @@ func _ready() -> void:
 
 	board.item_slot_clicked.connect(_on_item_slot_clicked)
 	board.item_discard_clicked.connect(_on_discard_clicked)
-	board.phase_spin_clicked.connect(_on_roll_pressed)
-	board.phase_use_clicked.connect(_on_use_pressed)
 	board.cancel_clicked.connect(_cancel_target)
 	table3d.on_table_click = _on_table_click   # 桌面实体（转盘 / 手牌）先于桌垫内容消费点击
 	Net.chat_received.connect(_refresh_chat)
@@ -1597,15 +1598,13 @@ func _refresh_corner_bars(standing: Array) -> void:
 					else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4))
 
 func _refresh_actions() -> void:
-	var phase := String(st.get("phase", "playing"))
 	var await_state := String(st.get("await", ""))
 	var is_my_roll := await_state == "roll" and int(st.get("turn", -1)) == my_peer
-	var my_turn := phase == "playing" and int(st.get("turn", -1)) == my_peer
-	_refresh_item_buttons(my_turn, await_state)
+	_refresh_action_button()
 	# 「轮到你转盘了」——原来这里写底栏状态条文案并顺手把镜头对回自己。底栏已随批次 3
 	# Task 6 取消：**状态文案这一层信息没有了**（见 doc/development/架构总览.md §五），
-	# 「该你了」改由牌垫阶段按钮的点亮/置灰（set_phase_buttons 的 style）与立牌上的
-	# 操作倒计时承担，发生过的事由战报承担。镜头对焦这半与文字无关，保留。
+	# 「该你了」改由右下角动作按钮的点亮与立牌上的操作倒计时承担，发生过的事由战报承担。
+	# 镜头对焦这半与文字无关，保留。
 	if await_state == "roll" and is_my_roll:
 		if not board.is_showing_deck_card() and not board.is_wheel_spinning() \
 				and not board.is_rotating():
@@ -1614,6 +1613,48 @@ func _refresh_actions() -> void:
 	if at_mode != "" and is_my_roll and int(st.get("roll_epoch", -1)) != _at_roll_epoch:
 		_at_roll_epoch = int(st.get("roll_epoch", -1))
 		_at_auto_roll()
+
+## 右下角动作按钮的状态（唯一来源是 st，客户端也准）：每次状态广播推一遍。
+##
+## 三态（见 批次7-设计 §5.2）：
+##   * 轮到我掷轮   → 「转动转盘」（primary，点亮）
+##   * 轮到我用道具 → 「结束回合」（normal）
+##   * 其余         → 整枚隐藏
+## "其余"含「我掷完、正在移动与落地结算」那段（await==""）—— 那一段没有可做的操作，
+## 显示一枚禁用的「转动转盘」会让玩家以为还能再掷。
+func _refresh_action_button() -> void:
+	if action_btn == null or not is_instance_valid(action_btn):
+		return
+	var phase := String(st.get("phase", ""))
+	var await_state := String(st.get("await", ""))
+	# 非道具阶段 → 收掉选中态与未完成的选目标态。**这一段是从 _refresh_item_buttons 顶部搬来的**
+	# （那个函数随按钮退场整段删掉，但这条清理不能丢）：道具阶段**超时**结束时 `_tgt_stage` 会挂着，
+	# 没有这一笔，选目标提示与牌上那点高亮会一直亮到下个回合。
+	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
+	if not using and selected_slot >= 0:
+		_clear_item_selection()
+	if not using and _tgt_stage != "":
+		_cancel_target()
+	var my_roll: bool = phase == "playing" and await_state == "roll" \
+		and int(st.get("turn", -1)) == my_peer
+	var my_item: bool = phase == "playing" and await_state == "item" \
+		and int(st.get("await_peer", -1)) == my_peer
+	action_btn.visible = my_roll or my_item
+	if my_roll:
+		action_btn.text = "转动转盘"
+		UIKit.restyle_button(action_btn, "primary")
+	elif my_item:
+		action_btn.text = "结束回合"
+		UIKit.restyle_button(action_btn, "normal")
+
+## 右下角动作按钮的唯一后果函数（文案与状态由 _refresh_action_button 决定）。
+## 只有"我的掷轮窗口"与"我的道具窗口"两次点击会做事，其余一律空转。
+func _on_action_pressed() -> void:
+	match String(st.get("await", "")):
+		"roll":
+			_on_roll_pressed()
+		"item":
+			_on_skip_pressed()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -3106,38 +3147,6 @@ func _apply_coco(p: Dictionary) -> void:
 		t.owner = GameData.NO_OWNER
 		t.level = 0
 		_log("%s 的【%s】被炸成了焦土！落地捐款可以修复它" % [o.name, String(GameData.TILES[idx].name)], "#ef7b74")
-
-func _refresh_item_buttons(my_turn: bool, await_state: String) -> void:
-	if board == null:
-		return
-	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
-	# 非道具阶段 → 清掉选中（绿光收掉）与未完成的选目标态
-	if not using and selected_slot >= 0:
-		_clear_item_selection()
-	if not using and _tgt_stage != "":
-		_cancel_target()
-	# 「使用道具」按钮三态：未选=跳过 / 选中可用=绿 / 选中不可用（含被动）=灰
-	var use_txt := "使用道具"
-	var use_style := "normal"
-	var use_dis := true
-	if using:
-		var p0 := _state_player(my_peer)
-		var its0: Array = p0.get("items", [])
-		if selected_slot < 0 or selected_slot >= its0.size():
-			use_txt = "跳过"; use_style = "normal"; use_dis = false
-		else:
-			var it: Dictionary = its0[selected_slot]
-			var d := ItemData.def(String(it.id))
-			var usable: bool = String(d.get("type", "")) == "active" \
-				and int(it.get("cd", 0)) == 0 \
-				and int(p0.get("stamina", 0)) >= _item_cost(p0, it) \
-				and not bool(p0.get("item_used", false)) and int(p0.get("silence", 0)) == 0
-			use_txt = "使用「%s」" % String(it.id)
-			use_style = "good" if usable else "normal"
-			use_dis = not usable
-	var spin_active: bool = my_turn and await_state == "roll"
-	board.set_phase_buttons("转转盘", "primary" if spin_active else "normal", not spin_active,
-		use_txt, use_style, use_dis)
 
 ## 选中一件道具（玩法侧入口，唯一）：写 selected_slot 并把**表现侧**一起同步。
 ##

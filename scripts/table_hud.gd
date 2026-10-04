@@ -71,11 +71,11 @@ static func build_play_ui(g: Node) -> void:
 
 
 	# 屏幕底部的操作坞（牌垫阶段条 + 操作条 + 共用底板）已随批次 3 Task 6 整条拆除：
-	# 掷轮改点桌面上的转盘实体、出牌改点手中牌（选中后点**牌垫上**的「使用道具」确认）、
-	# 现金与体力在桌上。所以这里不再建 mat_bar / action_bar / dock_plate / roll_btn /
+	# 掷轮改点桌面上的转盘实体、出牌改点手中牌（批次 7 起再点一下直出）、现金与体力在桌上。
+	# 所以这里不再建 mat_bar / action_bar / dock_plate / roll_btn /
 	# use_phase_btn / item_btn_box / status_label —— 玩家侧的操作入口只剩桌面上那些实体
-	# 与牌垫阶段按钮（`board.set_phase_buttons`，见 board_view.gd）。
-	# 注意别顺手把**牌垫**那两个按钮或 `_place_overlay_bar`（黑市还在用）也删了。
+	# 与下方的右下角动作按钮（`g.action_btn`）。
+	# 注意别顺手把 `_place_overlay_bar`（黑市还在用）也删了。
 
 	# 小卖部全屏界面（触发时独占；照 menu_layer 那套：全屏压暗底 + 居中面板，两者一起显隐）
 	g.shop_layer = Control.new()
@@ -358,6 +358,22 @@ static func build_play_ui(g: Node) -> void:
 	g.corner_bars = []
 	for ci in CORNER_SLOTS.size():
 		g.corner_bars.append(_make_corner_bar(g, hud, CORNER_SLOTS[ci]))
+
+	# 右下角动作按钮（批次 7）：轮到我掷轮 → 「转动转盘」；掷完进道具阶段 → 「结束回合」。
+	# 其余时候整枚隐藏（含"我掷完、正在移动与落地结算"那段 —— 那段没有可做的操作，
+	# 显示一枚禁用的「转动转盘」会让玩家以为还能再掷，见 批次7-设计 §5.2）。
+	# 落位：屏幕右下象限、**右下方那条四角身家条之上**（那条占 x∈[-207,-12] / y∈[-160,-56]）。
+	# **注意别再往右下角外推**：身家条就在那儿，压上去会挡住它。
+	g.action_btn = UIKit.button("转动转盘", 18, "primary")
+	g.action_btn.custom_minimum_size = Vector2(200, 52)
+	g.action_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	g.action_btn.offset_left = -220
+	g.action_btn.offset_right = -20
+	g.action_btn.offset_top = -224
+	g.action_btn.offset_bottom = -172
+	g.action_btn.visible = false
+	g.action_btn.pressed.connect(g._on_action_pressed)
+	hud.add_child(g.action_btn)
 
 	var hair := ColorRect.new()
 	hair.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
