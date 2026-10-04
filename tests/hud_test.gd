@@ -453,6 +453,11 @@ func _run() -> void:
 	_check(not g.board.has_method("focus_point_zoom"), "focus_point_zoom 已退场（唯一调用方是抽卡推近）")
 	var B1 = load("res://scripts/board_view.gd")
 	_check(not B1.get_script_constant_map().has("DECK_PUSH_FACTOR"), "DECK_PUSH_FACTOR 常量已删")
+	# z 层级（批次 8 审查 R5）：卡绝不能盖在模态面板上 —— 房主暂停会把树 `paused`，
+	# `DeckReveal._process` 随之停 ⇒ 卡收不掉、冻在暂停面板上。判据走**显式 z**，不看树序：
+	# `z_as_relative` 默认为真，卡挂在 hud(0) 下、菜单挂在 game(0) 下，靠树序谁在上会漂。
+	_check(g.deck_reveal.z_index < g.menu_layer.z_index,
+		"抽卡大字卡在暂停菜单之下（z %d < %d）" % [g.deck_reveal.z_index, g.menu_layer.z_index])
 
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
 	var hs: Dictionary = _state(2, false)

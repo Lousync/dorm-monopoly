@@ -33,7 +33,12 @@ var _showing := false
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	z_index = 65        # 压在棋盘 / 四角身家条之上；小卖部(70) 与暂停菜单之下（出图核对）
+	# 压在棋盘 / 四角身家条之上、**模态带之下**（暂停菜单 / 结算 50 / 弹问 60 / 小卖部 70）。
+	# 40 < 模态带里最低的 50 ⇒ 卡绝不被模态面板盖在下面，也绝不反压在它们之上。
+	# **不能只靠树序**：`z_as_relative` 默认为真，本组件挂在 `hud`(z 0) 里 ⇒ 实效 z 就是 40；
+	# 而 `menu_layer` 挂在 `game` 下（也是 0）—— 靠树序时谁在上取决于建/搬节点的顺序，
+	# 所以模态层自己也**显式**设了 z（见 `table_hud.build_menu_ui` 的 `menu_layer.z_index`）。
+	z_index = 40
 	visible = false
 	resized.connect(_place)
 
@@ -183,6 +188,9 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	plate.add_child(m)
 	var v := VBoxContainer.new()
+	# 契约是"绝不吃点击"：`STOP` 的后代不会被 `IGNORE` 的祖先屏蔽 ⇒ 这一层也要显式 IGNORE
+	#（根 / card / plate / m / layer / rule 都已经是 IGNORE，别只漏这一层）。
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_theme_constant_override("separation", 8)
 	m.add_child(v)
 	var title := UIKit.label(deck, 30, style[0])

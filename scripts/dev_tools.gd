@@ -475,7 +475,12 @@ func take_shot(path: String) -> void:
 	if path.contains("rules"):
 		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
 	if path.contains("pause"):
-		g._open_menu()           # 摆拍：打开暂停菜单
+		# 摆拍：打开暂停菜单。**这张 PNG 证明不了卡与菜单的层级**：`--shot=pause` 是先开菜单、
+		# 之后才 `show_card`（且本例多数不带 card ⇒ 卡压根不演），而房主暂停会把树 `paused`、
+		# `DeckReveal._process` 随之停 ⇒ 卡收不掉且 `alpha=0` 时不可见 —— 拍到的永远是"没有卡"。
+		# 「卡在菜单之下」由 `hud_test` 的显式 z 断言钉住（`deck_reveal.z_index < menu_layer.z_index`），
+		# 别从这张图得出反向结论。
+		g._open_menu()
 	if path.contains("deckout"):
 		# 抽卡「抽出」摆拍（批次 8 起演出在**屏幕层**，相机不再参与）：这里不再需要先把注视点
 		# 挪到牌堆（旧版是给 `play_deck_card` 的推近兜底），只等一拍让场景稳定。

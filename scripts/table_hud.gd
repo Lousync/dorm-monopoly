@@ -586,6 +586,12 @@ static func build_menu_ui(g: Node) -> void:
 	# ALWAYS 而非 WHEN_PAUSED：非房主本地打开菜单时对局仍在跑，菜单必须可交互
 	g.menu_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	g.menu_layer.visible = false
+	# 模态层按 z 显式置顶：菜单挂在 `game`(z 0) 下、自身原先没有 z_index ⇒ 实效 0，
+	# 挡不住后来出现的屏幕层控件（抽卡大字卡 DeckReveal 实效 40）。小卖部(70) 本来就已盖过
+	# 菜单的 0 ⇒ 这一笔顺带把既有那条潜在缺口也补上：模态带 = 菜单 80 / 小卖部 70 /
+	# 弹问 60 / 结算 50，全部高于屏幕 HUD 带（≤40）。**别靠树序**（`z_as_relative` 为真，
+	# 谁在上会随建节点 / `move_child` 的顺序漂）。
+	g.menu_layer.z_index = 80
 	g.add_child(g.menu_layer)
 
 	# 全屏压暗底：视觉上压暗棋盘，同时替菜单吞掉落在面板外的点击（模态）
