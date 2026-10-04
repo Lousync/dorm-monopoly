@@ -382,7 +382,7 @@ func menu_probe_run() -> void:
 ##   * **`--` 分隔符是必需的、不是笔误**：本项目所有开关都从 `OS.get_cmdline_user_args()` 读，
 ##     而它只返回 `--` 之后的参数 —— 少了它探针**永远不启动**、自动对局会一直跑下去
 ##     （复审实测：不加 `--` 跑到 240 s 被杀；加了约 20 s 出数）。
-##   * 走 `--autotest=host` 是为了**四家都在**（`--shot-game=1` 不补机器人 ⇒ 只有一条四角条，
+##   * 走 `--autotest=host` 是为了**四家都在**（`--shot-game=1` 不补机器人 ⇒ 名册条是空的，
 ##     量出来的不是"默认对局"的量）；
 ##   * `--rounds=9999` 只是让自动对局别在采样结束前自己收尾退出（本探针先退）。
 ##   * **别配 `--headless`**：探针逐帧等 `RenderingServer.frame_post_draw`，而 dummy 渲染器
@@ -504,6 +504,20 @@ func take_shot(path: String) -> void:
 		_on_tile_clicked(27)  # 顺便展示格子详情卡
 	if path.contains("rules"):
 		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
+	if path.contains("logopen"):
+		# 摆拍（批次 12 D）：展开右上角**战报栏**，用来核对"展开的战报栏不压名册条"
+		#（⑩ 明写名册条与它不许打架，`table_hud` 把战报栏的顶边让到了名册条下沿之下）。
+		# 走**真入口** `_toggle_log`（与玩家点「战报 ▾」同一条路），不直改 `log_panel.visible`。
+		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_logopen_table_plain.png`
+		g._toggle_log()
+	if path.contains("abshow") and g.multiplayer.is_server():
+		# 摆拍（批次 12 D）：让**畸变横幅**亮起来（批次 12 D3 起它在顶部**水平居中**、y≈6..48）。
+		# 走真路：写房主的 `_ab_active` 再 `_broadcast_state()` —— 横幅的显隐读的就是快照的
+		# `aberrations` 字段（`_refresh_ab_ui`），与真实触发同一条链，不直调那个刷新函数。
+		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_abshow_table_plain.png`
+		g._ab_active = [{"id": "断网", "left": 3}]
+		g._broadcast_state()
+		await get_tree().create_timer(0.25).timeout
 	if path.contains("pause"):
 		# 摆拍：打开暂停菜单。**这张 PNG 证明不了卡与菜单的层级**：`--shot=pause` 是先开菜单、
 		# 之后才 `show_card`（门是 `not path.contains("plain") or path.contains("card")`，所以不带
@@ -589,7 +603,7 @@ func take_shot(path: String) -> void:
 		# 摆拍（终审 fix wave）：开一个**对手**的道具弹窗，核对"卡牌图标 / 名称 / 能量小格 /
 		# 身家现金都读得出、面板居中"。与 hand / level / target 同类 —— 只在对局里注入**局面状态**，
 		# 玩法代码一行不改。手上有道具的家才有东西看：没有就先给 TA 发几件，再广播。
-		# **走真入口** `_on_corner_bar_clicked`（与玩家点四角条走同一条路），不直调 `_open_player_popup`。
+		# **走真入口** `_on_corner_bar_clicked`（与玩家点身家条 / 名册行走同一条路），不直调 `_open_player_popup`。
 		# 用法：`--autotest=host --rounds=6 --shot=shots/b9_popup_table_plain.png`
 		#   `table` → 停在围桌全景（不拉近、不弹格详情卡）；`plain` → 跳过抽卡与赌局浮层
 		#   （那两样会抢镜；**别**再带上 `card`）。
@@ -613,8 +627,8 @@ func take_shot(path: String) -> void:
 		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
 		g.casino.s_casino_roll.rpc({g.my_peer: 5})
 	if path.contains("target") and g.multiplayer.is_server() and not g.htiles.is_empty():
-		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**四角身家条**亮着、其余不亮"
-		#（立牌已退场，落点从桌上立牌换成屏幕四角条；高亮由 `_refresh_corner_highlight`
+		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**名册行**亮着、其余不亮"
+		#（落点史：桌上立牌 → 屏幕四角条（批次 9）→ 顶部名册条（批次 12 D）；高亮由 `_refresh_corner_highlight`
 		# 在批次 9 Task 3 接上，出图名 `xx_target_plain.png`）。
 		# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出
 		# "有的亮、有的不亮"，正是这条反馈要展示的对比（跑腿券那种"谁都能选"的拍不出对比）。

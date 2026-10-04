@@ -124,16 +124,23 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   `hand` → 给房主**发几张不同品质的道具**（只在房主侧注入状态，不动玩法代码），
   用来拍「手里握着牌」——开局背包是空的；
   `level` → 给前几块地**注入装修等级 1..4**（房主名下，用来核对房子图标与等级配色）；
-  `target` → 进**选目标态**（给房主发一张「强拆令」、只给最后一家两块地）核对"可选中的立牌
-  亮着、其余不亮"，**必须同时带 `plain`**（如 `xx_target_plain.png`）—— 不带的话后面那段
-  赌局预览会盖上整屏、什么都看不出来。
+  `target` → 进**选目标态**（给房主发一张「强拆令」、只给最后一家两块地）核对"可选中的**名册行**
+  亮着、其余不亮"（批次 12 D 起落点在右上角名册条；此前是屏幕四角条），**必须同时带 `plain`**
+  （如 `xx_target_plain.png`）—— 不带的话后面那段赌局预览会盖上整屏、什么都看不出来。
+  **注意看第一帧**（`xx_target_plain.png`，不带 `_N` 后缀）：选目标态不冻结树，第 2/3 帧
+  （0.6/1.2s 后）对局可能已经推进过、状态被 `_cancel_target` 收掉了。；
+  `logopen` → 展开右上角**战报栏**（走真入口 `_toggle_log`），用来核对"展开的战报栏不压名册条"
+  （批次 12 D；如 `xx_logopen_table_plain.png`）；
+  `abshow` → 把房主的 `_ab_active` 写一条畸变再 `_broadcast_state()`，让**顶部居中的畸变横幅**
+  亮起来核对落位与不重叠（批次 12 D；如 `xx_abshow_table_plain.png`）。
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
   **两条都会顺带推动手牌淡出**（`view2d` 端手里牌本就看不见）：想拍"手里有牌"，文件名别带
   `tilt` / `view2d` —— 否则会拿到一张空手牌，并当成 bug 去查。
   常拼的几个：**干净全景 `xx_table_plain.png`**、**全景＋格详情卡 `xx_plain.png`**
   （单带 `plain` 拍出来的**仍是全景**，要近景请再加 `freecam`，见上）、
   **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**、
-  **看选目标态 `xx_target_plain.png`**。
+  **看选目标态 `xx_target_plain.png`**（看**第一帧**）、**看展开的战报栏 `xx_logopen_table_plain.png`**、
+  **看畸变横幅 `xx_abshow_table_plain.png`**。
 - **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
 - **`--` 分隔符不能漏** —— 这些开关都读 `OS.get_cmdline_user_args()`（`--` **之后**的那一段）：
   写成 `--path . --shot=x.png` 会被 Godot 自己吃掉（不报错、也不生效），必须是
@@ -141,7 +148,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   第一次出图最容易踩。
 
 配套：`--shot-game=1 --shot=<路径>` 单人直达对局 —— 注意**不补机器人**，牌桌上只有你一家，
-**要拍四家立牌 / 四角身家条请改用 `--autotest=host --rounds=N --shot=...`**；
+**要拍四家的名册条请改用 `--autotest=host --rounds=N --shot=...`**；
 `--shot-lobby=<路径>` 直达大厅；
 `--shot-round=N` 指定**第几轮**摆拍（默认 2）——
 想看中后期才有的状态（满盘归属、各家装修）就把它调大，例如

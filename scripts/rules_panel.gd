@@ -15,15 +15,18 @@ static func build(g: Node) -> void:
 	_build_panel(g)
 	select_tab(g, "basic")
 
-## 收起态：左下角一个按钮（占据原「操作提示」的位置）
+## 收起态：**右上角**一枚按钮（批次 12 D2 / 设计 §⑩4：从左上角搬到右上、与「战报」并列）。
+## 位置是照着「战报」按钮（`table_hud` 里 -106..-12 / 12..40）排的：同一条 y、再往左让开 12 像素。
+## 展开的面板**仍在左下角**（384×422 那么大，放右上会盖住战报栏与名册条）——
+## 所以这枚按钮的作用更像是"翻到规则那一页"，面板从屏幕另一侧升起来。
 static func _build_button(g: Node) -> void:
 	g.rules_btn = UIKit.with_icon(UIKit.button("规则说明", 13), "rules", 17)
 	g.rules_btn.tooltip_text = "查看操作提示与完整游戏规则"
-	g.rules_btn.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	g.rules_btn.offset_left = 14
-	g.rules_btn.offset_right = 14 + BTN_W
-	g.rules_btn.offset_top = -46
-	g.rules_btn.offset_bottom = -12
+	g.rules_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	g.rules_btn.offset_left = -118 - BTN_W
+	g.rules_btn.offset_right = -118
+	g.rules_btn.offset_top = 12
+	g.rules_btn.offset_bottom = 40
 	g.rules_btn.pressed.connect(func() -> void: g._set_rules_open(true))
 	g.add_child(g.rules_btn)
 

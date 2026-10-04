@@ -96,8 +96,11 @@ func _run() -> void:
 	var all_text := ""
 	for p in pages:
 		all_text += String(p.body)
-	_check(basic_page.contains("身家条") and basic_page.contains("选中"),
-		"基础操作页把选目标的入口说成「点屏幕四角的对手身家条」（立牌已随批次 9 退场）")
+	_check(basic_page.contains("名册条") and basic_page.contains("选中"),
+		"基础操作页把选目标的入口说成「点右上角名册条里对手那一行」（批次 12 D 落点从四角条搬到名册条）")
+	# 反向契约：四角条只剩"我"那一条之后，"点屏幕四角的对手身家条"这句话就是**教错东西**
+	_check(not basic_page.contains("点屏幕四角的"),
+		"基础操作页不再教「点屏幕四角的对手身家条」（他人的四角条已删）")
 	_check(not all_text.contains("立牌"),
 		"全部页都不再出现已退场的「立牌」（反向契约，同「滚轮缩放」那条；查 all_text 与下面「座位卡」那条对齐）")
 	_check(not all_text.contains("座位卡"),

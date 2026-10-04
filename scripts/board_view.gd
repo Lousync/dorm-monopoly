@@ -15,7 +15,8 @@ class_name BoardView
 
 signal tile_clicked(idx: int)
 ## **已无发射方（批次 5 Task 2 起）**：座位卡整体退场后，画布里不再有"点玩家"的落点 ——
-## 「点玩家选目标」批次 9 起由**屏幕层四角身家条**承担（`game._on_corner_bar_clicked`
+## 「点玩家选目标」批次 9 起由**屏幕层的身家条 / 名册行**承担（批次 12 D 起落点在顶部名册条；
+## `game._on_corner_bar_clicked`
 ## 直调 `game._on_seat_clicked(peer)`）。信号与连接一律保留（同下面两条的先例）：
 ## 玩法入口 `_on_seat_clicked` 仍在，接口别动。
 signal seat_clicked(peer: int)
@@ -819,7 +820,8 @@ func _gui_input(ev: InputEvent) -> void:
 			elif _dragging:
 				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
 					# 座位卡已拆（批次 5 Task 2）：画布里只剩棋盘与牌堆，左键单击 = 点格子。
-					# 「点玩家选目标」从批次 9 起走**屏幕层四角身家条**（`game._on_corner_bar_clicked`），
+					# 「点玩家选目标」从批次 9 起走**屏幕层的身家条 / 名册行**（批次 12 D 起落点在名册条；
+				# `game._on_corner_bar_clicked`），
 					# 桌面这条链上早已没有"点玩家"的落点。
 					var idx := _index_at(mb.position)
 					if idx >= 0:
@@ -860,8 +862,8 @@ func set_hover(idx: int) -> void:
 		_animate_tile(idx, true)
 
 	# 座位卡（四条操作栏 + 内容件 + 倒计时簇 + 道具牌位）已随批次 5 Task 2 **整体退场**：
-	# 名字 / 身家 / 操作倒计时改由**屏幕层四角身家条**承担（公开背包批次 9 起另有玩家道具弹窗、
-	# 选目标改点四角条；中间那层桌上 3D 立牌也随批次 9 退场）。
+	# 名字 / 身家 / 操作倒计时改由**屏幕层的身家条 + 顶部名册条**承担（公开背包批次 9 起另有
+	# 玩家道具弹窗、选目标批次 12 D 起改点名册条；中间那层桌上 3D 立牌也随批次 9 退场）。
 	# 画布里从此只剩棋盘与两摞牌堆（牌垫阶段按钮也已在批次 7 退场：画布里再无按钮）。
 	#
 	# 注意下面几条**保留的接口**：它们今天没有座位卡可落点了，但玩法侧仍在调，
@@ -905,7 +907,7 @@ func mat_rect_px() -> Rect2:
 	return r
 
 ## 指向性道具：高亮可选格子 / 可选玩家（两者互斥）。**座位卡退场后前者仍是画布上的金框、
-## 后者在画布里已无落点** —— "哪些玩家可被选中"改由**屏幕四角身家条**点亮
+## 后者在画布里已无落点** —— "哪些玩家可被选中"改由**屏幕层的名册条那一行**点亮
 ##（`game._refresh_corner_highlight`，批次 9）。两者由 `game._push_peer_highlight`
 ## 在同一个调用点一起推，判据只有一份。
 func set_select_peers(peers: Array) -> void:
@@ -949,7 +951,7 @@ func pending_tile() -> int:
 
 ## 「哪些玩家此刻可被选中」的高亮：**画布里没有落点了**（座位卡与桌上立牌都已退场）。
 ## **保留接口不删**（`game._begin_peer_target` 仍在调）。
-## 这条反馈本身**不在画布里**：批次 9 起由**屏幕四角身家条**承担
+## 这条反馈本身**不在画布里**：批次 9 起由**屏幕层的身家条 / 名册行**承担
 ##（`game._refresh_corner_highlight` —— 可选中的那条描金边 + 提亮），
 ## 与屏幕层那句文字提示（`game._show_target_hint`）一起构成完整的"能点谁"。
 func _set_hl_peers(_peers: Array) -> void:
