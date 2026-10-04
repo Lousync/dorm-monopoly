@@ -1,7 +1,7 @@
 class_name GameData
 ## 棋盘、事件卡与规则数值。
 ## 棋盘为 56 格环形（18×12 外圈，四角各一格），由 _build_tiles 确定性生成：
-## 10 组各 3 块地产沿外圈排布，机会/命运/缴费/兼职/休息穿插其间。
+## 10 组各 3 块地产沿外圈排布，机会/命运/小卖部/失物招领/特浓咖啡/赌场/休息穿插其间。
 
 const MAX_PLAYERS := 4
 const START_MONEY := 20000
@@ -105,28 +105,14 @@ static func prop_price(k: int) -> int:
 static func prop_rent(k: int) -> int:
 	return int(roundf(float(prop_price(k)) * PROP_RENT_RATIO / 10.0)) * 10
 
-## 强制缴费格（按铺设顺序取用）
-const FINES := [
-	["看病挂号", 500], ["缴电费", 800], ["挂科重修", 1000], ["修车摊", 600],
-	["丢校园卡", 400], ["社团费", 1200], ["宽带到期", 700], ["打印超支", 900],
-	["补考费", 1500], ["班费摊派", 600],
-]
-
-## 兼职/奖励格（按铺设顺序取用）
-const BONUSES := [
-	["勤工俭学", 600], ["旧书转让", 500], ["问卷之星", 400], ["比赛得奖", 1000],
-	["摆摊成功", 800], ["退水费", 400], ["竞赛奖金", 1200], ["帮搬教材", 500],
-	["直播爆火", 1500], ["宿舍评比奖", 900], ["二手出清", 600], ["奖学金", 2000],
-]
-
 const TILE_DESC := {
 	"start": "踏上即可领取工资",
 	"jail": "被查寝的同学在这里反省",
 	"go_jail": "立刻被送往宿委会反省一回合",
 	"rest": "放松一下，无事发生",
 	"event": "抽取一张宿舍事件卡",
-	"fine": "强制缴费，躲不掉",
-	"bonus": "天降横财，直接入账",
+	"item": "翻一翻失物招领箱，捡到一件随机道具",
+	"again": "灌一口特浓咖啡，本回合再行动一次",
 	"casino": "全员下注玩小游戏，赢家通吃",
 	"property": "可购买 / 升级 / 收租金",
 	"shop": "三栏货架 · 每家独立补货 · 落地即可逛",
@@ -253,11 +239,10 @@ static func _build_tiles() -> Array:
 			"price": prop_price(rank), "rent": prop_rent(rank),
 		}
 
-	# 剩余格按确定性序列填充：E=机会/命运 F=缴费 B=兼职 R=免费休息
+	# 剩余格按确定性序列填充：
+	# E=机会/命运 S=小卖部 I=失物招领(随机道具) A=特浓咖啡(再动一次) C=赌场 R=免费休息
 	var xseq := _x_sequence()
 	var xi := 0
-	var fi := 0
-	var bi := 0
 	var ei := 0
 	for i in total:
 		if not t[i].is_empty():
@@ -268,14 +253,10 @@ static func _build_tiles() -> Array:
 				ei += 1
 			"S":
 				t[i] = {"type": "shop", "name": "小卖部"}
-			"F":
-				var f: Array = FINES[fi % FINES.size()]
-				t[i] = {"type": "fine", "name": f[0], "amount": f[1]}
-				fi += 1
-			"B":
-				var b: Array = BONUSES[bi % BONUSES.size()]
-				t[i] = {"type": "bonus", "name": b[0], "amount": b[1]}
-				bi += 1
+			"I":
+				t[i] = {"type": "item", "name": "失物招领"}
+			"A":
+				t[i] = {"type": "again", "name": "特浓咖啡"}
 			"C":
 				t[i] = {"type": "casino", "name": "宿舍赌场"}
 			_:
@@ -285,11 +266,14 @@ static func _build_tiles() -> Array:
 		push_error("棋盘铺设错误：剩余格 %d != 22" % xi)
 	return t
 
+## 功能格铺设序列（按剩余空位的路径序填充，分组只为好读）：
+## 底边+左边前段 / 左边后段+顶边 / 右边 —— 同侧同类格不相邻。
+## 合计 S6（小卖部）/ E4（机会命运）/ I4（失物招领）/ A2（特浓咖啡）/ C2（赌场）/ R4（空教室）。
 static func _x_sequence() -> Array:
-	var a := ["S", "B", "F", "C", "R", "B"]
-	var b := ["E", "B", "F", "S", "R", "B"]
-	var c := ["S", "B", "R", "C", "F", "B", "E", "R", "F", "S"]
-	return a + b + c  # E2 / S4（小卖部）/ B6 / F4 / R4 / C2（赌场格），共 22
+	var a := ["S", "I", "A", "C", "R", "S", "E", "S"]
+	var b := ["S", "R", "C", "E", "I", "E", "R"]
+	var c := ["S", "I", "E", "R", "I", "A", "S"]
+	return a + b + c
 
 ## 装修升级费用（每级）
 static func upgrade_cost(idx: int) -> int:

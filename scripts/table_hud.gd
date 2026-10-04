@@ -109,6 +109,23 @@ static func build_play_ui(g: Node) -> void:
 	g.log_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.log_toast)
 
+	# 右上角「畸变生效中」小标签（快照的 aberrations 字段驱动显隐与文案；
+	# 界面美术重构后升级为正式横幅 + 座位卡角标，当前从简）
+	g.ab_label = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.88), 10, Color(0, 0, 0, 0), 0, 5)
+	g.ab_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	g.ab_label.offset_left = -430.0
+	g.ab_label.offset_right = -14.0
+	g.ab_label.offset_top = 50.0
+	g.ab_label.offset_bottom = 92.0
+	g.ab_label.visible = false
+	g.ab_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ab_lm := UIKit.margins(12, 5, 4, 4)
+	ab_lm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.ab_label.add_child(ab_lm)
+	g.ab_label_l = UIKit.label("", 14, Color("#f0c064"))
+	ab_lm.add_child(g.ab_label_l)
+	hud.add_child(g.ab_label)
+
 
 	# 屏幕底部的操作坞（牌垫阶段条 + 操作条 + 共用底板）已随批次 3 Task 6 整条拆除：
 	# 掷轮改点桌面上的转盘实体、出牌改点手中牌（批次 7 起再点一下直出）、现金与体力在桌上。
@@ -783,6 +800,32 @@ static func build_menu_ui(g: Node) -> void:
 	sv.add_child(g.tier_row)
 	g.tier_readonly = UIKit.label("", 13, UIKit.TEXT_DIM)
 	sv.add_child(g.tier_readonly)
+	# 畸变（房主可点，客户端只读；规则见 doc/game-design/畸变.md）
+	g.ab_title = UIKit.label("畸变（全场事件）", 14, UIKit.TEXT)
+	sv.add_child(g.ab_title)
+	var abr1 := HBoxContainer.new()
+	abr1.add_theme_constant_override("separation", 10)
+	sv.add_child(abr1)
+	abr1.add_child(UIKit.label("触发频率", 13, UIKit.TEXT_DIM))
+	g.ab_row = UIKit.chip_row(GameSettings.AB_FREQS, GameSettings.AB_FREQ_LABELS,
+		func(id: String) -> void: g._set_ab_freq(id))
+	abr1.add_child(g.ab_row)
+	var abr2 := HBoxContainer.new()
+	abr2.add_theme_constant_override("separation", 10)
+	sv.add_child(abr2)
+	abr2.add_child(UIKit.label("持续回合", 13, UIKit.TEXT_DIM))
+	g.ab_dur_row = UIKit.chip_row(GameSettings.AB_DURS, GameSettings.AB_DUR_LABELS,
+		func(id: String) -> void: g._set_ab_dur(id))
+	abr2.add_child(g.ab_dur_row)
+	var abr3 := HBoxContainer.new()
+	abr3.add_theme_constant_override("separation", 10)
+	sv.add_child(abr3)
+	abr3.add_child(UIKit.label("条件触发", 13, UIKit.TEXT_DIM))
+	g.ab_cond_row = UIKit.chip_row(GameSettings.AB_COND_SW, GameSettings.AB_COND_LABELS,
+		func(id: String) -> void: g._set_ab_cond(id))
+	abr3.add_child(g.ab_cond_row)
+	g.ab_readonly = UIKit.label("", 13, UIKit.TEXT_DIM)
+	sv.add_child(g.ab_readonly)
 	sv.add_child(UIKit.label("—— 更多设置项（后续加入） ——", 12, UIKit.TEXT_DIM))
 	var back_btn := UIKit.button("‹ 返回", 14)
 	back_btn.pressed.connect(func() -> void: g._menu_show("menu"))

@@ -212,6 +212,8 @@ Godot_console.exe --headless --path . --script tests/blackshop_test.gd
 Godot_console.exe --headless --path . --script tests/shop_test.gd
 # 赌场小游戏规则单测（投骰子点数 / 胜负 / 平局平分 / 一局流程）
 Godot_console.exe --headless --path . --script tests/casino_test.gd
+# 畸变单测（全场事件：两道闸门 + 逐条效果 + 对局内设置同步）
+Godot_console.exe --headless --path . --script tests/aberration_test.gd
 # 回归单测（被踢后重置残留/回合计数/客户端道具栏/小卖部购买按钮/镜头等）
 Godot_console.exe --headless --path . --script tests/regression_test.gd
 # 暂停菜单回归（走真实 GUI 输入链路：点开暂停后菜单按钮必须点得动）

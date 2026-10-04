@@ -48,6 +48,7 @@ const OP_KIND_LABELS := {
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
+var _extra_move := false   # 特浓咖啡：本次落地后再行动一次（_play_turn 每轮重置后消费）
 var _shop_peer := 0        # 正在逛小卖部的玩家（0 = 无）
 var _shop_tile := -1
 var _shop_epoch := 0
@@ -117,6 +118,20 @@ var black_hint: Label
 var black_picker: Control
 var black_picker_box: VBoxContainer
 var _black_sig := ""
+
+# ---------------- 畸变（host 状态，规则与两道闸门见 doc/game-design/畸变.md §二） ----------------
+var _ab_active: Array = []   # 生效中的持续型：[{id, left}]，left = 剩余玩家回合数
+var _ab_queue: Array = []    # 条件型顺延队列（id × ≤2，超出丢弃）
+var _ab_fired := {}          # 条件型一次性标记（id -> true，触发判定时即写）
+var _ab_no_roll := false     # 调休：本回合不能掷轮（一次性，进掷轮循环即消费）
+var _ab_extra_peer := -1     # 调休：该 peer 自己的下一回合连掷两次
+var ab_label: PanelContainer  # 「生效中」小标签（hud 层，快照驱动，界面重构后再升级）
+var ab_label_l: Label         # 生效中标签的内层文本
+var ab_row: HBoxContainer     # 对局内设置面板：畸变频率 chips（房主）
+var ab_dur_row: HBoxContainer # 对局内设置面板：持续回合 chips（房主）
+var ab_cond_row: HBoxContainer  # 对局内设置面板：条件触发 chips（房主）
+var ab_title: Label           # 对局内设置面板：畸变小节标题（与只读行互斥显隐）
+var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
 # ---------------- 格详情卡 / 规则说明（左下角，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
@@ -270,6 +285,7 @@ func _ready() -> void:
 	# 设置面板上一段已建好（_build_ui 在前），此处按身份定「操作限时」行显隐——
 	# 否则两行同时可见，要等首次改挡才归位
 	_refresh_tier_ui()
+	_refresh_ab_settings_ui()
 
 	# 客户端这里不再写任何东西：原来那句「等待房主同步状态…」写在底栏状态条上，
 	# 底栏已随批次 3 Task 6 取消（等房主的首份 s_state 广播即可，见 _broadcast_state）。
@@ -411,7 +427,7 @@ func _host_setup() -> void:
 			_stock_shop(i)
 	_log("游戏开始！每人初始资金 %s，踏上起点领工资 %s" % [
 		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
-	_log("转盘决定步数（0~12）：转到 12 满值再动一次；连续三次 10+ 会被查寝抓走哦")
+	_log("转盘决定步数（0~12）：转到 12 满值再动一次，转到 0 就地再结算脚下格子；连续三次 10+ 会被查寝抓走哦")
 	await _wait(1.5)
 	_broadcast_state()
 	if at_mode == "host":
@@ -508,7 +524,12 @@ func _play_turn(p: Dictionary) -> void:
 		_log("%s 在小黑屋反省，本回合强制保守托管" % p.name, "#c9a6ff")
 	_item_turn_start(p)  # 休眠=保守托管：被动与自动结算照常（§1）
 	_broadcast_state()
+	_aberration_window(p)   # 畸变窗口：回合开始结算后、掷轮前（畸变.md §二/§五）
 	while running:
+		if _ab_no_roll:   # 调休：本回合不能转盘（不移动、不结算落点，道具阶段照常）
+			_ab_no_roll = false
+			_log("%s 碰上【调休】，本回合原地放假，转盘停转" % p.name, "#f0a0c0")
+			break
 		_awaiting_roll = int(p.peer)
 		_roll_epoch += 1
 		var epoch := _roll_epoch
@@ -521,6 +542,7 @@ func _play_turn(p: Dictionary) -> void:
 		if not running:
 			return
 		_awaiting_roll = 0
+		_extra_move = false  # 特浓咖啡标记每轮重算（上轮 12 满值续动不会残留）
 
 		var roll := randi_range(0, 12)
 		if bool(p.get("reroll_next", false)):
@@ -556,9 +578,21 @@ func _play_turn(p: Dictionary) -> void:
 		var step := roll
 		if roll > 0 and _has_item(p, "公交卡"):
 			step += 1   # 公交卡：前进额外多走 1 格（后退/待命不触发）
+		var ab_cut := _ab_move_cut(p)
+		if ab_cut > 0:
+			step = maxi(0, step - ab_cut)
+			_log("【隔离】%s 的移动点数 −%d" % [p.name, ab_cut], "#c9a6ff")
 		var path := GameData.compute_path(int(p.pos), step)
 		if path.is_empty():
 			_log("%s 转了个 0，原地待命一回合" % p.name, "#8a90a5")
+			# 0 点再结算：脚下格子里有可结算的内容就再来一次（角格除外，不重复领工资）
+			if not GameData.is_corner(int(p.pos)):
+				await _resolve_tile(p, true)
+				_broadcast_state()
+				if not running or not bool(p.alive):
+					return
+				if _extra_move:
+					continue  # 脚下正好是特浓咖啡：待命完还能再动
 			break  # 待命也算完成投掷，仍可用道具
 		for idx in path:
 			if idx == 0:
@@ -577,6 +611,14 @@ func _play_turn(p: Dictionary) -> void:
 			return
 		if roll == 12:
 			_log("%s 转到 12 满值，奖励再动一次！" % p.name, "#f0c064")
+			await _wait(0.5)
+			continue
+		if _extra_move:
+			await _wait(0.5)
+			continue  # 特浓咖啡：本回合再行动一次
+		if bool(p.get("ab_extra_roll", false)):
+			p.ab_extra_roll = false
+			_log("【调休】第二趟：%s 再转一次！" % p.name, "#f0a0c0")
 			await _wait(0.5)
 			continue
 		break
@@ -602,35 +644,266 @@ func _bot_roll_later() -> void:
 	if running and _awaiting_roll != 0:
 		roll_received.emit()
 
+# ================= 房主：畸变 =================
+# 规则唯一来源：doc/game-design/畸变.md。两道闸门（2026-10-04 定稿）：
+# 闸门一 每回合最多触发 1 条新畸变；闸门二 全场同时最多 1 条持续型「生效中」，
+# 生效期间窗口跳过——随机候选丢弃、条件候选照常顺延。
+# 挑选：条件 > 随机（顺延补发的条件再插队一级），同级图鉴序 + 掷骰。
+
+## 畸变窗口：插在回合开始结算之后、掷轮之前（畸变.md §五）。同步函数，无 await。
+func _aberration_window(p: Dictionary) -> void:
+	p.ab_extra_roll = false   # 上回合残留的调休补班标记清掉（查寝等提前退回合的场合）
+	_ab_tick()
+	if _ab_extra_peer == int(p.peer):
+		if _is_sleeping(p):
+			pass   # 休眠回合用不了调休，留到下一个自己的回合
+		else:
+			_ab_extra_peer = -1
+			p.ab_extra_roll = true
+			_log("【调休】补班时间：%s 本回合可以连转两次！" % p.name, "#f0a0c0")
+	var pick := _ab_pick(_ab_candidates(p))
+	if pick != "":
+		_ab_trigger(p, pick)
+	_check_end()
+	_broadcast_state()
+
+## 持续型计时：每个玩家回合开始 left−1，归零移除并广播结束
+func _ab_tick() -> void:
+	if _ab_active.is_empty():
+		return
+	var expired: Array = []
+	for a in _ab_active:
+		a.left = int(a.left) - 1
+		if int(a.left) <= 0:
+			expired.append(String(a.id))
+	_ab_active = _ab_active.filter(func(a: Dictionary) -> bool: return int(a.left) > 0)
+	for id in expired:
+		_log("畸变【%s】退去了，一切恢复常轨" % id, "#8a90a5")
+		s_aberr.rpc(id, "end", 0)
+
+## 收集本回合候选：顺延队首（prio −1 插队）+ 新达成条件（prio 0）+ 随机掷中（prio 1）
+func _ab_candidates(p: Dictionary) -> Array:
+	var out: Array = []
+	if not _settings.ab_cond:
+		_ab_queue.clear()   # 关掉条件触发 = 顺延队列一并冻结
+	else:
+		for id in _ab_queue.duplicate():
+			out.append({"id": id, "prio": -1})
+		for id in AberrationData.ABERRATIONS:
+			var d: Dictionary = AberrationData.def(id)
+			if String(d.get("trigger", "")) != "条件" or not bool(d.get("implemented", false)):
+				continue
+			if _ab_fired.has(id) or _ab_queue.has(id):
+				continue
+			if _ab_cond_met(id):
+				_ab_fired[id] = true
+				out.append({"id": id, "prio": 0})
+	if String(_settings.ab_freq) == "关":
+		return out
+	if randf() >= float(AberrationData.FREQ_P.get(_settings.ab_freq, 0.06)):
+		return out
+	var pool: Array = []
+	for id in AberrationData.ABERRATIONS:
+		var d: Dictionary = AberrationData.def(id)
+		if String(d.get("trigger", "")) == "随机" and bool(d.get("implemented", false)):
+			pool.append(id)
+	if not pool.is_empty():
+		out.append({"id": pool[randi_range(0, pool.size() - 1)], "prio": 1})
+	return out
+
+## 条件型是否在本回合窗口达成（一次性标记由候选收集方写）
+func _ab_cond_met(id: String) -> bool:
+	var cond: Dictionary = AberrationData.def(id).get("cond", {})
+	if id == "房价崩盘":
+		for o in hp:
+			if bool(o.alive) and (_own_props(int(o.peer)) as Array).size() >= int(cond.get("props", 5)):
+				return true
+		return false
+	if id == "枪打出头鸟":
+		for o in hp:
+			if bool(o.alive) and int(o.get("money", 0)) > int(cond.get("cash", 30000)):
+				return true
+		return false
+	return false
+
+## 挑选唯一触发者；被闸门 / 优先级刷掉的条件型进顺延队列。返回 id 或 ""。
+func _ab_pick(cands: Array) -> String:
+	if cands.is_empty():
+		return ""
+	var best := 99
+	for c in cands:
+		best = mini(best, int(c.get("prio", 1)))
+	var top: Array = cands.filter(func(c: Dictionary) -> bool: return int(c.get("prio", 1)) == best)
+	var persisting := not _ab_active.is_empty()
+	if best <= 0:   # 条件型（含顺延补发）
+		if persisting:   # 闸门二：持续型生效中 → 全部顺延
+			for c in top:
+				_ab_enqueue(String(c.id))
+			return ""
+		var chosen := String(top[randi_range(0, top.size() - 1)].id)
+		for c in top:   # 闸门一：只发一条，落选的条件型顺延
+			if String(c.id) != chosen:
+				_ab_enqueue(String(c.id))
+		_ab_queue.erase(chosen)
+		return chosen
+	if persisting:
+		return ""   # 随机型撞上闸门二：本轮作废
+	return String(top[randi_range(0, top.size() - 1)].id)
+
+## 条件型顺延入队（上限 2，超出丢弃——该条件本局作废）
+func _ab_enqueue(id: String) -> void:
+	if _ab_queue.has(id) or _ab_queue.size() >= 2:
+		return
+	_ab_queue.append(id)
+
+## 触发一条畸变：持续型入表 + 当刻一次性部分；非持续型立即结算。
+## 公告走 _log（s_log 顶部气泡），debuff 的震屏在 s_aberr 里对所有端生效。
+func _ab_trigger(p: Dictionary, id: String) -> void:
+	var d: Dictionary = AberrationData.def(id)
+	_log("【畸变】%s —— %s" % [id, String(d.get("desc", ""))], "#f0c064")
+	if String(d.get("type", "")) == "持续":
+		var left := int(d.get("dur", 0))
+		if left <= 0:
+			left = maxi(1, int(_settings.ab_dur))
+		_ab_active.append({"id": id, "left": left})
+		s_aberr.rpc(id, "start", left)
+		_ab_apply_persistent_start(p, id)
+	else:
+		s_aberr.rpc(id, "start", 0)
+		_ab_apply_instant(p, id)
+
+## 非持续型：触发瞬间结算（debuff 逐玩家独立被香皂/护盾免疫）
+func _ab_apply_instant(p: Dictionary, id: String) -> void:
+	match id:
+		"天降红包":
+			for o in hp:
+				if bool(o.alive):
+					o.money = int(o.money) + 500
+		"强制捐款":
+			for o in hp:
+				if not bool(o.alive):
+					continue
+				if _immune_debuff(o):
+					_log("%s 的【空想者的香皂】挡下了强制捐款" % o.name, "#8fb7f2")
+				else:
+					_pay(o, 500, {})
+		"集体感冒":
+			for o in hp:
+				if not bool(o.alive):
+					continue
+				if _immune_debuff(o):
+					_log("%s 的【空想者的香皂】挡下了集体感冒" % o.name, "#8fb7f2")
+				else:
+					o.sleep = maxi(int(o.get("sleep", 0)), 1)
+		"金融危机":
+			for o in hp:
+				if not bool(o.alive):
+					continue
+				if _immune_debuff(o):
+					_log("%s 的【空想者的香皂】挡下了金融危机" % o.name, "#8fb7f2")
+					continue
+				var rate: float = AberrationData.FIN_RATE_NC
+				if not (_own_props(int(o.peer)) as Array).is_empty():
+					rate = AberrationData.FIN_RATE_C
+				var amt := int(int(o.get("money", 0)) * rate)
+				if amt > 0:
+					_pay(o, amt, {})
+		"枪打出头鸟":
+			var cash_need := int(AberrationData.def(id).get("cond", {}).get("cash", 30000))
+			var rich: Array = hp.filter(func(o: Dictionary) -> bool:
+				return bool(o.alive) and int(o.get("money", 0)) > cash_need)
+			if not rich.is_empty():
+				var top: int = (rich as Array).map(func(o: Dictionary) -> int: return int(o.money)).max()
+				rich = rich.filter(func(o: Dictionary) -> bool: return int(o.money) == top)
+				var t: Dictionary = rich[randi_range(0, rich.size() - 1)]   # 并列掷骰（畸变.md §二）
+				if _immune_debuff(t):
+					_log("%s 的【空想者的香皂】挡下了强制捐款" % t.name, "#8fb7f2")
+				else:
+					_pay(t, int(int(t.money) * AberrationData.BIRD_RATE), {})
+		"拆迁":
+			var n := randi_range(1, 2)
+			for i in n:
+				var all_props: Array = []
+				for o in hp:
+					if bool(o.alive):
+						all_props.append_array(_own_props(int(o.peer)))
+				if all_props.is_empty():
+					break
+				var si: int = all_props[randi_range(0, all_props.size() - 1)]
+				var owner := _player_by_peer(int(htiles[si].owner))
+				if not owner.is_empty() and _immune_debuff(owner):
+					_log("%s 的【空想者的香皂】保住了【%s】" % [owner.name, String(GameData.TILES[si].name)], "#8fb7f2")
+					continue   # 该抽作废、不补抽（补抽规则待实现复核）
+				htiles[si].owner = GameData.NO_OWNER
+				htiles[si].level = 0
+				_log("【拆迁】%s 被拆平了，归为无主" % String(GameData.TILES[si].name), "#c9a6ff")
+		"调休":
+			_ab_no_roll = true
+			_ab_extra_peer = int(p.peer)
+		_:
+			pass
+
+## 持续型入表当刻的一次性部分（其余持续效果由各挂点按 _ab_has 现查）
+func _ab_apply_persistent_start(p: Dictionary, id: String) -> void:
+	if id == "诚信考试":
+		if _immune_debuff(p):
+			_log("%s 的【空想者的香皂】让他在诚信考试里照样传小条" % p.name, "#8fb7f2")
+		else:
+			p.silence = maxi(int(p.get("silence", 0)), 1)   # 本回合道具阶段被禁（dur=1 只盖当前回合）
+
+func _ab_has(id: String) -> bool:
+	for a in _ab_active:
+		if String(a.id) == id:
+			return true
+	return false
+
+## 畸变的全局租金倍率（通胀 ×2 / 房价崩盘 ×0.5；闸门二保证二者不同屏）
+func _ab_rent_mult() -> float:
+	if _ab_has("通胀"):
+		return 2.0
+	if _ab_has("房价崩盘"):
+		return 0.5
+	return 1.0
+
+## 畸变的移动点数削减（隔离 −2；debuff，逐玩家被香皂/护盾免疫）
+func _ab_move_cut(p: Dictionary) -> int:
+	return 2 if _ab_has("隔离") and not _immune_debuff(p) else 0
+
 # ================= 房主：结算 =================
 
-func _resolve_tile(p: Dictionary) -> void:
+## 落地结算。re = 「0 点再结算」：站在原地补一次结算——
+## 只保留询问类内容（买地 / 升级）与功能格效果，不重复交租 / 焦土捐款。
+func _resolve_tile(p: Dictionary, re := false) -> void:
 	var idx := int(p.pos)
 	var d: Dictionary = GameData.TILES[idx]
 	match String(d.type):
 		"property":
 			var t: Dictionary = htiles[idx]
 			if bool(t.get("soil", false)):
-				if _immune_debuff(p):
+				if re:
+					_log("%s 在【%s】的焦土上罚站，这次不用捐款" % [p.name, String(d.name)], "#8a90a5")
+				elif _immune_debuff(p):
 					_log("%s 的【空想者的香皂】挡下了焦土捐款，进度不涨" % p.name, "#8fb7f2")
 					await _wait(0.4)
-					return
-				var amt: int = mini(ItemData.SOIL_DONATE, int(p.money))
-				p.money = int(p.money) - amt
-				t.soil_prog = int(t.get("soil_prog", 0)) + amt
-				var target: int = int(GameData.TILES[idx].price)
-				_log("%s 往【%s】的焦土投了 %s 捐款（%d/%d）" % [p.name,
-					String(GameData.TILES[idx].name), GameData.fmt_money(amt), int(t.soil_prog), target], "#8a90a5")
-				if int(t.soil_prog) >= target:
-					t.soil = false
-					t.owner = GameData.NO_OWNER
-					t.level = 0  # 恢复为无主：等级清零，重新购买从 Lv0 起
-					t.soil_prog = 0
-					_log("【%s】的焦土修复完成，恢复为无主地产！" % String(GameData.TILES[idx].name), "#74d188")
+				else:
+					var amt: int = mini(ItemData.SOIL_DONATE, int(p.money))
+					p.money = int(p.money) - amt
+					t.soil_prog = int(t.get("soil_prog", 0)) + amt
+					var target: int = int(GameData.TILES[idx].price)
+					_log("%s 往【%s】的焦土投了 %s 捐款（%d/%d）" % [p.name,
+						String(GameData.TILES[idx].name), GameData.fmt_money(amt), int(t.soil_prog), target], "#8a90a5")
+					if int(t.soil_prog) >= target:
+						t.soil = false
+						t.owner = GameData.NO_OWNER
+						t.level = 0  # 恢复为无主：等级清零，重新购买从 Lv0 起
+						t.soil_prog = 0
+						_log("【%s】的焦土修复完成，恢复为无主地产！" % String(GameData.TILES[idx].name), "#74d188")
 			elif int(t.owner) == GameData.NO_OWNER:
 				await _resolve_buy(p, idx)
 			elif int(t.owner) == int(p.peer):
 				await _resolve_upgrade(p, idx)
+			elif re:
+				_log("%s 在【%s】原地罚站，站着的客人不用再交租" % [p.name, String(d.name)], "#8a90a5")
 			else:
 				await _resolve_rent(p, idx)
 		"event":
@@ -640,21 +913,28 @@ func _resolve_tile(p: Dictionary) -> void:
 			_log("%s 抽到事件：%s" % [p.name, card.t])
 			await _wait(DeckReveal.CARD_TIME + 0.1)
 			await _apply_card(p, card)
-		"fine":
-			if _immune_debuff(p):
-				_log("%s 的【空想者的香皂】挡下了强制缴费" % p.name, "#8fb7f2")
-				await _wait(0.4)
+		"item":
+			# 失物招领：按招领权重随机品质捡一件（品质缺货自动向下降档）
+			var q := _roll_quality(ItemData.FIND_WEIGHTS)
+			var qi: int = ItemData.QUALITIES.find(q)
+			while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).is_empty():
+				qi -= 1
+			var found := _grant_item_of_quality(p, ItemData.QUALITIES[qi], "失物招领")
+			if String(found) != "":
+				s_card.rpc("【失物招领】%s 捡到了【%s】！" % [p.name, found], "good")
 			else:
-				var fee := _fine_mod(p, int(d.amount))
-				_log("%s 落在【%s】，被强制缴费 %s" % [p.name, d.name, GameData.fmt_money(fee)], "#ef7b74")
-				s_card.rpc("【%s】强制缴费 %s" % [d.name, GameData.fmt_money(fee)], "bad")
-				await _wait(0.6)
-				_pay(p, fee, {})
-		"bonus":
-			p.money = int(p.money) + int(d.amount)
-			_log("%s 在【%s】赚到 %s" % [p.name, d.name, GameData.fmt_money(int(d.amount))], "#74d188")
+				s_card.rpc("【失物招领】%s 翻了半天，一无所获" % p.name, "info")
+			await _wait(0.4)
+		"again":
+			_log("%s 在【特浓咖啡】灌了一大口，精神抖擞——本回合再行动一次！" % p.name, "#f0a0c0")
+			s_card.rpc("【特浓咖啡】%s 再行动一次！" % p.name, "good")
+			_extra_move = true
+			await _wait(0.4)
 		"shop":
-			await _run_shop(p, idx)
+			if _ab_has("停电"):
+				_log("【停电】%s 路过小卖部——店里黑着呢" % p.name, "#8a90a5")
+			else:
+				await _run_shop(p, idx)
 		"casino":
 			_log("%s 踏进【宿舍赌场】，全员开赌！" % p.name, "#f0a0c0")
 			await casino.run(p)
@@ -665,7 +945,10 @@ func _resolve_tile(p: Dictionary) -> void:
 		"jail":
 			_log("%s 来宿委会探监，一切安好" % p.name)
 		"rest":
-			_log("%s 在【%s】歇了口气，无事发生" % [p.name, d.name])
+			if re:
+				_log("%s 在【%s】继续歇着，无事发生" % [p.name, d.name])
+			else:
+				_log("%s 在【%s】歇了口气，无事发生" % [p.name, d.name])
 		"start":
 			_log("%s 恰好停在起点，工资已到账！" % p.name, "#74d188")
 	if not bool(p.alive):
@@ -748,6 +1031,9 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 		return
 	rent = _rent_gain(op, rent)   # 招财猫 +50 / 包租婆 ×1.2
 	rent = _rent_pay(p, rent)     # 保安巡逻 -30%
+	var ab_mult := _ab_rent_mult()
+	if ab_mult != 1.0:
+		rent = int(rent * ab_mult)   # 畸变：通胀 ×2 / 房价崩盘 ×0.5（中性，香皂无效）
 	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name], "#ef7b74")
 	_pay(p, rent, op)
 
@@ -800,13 +1086,18 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 	if card.has("gain_item"):
 		_grant_card_item(p, String(card.gain_item))
 	if card.has("gain_item_quality"):
-		_grant_card_quality(p, String(card.gain_item_quality))
+		_grant_item_of_quality(p, String(card.gain_item_quality))
 	if card.has("enter_shop"):
 		var shop_keys: Array = shops.keys()
-		if not shop_keys.is_empty():
+		if _ab_has("停电"):
+			_log("【停电】商店进不去，卡上的逛街安排作废", "#8a90a5")
+		elif not shop_keys.is_empty():
 			await _run_shop(p, int(shop_keys.pick_random()))
 	if card.has("enter_blackshop"):
-		await _run_blackshop(p)
+		if _ab_has("停电"):
+			_log("【停电】黑市也黑着，进不去", "#8a90a5")
+		else:
+			await _run_blackshop(p)
 	_check_end()
 
 ## 机会卡发道具（指定 id / 指定品质）；背包满则作废提示，唯一池过滤照旧
@@ -817,17 +1108,20 @@ func _grant_card_item(p: Dictionary, id: String) -> void:
 	if _grant_item(p, id):
 		_log("%s 从机会卡获得道具【%s】" % [p.name, id], "#74d188")
 
-func _grant_card_quality(p: Dictionary, q: String) -> void:
-	if p.items.size() >= 5:
-		_log("%s 背包已满，到手的道具作废了" % p.name, "#8a90a5")
-		return
+## 按品质从可用池随机发一件道具（背包满 / 缺货则落空，返回 ""）。
+## src = 来源名（「机会卡」/「失物招领」），只进战报文案。
+func _grant_item_of_quality(p: Dictionary, q: String, src := "机会卡") -> String:
+	if p.items.size() >= _bag_cap(p):
+		_log("%s 背包已满，%s的道具放不下了" % [p.name, src], "#8a90a5")
+		return ""
 	var pool := _item_pool(q)
 	if pool.is_empty():
 		_log("%s 想领道具，可惜【%s】缺货" % [p.name, q], "#8a90a5")
-		return
+		return ""
 	var id: String = pool[randi_range(0, pool.size() - 1)]
 	_grant_item(p, id)
-	_log("%s 从机会卡获得道具【%s】" % [p.name, id], "#74d188")
+	_log("%s 从%s获得道具【%s】" % [p.name, src, id], "#74d188")
+	return id
 
 func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 	var paid: int = mini(amount, maxi(int(p.money), 0))
@@ -1218,6 +1512,68 @@ func _refresh_tier_ui() -> void:
 		GameSettings.TIER_LABELS.get(_settings.timeout_tier, "现状"))
 	UIKit.chip_select(tier_row, _settings.timeout_tier)
 
+## 房主改畸变设置（对局内暂停面板；大厅入口随「开局设置面板」批次接入）
+func _set_ab_freq(id: String) -> void:
+	if not multiplayer.is_server() or not GameSettings.AB_FREQS.has(id) or id == _settings.ab_freq:
+		return
+	_settings.ab_freq = id
+	_log("房主把畸变频率改为「%s」" % id, "#f0c064")
+	_refresh_ab_settings_ui()
+	_broadcast_state()
+
+func _set_ab_dur(id: String) -> void:
+	if not multiplayer.is_server() or not GameSettings.AB_DURS.has(id):
+		return
+	if int(id) == _settings.ab_dur:
+		return
+	_settings.ab_dur = int(id)
+	_log("房主把畸变持续回合改为 %d" % int(id), "#f0c064")
+	_refresh_ab_settings_ui()
+	_broadcast_state()
+
+func _set_ab_cond(id: String) -> void:
+	if not multiplayer.is_server() or not GameSettings.AB_COND_SW.has(id):
+		return
+	var on := id == "on"
+	if on == _settings.ab_cond:
+		return
+	_settings.ab_cond = on
+	_log("房主把畸变条件触发改为「%s」" % String(GameSettings.AB_COND_LABELS.get(id, id)), "#f0c064")
+	_refresh_ab_settings_ui()
+	_broadcast_state()
+
+## 刷新设置面板的「畸变」小节：房主 = 小节标题 + 三行可点 chips，客户端 = 一行只读文本。
+## 显隐分工与「操作限时」行同理（两侧互斥，见 _refresh_tier_ui 的注释）。
+func _refresh_ab_settings_ui() -> void:
+	if ab_row == null or ab_readonly == null or ab_title == null:
+		return
+	var is_host := multiplayer.is_server()
+	ab_title.visible = is_host
+	ab_row.visible = is_host
+	ab_dur_row.visible = is_host
+	ab_cond_row.visible = is_host
+	ab_readonly.visible = not is_host
+	ab_readonly.text = "畸变：%s · 持续%d回合 · 条件触发%s（房主设置）" % [
+		_settings.ab_freq, _settings.ab_dur, "开" if _settings.ab_cond else "关"]
+	UIKit.chip_select(ab_row, _settings.ab_freq)
+	UIKit.chip_select(ab_dur_row, str(_settings.ab_dur))
+	UIKit.chip_select(ab_cond_row, "on" if _settings.ab_cond else "off")
+
+## 「生效中」小标签：读快照的 aberrations 字段（s_state 两端同路径触发）。
+## 界面美术重构后这里升级为正式横幅 + 座位卡角标（当前从简）。
+func _refresh_ab_ui() -> void:
+	if ab_label == null or ab_label_l == null:
+		return
+	var act: Array = st.get("aberrations", [])
+	if act.is_empty():
+		ab_label.visible = false
+		return
+	var parts := PackedStringArray()
+	for a in act:
+		parts.append("%s·剩%d回合" % [String(a.id), int(a.left)])
+	ab_label_l.text = "🌀 畸变生效中：%s" % "、".join(parts)
+	ab_label.visible = true
+
 ## 操作窗口剩余时间（全员可见）走这条专用 RPC，而不进 _broadcast_state：
 ## 它按秒高频变化，进全量状态会让所有端每秒白渲染一整帧棋盘。
 ## kind="" 表示当前没有操作窗口（收簇）；total<=0 = 不限时；owner_peer = 窗口归属玩家
@@ -1293,6 +1649,8 @@ func _broadcast_state() -> void:
 		"black_pay_mode": _black_pay_mode, "black_pay_need": _black_pay_need,
 		"black_pay_got": _black_pay_got,
 		"timeout_tier": _settings.timeout_tier,
+		"aberrations": _ab_active,
+		"ab_freq": _settings.ab_freq, "ab_dur": _settings.ab_dur, "ab_cond": _settings.ab_cond,
 		"winner": winner, "roll_epoch": _roll_epoch,
 	})
 
@@ -1301,6 +1659,13 @@ func _log(line: String, color: String = "#dfe3ee") -> void:
 	if color != "#dfe3ee":
 		safe = "[color=%s]%s[/color]" % [color, safe]
 	s_log.rpc(safe)
+
+## 畸变公告：start / end。文本公告已由 _log→s_log 走顶部气泡；
+## 这里补全场动效（debuff 触发震屏），持续期「生效中」标签由快照的 aberrations 驱动。
+@rpc("authority", "call_local", "reliable")
+func s_aberr(id: String, action: String, left: int) -> void:
+	if action == "start" and String(AberrationData.def(id).get("tag", "")) == "debuff":
+		Fx.shake(self, 9.0, 0.35)
 
 # ================= 全员：接收 RPC =================
 
@@ -1313,6 +1678,14 @@ func s_state(state: Dictionary) -> void:
 		if _prompt_token != -1:   # 弹窗开着 → 按新挡位重启倒计时条
 			_prompt_bar_arm(_prompt_token, GameSettings.turn_seconds(tier, "prompt"))
 		_refresh_tier_ui()
+	var abf := String(state.get("ab_freq", "关"))
+	if abf != _settings.ab_freq or int(state.get("ab_dur", 2)) != _settings.ab_dur \
+			or bool(state.get("ab_cond", true)) != _settings.ab_cond:
+		_settings.ab_freq = abf
+		_settings.ab_dur = int(state.get("ab_dur", 2))
+		_settings.ab_cond = bool(state.get("ab_cond", true))
+		_refresh_ab_settings_ui()
+	_refresh_ab_ui()
 	board.render(state)
 	log_head.text = "第 %d/%d 轮 · 战报" % [int(state.round), int(state.max_rounds)]
 	_refresh_players()
@@ -1979,12 +2352,10 @@ func _on_tile_clicked(idx: int) -> void:
 				GameData.fmt_money(int(d.price)),
 				GameData.fmt_money(GameData.rent_for(idx, tiles)), level, GameData.level_name(level),
 				owner_name]
-		"fine":
-			accent = UIKit.DANGER
-			body = "%s\n金额：%s" % [body, GameData.fmt_money(int(d.amount))]
-		"bonus":
-			accent = UIKit.GOOD
-			body = "%s\n金额：%s" % [body, GameData.fmt_money(int(d.amount))]
+		"item":
+			accent = ItemData.QUALITY_COLORS["紫"]
+		"again":
+			accent = ItemData.QUALITY_COLORS["橙"]
 	info_title.text = "【%s】" % String(d.name)
 	info_title.add_theme_color_override("font_color", accent)
 	info_body.text = body
@@ -2383,19 +2754,6 @@ func _stamina_cap(p: Dictionary) -> int:
 func _salary_amount(p: Dictionary) -> int:
 	return GameData.SALARY + (300 if _has_item(p, "校园卡") else 0)
 
-## 强制缴费修正：学费上涨(全员 +50%) → 保修卡(减半) → 优惠券(-300)
-func _fine_mod(victim: Dictionary, amount: int) -> int:
-	var a := amount
-	for o in hp:
-		if bool(o.get("alive", true)) and _has_item(o, "学费上涨"):
-			a = int(a * 1.5)
-			break
-	if _has_item(victim, "保修卡"):
-		a = int(a / 2)
-	if _has_item(victim, "优惠券"):
-		a = maxi(0, a - 300)
-	return maxi(0, a)
-
 func _buy_price(p: Dictionary, price: int) -> int:
 	return maxi(0, price - (300 if _has_item(p, "砍价高手") else 0))
 
@@ -2443,6 +2801,10 @@ func _move_and_resolve(p: Dictionary, steps: int) -> void:
 	var s := steps
 	if s > 0 and _has_item(p, "公交卡"):
 		s += 1
+	var ab_cut := _ab_move_cut(p)
+	if ab_cut > 0:
+		s = maxi(0, s - ab_cut)
+		_log("【隔离】%s 的移动点数 −%d" % [p.name, ab_cut], "#c9a6ff")
 	var path := GameData.compute_path_steps(int(p.pos), s)
 	for idx in path:
 		if idx == 0:
@@ -2493,13 +2855,14 @@ func _item_pool(quality: String) -> Array:
 		out.append(String(id))
 	return out
 
-func _roll_quality() -> String:
+## 按权重表抽品质（小卖部补货用 SHOP_WEIGHTS，失物招领格用 FIND_WEIGHTS）
+func _roll_quality(weights: Dictionary = ItemData.SHOP_WEIGHTS) -> String:
 	var total := 0
-	for q in ItemData.SHOP_WEIGHTS:
-		total += int(ItemData.SHOP_WEIGHTS[q])
+	for q in weights:
+		total += int(weights[q])
 	var r := randi_range(0, maxi(total - 1, 0))
-	for q in ItemData.SHOP_WEIGHTS:
-		r -= int(ItemData.SHOP_WEIGHTS[q])
+	for q in weights:
+		r -= int(weights[q])
 		if r < 0:
 			return q
 	return "白"
@@ -2521,7 +2884,9 @@ func _stock_shop(idx: int) -> void:
 
 func _item_turn_start(p: Dictionary) -> void:
 	var cap := _stamina_cap(p)
-	if int(p.get("stamina", 3)) >= cap:
+	if _ab_has("限电") and not _immune_debuff(p):
+		_log("【限电】%s 本回合体力没有回复" % p.name, "#c9a6ff")
+	elif int(p.get("stamina", 3)) >= cap:
 		if _has_item(p, "校历"):
 			p.money = int(p.money) + 300
 			_log("【校历】%s 体力已满，溢出折算为 %s" % [p.name, GameData.fmt_money(300)], "#74d188")
@@ -2554,6 +2919,9 @@ func _item_turn_start(p: Dictionary) -> void:
 	if _has_item(p, "信托基金"):
 		p.money = int(p.money) + 100
 		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(100)], "#74d188")
+	if _ab_has("奖学金季"):
+		p.money = int(p.money) + 300
+		_log("【奖学金季】%s 领到 %s 补贴" % [p.name, GameData.fmt_money(300)], "#74d188")
 	_maybe_emergency(p)
 
 func _has_usable(p: Dictionary) -> bool:

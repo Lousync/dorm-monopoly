@@ -16,9 +16,24 @@ const TIER_LABELS := {
 
 var timeout_tier := TIER_CURRENT
 
+# ---- 畸变（doc/game-design/畸变.md §六；频率「关」即总开关关闭） ----
+const AB_FREQS: Array[String] = ["关", "低", "中", "高"]
+const AB_FREQ_LABELS := {"关": "关", "低": "低", "中": "中", "高": "高"}
+const AB_DURS: Array[String] = ["1", "2", "3", "4"]
+const AB_DUR_LABELS := {"1": "1", "2": "2", "3": "3", "4": "4"}
+const AB_COND_SW: Array[String] = ["off", "on"]
+const AB_COND_LABELS := {"off": "关", "on": "开"}
+
+var ab_freq := "关"   # 随机触发频率（关 = 整局不触发）
+var ab_dur := 2       # 持续型畸变的默认时长基准（玩家回合数，条目可覆盖）
+var ab_cond := true   # 是否允许条件型畸变触发
+
 func copy() -> GameSettings:
 	var s := GameSettings.new()
 	s.timeout_tier = timeout_tier
+	s.ab_freq = ab_freq
+	s.ab_dur = ab_dur
+	s.ab_cond = ab_cond
 	return s
 
 ## 某环节的操作窗口秒数；<= 0 表示不限时。
