@@ -154,6 +154,12 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 > `AUTOTEST LOBBY humans=1` 直接补机器人开打——**看着像联机坏了，其实是调用方式的问题**。
 > CI（`.github/workflows/ci.yml`）在同一个 `run:` 块里跑，不受影响。
 > 本机实测：同一次调用内 host 报 `humans=2`、两侧 `OK round=3`，全程无 SCRIPT ERROR。
+>
+> **但也别把"十几套件的循环"与联机回归塞进同一条命令**（2026-10-04 实测）：先跑完 13 套件、
+> ≈4 分钟后才起 host，client 仍报 `NET: connection_failed`、host 只有 `humans=1`；**拆成
+> 独立一条命令（间隔 4 秒）即通**。⇒ 两条约定**不冲突**：上面那条讲的是 **host 与 client 这两个
+> 进程**要待在一起，这条讲的是**别把它们跟在长循环后面** —— 套件与联机回归分开跑。
+> 表现与上面那条一模一样，先按"调用方式"排查，别急着怀疑联机代码。
 
 ## 四、硬性约定
 
