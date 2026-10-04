@@ -230,7 +230,7 @@ func _run() -> void:
 			lights.append(n)
 		_check(lights.size() == 1 and lights[0] == lamp_l,
 			"全场只有台灯这一盏灯（实得 %d 盏）" % lights.size())
-		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 立牌 / 牌堆才投得出影子）")
+		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 牌堆才投得出影子）")
 		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
 		_check(lamp_l.light_energy > 0.5, "台灯有能量（实得 %.2f）" % lamp_l.light_energy)
 		var lp: Vector3 = lamp_l.global_position
@@ -405,7 +405,7 @@ func _run() -> void:
 				"剪影底光够亮（e_lum %.4f ≥ 0.05 —— 下限与夹逼挂钩：0.021 那档实测仅 1/255，必须红）" % e_lum)
 
 	print("== 贴图窗口 = 桌垫（棋盘 + 一圈留白），不再铺满整张画布 ==")
-	# 批次 5 Task 2：座位栏换成了桌上立牌，画布不再需要为它们预留 —— 窗口从"整张画布"
+	# 批次 5 Task 2：座位栏退场，画布不再需要为它们预留 —— 窗口从"整张画布"
 	# 收到"桌垫"（`BoardView.MAT_RECT`）。批次 2 的 T4c 之所以把窗口恢复成整张画布，
 	# 是因为当时上家座位栏会落到窗口之外、既看不见也点不到；座位栏一走，这条约束随之解除。
 	# 窗口是否覆盖了该覆盖的东西，由下面「两条牌堆都在窗口内」那段钉住。
@@ -531,7 +531,7 @@ func _run() -> void:
 	var margin_log := ""
 	# 四角一律从**桌垫**（TABLE_SIZE）现取，不写死 ±4：桌面不再是正方形（进深由窗口比例定）。
 	# 为什么是桌垫而不是外圈木纹：木纹是"桌子本身"，第一人称下桌子伸出画面是自然的；
-	# 要全程入画的是**看得见的棋面**（桌垫）与**四块立牌**（下面那条专门钉它）。
+	# 要全程入画的是**看得见的棋面**（桌垫）。
 	var hw: float = t3.TABLE_SIZE.x * 0.5
 	var hd: float = t3.TABLE_SIZE.y * 0.5
 	for i in 21:
@@ -568,49 +568,6 @@ func _run() -> void:
 	_check(area_ratio > 0.6 and area_ratio < 1.6,
 		"两端桌面投影大小接近（面积比 %.2f，须在 [0.6,1.6]；3D 端 %s / 2D 端 %s）"
 			% [area_ratio, boxes[0], boxes[1]])
-	# 桌面在不在画面里还不够：**四块立牌**（批次 5 Task 2 起"点玩家选目标"的唯一入口）
-	# 也必须在整条轨道上看得见 —— 它们的桌位（STANDEE_BASE_PX）是画布常量，窗口一改就得重取，
-	# 重取错了这里会红。量的是**牌面八个角**（真·看得见的那块，不是桌面上那个落点）。
-	# 量在一台**临时**的 TableProps 上（不进 t3.table_props）：那台的子节点数被后面
-	# 的**轮缘**断言数着（`get_child_count() == 1`），这里塞一块立牌进去会把它带偏。
-	var S0 = load("res://scripts/table_props.gd")
-	var tp0 = S0.new()
-	tp0.setup(t3)
-	root.add_child(tp0)
-	var srows0: Array = []
-	for i in 4:
-		srows0.append({"peer": i + 1, "name": "P%d" % (i + 1), "worth": 1, "color_idx": i,
-			"alive": true, "items": [], "is_self": false})
-	tp0.set_standees(srows0)
-	await process_frame
-	var sroot0: Node = tp0.get_node_or_null("Standees")
-	var worst_standee := INF
-	var worst_standee_wt := -1.0
-	if sroot0 == null:
-		_check(false, "立牌父节点缺了，「立牌全程在画面内」整段跳过")
-	else:
-		for i in 21:
-			var wt2 := i * 0.05
-			t3.snap_view(wt2)
-			var m2 := INF
-			for j in 4:
-				var plate0 = (sroot0.get_child(j) as Node3D).get_node("Plate") as MeshInstance3D
-				for sx in [-0.5, 0.5]:
-					for sy in [-0.5, 0.5]:
-						for sz in [-0.5, 0.5]:
-							var c0: Vector3 = plate0.global_transform * Vector3(
-								0.70 * float(sx), 0.72 * float(sy), 0.03 * float(sz))
-							var sp0: Vector2 = t3.camera.unproject_position(c0)
-							m2 = minf(m2, minf(minf(sp0.x, vr.size.x - sp0.x),
-								minf(sp0.y, vr.size.y - sp0.y)))
-			if m2 < worst_standee:
-				worst_standee = m2
-				worst_standee_wt = wt2
-		_check(worst_standee > 5.0,
-			"四块立牌的牌面在整条轨道 21 档都看得见（最小余量 %.1f px @ view_t=%.2f，须 > 5px）"
-				% [worst_standee, worst_standee_wt])
-	t3.snap_view(0.0)
-	tp0.free()
 	# 滚轮改的是目标值，不是硬切
 	t3.snap_view(0.0)
 	t3.set_view(1.0)
@@ -829,7 +786,7 @@ func _run() -> void:
 	t3.on_table_click = Callable()
 
 	# ---- 批次 3 Task 1：3D 物件层地基 ----
-	# props 是实体物件（转盘 / 两摞牌堆 / 手牌 / 四块立牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
+	# props 是实体物件（转盘 / 两摞牌堆 / 手牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
 	# 物件摆位一律走 canvas_px_to_world（画布像素 → 桌面世界），而不是另立一套坐标。
 	# 这条往返就是"共用坐标系"的可执行定义 —— 两套坐标系一旦漂移，往返立刻对不上。
 	# 同时钉住 y：画布中心落在桌面上、与桌垫齐平，物件才不会浮空或陷进桌子。
@@ -1260,7 +1217,7 @@ func _run() -> void:
 
 	# ---- 批次 5 Task 1：视角量是属性（赋值即推送） ----
 	# 批次 4 的终审：`view_t` 曾是**公开 var**，唯一更新点是 `_apply_camera()` ⇒ 任何一句
-	# `view_t = x` 都会让相机与物件静默脱钩。立牌正要用同一个推送点（自己的那面按 view_t 显隐），
+	# `view_t = x` 都会让相机与物件静默脱钩。手牌正要用同一个推送点（淡出按 view_t 算），
 	# 所以把不变量变成结构：setter 里 clamp + 早退 + 调 `_apply_camera()`（推送在它末尾）。
 	# 断言走可观察量：**直接**写 view_t，手牌的不透明度与相机俯角都必须跟着变。
 	print("== 视角量是属性：直接赋值也推相机与物件（不会静默脱钩）==")
@@ -1280,284 +1237,10 @@ func _run() -> void:
 	t3.snap_view(0.0)
 	await process_frame
 
-	# ---- 批次 5 Task 1：四块 3D 立牌 ----
-	# 座位卡的 3D 版：名字 / 身家 / 公开背包 / 倒计时都长在牌面上，点它 = 选目标。
-	# 断言一律走可观察量（节点自己的 mesh 与变换、真投影链路、文字内容、材质模式），
-	# 不把 set_standees 的推导再写一遍。
-	print("== 立牌：四块落座、有厚度、向后倾（能投影） ==")
-	var tpS = t3.table_props
-	if tpS == null:
-		_check(false, "TableProps 未就绪，立牌断言整段跳过")
-	else:
-		var rowsS := [
-			{"peer": 1, "name": "我", "worth": 20000, "color_idx": 0, "alive": true,
-				"items": [], "is_self": true},
-			{"peer": 2, "name": "乙", "worth": 15800, "color_idx": 1, "alive": true,
-				"items": [{"id": "招财猫"}, {"id": "黑卡"}], "is_self": false},
-			{"peer": 3, "name": "丙", "worth": 8000, "color_idx": 2, "alive": true,
-				"items": [], "is_self": false},
-			{"peer": 4, "name": "丁", "worth": 100, "color_idx": 3, "alive": false,
-				"items": [], "is_self": false},
-		]
-		tpS.set_standees(rowsS)
-		await process_frame
-		var sr: Node = tpS.get_node_or_null("Standees")
-		_check(sr != null, "立牌的父节点在（set_standees 时建）")
-		if sr == null:
-			_check(false, "立牌父节点缺了，下面整段跳过")
-		else:
-			_check(sr.get_child_count() == 4, "四块立牌都建了（实得 %d）" % sr.get_child_count())
-			var thick := true
-			var lean := true
-			var opaque := true
-			for i in 4:
-				var root_i := sr.get_child(i) as Node3D
-				var plate := root_i.get_node_or_null("Plate") as MeshInstance3D
-				var bm: BoxMesh = null
-				if plate != null and plate.mesh is BoxMesh:
-					bm = plate.mesh as BoxMesh
-				if bm == null or bm.size.y < 0.2 or bm.size.z < 0.01:
-					thick = false        # 薄板：有明确的长宽，也有厚度
-				if bm != null:
-					# "向后倾"的可执行定义：牌面顶边比板底（= 立牌原点）**更靠远端**（z 更小）
-					var top_z: float = (plate.global_transform * Vector3(0.0, bm.size.y * 0.5, 0.0)).z
-					if top_z >= root_i.global_position.z:
-						lean = false
-				var pm: StandardMaterial3D = null
-				if plate != null:
-					pm = plate.material_override as StandardMaterial3D
-				if pm == null or pm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
-					opaque = false
-			_check(thick, "四块都是有**厚度**的薄板（BoxMesh，厚度 ≥ 0.01 世界单位）")
-			_check(lean, "四块都**向后倾**（牌面顶边比板底更靠远端 —— 2D 端才看得见一块面）")
-			_check(opaque, "牌面是不透明材质（不进透明队列 ⇒ 写深度、投得出影子）")
-			# 四块都立在桌面上（不是浮空也不是陷进去），且落在**四条边的中线上**：
-			# 底沿 z>0 / 上沿 z<0 / 左侧 x<0 / 右侧 x>0，且横向偏移在一条中线上（左右那两块 z≈0）。
-			# 具体数值由 STANDEE_BASE_PX 经窗口换算定（见下面「立牌仍贴在桌沿」那段的几何判据），
-			# 这里只钉"四条边各一块、方向别配错"。
-			var on_table := true
-			var at_edge := true
-			for i in 4:
-				var rp: Vector3 = (sr.get_child(i) as Node3D).global_position
-				if absf(rp.y - (t3.table_mesh.global_position.y + tpS.PROPS_Y)) > 0.001:
-					on_table = false
-				var ehw: float = t3.TABLE_SIZE.x * 0.5
-				var ehd: float = t3.TABLE_SIZE.y * 0.5
-				# 底 / 左 / 上 / 右 四块各自该在哪条边上（板心都在桌垫之外那一圈）
-				var ok_edge: bool = [rp.z > ehd and absf(rp.x) < 0.05,
-					rp.x < -ehw and absf(rp.z) < 0.05,
-					rp.z < -ehd and absf(rp.x) < 0.05,
-					rp.x > ehw and absf(rp.z) < 0.05][i]
-				if not ok_edge:
-					at_edge = false
-			_check(on_table, "四块都坐在桌面上（y = 桌垫 + PROPS_Y）")
-			_check(at_edge, "四块分别立在桌子四边（底 / 左 / 上 / 右各一块，都在桌垫之外那圈上）")
-
-			# 牌面文字：名字 / 身家（破产与座位卡同款："已出局"）
-			_check(String((sr.get_child(1).get_node("Name") as Label3D).text) == "乙",
-				"第二块（左边那位）的名字是「乙」（实得「%s」）"
-					% String((sr.get_child(1).get_node("Name") as Label3D).text))
-			var worth_txt := String((sr.get_child(1).get_node("Worth") as Label3D).text)
-			_check(worth_txt.contains("15,800"), "身家按传入的 worth 显示（实得「%s」）" % worth_txt)
-			_check(String((sr.get_child(3).get_node("Worth") as Label3D).text) == "已出局",
-				"破产那家身家显示「已出局」（实得「%s」）"
-					% String((sr.get_child(3).get_node("Worth") as Label3D).text))
-			# 文字要能被暗底上的描边托住（设计稿 §五 反转 4 的代价就是靠它）
-			var name_lab := sr.get_child(1).get_node("Name") as Label3D
-			_check(name_lab.outline_size > 0 and name_lab.outline_modulate.a > 0.5,
-				"立牌文字带深色描边（暗底可读性）")
-			_check(not name_lab.billboard and not name_lab.no_depth_test,
-				"文字贴着牌面（不 billboard、不 no_depth_test —— 要被前面挡它的东西遮住）")
-
-			print("== 立牌：公开背包摆满 7 件（不截到 5）、品质色对得上 ==")
-			var IDS = load("res://scripts/item_data.gd")
-			var seven := []
-			for k in 7:
-				seven.append({"id": "共享单车"})     # 白
-			seven[6] = {"id": "黑卡"}                # 橙（最后一张换个品质，颜色才不是一色到底）
-			var rows7: Array = rowsS.duplicate(true)
-			rows7[0].items = seven
-			tpS.set_standees(rows7)
-			await process_frame
-			var bags: Array = []
-			for c in (sr.get_child(0) as Node3D).get_children():
-				if String(c.name).begins_with("Bag"):
-					bags.append(c)
-			_check(bags.size() == 7, "背包小卡的池子有 7 个位子（实得 %d）" % bags.size())
-			var vis_bags := 0
-			for b in bags:
-				if (b as MeshInstance3D).visible:
-					vis_bags += 1
-			_check(vis_bags == 7, "**7 件全部摆出来**（不截到 5；实得 %d 张）" % vis_bags)
-			_check(String((sr.get_child(0).get_node("Count") as Label3D).text) == "背包 7",
-				"件数写明（实得「%s」）" % String((sr.get_child(0).get_node("Count") as Label3D).text))
-			var bm0: StandardMaterial3D = null
-			if bags.size() > 0:
-				bm0 = (bags[0] as MeshInstance3D).material_override as StandardMaterial3D
-			var bm6: StandardMaterial3D = null
-			if bags.size() > 6:
-				bm6 = (bags[6] as MeshInstance3D).material_override as StandardMaterial3D
-			_check(bm0 != null and bm0.albedo_color.is_equal_approx(IDS.QUALITY_COLORS["白"]),
-				"小卡用品质色（共享单车 = 白）")
-			_check(bm6 != null and bm6.albedo_color.is_equal_approx(IDS.QUALITY_COLORS["橙"]),
-				"最后一张是黑卡 = 橙（逐张不同色，不是整排一色）")
-			_check(bm0 != null and bm0.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
-				"背包小卡也是不透明材质（同样要投得出影子）")
-			# 空背包：一件都不露，但"背包 0"这行仍在（那一格是"公开背包"的位置）
-			var rows0: Array = rowsS.duplicate(true)
-			rows0[0].items = []
-			tpS.set_standees(rows0)
-			vis_bags = 0
-			for b in bags:
-				if (b as MeshInstance3D).visible:
-					vis_bags += 1
-			_check(vis_bags == 0, "空背包：一张小卡都不露（实得 %d）" % vis_bags)
-			_check(String((sr.get_child(0).get_node("Count") as Label3D).text) == "背包 0",
-				"空背包仍写「背包 0」")
-
-			print("== 立牌：命中（点它 = 选目标）、自己的那面 3D 端点不到 ==")
-			tpS.set_standees(rowsS)
-			await process_frame
-			t3.snap_view(0.0)
-			await process_frame
-			# 「看得见的那块牌面」= 板心经真实点击链路折回画布像素（同 hand_rect 的验法）
-			var seen_s := func(i: int) -> Vector2:
-				var pl := (sr.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
-				var got = t3.screen_to_viewport(t3.camera.unproject_position(pl.global_position))
-				return got if got != null else Vector2(-9999.0, -9999.0)
-			var hit_self := true
-			var peer_ok := true
-			for i in [1, 2, 3]:
-				var px: Vector2 = seen_s.call(i)
-				if tpS.standee_hit(px) != i:
-					hit_self = false
-				if tpS.standee_peer(i) != int(rowsS[i].peer):
-					peer_ok = false
-			_check(hit_self, "点三块对手立牌看得见的那面都命中它自己")
-			_check(peer_ok, "standee_peer(i) 给出该块是谁（乙 / 丙 / 丁）")
-			_check(tpS.standee_peer(9) == GameData.NO_PEER, "越界下标给 NO_PEER（哨兵，不是 -1）")
-			_check(tpS.standee_hit(Vector2(1024.0, 1024.0)) == -1,
-				"棋盘中心不算命中（立牌在桌沿，不该吃掉棋盘上的点击）")
-			# 自己的那面：3D 端看不见 ⇒ 点不到
-			_check(not (sr.get_child(0) as Node3D).visible, "3D 端自己的立牌藏起来了（第一人称看不见自己）")
-			_check(tpS.standee_hit(seen_s.call(0)) == -1, "3D 端点自己的立牌不命中（-1）")
-			# **两者永不同框**（批次 5 Task 4）：手牌坐在近端木纹留白、自己那块立牌立在近端桌沿，
-			# 投影压在同一片屏幕区域上。**0.5 是两个滚轮格的稳定停驻位**（不是"过渡里的几帧"），
-			# 所以分界线 `STANDEE_SELF_HIDE_T` 提到**手牌最后可见的档之上**：
-			# 手牌还看得见时自己那面就是藏着，等手牌淡完了它才现身。
-			tpS.set_hand([{"id": "招财猫"}, {"id": "黑卡"}])
-			t3.snap_view(0.5)
-			await process_frame
-			_check(tpS.hand_alpha() > 0.02,
-				"停驻位 view_t = 0.5：手牌还看得见（实得 alpha %.2f）" % tpS.hand_alpha())
-			_check(not (sr.get_child(0) as Node3D).visible,
-				"停驻位 view_t = 0.5：自己那块立牌仍藏着 —— 两者不同框")
-			t3.snap_view(0.7)
-			await process_frame
-			_check(tpS.hand_alpha() < 0.02,
-				"view_t = 0.7：手牌已淡完（实得 alpha %.2f）" % tpS.hand_alpha())
-			_check((sr.get_child(0) as Node3D).visible,
-				"手牌消失之后自己那块立牌才露出来（分界线在手牌最后可见的档之上）")
-			# 2D 端：四块都在、自己那面也点得到
-			t3.snap_view(1.0)
-			await process_frame
-			_check((sr.get_child(0) as Node3D).visible, "2D 端自己的立牌露出来了")
-			_check(tpS.standee_hit(seen_s.call(0)) == 0, "2D 端点自己的立牌命中（实得 %d）"
-				% tpS.standee_hit(seen_s.call(0)))
-			t3.snap_view(0.0)
-			await process_frame
-
-			print("== 立牌：倒计时只挂在当前行动者那一块 ==")
-			tpS.set_standee_timer(3, "掷骰", 6.0, 30.0)      # 行动者 = 丙（第 3 块）
-			var t_act := (sr.get_child(2).get_node("Timer") as Label3D)
-			var t_other := (sr.get_child(1).get_node("Timer") as Label3D)
-			_check(t_act.visible, "行动者那块露倒计时")
-			_check(String(t_act.text).contains("掷骰") and String(t_act.text).contains("6"),
-				"倒计时写明环节与剩余秒数（实得「%s」）" % String(t_act.text))
-			_check(not t_other.visible, "别人的立牌不露倒计时")
-			_check((sr.get_child(2).get_node("Track") as MeshInstance3D).visible
-				and (sr.get_child(2).get_node("Fill") as MeshInstance3D).visible,
-				"倒计时那一档的进度条也跟着露")
-			_check(not (sr.get_child(1).get_node("Track") as MeshInstance3D).visible,
-				"别人的进度条不露")
-			# 进度条长度跟着剩余比例缩（左端固定）：30 秒里剩 6 秒 ⇒ 填充只有两成
-			var fill2 := sr.get_child(2).get_node("Fill") as MeshInstance3D
-			_check(absf(fill2.scale.x - 0.2) < 0.02, "填充长度 = 剩余比例（实得 %.2f，期望 0.2）"
-				% fill2.scale.x)
-			tpS.set_standee_timer(GameData.NO_PEER, "", 0.0, 0.0)
-			_check(not t_act.visible, "窗口收起后四块一起收起")
-
-			print("== 立牌：幂等（节点池只建一次） ==")
-			var pool_s: int = sr.get_child_count()
-			var first_s: Node = sr.get_child(0)
-			tpS.set_standees(rowsS)
-			_check(sr.get_child_count() == pool_s and sr.get_child(0) == first_s,
-				"重复调用不重建节点（%d → %d 块）" % [pool_s, sr.get_child_count()])
-			# 两人局：多出来的池子节点**藏起来**而不是拆掉
-			tpS.set_standees([rowsS[0], rowsS[1]])
-			_check((sr.get_child(2) as Node3D).visible == false, "人少了：多余的立牌藏起来（不拆节点）")
-			tpS.set_standees(rowsS)
-			_check((sr.get_child(2) as Node3D).visible, "人又齐了：藏起来的那块重新露出")
-			_check(tpS.standee_hit(Vector2(50.0, 50.0)) == -1, "角落不算命中")
-
-			# ---- 批次 5 Task 3：可选中的立牌高亮 ----
-			# 座位卡上的金框（`board.set_select_peers`）随座位卡退场后没有落点了，
-			# 这条反馈补在立牌上：可选中的那块**提亮牌面 + 自发光 + 略微抬起**，其余保持原样。
-			# 断言走可观察量（材质色 / emission / 世界 y），不读内部标志。
-			print("== 立牌：可选中的那块亮着（提亮 + 自发光 + 抬一点），其余原样 ==")
-			var plate_of := func(i: int) -> MeshInstance3D:
-				return (sr.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
-			var mat_of := func(i: int) -> StandardMaterial3D:
-				return plate_of.call(i).material_override as StandardMaterial3D
-			var lum_of := func(i: int) -> float:
-				return mat_of.call(i).albedo_color.get_luminance()
-			var plain_lum: Array = []
-			var plain_y: Array = []
-			for i in 4:
-				plain_lum.append(lum_of.call(i))
-				plain_y.append((sr.get_child(i) as Node3D).global_position.y)
-			_check(not mat_of.call(1).emission_enabled, "（前置）没高亮时牌面不自发光")
-			tpS.set_standee_highlight([2, 4])          # 乙 / 丁（第 2、第 4 块）
-			_check(mat_of.call(1).emission_enabled and mat_of.call(3).emission_enabled,
-				"可选中的两块亮着（自发光打开）")
-			_check(not mat_of.call(0).emission_enabled and not mat_of.call(2).emission_enabled,
-				"不可选中的两块保持原样（不自发光）")
-			_check(lum_of.call(1) > plain_lum[1] + 0.05 and lum_of.call(3) > plain_lum[3] + 0.05,
-				"亮着的牌面真提亮了（乙 %.3f→%.3f / 丁 %.3f→%.3f）"
-					% [plain_lum[1], lum_of.call(1), plain_lum[3], lum_of.call(3)])
-			_check(absf(lum_of.call(0) - plain_lum[0]) < 0.001 and absf(lum_of.call(2) - plain_lum[2]) < 0.001,
-				"没选中的牌面颜色一字未动")
-			_check((sr.get_child(1) as Node3D).global_position.y > plain_y[1] + 0.01,
-				"亮着的那块还抬起来一点（y %.3f → %.3f）"
-					% [plain_y[1], (sr.get_child(1) as Node3D).global_position.y])
-			_check(absf((sr.get_child(0) as Node3D).global_position.y - plain_y[0]) < 0.001,
-				"没选中的那块高度一字未动")
-			# 广播不能把高亮弄丢：`set_standees` 每次重摆都要把这份状态重放一遍（与倒计时同款）
-			tpS.set_standees(rowsS)
-			_check(mat_of.call(1).emission_enabled and lum_of.call(1) > plain_lum[1] + 0.05,
-				"一次重摆（=状态广播）之后高亮仍在（重放没有丢）")
-			_check(not mat_of.call(0).emission_enabled, "重摆之后没选中的那块仍不自发光")
-			# 熄灭：材质与高度都回到没高亮过的那一档
-			tpS.set_standee_highlight([])
-			_check(not mat_of.call(1).emission_enabled and not mat_of.call(3).emission_enabled,
-				"清空之后四块一起熄灭")
-			_check(absf(lum_of.call(1) - plain_lum[1]) < 0.001 and absf(lum_of.call(3) - plain_lum[3]) < 0.001,
-				"熄灭后牌面颜色回到原样")
-			_check(absf((sr.get_child(1) as Node3D).global_position.y - plain_y[1]) < 0.001,
-				"熄灭后高度落回原样")
-			# 越界的 peer（不在桌上）不该点亮任何一块
-			tpS.set_standee_highlight([GameData.NO_PEER, 999])
-			var any_lit := false
-			for i in 4:
-				if mat_of.call(i).emission_enabled:
-					any_lit = true
-			_check(not any_lit, "不在桌上的 peer 不点亮任何一块")
-			tpS.set_standee_highlight([])
-
 	# ---- 批次 6 Task 2：机会 / 命运两摞实体牌堆 ----
 	# 桌垫上最后两处"贴片"（画布上印着的那两摞卡背）实体化。钉四件事：
 	#   ① 两摞都在、都**有厚度**（叠层 > 1 —— 一块等厚方砖不算"一摞牌"）；
-	#   ② 落点与印在桌垫上的那摞卡背**重合**（走 `board.deck_screen_pos()` —— 与轮缘 / 立牌
+	#   ② 落点与印在桌垫上的那摞卡背**重合**（走 `board.deck_screen_pos()` —— 与轮缘 / 手牌
 	#      同一条 chain：`global_position + _view_from_world(...)`；这里也是 layout_test 后面那段
 	#      "牌堆在窗口内"用的口径。**别再自己拼 `_view_from_world`** —— 它是私有方法、且容易漏
 	#      `global_position` 那一项，批次 6 Task 3 把这条链收进了公开入口）；
@@ -1717,15 +1400,13 @@ func _run() -> void:
 
 	t3.queue_free()
 
-	# ---- 批次 5 Task 2：座位栏退场，改钉"窗口覆盖了什么 + 立牌还在不在桌沿" ----
+	# ---- 批次 5 Task 2：座位栏退场，改钉"窗口覆盖了什么"（原第 ③ 条「立牌贴桌沿」随批次 9 删）----
 	# T4b/T4c/T-a 那三条（"四条座位栏都在画布内 / 窗口内 / 屏幕内"）随座位栏一起删了：
-	# 它们守的是"指向性道具点得到人"，而那个入口现在是**3D 立牌**（由 hud_test 的
-	# 「点对手立牌能选目标」守着）。这里换成三条新的：
+	# 它们守的是"指向性道具点得到人"，而那个入口随批次 9 挪到**屏幕层的四角身家条**
+	#（Task 2 起可点、Task 3 接上选目标高亮；hud_test 里那两条断言守着）。这里只剩两条：
 	#   ① 反向契约：座位卡那一套真的没了、也没有留下四条空栏；
 	#   ② 窗口必须覆盖**棋盘与两摞牌堆**（可见且可点到）——批次 2 的 T4c 就是踩了这个坑
-	#     （窗口裁过头 ⇒ 画布内有、桌面上看不见也点不到）才把窗口恢复成整张画布的；
-	#   ③ 四块立牌仍贴在**桌沿**（桌垫之外、木桌之内）—— 窗口一改，立牌坐标必须跟着重取
-	#     （Task 1 的代码注释里预告过这条）。
+	#     （窗口裁过头 ⇒ 画布内有、桌面上看不见也点不到）才把窗口恢复成整张画布的。
 	print("== 座位卡退场：画布里没有座位栏，棋盘与牌堆仍在窗口内 ==")
 	var t4 = load("res://scripts/table_3d.gd").new()
 	root.add_child(t4)
@@ -1759,40 +1440,6 @@ func _run() -> void:
 		print("    牌堆 %s：中心（画布）%s 底板 %s" % [d, dc, zone])
 	_check(deck_out == 0, "两摞牌堆的中心都在纹理窗口内（窗口外 %d 摞）" % deck_out)
 	_check(deck_zone_out == 0, "两摞牌堆的底板整块在纹理窗口内（越界 %d 摞）" % deck_zone_out)
-	# ③ 四块立牌的桌位：底 / 左 / 上 / 右。判据用**世界坐标**（桌垫口径）：
-	#    ① 在桌垫之外（不压在棋盘 / 桌垫上）② 在木桌之内（没飞出桌沿）。
-	var S4 = load("res://scripts/table_props.gd")
-	var half_w: float = t4.TABLE_SIZE.x * 0.5
-	var half_d: float = t4.TABLE_SIZE.y * 0.5
-	var wood_out: float = half_w + t4.WOOD_FRAME      # 木桌外沿（宽 == 深，都是方形外扩）
-	var off_mat := 0
-	var off_wood := 0
-	for i in 4:
-		var bpx: Vector2 = S4.STANDEE_BASE_PX[i]
-		var w: Vector3 = t4.canvas_px_to_world(bpx)
-		var shalf: Vector2 = Vector2(S4.STANDEE_SIZE.x, S4.STANDEE_SIZE.y) * 0.5
-		# 立牌是一块板：x 方向占 ±半宽，z 方向只占厚度——判"在桌垫之外"用它的**板心**
-		var outside_mat: bool = absf(w.x) > half_w + shalf.x or absf(w.z) > half_d + shalf.y
-		var inside_wood: bool = absf(w.x) + shalf.x <= wood_out and absf(w.z) + shalf.x <= wood_out
-		print("    立牌 %d：世界 %s（桌垫半宽 %.2f / 半深 %.2f，木桌外沿 %.2f）"
-			% [i, w, half_w, half_d, wood_out])
-		if not outside_mat:
-			off_mat += 1
-		if not inside_wood:
-			off_wood += 1
-	# 底 / 上两块在 z 上、左 / 右两块在 x 上：四块**都**要在桌垫之外、木桌之内
-	_check(off_mat == 0, "四块立牌都立在桌垫之外（压在桌垫上的 %d 块）" % off_mat)
-	_check(off_wood == 0, "四块立牌都没飞出木桌沿（飞出去的 %d 块）" % off_wood)
-	# 对称性：左右两块 x 互为相反数、上下两块 z 互为相反数（对着出图核过的那四个桌位）
-	var sx0: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[0])
-	var sx1: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[1])
-	var sx2: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[2])
-	var sx3: Vector3 = t4.canvas_px_to_world(S4.STANDEE_BASE_PX[3])
-	_check(absf(sx0.x) < 0.01 and absf(sx2.x) < 0.01 and absf(sx1.z) < 0.01 and absf(sx3.z) < 0.01,
-		"四块立牌各自在四条边的中线上（底/上在 x=0、左/右在 z=0）")
-	_check(is_equal_approx(sx1.x, -sx3.x) and is_equal_approx(sx0.z, -sx2.z),
-		"左右 / 上下两块关于桌心对称（x %.2f/%.2f、z %.2f/%.2f）"
-			% [sx1.x, sx3.x, sx0.z, sx2.z])
 	t4.queue_free()
 
 	if fails == 0:

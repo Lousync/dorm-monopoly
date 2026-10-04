@@ -24,53 +24,6 @@ func _fresh_tiles() -> Array:
 		out.append({"owner": GameData.NO_OWNER, "level": 0})
 	return out
 
-## 某个 peer 的立牌是第几块（-1 = 没这块牌）。行序由 game._refresh_standees 定，
-## 这里不重写那套轮转，直接问立牌自己。
-func _standee_idx_of(g, peer: int) -> int:
-	var tp = g.table3d.table_props
-	for i in tp._standee_rows.size():
-		if tp.standee_peer(i) == peer:
-			return i
-	return -1
-
-## 第 i 块立牌上的倒计时标签（座位卡退场后，倒计时簇的落点就是它）。
-func _standee_timer(g, i: int) -> Label3D:
-	var root: Node = g.table3d.table_props.get_node_or_null("Standees")
-	if root == null or i < 0 or i >= root.get_child_count():
-		return null
-	return root.get_child(i).get_node_or_null("Timer") as Label3D
-
-## 第 i 块立牌的**牌面在屏幕上的**包围盒（板八角经真投影链）。四角身家条是屏幕层 Control，
-## 要跟它比"同不同框"就得取屏幕坐标 —— 立牌那条"折回画布像素"的命中链（`_standee_rect`）
-## 是另一套口径，不能拿来跟屏幕层的矩形相交。
-func _standee_screen_rect(g, i: int) -> Rect2:
-	var tp = g.table3d.table_props
-	var sr: Node = tp.get_node_or_null("Standees")
-	if sr == null or i < 0 or i >= sr.get_child_count():
-		return Rect2()
-	var plate := (sr.get_child(i) as Node3D).get_node_or_null("Plate") as MeshInstance3D
-	if plate == null or not (plate.mesh is BoxMesh):
-		return Rect2()
-	var bm: BoxMesh = plate.mesh
-	var mn := Vector2(INF, INF)
-	var mx := Vector2(-INF, -INF)
-	for sx in [-0.5, 0.5]:
-		for sy in [-0.5, 0.5]:
-			for sz in [-0.5, 0.5]:
-				var c: Vector3 = plate.global_transform * Vector3(
-					bm.size.x * float(sx), bm.size.y * float(sy), bm.size.z * float(sz))
-				var p: Vector2 = g.table3d.camera.unproject_position(c)
-				mn = mn.min(p)
-				mx = mx.max(p)
-	return Rect2(mn, mx - mn)
-
-## 第 i 块立牌上的倒计时进度条（底轨 / 填充）
-func _standee_bar(g, i: int, nm: String) -> MeshInstance3D:
-	var root: Node = g.table3d.table_props.get_node_or_null("Standees")
-	if root == null or i < 0 or i >= root.get_child_count():
-		return null
-	return root.get_child(i).get_node_or_null(nm) as MeshInstance3D
-
 ## 一份 4 人、身家互不相同的状态：甲(最富) 乙 丙 丁(最穷)，轮到我(=乙) 行动
 ## 棋盘上第一格小卖部（进店状态需要一个真实格号：shop_open 必须 >= 0）
 func _shop_tile() -> int:
@@ -111,7 +64,7 @@ func _state(turn_peer: int, with_shop: bool) -> Dictionary:
 ##  ① 房主 `_host_setup` 在开局 1.5 秒后会自己 `_broadcast_state()` 一次（见 game.gd:382），
 ##     而 `_broadcast_state` 要读 `hp[turn_i].peer` —— 名册为空时它抛
 ##     `SCRIPT ERROR: Out of bounds`（本批之前就挂着的噪声）。给一份**与 `_state()` 同形**的
-##     名册（peer 顺序相同 ⇒ 立牌行序也相同），那次自动广播就与测试自己喂的状态一致。
+##     名册（peer 顺序与 `_state()` 一致），那次自动广播就与测试自己喂的状态一致。
 ##  ② 「点手中牌」段要走真房主路径 `_use_item`，它读的就是这份名册（不是 st）。
 func _host_roster() -> Array:
 	var out := []
@@ -153,7 +106,7 @@ func _run() -> void:
 
 	print("== 四角身家条（客户端视角：我是乙，行动的也是我）==")
 	# 角位 = 桌位（`game._seat_peers`：自己打头、其余按行动序 → 底/左/上/右），
-	# 与桌上四块立牌一一对应；取代了右侧名册栏（名册栏与它挂的是同一份东西）。
+	# 取代了右侧名册栏（名册栏与它挂的是同一份东西）。
 	# UIKit 一律**运行时 load**：静态写 `UIKit.X` 会把 ui_kit.gd 拽进本脚本的静态依赖链，
 	# 而它引用了 autoload `Fx` —— 在 `--script` 入口下此时 autoload 还没注册，
 	# 整链会以「Identifier not found: Fx」编译失败（同 layout_test 顶部那段说明）。
@@ -205,7 +158,7 @@ func _run() -> void:
 	_check(String(bars[2].name_l.text).contains("破产"), "破产那家标「破产」（实得「%s」）"
 		% String(bars[2].name_l.text))
 	_check(String(bars[2].worth_l.text) == "已出局", "破产那家身家列显示「已出局」")
-	# 轮到谁行动：那一条的名字变金（角位的"该你了"提示，与立牌倒计时同一件事）
+	# 轮到谁行动：那一条的名字变金（角位的"该你了"提示，与四角条的倒计时行同一件事）
 	_check((bars[0].name_l as Label).get_theme_color("font_color") == UK.ACCENT,
 		"行动者（我）那条名字变金")
 	_check((bars[1].name_l as Label).get_theme_color("font_color") != UK.ACCENT,
@@ -263,29 +216,6 @@ func _run() -> void:
 	_check(quad_hit.size() == 4, "四条各占一个角（实得 %d 个角）" % quad_hit.size())
 	_check(off_screen == 0, "四条都完整落在屏幕内（出屏 %d 条）" % off_screen)
 	_check(overlap_bad == 0, "四条都没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
-	# 四角条与立牌**不同框**（修复波 G）：此前只在注释里声称"四个角都是空的"，没有断言。
-	# 两端 + **中段三档**都要核（批次 6 Task 3 补 0.25/0.5/0.75）：两端安全推不出中间帧安全 ——
-	# 立牌在屏幕上的位置随俯角/距离一起插值，而中段恰是"距离插值最紧"的那一段
-	#（`table_3d.VIEW_DIST_2D` 那段：wt≈0.45–0.55 桌面四角余量最小）。判据 = 屏幕矩形不相交。
-	var srh_g: Node = g.table3d.table_props.get_node_or_null("Standees")
-	var cross_pairs := 0
-	var cross_view := -1.0
-	for vt in [0.0, 0.25, 0.5, 0.75, 1.0]:
-		g.table3d.snap_view(vt)
-		await process_frame
-		await process_frame
-		for i in (srh_g.get_child_count() if srh_g != null else 0):
-			if not (srh_g.get_child(i) as Node3D).visible:
-				continue
-			var rs: Rect2 = _standee_screen_rect(g, i)
-			for b in vis_bars:
-				if rs.intersects((b.root as Control).get_global_rect()):
-					cross_pairs += 1
-					cross_view = vt
-					print("    [穿帮] view_t=%.1f 立牌 %d %s × 角标 peer %d %s" % [
-						vt, i, rs, int(b.peer), (b.root as Control).get_global_rect()])
-	_check(cross_pairs == 0, "四角条与立牌在 5 档 view_t（0/0.25/0.5/0.75/1.0）都不同框（重叠 %d 处，view_t=%s）"
-		% [cross_pairs, str(cross_view)])
 	g.table3d.snap_view(0.0)
 	await process_frame
 
@@ -333,12 +263,15 @@ func _run() -> void:
 			% ("无" if g.action_btn == null else String(g.action_btn.text)))
 	# 陷阱：`_process` 原有一句 `if mat_bar == null: return` 的**提前返回**。只删构建、不删守卫的话，
 	# `_process` 后半段（小卖部 / 黑市 / 操作倒计时 / 开发者面板）会**静默**不再执行。
-	# 这里用「倒计时簇仍被推进」把后半段钉住（簇的推送在 `_process` 最末）。
+	# 这里用「倒计时仍被推进到四角条」把后半段钉住（簇的推送在 `_process` 最末）。
 	g.s_op_timer("roll", 30.0, 30.0, 3)
 	g._process(0.0)
 	await process_frame
-	_check(_standee_timer(g, _standee_idx_of(g, 3)) != null
-			and _standee_timer(g, _standee_idx_of(g, 3)).visible,
+	var cb3g: Dictionary = {}
+	for b in g.corner_bars:
+		if int(b.peer) == 3:
+			cb3g = b
+	_check(not cb3g.is_empty() and (cb3g.timer_kind as Label).visible,
 		"_process 的后半段仍在跑（倒计时没被提前返回吞掉）")
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
@@ -428,7 +361,7 @@ func _run() -> void:
 	print("== 抽卡演出：在屏幕层大字演、**相机全程不动**（批次 8）==")
 	# 批次 8 的判据就一句：演出前后 2D 相机的缩放与注视点**完全相同**。
 	# 旧版会把 `_zoom` 推到 ≥2× 全景（DECK_PUSH_FACTOR）—— 那一推让印在桌垫上的图案整体放大滑动，
-	# 而手牌 / 立牌是不跟 2D 相机的实物 ⇒ 明显错位（用户 ① 报的就是它）。
+	# 而手牌是不跟 2D 相机的实物 ⇒ 明显错位（用户 ① 报的就是它）。
 	g.board.cam_locked = false
 	g.board.fit_overview(true)
 	await process_frame
@@ -556,8 +489,9 @@ func _run() -> void:
 	_check(strip_sb is StyleBoxTexture,
 		"色条挂着真正的卡样式（实得 %s）" % ("null" if strip_sb == null else strip_sb.get_class()))
 
-	print("== 操作倒计时（D 方案）：挂在当前行动者的立牌上 ==")
-	# 座位卡退场后，倒计时簇的落点换成立牌；数据链路一字未改（仍由 _refresh_op_timer 逐帧推）。
+	print("== 操作倒计时（D 方案）：四角条是倒计时唯一的落点（立牌已于批次 9 退场）==")
+	# 倒计时簇原先立牌 / 四角条各一份；立牌随批次 9 退场 ⇒ 四角条成了唯一落点。它"3D / 2D 两端
+	# 都常驻"的性质本来就比立牌稳。数据链路一字未改（仍由 _refresh_op_timer 逐帧推）。
 	g.my_peer = 2
 	g.s_state(_state(2, false))
 	g._refresh_actions()
@@ -567,19 +501,6 @@ func _run() -> void:
 	g.s_op_timer("roll", 35.0, 35.0, 2)
 	g._process(0.0)
 	await process_frame
-	var i2: int = _standee_idx_of(g, 2)     # 乙 = 行动者
-	var i1: int = _standee_idx_of(g, 1)     # 甲 = 非行动者
-	var tm2: Label3D = _standee_timer(g, i2)
-	var tm1: Label3D = _standee_timer(g, i1)
-	_check(i2 >= 0 and tm2 != null and tm2.visible, "行动者（乙）的立牌上倒计时显示")
-	_check(tm1 != null and not tm1.visible, "非行动者的立牌不显示倒计时")
-	_check(String(tm2.text) == "掷轮 35 秒",
-		"显示环节名与剩余秒数（实得「%s」）" % String(tm2.text))
-	var bar2: MeshInstance3D = _standee_bar(g, i2, "Fill")
-	_check(bar2 != null and bar2.scale.x > 0.9, "进度条接近满格（实得 %.2f）" % bar2.scale.x)
-	# ---- 修复波 A：同一份倒计时**镜像到行动者的四角条** ----
-	# 为什么必须有：立牌那份挂行动者，而**自己**的立牌在 3D 端藏着（STANDEE_SELF_HIDE_T）
-	# ⇒ 自己的回合在 3D 端看不到还剩几秒。四角条两端都常驻，是唯一合适的落点。
 	var cbar_of := func(peer: int) -> Dictionary:
 		for b in g.corner_bars:
 			if int(b.peer) == peer:
@@ -613,41 +534,31 @@ func _run() -> void:
 	g.s_op_timer("item", 5.0, 12.0, 2)
 	await create_timer(1.5).timeout
 	g._process(0.0)
-	var w0: float = bar2.scale.x
-	_check(w0 < 0.45 and w0 > 0.15, "一秒多后进度条平滑缩水到中段（实得 %.2f）" % w0)
-	_check(String(tm2.text).begins_with("道具"),
-		"环节名跟着窗口走（实得「%s」）" % String(tm2.text))
-	# 窗口换人：倒计时跟到丙的立牌
+	var frac2: float = cfl2.size.x / maxf(ctk2.size.x, 1.0)
+	_check(frac2 < 0.45 and frac2 > 0.15, "一秒多后进度条平滑缩水到中段（实得 %.2f）" % frac2)
+	_check(String((cb2.timer_kind as Label).text).begins_with("道具"),
+		"环节名跟着窗口走（实得「%s」）" % String((cb2.timer_kind as Label).text))
+	# 窗口换人：倒计时跟到丙那一条
 	g.s_op_timer("black", 15.0, 20.0, 3)
 	g._process(0.0)
 	await process_frame
-	var i3: int = _standee_idx_of(g, 3)
-	var tm3: Label3D = _standee_timer(g, i3)
-	_check(tm3 != null and tm3.visible and not tm2.visible,
-		"窗口换人时倒计时跟到丙的立牌")
-	_check(String(tm3.text) == "黑市 15 秒",
-		"环节名「黑市」（实得「%s」）" % String(tm3.text))
-	# 四角条那一份跟着换人（同一个 _op_owner，不另立判据）
 	var cb3: Dictionary = cbar_of.call(3)
 	_check((cb3.timer_kind as Label).visible and not (cb2.timer_kind as Label).visible,
-		"四角条上的倒计时跟着行动者换到丙那一条")
+		"窗口换人时倒计时跟着行动者换到丙那一条")
+	_check(String((cb3.timer_kind as Label).text) == "黑市",
+		"环节名「黑市」（实得「%s」）" % String((cb3.timer_kind as Label).text))
+	_check(String((cb3.timer_left as Label).text) == "15 秒",
+		"剩余秒数跟着换人（实得「%s」）" % String((cb3.timer_left as Label).text))
 	# 不限时：仍显示环节名，但不写"0 秒"、进度条整条收起（语义原在座位卡上："不限时"）
 	g.s_op_timer("roll", 0.0, 0.0, 3)
 	g._process(0.0)
-	_check(tm3.visible and not _standee_bar(g, i3, "Track").visible
-			and not _standee_bar(g, i3, "Fill").visible,
-		"不限时窗口仍显示环节名但进度条藏掉")
-	_check(String(tm3.text) == "掷轮",
-		"不限时文案不写秒数（实得「%s」）" % String(tm3.text))
-	# 四角条同一口径：环节名留着，秒数与进度条一起收起
 	_check((cb3.timer_kind as Label).visible and String((cb3.timer_kind as Label).text) == "掷轮"
 			and not (cb3.timer_left as Label).visible and not (cb3.timer_track as ColorRect).visible,
-		"四角条不限时：只写环节名，不写秒数、不画进度条")
-	# 窗口关闭：kind="" 四块一起收
+		"不限时窗口仍显示环节名但不写秒数、不画进度条")
+	# 窗口关闭：kind="" 四条一起收
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
 	await process_frame
-	_check(not tm3.visible and not tm2.visible, "窗口关闭后所有立牌的倒计时收起")
 	var any_corner_timer := false
 	for b in g.corner_bars:
 		if (b.timer_kind as Label).visible or (b.timer_track as ColorRect).visible \
@@ -1148,7 +1059,7 @@ func _run() -> void:
 	_check(tph._hand_disc == -1, "回合推进后红标收掉（实得 _hand_disc=%d）" % tph._hand_disc)
 
 	print("== 选目标期间：手牌对点击完全透明（终审 R2）==")
-	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子 / 立牌，手牌不能抢答成
+	# `_hand_clickable` 补上 `_tgt_stage == ""`：选目标时玩家**正要**点格子 / 四角条，手牌不能抢答成
 	# 「改选另一张牌」。修完后手牌在选目标期间对点击**完全透明**：左键落回棋盘 = 选格、
 	# 右键 = 既有取消。
 	# **批次 5 Task 3 起这条闸仍然必须站岗**，虽然牌已不再盖住任何近排格子（见上一段）：
@@ -1176,163 +1087,22 @@ func _run() -> void:
 	_check(g._tgt_stage == "", "该格被选中 → 选目标态收尾（实得「%s」）" % g._tgt_stage)
 	g._cancel_target()
 
-	print("== 立牌（批次 5 Task 1）：数据来自已同步的 st、点对手立牌能选目标 ==")
-	# 座位卡的 3D 版。数据全走 st.players / st.tiles（客户端也准），顺序按"自己打头、
-	# 其余按行动序"轮转 —— 与 STANDEE_BASE_PX[0..3] 的四个桌位一一对应（座位卡已退场）。
-	# 点击那条：`_on_table_click` 里立牌只多一个命中分支，后果一律走**既有的** `_on_seat_clicked`。
-	g.my_peer = 2
-	g.s_state(_state(2, false))
-	await process_frame
-	await process_frame
-	g._process(0.0)
-	var srh: Node = tph.get_node_or_null("Standees")
-	_check(srh != null, "立牌的父节点在（game._refresh_table_props 驱动）")
-	if srh == null:
-		_check(false, "立牌父节点缺了，下面整段跳过")
-	else:
-		_check(tph._standee_rows.size() == 4, "四家都有立牌（实得 %d）" % tph._standee_rows.size())
-		_check(tph.standee_peer(0) == 2 and tph.standee_peer(1) == 3 \
-			and tph.standee_peer(2) == 4 and tph.standee_peer(3) == 1,
-			"自己打头、其余按行动序（实得 %d/%d/%d/%d）" % [tph.standee_peer(0), tph.standee_peer(1),
-				tph.standee_peer(2), tph.standee_peer(3)])
-		_check(String((srh.get_child(0).get_node("Name") as Label3D).text) == "乙",
-			"第一块（自己）是「乙」（实得「%s」）"
-				% String((srh.get_child(0).get_node("Name") as Label3D).text))
-		# 身家读 st.tiles 而不是 host 专有的 htiles（客户端也要显示）：甲现金 12000 + 他名下那块地。
-		# 期望值在测试里按**数据表**自己算一遍 —— 写死"15,800"会随地产价格调整假红。
-		var want_w := 12000
-		var st_t: Array = g.st.tiles
-		for i in mini(st_t.size(), GameData.TILES.size()):
-			if int(st_t[i].get("owner", GameData.NO_OWNER)) == 1:
-				want_w += int(GameData.TILES[i].price)
-		var w1 := String((srh.get_child(3).get_node("Worth") as Label3D).text)
-		_check(w1.contains(GameData.fmt_money(want_w)) and not w1.contains(GameData.fmt_money(12000)),
-			"身家按「现金 + 地产」（已同步的口径）算（实得「%s」，期望含 %s、不等于现金 %s）"
-				% [w1, GameData.fmt_money(want_w), GameData.fmt_money(12000)])
-		_check(String((srh.get_child(2).get_node("Worth") as Label3D).text) == "已出局",
-			"破产那家（丁）写「已出局」")
-		# ---- 字号 / 可读性（修复波 E）----
-		# 设计稿 §五 反转第 4 条点名"立牌上的名字 / 身家要能读"。这里量**屏幕包围盒高**
-		#（1280×800、围桌全景），把下限钉住 —— 只改字号、不动这条断言，等于放行一次静默回退。
-		# 量的是字盒高（含 ascent/descent），肉眼看到的字高约它的六成（见 table_props 那段取证）。
-		var lab_px := func(i: int, nm: String) -> float:
-			var l := (srh.get_child(i) as Node3D).get_node_or_null(nm) as Label3D
-			if l == null or l.text == "":
-				return -1.0
-			var ab: AABB = l.get_aabb()
-			var mn := Vector2(INF, INF)
-			var mx := Vector2(-INF, -INF)
-			for sx in [-0.5, 0.5]:
-				for sy in [-0.5, 0.5]:
-					for sz in [-0.5, 0.5]:
-						var c: Vector3 = l.global_transform * (ab.position + Vector3(
-							ab.size.x * float(sx), ab.size.y * float(sy), ab.size.z * float(sz)))
-						var p: Vector2 = g.table3d.camera.unproject_position(c)
-						mn = mn.min(p)
-						mx = mx.max(p)
-			return mx.y - mn.y
-		tph.set_standee_timer(tph.standee_peer(1), "小卖部", 60.0, 60.0)   # 最长的一行倒计时
-		await process_frame
-		await process_frame
-		var px_name: float = lab_px.call(1, "Name")
-		var px_worth: float = lab_px.call(1, "Worth")
-		var px_count: float = lab_px.call(1, "Count")
-		var px_timer: float = lab_px.call(1, "Timer")
-		print("    [实测] 立牌字号 → 屏幕包围盒高（1280×800 / 围桌全景）：名字 %.1f · 身家 %.1f · 件数 %.1f · 倒计时 %.1f px" % [
-			px_name, px_worth, px_count, px_timer])
-		_check(px_name >= 15.0, "名字那一档可读（%.1f px ≥ 15）" % px_name)
-		_check(px_worth >= 14.0, "身家那一档提到名字同级可读（%.1f px ≥ 14）" % px_worth)
-		_check(px_count >= 11.0, "件数提到可读档（%.1f px ≥ 11）" % px_count)
-		_check(px_timer >= 11.0, "倒计时提到可读档（%.1f px ≥ 11）" % px_timer)
-		# 提字号不许把文字撑出牌面（板宽是硬约束 —— 见 table_props.STANDEE_SIZE：上界 1.1）
-		var plate_w: float = ((srh.get_child(1).get_node("Plate") as MeshInstance3D).mesh as BoxMesh).size.x
-		var widest := 0.0
-		for nm2 in ["Name", "Worth", "Count", "Timer"]:
-			var l2 := (srh.get_child(1) as Node3D).get_node_or_null(nm2) as Label3D
-			if l2 != null and l2.text != "":
-				widest = maxf(widest, l2.get_aabb().size.x)
-		print("    [实测] 最宽一行 %.3f 世界单位 / 板宽 %.3f（宽的上界 1.1）" % [widest, plate_w])
-		_check(widest <= plate_w, "四行文字都没撑出牌面（最宽 %.3f ≤ 板宽 %.3f）" % [widest, plate_w])
-		tph.set_standee_timer(GameData.NO_PEER, "", 0.0, 0.0)
-		_check(not (srh.get_child(0) as Node3D).visible,
-			"3D 端自己的立牌藏起来（view_t = 0）")
-		# 「看得见的那块牌面」= 板心经真实点击链路折回画布像素
-		var seen_h := func(i: int) -> Vector2:
-			var pl := (srh.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
-			var got = g.table3d.screen_to_viewport(g.table3d.camera.unproject_position(pl.global_position))
-			return got if got != null else Vector2(-9999.0, -9999.0)
-		var foe_pt: Vector2 = seen_h.call(3)          # 第 4 块 = 甲（peer 1）
-		_check(tph.standee_hit(foe_pt) == 3, "点甲那块立牌命中（实得 %d）" % tph.standee_hit(foe_pt))
-		# 非选目标态：立牌**不消费**点击 —— 它立在桌沿、与近端那排格子 / 手牌相接，
-		# 凭空多一块死区是不能接受的（判据与 _on_seat_clicked 同源：它那时本来就什么都不做）。
-		g._cancel_target()
-		_check(g._tgt_stage == "", "前置：当前不在选目标态")
-		_check(not g._on_table_click(foe_pt), "非选目标态：点立牌**不消费**（点击照旧落回棋盘）")
-		# 选目标态：点对手立牌 = 选定目标，走的仍是既有的 _on_seat_clicked
-		# （强拆令是两段式：选完玩家要再点他名下的一块地）。
-		# 手上那张要从**已同步的 st** 里读（`_target_item_id` 读的是 st.players）——只改 hp 不够。
-		# `await = "item"` / `await_peer = 我` 是**必须的**：`_refresh_action_button` 对"不是在
-		# 道具阶段的我家"会顺手 `_cancel_target()`（既有行为，与本任务无关）。用掷轮窗口喂广播，
-		# 选目标态会被那次广播取消掉 —— 那验的就不是"高亮重放"而是别的东西了。
-		var s_tgt: Dictionary = _state(2, false)
-		s_tgt.await = "item"
-		s_tgt.await_peer = 2
-		for p in s_tgt.players:
-			if int(p.peer) == 2:
-				p.items = [{"id": "强拆令", "cd": 0}]
-		g.hp = [{"peer": 2, "name": "乙", "color": 1, "bot": false, "alive": true, "money": 20000,
-			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "silence": 0, "shield": 0,
-			"items": [{"id": "强拆令", "cd": 0}]}]
-		g.s_state(s_tgt)
-		await process_frame
-		# 批次 5 Task 3：**可选中的立牌必须亮着** —— 座位卡退场后这条可见反馈在画布里没有落点了
-		# （Task 2 的遗留顾虑 1），补在立牌上。判据一律取材质上真实贴上去的东西（emission_enabled
-		# 与 albedo 的亮度），不读内部标志；驱动点就是 `_begin_peer_target` 那一处
-		#（`game._push_peer_highlight` 同一处推给 board 与立牌，判据只有一份）。
-		var plate_of := func(i: int) -> MeshInstance3D:
-			return (srh.get_child(i) as Node3D).get_node("Plate") as MeshInstance3D
-		var lit_of := func(i: int) -> bool:
-			var pm := plate_of.call(i).material_override as StandardMaterial3D
-			return pm != null and pm.emission_enabled
-		var lum_of := func(i: int) -> float:
-			return (plate_of.call(i).material_override as StandardMaterial3D).albedo_color.get_luminance()
-		var dim_lum: Array = []
-		for i in 4:
-			dim_lum.append(lum_of.call(i))
-		var dim_y: Array = []
-		for i in 4:
-			dim_y.append((srh.get_child(i) as Node3D).global_position.y)
-		g._begin_peer_target(0, false, true)
-		_check(g._tgt_stage == "peer", "进了既有的「选玩家」态（实得「%s」）" % g._tgt_stage)
-		# 强拆令是两段式（目标须名下有地）⇒ 四家里只有甲（peer 1，第 4 块）可选
-		_check(lit_of.call(3), "选目标态：可选中的那块（甲）亮着")
-		_check(not lit_of.call(1) and not lit_of.call(2),
-			"选目标态：不可选中的两块保持原样（不亮）")
-		_check(lum_of.call(3) > dim_lum[3] + 0.05,
-			"亮着的那块牌面真提亮了（%.3f → %.3f）" % [dim_lum[3], lum_of.call(3)])
-		_check(lum_of.call(1) < dim_lum[1] + 0.001,
-			"没选中的那块牌面颜色一字未动（%.3f → %.3f）" % [dim_lum[1], lum_of.call(1)])
-		_check((srh.get_child(3) as Node3D).global_position.y > dim_y[3] + 0.01,
-			"亮着的那块还抬起来一点（y %.3f → %.3f）"
-				% [dim_y[3], (srh.get_child(3) as Node3D).global_position.y])
-		# 广播不能把高亮弄丢（与倒计时同款：每次重摆都重放一遍）
-		g.s_state(s_tgt)
-		await process_frame
-		_check(lit_of.call(3) and not lit_of.call(1), "一次状态广播之后高亮仍在（重摆会重放）")
-		_check(g._on_table_click(foe_pt), "选目标态：点甲那块立牌被消费（选目标链路接上了）")
-		_check(g._tgt_stage == "tile" and g._tgt_peer == 1,
-			"选定甲 → 转进既有的第二段「选他名下的一块地」（实得「%s」/ target=%d）"
-				% [g._tgt_stage, g._tgt_peer])
-		# 走进第二段（选地块）之后，那份"可选玩家"高亮随之熄灭（与 board.set_select_tiles 同步）
-		_check(not lit_of.call(3), "转进「选地块」段后立牌高亮熄灭")
-		g._cancel_target()
-		_check(not lit_of.call(3) and not lit_of.call(1), "取消选目标后四块都不亮")
-		# 右键不消费：棋盘上右键是既有的取消，立牌不破例
-		g._begin_peer_target(0, false, true)
-		_check(lit_of.call(3), "（前置）重新进选目标态：甲那块又亮了")
-		_check(not g._on_table_click(foe_pt, MOUSE_BUTTON_RIGHT),
-			"选目标态下右键点立牌不消费（右键在棋盘上是既有的取消）")
-		g._cancel_target()
+	print("== 立牌已退场（批次 9）：接口与节点都不在（不留空壳） ==")
+	var tpS = g.table3d.table_props
+	_check(tpS != null, "TableProps 在")
+	if tpS != null:
+		_check(not tpS.has_method("set_standees"), "set_standees 已退场")
+		_check(not tpS.has_method("standee_hit"), "standee_hit 已退场")
+		_check(not tpS.has_method("standee_screen_center"), "standee_screen_center 已退场")
+		_check(not tpS.has_method("set_standee_timer"), "set_standee_timer 已退场")
+		_check(not tpS.has_method("set_standee_highlight"), "set_standee_highlight 已退场")
+		_check(tpS.get_node_or_null("Standees") == null, "桌上没有立牌父节点")
+	_check(not g.has_method("_refresh_standees"), "game._refresh_standees 已退场")
+	var TP1 = load("res://scripts/table_props.gd")
+	var tp_consts: Dictionary = TP1.get_script_constant_map()
+	_check(not tp_consts.has("STANDEE_SIZE") and not tp_consts.has("STANDEE_BASE_PX") \
+			and not tp_consts.has("BACKPACK_MAX"),
+		"立牌常量（STANDEE_* / BACKPACK_MAX）已删")
 
 	g.get_tree().paused = false
 	g.free()

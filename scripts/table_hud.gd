@@ -41,8 +41,8 @@ static func build_play_ui(g: Node) -> void:
 	g.add_child(g.table3d)
 	g.board = g.table3d.board
 	g.board.tile_clicked.connect(g._on_tile_clicked)
-	# `seat_clicked` 自批次 5 Task 2 起**没有发射方**了（座位卡退场，"点玩家"改由桌上的 3D
-	# 立牌命中后直调 `_on_seat_clicked`）。连接保留：它接的是玩法入口，接口不动（同
+	# `seat_clicked` 自批次 5 Task 2 起**没有发射方**了（座位卡退场；"点玩家"批次 9 起由屏幕层
+	# 四角身家条直调 `_on_seat_clicked`）。连接保留：它接的是玩法入口，接口不动（同
 	# board_view 里 item_slot_clicked 那条先例）。
 	g.board.seat_clicked.connect(g._on_seat_clicked)
 
@@ -350,11 +350,11 @@ static func build_play_ui(g: Node) -> void:
 	# **为什么取代**：名册栏与四角条挂的是同一份东西（名次 + 名字 + 身家），同时留着是重复；
 	# 设计稿 §三 的"屏幕清理"与参考（骗子酒馆的四角头像角标）都指向只留四角。
 	# 代价（已在设计里接受）：名册栏那行"地产 ×n · 道具 n / 现金"一起消失 ——
-	# 地产数仍在棋盘上看得见（格子归属色条 + 格详情卡），公开背包由桌上立牌承担。
+	# 地产数仍在棋盘上看得见（格子归属色条 + 格详情卡），公开背包改由**玩家道具弹窗**承担
+	#（批次 9；原先是桌上立牌那排品质色小卡）。
 	#
 	# **角位 = 桌位**：谁坐哪个桌位（game._seat_peers 的"自己打头、其余按行动序"）就挂到
-	# 对应的那个角（CORNER_SLOTS 左下 / 左上 / 右上 / 右下，沿屏幕顺时针）——
-	# 角标与桌上那块立牌对得上，选目标态立牌一亮就知道亮的是哪个角。
+	# 对应的那个角（CORNER_SLOTS 左下 / 左上 / 右上 / 右下，沿屏幕顺时针）。
 	g.corner_bars = []
 	for ci in CORNER_SLOTS.size():
 		g.corner_bars.append(_make_corner_bar(g, hud, CORNER_SLOTS[ci]))
@@ -441,10 +441,10 @@ const CORNER_TIMER_ROW_H := 19
 ##   ① **不让开** 三个角按钮 —— 左上「暂停」（12,10–92,38）、右上「战报」（底 40）、
 ##      左下「规则说明」（顶 ≈ 754）：上边那两条从 y = 48 往下挂、下边那两条从底往上留 56。
 ##      右下这一角没有按钮，同样贴 12 / 56（四角对称，看着才是一套）。
-##   ② **不让开** 四块立牌 —— 它们立在桌沿、投影落在屏幕**中段偏外**（左/右两块的牌心在 450 高
-##      附近、上家那块顶部居中、自己那块只在 2D 端出现且居中），四个角都是空的。
+##   ② **四个角都是空的** —— 这条原是对着"四块立牌立在桌沿、投影落在屏幕中段偏外"核的
+##      （立牌已随批次 9 退场；它留下的余量结论仍成立：角标不与棋盘主体抢屏幕地方）。
 ##   ③ **角标有意在战报浮层之下**：展开的战报面板会盖住右上 / 右下两条（浮层、收起即恢复，
-##      与它盖住棋盘同类）。需求只禁止角标遮挡三个角按钮与立牌，这一条**判可接受**、
+##      与它盖住棋盘同类）。需求只禁止角标遮挡三个角按钮，这一条**判可接受**、
 ##      别当 bug 去"修"（登记在 `development/开发台账.md` §三）。
 const CORNER_SLOTS := [
 	# 自己（桌位 = 底）→ 左下
@@ -794,8 +794,8 @@ static func build_menu_ui(g: Node) -> void:
 	cv_cancel.pressed.connect(g._close_cheat_picker)
 	cv2.add_child(cv_cancel)
 
-	# 指向性道具目标提示条（顶部居中）：**点桌上立牌 / 点格子**选目标（玩家卡随批次 5 的座位卡
-	# 一起退场了，选人的落点现在是自己/对手那块 3D 立牌，`table_props.standee_hit`）；
+	# 指向性道具目标提示条（顶部居中）：**点屏幕四角的身家条 / 点格子**选目标（玩家卡随批次 5
+	# 的座位卡、桌上立牌随批次 9 一起退场了，选人的落点在屏幕层四角条上）；
 	# 取消 = 点此「取消」或 Esc / 右键单击（拖拽平移不触发）
 	g.target_hint = Control.new()
 	g.target_hint.set_anchors_preset(Control.PRESET_FULL_RECT)

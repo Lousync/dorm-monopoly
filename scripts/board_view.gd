@@ -11,8 +11,8 @@ class_name BoardView
 
 signal tile_clicked(idx: int)
 ## **已无发射方（批次 5 Task 2 起）**：座位卡整体退场后，画布里不再有"点玩家"的落点 ——
-## 「点玩家选目标」改由**桌上的 3D 立牌**承担，命中后直接调 `game._on_seat_clicked(peer)`
-##（见 game.gd `_on_table_click` 的第 3) 段）。信号与连接一律保留（同下面两条的先例）：
+## 「点玩家选目标」批次 9 起由**屏幕层四角身家条**承担（`game._on_corner_bar_clicked`
+## 直调 `game._on_seat_clicked(peer)`）。信号与连接一律保留（同下面两条的先例）：
 ## 玩法入口 `_on_seat_clicked` 仍在，接口别动。
 signal seat_clicked(peer: int)
 ## 下面两条原属「座位卡道具牌位」那一排（已随批次 3 Task 6 拆除），现在**没有发射方**：
@@ -759,8 +759,8 @@ func _gui_input(ev: InputEvent) -> void:
 			elif _dragging:
 				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
 					# 座位卡已拆（批次 5 Task 2）：画布里只剩棋盘与牌堆，左键单击 = 点格子。
-					# 「点玩家选目标」不再走画布 —— 立牌是 3D 实体，由 game._on_table_click
-					# 命中后转给既有的 _on_seat_clicked（见 scripts/game.gd 第 3) 段）。
+					# 「点玩家选目标」从批次 9 起走**屏幕层四角身家条**（`game._on_corner_bar_clicked`），
+					# 桌面这条链上早已没有"点玩家"的落点。
 					var idx := _index_at(mb.position)
 					if idx >= 0:
 						Fx.play("click", -10.0)
@@ -800,8 +800,8 @@ func set_hover(idx: int) -> void:
 		_animate_tile(idx, true)
 
 	# 座位卡（四条操作栏 + 内容件 + 倒计时簇 + 道具牌位）已随批次 5 Task 2 **整体退场**：
-	# 名字 / 身家 / 公开背包 / 操作倒计时 / 点选目标全部改由**桌上的 3D 立牌**承担
-	#（scripts/table_props.gd 的 standees 子层，数据由 game._refresh_standees 驱动）。
+	# 名字 / 身家 / 操作倒计时改由**屏幕层四角身家条**承担（公开背包批次 9 起另有玩家道具弹窗、
+	# 选目标改点四角条；中间那层桌上 3D 立牌也随批次 9 退场）。
 	# 画布里从此只剩棋盘与两摞牌堆（牌垫阶段按钮也已在批次 7 退场：画布里再无按钮）。
 	#
 	# 注意下面几条**保留的接口**：它们今天没有座位卡可落点了，但玩法侧仍在调，
@@ -843,8 +843,8 @@ func mat_rect_px() -> Rect2:
 	return r
 
 ## 指向性道具：高亮可选格子 / 可选玩家（两者互斥）。**座位卡退场后前者仍是画布上的金框、
-## 后者在画布里已无落点** —— "哪些玩家可被选中"改由**桌上立牌**点亮
-##（`table_props.set_standee_highlight`，批次 5 Task 3）。两处由 `game._push_peer_highlight`
+## 后者在画布里已无落点** —— "哪些玩家可被选中"改由**屏幕四角身家条**点亮
+##（`game._refresh_corner_highlight`，批次 9）。两者由 `game._push_peer_highlight`
 ## 在同一个调用点一起推，判据只有一份。
 func set_select_peers(peers: Array) -> void:
 	_set_hl_tiles([])
@@ -861,10 +861,10 @@ func clear_select() -> void:
 	_set_hl_tiles([])
 	_pulse_select(false)
 
-## 「哪些玩家此刻可被选中」的高亮：座位卡拆掉后**画布里没有落点了**（立牌是 3D 实体，
-## 见 table_props.gd）。**保留接口不删**（`game._begin_peer_target` 仍在调）。
-## 这条反馈本身**不在画布里**：批次 5 Task 3 起由桌上立牌承担
-##（`table_props.set_standee_highlight` —— 可选中的牌面提亮 + 自发光 + 略微抬起），
+## 「哪些玩家此刻可被选中」的高亮：**画布里没有落点了**（座位卡与桌上立牌都已退场）。
+## **保留接口不删**（`game._begin_peer_target` 仍在调）。
+## 这条反馈本身**不在画布里**：批次 9 起由**屏幕四角身家条**承担
+##（`game._refresh_corner_highlight` —— 可选中的那条描金边 + 提亮），
 ## 与屏幕层那句文字提示（`game._show_target_hint`）一起构成完整的"能点谁"。
 func _set_hl_peers(_peers: Array) -> void:
 	pass
@@ -907,8 +907,8 @@ func mark_discard_pending(peer: int, slot: int) -> void:
 ## 座位卡本身在批次 5 Task 2 退场 ⇒ 以前那两圈"给牌位点绿光"的循环无处可画。
 ## 选中的**可见**反馈在桌面上那张手牌自己身上（`table_props.set_hand_selected`：抬起 + 提亮）。
 ## **为什么留着**：玩法侧（`game._on_item_slot_clicked` / `_clear_item_selection`）仍在写它、
-## 接口不能断。公开背包（看别人的道具）现在由桌上立牌承担（`table_props.set_standees`），
-## 但那排小卡是"品质色 + 件数"、不接点选 —— 这条高亮**不会**跟着立牌复活。
+## 接口不能断。公开背包（看别人的道具）现在由**玩家道具弹窗**承担（`scripts/player_popup.gd`，
+## 批次 9；原先是桌上立牌那排品质色小卡），它是只读展示、不接点选 —— 这条高亮**不会**跟着复活。
 func set_item_selected(peer: int, slot: int) -> void:
 	item_selected = {"peer": peer, "slot": slot}
 
