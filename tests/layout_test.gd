@@ -41,7 +41,7 @@ func _shade_screen_bbox(t3, shade: MeshInstance3D) -> Rect2:
 ## 格坐标是**桌垫口径**（`tile_pos` 活在 BOARD_OFFSET 那一系里），不是画布像素 —— 送进
 ## `canvas_px_to_world` 之前必须先过 BoardView 的取景变换。走的就是 `tile_screen_pos` 那条链：
 ## `global_position + _view_from_world(...)`（私有方法 + 那一项 `global_position` 都别漏，
-## 见本文件 :1314-1320 那段）。把 `tile_pos` 直接当画布像素喂进去会量到桌面上并不存在的一格。
+## 见本文件 :1318-1324 那段）。把 `tile_pos` 直接当画布像素喂进去会量到桌面上并不存在的一格。
 func _tile_screen_w(t3, idx: int) -> float:
 	var mn := Vector2(INF, INF)
 	var mx := Vector2(-INF, -INF)
