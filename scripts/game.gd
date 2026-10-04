@@ -139,6 +139,13 @@ var action_btn: Button
 ## 抽卡演出的屏幕层大字卡（批次 8）：由 `TableHud.build_play_ui` 建、`s_card` 调它。
 ## 演出不再动 2D 相机（旧 `board.play_deck_card` 那一路已删），见 scripts/deck_reveal.gd。
 var deck_reveal: DeckReveal
+## 玩家道具弹窗（批次 9，见 scripts/player_popup.gd）：点四角身家条打开（`_on_corner_bar_clicked`），
+## 装立牌退场后没有落点的**公开背包 + 能量**。由 `TableHud.build_play_ui` 建；数据由
+## `_open_player_popup` **一处**组装（全取已同步的 st，客户端也准）。
+var player_popup: PlayerPopup
+## 「此刻可被选中的玩家」的**单一来源**（批次 9）：由 `_push_peer_highlight` 写、四角条高亮读
+##（`_refresh_corner_highlight`，实现归 Task 3）。放在 game 上而不是四角条里，是因为广播会重排角位。
+var _hl_peers: Array = []
 var _corner_sig := ""              # 四角条的刷新签名（状态没变就不重写）
 var _log_flash_tw: Tween          # 新战报时头部闪金（沉浸感）
 var _op_kind := ""                # 当前操作窗口 kind（"" = 无窗口，簇收起）
@@ -1472,6 +1479,18 @@ func _refresh_players() -> void:
 			"money": int(rpl.get("money", 0)), "alive": bool(rpl.get("alive", true)),
 		})
 	_refresh_corner_bars(standing)
+	# 高亮重放：`_refresh_corner_bars` 有签名缓存（状态没变就早退），而"只变高亮"的广播
+	#（`_push_peer_highlight` 不伴随状态变化）会在那里被早退掉；而且广播会重排角位 ——
+	# 只贴"变化的那一次"会漏。所以每次广播末尾都按 `_hl_peers` 重放一遍。
+	_refresh_corner_highlight()
+	# 玩家道具弹窗（批次 9）：打开期间随广播重填（数值实时）；那个人离场或整局结束即关掉
+	#（弹一个已经不存在的人的弹窗没有意义）。
+	if player_popup != null and player_popup.is_open():
+		var op := player_popup.open_peer()
+		if String(st.get("phase", "")) == "ended" or _state_player(op).is_empty():
+			player_popup.close()
+		else:
+			_open_player_popup(op)
 
 ## 四角身家条（批次 5 Task 3）：取代右侧名册栏（理由与落位见 table_hud.gd 的 CORNER_SLOTS）。
 ##
@@ -1518,6 +1537,9 @@ func _refresh_corner_bars(standing: Array) -> void:
 		var peer := int(e.peer)
 		var alive := bool(e.alive)
 		bar.peer = peer
+		# 批次 9：条根上镜像一份 peer 给点击回调用（`table_hud._make_corner_bar` 的 `gui_input`
+		# 现读 `root` 的 meta）—— **必须与 `bar.peer` 同处写**，否则回调会点到上一个人。
+		root.set_meta("peer", peer)
 		# 棋子色小片：与棋盘上的棋子同一个配色来源（只在真变了才重建）
 		var col := int(e.color)
 		if bar.chip == null or not is_instance_valid(bar.chip) or int(bar.chip_color) != col:
@@ -1528,6 +1550,7 @@ func _refresh_corner_bars(standing: Array) -> void:
 			bar.chip_color = col
 		# 名次徽章：1 金 / 2 银 / 3 铜 / 其余石板灰（它是一棵小节点树，只在名次真变了才重建）
 		var rank := int(e.get("rank", 0))
+		bar["rank"] = rank      # 道具弹窗的名次徽章取它（`_rank_of`，与画出来的那个同一个数）
 		if int(bar.badge_rank) != rank:
 			for c in (bar.badge_slot as Control).get_children():
 				c.queue_free()
@@ -1562,6 +1585,19 @@ func _refresh_corner_bars(standing: Array) -> void:
 				Color(0.085, 0.095, 0.138, 0.82), 10,
 				Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.9) if active
 					else Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4))
+
+## 把「此刻可被选中的玩家」（`_hl_peers`）那份高亮贴到四角条上 —— **每次状态广播末尾重放一遍**。
+##
+## **为什么单独一个函数、不塞进 `_refresh_corner_bars`**：那个函数有签名缓存（状态没变就早退），
+## 而"只变高亮"的广播（`_push_peer_highlight` 不伴随状态变化）会在那里被早退掉；并且广播会重排
+## 角位，只贴"变化的那一次"会漏。所以留一处独立落点、每次广播都重放。
+##
+## **批次 9 Task 2 刻意只落接口、不落可见反馈**（批内过渡态 R3）：现在选目标态仍**没有**可见反馈 ——
+## 条根 `STOP` 只让"点它"这件事成立（`_on_corner_bar_clicked`），"哪条亮着"的样式
+##（2px 金边 + 底色提亮，与行动者的 1px 金边分得开）由 **Task 3 的 `_apply_corner_style`** 补上。
+## **别在这里自己写一套高亮**：会与 Task 3 的样式合成打架（尤其是 `bar["hot"]` 这个缓存位）。
+func _refresh_corner_highlight() -> void:
+	pass
 
 func _refresh_actions() -> void:
 	var await_state := String(st.get("await", ""))
@@ -1630,6 +1666,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			dev.toggle()
 		elif k.keycode == KEY_ESCAPE and (_tgt_stage != "" or selected_slot >= 0):
 			_cancel_target()   # 选目标态或「选中了一张牌」都算可取消的状态
+		elif k.keycode == KEY_ESCAPE and player_popup != null and player_popup.is_open():
+			# 批次 9：Esc 关道具弹窗。**排在"选目标态"之后** —— 选目标态优先（那时不该有弹窗，
+			# 真有也不是当前这一步要取消的东西）。
+			player_popup.close()
 
 func _toggle_log() -> void:
 	log_panel.visible = not log_panel.visible
@@ -3333,6 +3373,42 @@ func _begin_tile_target(slot: int, idxs) -> void:
 	_push_peer_highlight([])
 	if board != null:
 		board.set_select_tiles(arr)
+
+## 点四角身家条的唯一后果函数（批次 9）。**入口在 `table_hud._make_corner_bar` 的 `gui_input`**
+##（条根 `mouse_filter = STOP`，回调里现读 `root` 的 meta 得 peer）。
+##   * 选目标态下 → 走**既有的** `_on_seat_clicked`（它自己判"是不是可选目标"，非目标静默 no-op）；
+##     **不开弹窗**（选目标途中弹一个模态会互相打架）。
+##   * 平时 → 打开该玩家的道具弹窗。
+func _on_corner_bar_clicked(peer: int) -> void:
+	if peer == GameData.NO_PEER:
+		return
+	if _tgt_stage == "peer":
+		_on_seat_clicked(peer)
+		return
+	_open_player_popup(peer)
+
+## 开某玩家的道具弹窗（数据在这里**一处**组装；单一来源仍是已同步的 st / _state_*）。
+## 取不到这个人（peer 不存在 / 已离场）就什么都不做 —— 不发请求、不崩。
+func _open_player_popup(peer: int) -> void:
+	if player_popup == null:
+		return
+	var p := _state_player(peer)
+	if p.is_empty():
+		return
+	player_popup.open(peer, {
+		"name": String(p.get("name", "?")), "worth": _state_worth(peer),
+		"money": int(p.get("money", 0)), "stamina": int(p.get("stamina", 0)),
+		"cap": _stamina_cap(p), "alive": bool(p.get("alive", true)),
+		"color_idx": int(p.get("color", 0)), "rank": _rank_of(peer),
+		"items": p.get("items", []),
+	})
+
+## 某玩家的名次（四角条那套 standing 里的 rank；查不到给 0 = 不画徽章）
+func _rank_of(peer: int) -> int:
+	for b in corner_bars:
+		if int((b as Dictionary).get("peer", GameData.NO_PEER)) == peer:
+			return int((b as Dictionary).get("rank", 0))
+	return 0
 
 ## 选玩家完成。批次 9 起入口是**屏幕四角身家条**（`_on_corner_bar_clicked` 转到这儿）；
 ## 座位卡与立牌都已退场，这里只是后果函数。

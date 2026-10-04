@@ -1104,6 +1104,37 @@ func _run() -> void:
 			and not tp_consts.has("BACKPACK_MAX"),
 		"立牌常量（STANDEE_* / BACKPACK_MAX）已删")
 
+	print("== 四角身家条可点 → 玩家道具弹窗（批次 9）==")
+	g.my_peer = 2
+	var s_cb: Dictionary = _state(2, false)
+	for p in s_cb.players:
+		if int(p.peer) == 1:
+			p.stamina = 4
+			p.items = [{"id": "招财猫", "cd": 0}, {"id": "黑卡", "cd": 0, "charges": 3}]
+	g.s_state(s_cb)
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	_check(g.corner_bars[0].root.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"四角条吃点击（STOP）")
+	# **按 peer 找那条，别写下标假设**：角位是"自己打头、其余按行动序"轮转出来的，
+	# my_peer=2 时 seats=[2,3,4,1] ⇒ peer 1 落在第 4 条，不是第 2 条。
+	var idx1 := -1
+	for i in g.corner_bars.size():
+		if int((g.corner_bars[i] as Dictionary).get("peer", GameData.NO_PEER)) == 1:
+			idx1 = i
+	_check(idx1 >= 0, "peer 1 的四角条在（实得下标 %d）" % idx1)
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	_check(g.player_popup != null and g.player_popup.is_open(), "点四角条 → 道具弹窗打开")
+	_check(g.player_popup.item_count == 2, "弹窗里卡牌数与 st 一致（2 件，实得 %d）" % g.player_popup.item_count)
+	_check(g.player_popup.stamina_text == "4", "弹窗里能量（体力）值与 st 一致（实得「%s」）" % g.player_popup.stamina_text)
+	g.player_popup.close()
+	_check(not g.player_popup.is_open(), "关闭后收起")
+	# 反向：不可见的那条不该开（人少了 / 自己不在名册时不崩）
+	g._on_corner_bar_clicked(999)
+	_check(not g.player_popup.is_open(), "点一个不存在的玩家：不开弹窗、也不崩")
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

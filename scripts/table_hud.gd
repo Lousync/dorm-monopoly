@@ -379,6 +379,11 @@ static func build_play_ui(g: Node) -> void:
 	g.deck_reveal = DeckReveal.new()
 	hud.add_child(g.deck_reveal)
 
+	# 玩家道具弹窗（批次 9）：点四角身家条打开（卡牌 / 能量 / 身家现金；z 65，见 player_popup.gd）。
+	# 挂在 hud 上、显式 z 高于四角条与动作按钮 —— 别靠树序（`z_as_relative` 为真）。
+	g.player_popup = PlayerPopup.new()
+	hud.add_child(g.player_popup)
+
 	var hair := ColorRect.new()
 	hair.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
 	hair.custom_minimum_size = Vector2(0, 1)
@@ -459,8 +464,13 @@ const CORNER_SLOTS := [
 
 ## 一条四角身家条：棋子色小片 + 名次徽章 + 「名字 / 身家 / 现金」三行 + 一条**操作倒计时行**。
 ## 建一次就不动结构，之后只由 `game._refresh_corner_bars`（名字 / 身家 / 现金 / 徽章 / 描边）
-## 与 `game._refresh_corner_timer`（倒计时行）改文字与显隐 ——
-## 整条 `mouse_filter = IGNORE`：它只是读数，绝不吃点击（四角下面还有棋盘与按钮）。
+## 与 `game._refresh_corner_timer`（倒计时行）改文字与显隐。
+##
+## **批次 9 起这条可点**（`mouse_filter = STOP`）：点它 = 开该玩家的**道具弹窗**
+##（`game._on_corner_bar_clicked`），选目标态下则是选中 TA。条内子控件仍全是 IGNORE ——
+## 点击一律冒泡到条根，由根上那条 `gui_input` 统一接（peer 现读 `root` 的 meta，别闭包捕获）。
+## 吃了点击的**影响面已核对**：它只占屏幕四个角，下面没有棋盘可点内容（3D 全景与 2D 端两张
+## 出图都确认了棋盘主体远在条内侧；三个角按钮不重叠由 `tests/hud_test.gd` 的断言钉住）。
 ##
 ## **现金那一行（B）**：身家 = 现金 + 地产，只报身家时玩家在买卖 / 付租那一刻看不到自己有多少
 ## 现金（座位卡与右栏名册栏都已退场，桌上的筹码堆 / 体力件也在批次 7 退场）⇒ 身家做大字、现金做第二行小字，
@@ -470,7 +480,16 @@ const CORNER_SLOTS := [
 static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dictionary:
 	var root := UIKit.panel_container(Color(0.085, 0.095, 0.138, 0.82), 10,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 批次 9：四角条从"只读"变"可点"（点它 = 开该玩家的道具弹窗 / 选目标态下选中 TA）。
+	# 条内的子控件**保持 IGNORE**，否则点到名字那块就不冒泡到条根。
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	# **按 peer 找那条、别在闭包里捕获 peer**：角位是"自己打头"轮转出来的，人一换这一条就换人
+	# ⇒ 回调里现读 `root` 上的 meta（由 `game._refresh_corner_bars` 与 `bar.peer` 同处写）。
+	root.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			g._on_corner_bar_clicked(int(root.get_meta("peer", GameData.NO_PEER)))
+	)
 	var s: Vector2 = CORNER_BAR_SIZE
 	root.custom_minimum_size = s
 	var preset := int(slot.preset)
