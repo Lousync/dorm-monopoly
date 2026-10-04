@@ -394,6 +394,15 @@ func _run() -> void:
 			_check(e_lum + a_lum > bg_lum,
 				"剪影亮于背景（底光 %.4f + 环境 %.4f > 背景 %.4f —— 没有底光时反过来：床架实测 1/255 < 背景 4~6/255）"
 					% [e_lum, a_lum, bg_lum])
+			# ---- 收尾：**光够不够亮**这一条必须与出图夹逼挂钩 ----
+			# 上面那条 `e_lum + a_lum > bg_lum` 的算术门槛只到 ~0.009（bg_lum 0.014 - a_lum 0.006），
+			# 而夹逼里**被否掉的 0.021 那档 e_lum ≈ 0.0185 照样过** ⇒ 采用量级根本没被守住，
+			# 将来退回"测得出但看不见"的发光也会绿。夹逼事实见 `table_3d.ROOM_EMISSION` 那段：
+			#   0.021 ⇒ 出图 1/255（等于没发光，否掉）；0.11 ⇒ 床架 18/255（采用）。
+			# 把下限钉在**采用量级（0.11 ⇒ e_lum ≈ 0.097）的约一半**：`e_lum >= 0.05`。
+			# 于是 0.03（e_lum ≈ 0.026）与 0.021 都必红，采用的 0.11 仍有近 2× 余量。
+			_check(e_lum >= 0.05,
+				"剪影底光够亮（e_lum %.4f ≥ 0.05 —— 下限与夹逼挂钩：0.021 那档实测仅 1/255，必须红）" % e_lum)
 
 	print("== 贴图窗口 = 桌垫（棋盘 + 一圈留白），不再铺满整张画布 ==")
 	# 批次 5 Task 2：座位栏换成了桌上立牌，画布不再需要为它们预留 —— 窗口从"整张画布"
@@ -1883,7 +1892,7 @@ func _run() -> void:
 	var deck_out := 0
 	var deck_zone_out := 0
 	for d in ["机会", "命运"]:
-		var dc: Vector2 = b4._view_from_world(b4.deck_center(d))
+		var dc: Vector2 = b4.deck_screen_pos(d)
 		# 牌堆底板 280×180（见 board_view._build_deck），要整块在窗口里
 		var zone := Rect2(dc - Vector2(140.0, 90.0), Vector2(280.0, 180.0))
 		if not win4.has_point(dc):
