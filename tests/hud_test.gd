@@ -458,6 +458,10 @@ func _run() -> void:
 	# `z_as_relative` 默认为真，卡挂在 hud(0) 下、菜单挂在 game(0) 下，靠树序谁在上会漂。
 	_check(g.deck_reveal.z_index < g.menu_layer.z_index,
 		"抽卡大字卡在暂停菜单之下（z %d < %d）" % [g.deck_reveal.z_index, g.menu_layer.z_index])
+	# 同类残留（批次 8 审查 R7）：非房主看到的「⏸ 房主已暂停 · 等待继续…」全屏遮罩也在模态带，
+	# 客户机被房主暂停时卡会冻住 ⇒ 遮罩必须同样压在卡之上，否则那句提示被冻住的卡盖住。
+	_check(g.deck_reveal.z_index < g.pause_mask.z_index,
+		"抽卡大字卡在「房主已暂停」遮罩之下（z %d < %d）" % [g.deck_reveal.z_index, g.pause_mask.z_index])
 
 	print("== 悬停棋子：浮出昵称 / 身家 / 排名 ==")
 	var hs: Dictionary = _state(2, false)

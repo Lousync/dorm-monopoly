@@ -611,6 +611,10 @@ static func build_menu_ui(g: Node) -> void:
 	g.pause_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.pause_mask.visible = false
 	g.pause_mask.process_mode = Node.PROCESS_MODE_ALWAYS
+	# 与 `menu_layer` 同档（80，同属"模态 / 暂停遮罩带"）：房主暂停会把树 `paused`，
+	# 客户机上冻住的抽卡大字卡（DeckReveal 实效 z 40）收不掉；没有这一笔时 `pause_mask`
+	# 实效 0 ⇒ 「⏸ 房主已暂停 · 等待继续…」会被那张卡盖住。显式置顶，别靠树序。
+	g.pause_mask.z_index = 80
 	g.add_child(g.pause_mask)
 	var pm_lab := UIKit.label("⏸ 房主已暂停 · 等待继续…", 20, UIKit.ACCENT)
 	pm_lab.set_anchors_preset(Control.PRESET_FULL_RECT)

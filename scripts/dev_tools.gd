@@ -476,8 +476,9 @@ func take_shot(path: String) -> void:
 		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
 	if path.contains("pause"):
 		# 摆拍：打开暂停菜单。**这张 PNG 证明不了卡与菜单的层级**：`--shot=pause` 是先开菜单、
-		# 之后才 `show_card`（且本例多数不带 card ⇒ 卡压根不演），而房主暂停会把树 `paused`、
-		# `DeckReveal._process` 随之停 ⇒ 卡收不掉且 `alpha=0` 时不可见 —— 拍到的永远是"没有卡"。
+		# 之后才 `show_card`（门是 `not path.contains("plain") or path.contains("card")`，所以不带
+		# `plain` 的 pause 图**会**调 show_card），而房主暂停会把树 `paused`、`DeckReveal._process`
+		# 随之停 ⇒ 卡的初值 `alpha=0` 永远推不上去 —— 拍到的永远是"没有卡"。
 		# 「卡在菜单之下」由 `hud_test` 的显式 z 断言钉住（`deck_reveal.z_index < menu_layer.z_index`），
 		# 别从这张图得出反向结论。
 		g._open_menu()
