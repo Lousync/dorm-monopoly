@@ -373,10 +373,15 @@ func menu_probe_run() -> void:
 	get_tree().quit(0)
 ## 帧率实测（批次 6 Task 3）：在**默认对局取景**下逐帧量真实帧时间，打印平均值与最差一帧后退出。
 ##
-## 用法：`--autotest=host --rounds=9999 --fps=8`
+## 用法：`-- --autotest=host --rounds=9999 --fps=8`
+##   * **`--` 分隔符是必需的、不是笔误**：本项目所有开关都从 `OS.get_cmdline_user_args()` 读，
+##     而它只返回 `--` 之后的参数 —— 少了它探针**永远不启动**、自动对局会一直跑下去
+##     （复审实测：不加 `--` 跑到 240 s 被杀；加了约 20 s 出数）。
 ##   * 走 `--autotest=host` 是为了**四家都在**（`--shot-game=1` 不补机器人 ⇒ 只有一块立牌、
 ##     一条四角条，量出来的不是"默认对局"的量）；
 ##   * `--rounds=9999` 只是让自动对局别在采样结束前自己收尾退出（本探针先退）。
+##   * **别配 `--headless`**：探针逐帧等 `RenderingServer.frame_post_draw`，而 dummy 渲染器
+##     **不发这个信号** ⇒ 探针会**挂死**（下面函数入口有一道直接退出的闸，见那里）。
 ##
 ## 口径（**照实记**，别把它读成"任何场景都这个数"）：
 ##   * 计时用 `Time.get_ticks_usec()`（**真实时间**，不受 `Engine.time_scale` 影响）；
@@ -387,6 +392,12 @@ func menu_probe_run() -> void:
 ##   * 单帧 >100ms 会**额外**打一行 `FPSPROBE SLOW`（附当时的 await / phase / draw call / 物件数），
 ##     用来判断长帧是"场景内容变重了"还是别的原因 —— 正常跑不会刷屏。
 func fps_probe_run() -> void:
+	# 无头直接退出：探针逐帧等 `RenderingServer.frame_post_draw`，而 dummy 渲染器不发它 ⇒
+	# 配 `--headless` 跑会**永远不返回**（不报错、不退出，看着像卡死）。这条闸把它变成一句人话。
+	if DisplayServer.get_name() == "headless":
+		print("FPSPROBE SKIP headless（dummy 渲染器不发 frame_post_draw，探针在这里会挂死）")
+		get_tree().quit(0)
+		return
 	var waited := 0.0
 	while not g.running and waited < 40.0:
 		await get_tree().create_timer(0.25, true, false, true).timeout
