@@ -244,8 +244,13 @@ func _on_peer_connected(id: int) -> void:
 func _kick_peer(id: int, reason: String) -> void:
 	s_kick.rpc_id(id, reason)
 	await get_tree().create_timer(0.35).timeout
+	# `ENetMultiplayerPeer` 在 4.x **没有** `get_peer_address(id)`（那是 3.x 的写法）。
+	# 原来那句有两重坏：① 抛 `SCRIPT ERROR: Nonexistent function`；② 表达式求值为 null ⇒
+	# `not "".is_empty()` = false ⇒ **`disconnect_peer` 永远不执行** ⇒ 踢人静默失效
+	# （只发了个 `s_kick` 通知，对端照样留在房里）。改用 `multiplayer.get_peers()` 判在不在：
+	# 仍连着才断（对端也可能已经自己走了）。实测复现与修后对照见提交说明。
 	var mp := multiplayer.multiplayer_peer
-	if mp is ENetMultiplayerPeer and not String(mp.get_peer_address(id)).is_empty():
+	if mp is ENetMultiplayerPeer and multiplayer.get_peers().has(id):
 		mp.disconnect_peer(id)
 
 func _on_peer_disconnected(id: int) -> void:
