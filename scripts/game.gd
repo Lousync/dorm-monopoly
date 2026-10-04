@@ -969,8 +969,9 @@ func _on_hand_clicked(hi: int) -> void:
 	_on_item_slot_clicked(my_peer, hi)   # 玩法侧唯一入口：记 selected_slot + 桌上那张牌抬起
 	_on_use_pressed()                    # 既有的出牌分发（选玩家 / 选地块 / 点数框 / 直接发）
 
-## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 两处表现侧（牌垫牌位 / 桌上手牌）。
-## 三处必须一起动 —— 只清 selected_slot，牌垫上会留一块绿光、桌上一张牌还抬着。
+## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 手牌表现（桌上那张牌还抬着）。
+## `board.set_item_selected` 照旧一起调，但它自座位卡退场（批次 5）后**只记状态、没有落点**
+## （同 `_set_hl_peers` 那类无落点的接口按先例保留）；今天真正看得见的反馈只有手牌自己收起抬起。
 func _clear_item_selection() -> void:
 	selected_slot = -1
 	if board != null:
