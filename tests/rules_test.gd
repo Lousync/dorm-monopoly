@@ -85,8 +85,8 @@ func _test_board_shape() -> void:
 		_check(GameData.TILES[cs[k]].type == cnames[k], "角格 %d = %s" % [cs[k], cnames[k]])
 	var props := 0
 	var events := 0
-	var fines := 0
-	var bonus := 0
+	var items := 0
+	var agains := 0
 	var rests := 0
 	var casinos := 0
 	var shops := 0
@@ -96,10 +96,10 @@ func _test_board_shape() -> void:
 				props += 1
 			"event":
 				events += 1
-			"fine":
-				fines += 1
-			"bonus":
-				bonus += 1
+			"item":
+				items += 1
+			"again":
+				agains += 1
 			"rest":
 				rests += 1
 			"casino":
@@ -107,12 +107,30 @@ func _test_board_shape() -> void:
 			"shop":
 				shops += 1
 	_check(props == 30, "30 块地产")
-	_check(events == 2, "2 个机会/命运格（原有 4 格改小卖部）")
-	_check(shops == 4, "4 个小卖部格")
-	_check(fines == 4, "4 个缴费格")
-	_check(bonus == 6, "6 个兼职/奖励格")
+	_check(events == 4, "4 个机会/命运格（事件卡池变化多端，替代部分纯给钱格）")
+	_check(shops == 6, "6 个小卖部格（实机反馈：4 家太少）")
+	_check(items == 4, "4 个失物招领格（随机道具替代固定给钱）")
+	_check(agains == 2, "2 个特浓咖啡格（再动一次）")
 	_check(rests == 5, "5 个休息格（4 空教室 + 角上卧谈会）")
 	_check(casinos == 2, "2 个宿舍赌场格")
+	# 纯给钱/扣钱格已全部退场：不许再出现 fine / bonus 类型
+	var legacy := 0
+	for t in GameData.TILES:
+		if String(t.type) == "fine" or String(t.type) == "bonus":
+			legacy += 1
+	_check(legacy == 0, "不再有强制缴费 / 兼职奖励格")
+	# 同侧同类格不相邻：扫每段连续空位（相邻的功能空位不该同型）
+	var gap_types: Array = []
+	for i in GameData.TILES.size():
+		if not GameData.is_corner(i) and String(GameData.TILES[i].type) != "property":
+			gap_types.append(String(GameData.TILES[i].type))
+		else:
+			gap_types.append("")
+	var adj_dup := 0
+	for i in gap_types.size() - 1:
+		if gap_types[i] != "" and gap_types[i] == gap_types[i + 1]:
+			adj_dup += 1
+	_check(adj_dup == 0, "相邻空位不同型（%d 处连排同型）" % adj_dup)
 	# 价位是「打乱后固定」的：30 块地拿到的正好是 30 个价位的一个排列，
 	# 且**不再**沿路径递增（那正是这次要去掉的排法）
 	var pi: Array = _prop_indices()

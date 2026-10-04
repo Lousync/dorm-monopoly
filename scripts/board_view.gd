@@ -219,7 +219,7 @@ func _build_backdrop() -> void:
 ## 地产的图标逐块放在数据里（d.icon），不再按组查表（组已废除）。
 const TILE_ICONS := {
 	"event": {"机会": "luck", "命运": "fate"},
-	"fine": "fine", "bonus": "bonus", "rest": "rest", "casino": "casino", "shop": "daily",
+	"item": "1f381", "again": "2615", "rest": "rest", "casino": "casino", "shop": "daily",
 	"start": "start", "jail": "jail", "go_jail": "gojail",
 }
 
@@ -275,7 +275,6 @@ func _build_tiles() -> void:
 		_tile_idx_labels.append(idx_l)
 
 		# 主题图标水印：垫在牌名下面，给每类格子一个视觉身份
-		var casino: bool = d.type == "casino"
 		var icon_name := _tile_icon_name(d)
 		if icon_name != "":
 			var icon_t := UIKit.icon(icon_name)
@@ -290,7 +289,15 @@ func _build_tiles() -> void:
 				ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				p.add_child(ic)
 
-		var name_c: Color = Color(0.98, 0.58, 0.78) if casino else (SHOP_ACCENT if d.type == "shop" else UIKit.TEXT)
+		var name_c: Color = UIKit.TEXT
+		if d.type == "casino":
+			name_c = Color(0.98, 0.58, 0.78)
+		elif d.type == "shop":
+			name_c = SHOP_ACCENT
+		elif d.type == "item":
+			name_c = FIND_ACCENT
+		elif d.type == "again":
+			name_c = COFFEE_ACCENT
 		var name_l := UIKit.bold_label(d.name, 18, UIKit.ACCENT if corner else name_c)
 		name_l.position = Vector2(5, 18)
 		name_l.size = Vector2(TILE - GAP * 2.0 - 10, 44)
@@ -1263,6 +1270,8 @@ var _shop_refresh: Button
 
 const SHOP_ACCENT := Color(0.42, 0.78, 0.55)    # 小卖部：菜绿
 const CASINO_ACCENT := Color(0.93, 0.3, 0.55)   # 赌场：与赌场格同色
+const FIND_ACCENT := Color(0.66, 0.47, 0.92)    # 失物招领：道具主题紫
+const COFFEE_ACCENT := Color(0.96, 0.62, 0.25)  # 特浓咖啡：活力橙
 const SHOP_QUALITIES := [Color(0.93, 0.93, 0.93), Color(0.42, 0.78, 0.55),
 	Color(0.36, 0.6, 0.92), Color(0.66, 0.47, 0.92), Color(0.96, 0.62, 0.25)]  # 白绿蓝紫橙
 const SHOP_WOOD_TEXT := Color(0.78, 0.7, 0.58)     # 木柜台上的米黄字
@@ -1985,10 +1994,10 @@ func render(state: Dictionary) -> void:
 		match String(d.type):
 			"property":
 				sub.text = _short_money(int(d.price)) if owner_id == GameData.NO_OWNER else ""
-			"fine":
-				sub.text = "-" + _short_money(int(d.amount))
-			"bonus":
-				sub.text = "+" + _short_money(int(d.amount))
+			"item":
+				sub.text = "随机道具"
+			"again":
+				sub.text = "再动一次"
 			"start":
 				sub.text = "+" + _short_money(GameData.SALARY)
 			"jail":

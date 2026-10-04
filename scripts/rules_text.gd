@@ -14,16 +14,6 @@ static func _h(text: String) -> String:
 static func _d(text: String) -> String:
 	return "[color=%s]%s[/color]" % [C_DIM, text]
 
-## 表格里金额列的区间（如强制缴费 400~1,500）：从数据算，别在文案里写死
-static func _amount_range(table: Array) -> String:
-	var lo := 1 << 30
-	var hi := 0
-	for row in table:
-		var v := int(row[1])
-		lo = mini(lo, v)
-		hi = maxi(hi, v)
-	return "%s~%s" % [GameData.fmt_money(lo), GameData.fmt_money(hi)]
-
 ## 棋盘上某格型的数量：从 TILES 数出来，写死会在改棋盘时悄悄说谎
 static func _count_of(type_name: String) -> int:
 	var n := 0
@@ -31,8 +21,6 @@ static func _count_of(type_name: String) -> int:
 		if String(d.get("type", "")) == type_name:
 			n += 1
 	return n
-
-
 
 ## 掷轮超时说明——「不限时」档要说清「不会被代掷」
 static func _roll_rule(tier: String) -> String:
@@ -92,7 +80,8 @@ static func _turn(tier: String) -> String:
 		_h("① 转轮盘（0~12）"),
 		"· 1~11：前进对应步数",
 		"· 12：满值，走完后再%s" % _d("额外行动一次"),
-		"· 0：原地待命一回合（仍算完成投掷，之后可用道具）",
+		"· 0：原地待命一回合，脚下格子的内容会%s（角格除外）" % _d("再结算一次"),
+		"· 待命仍算完成投掷，之后照常可用道具",
 		"· 连续 3 次 ≥10：兴奋过度，被查寝送宿委会（跳过一回合）",
 		_roll_rule(tier),
 		"",
@@ -120,8 +109,8 @@ static func _board() -> String:
 		_h("格型"),
 		"· 地产 %d 块（各自独立，无分组）· 机会/命运 %d · 小卖部 %d" % [
 			_count_of("property"), _count_of("event"), _count_of("shop")],
-		"· 强制缴费 %d · 兼职奖励 %d · 免费休息 %d · 宿舍赌场 %d" % [
-			_count_of("fine"), _count_of("bonus"), _count_of("rest"), _count_of("casino")],
+		"· 失物招领 %d · 特浓咖啡 %d · 免费休息 %d · 宿舍赌场 %d" % [
+			_count_of("item"), _count_of("again"), _count_of("rest"), _count_of("casino")],
 		"",
 		_h("地产：沿路径由便宜到贵"),
 	]
@@ -153,15 +142,21 @@ static func _money() -> String:
 		_h("资金"),
 		"· 起始资金 %s" % GameData.fmt_money(GameData.START_MONEY),
 		"· 踏过或停在起点领工资 %s" % GameData.fmt_money(GameData.SALARY),
-		"· 强制缴费格 %s，躲不掉" % _d(_amount_range(GameData.FINES)),
-		"· 兼职 / 奖励格 %s，直接入账" % _d(_amount_range(GameData.BONUSES)),
+		"· 钱主要花在%s：买地、装修、交租、小卖部、赌注" % _d("刀刃上"),
 		"",
 		_h("机会 / 命运卡"),
 		"· ±金额、前进后退、送监、室友发红包、请全宿舍喝奶茶……",
 		"· 机会格另有专属卡：被拉进小卖部、公告栏道具券、神秘短信（开黑市）",
 		"",
+		_h("失物招领（地图 %d 格）" % _count_of("item")),
+		"· 落地翻箱，按品质权重捡一件随机道具（白 45 / 绿 30 / 蓝 18 / 紫 5 / 橙 2）",
+		"· 背包满或该品质缺货则落空",
+		"",
+		_h("特浓咖啡（地图 %d 格）" % _count_of("again")),
+		"· 落地灌一口，本回合%s（再掷一次轮盘并照常结算）" % _d("再行动一次"),
+		"",
 		_h("豁免（空想者的香皂）"),
-		"· 持皂免疫 debuff：扣钱、后退、送监、罚款、黑市出口费与挨打……",
+		"· 持皂免疫 debuff：扣钱、后退、送监、黑市出口费与挨打……",
 		"· %s 租金、购买、赌注、道具消耗是中性，香皂挡不住" % _d("注意："),
 		"",
 		_h("胜负"),
@@ -193,7 +188,7 @@ static func _item() -> String:
 			GameData.fmt_money(ItemData.QUALITY_PRICES["橙"])],
 		"· %s" % _d("逐件道具的效果见 doc/game-design/道具图鉴.md"),
 		"",
-		_h("小卖部（地图 4 家）"),
+		_h("小卖部（地图 %d 家）" % _count_of("shop")),
 		"· 落在地图小卖部格即进店；每家 3 栏货架、各自独立补货",
 		"· 点桌面货架卡或底部「买」按钮购买；持黑卡且有次数则免单",
 		"· 刷新费 = %s + %s × 全场刷新次数（整局递增、不重置）" % [
