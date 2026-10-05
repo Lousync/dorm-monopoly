@@ -389,6 +389,7 @@ func _build_shell() -> void:
 	_plane("WallE", Vector3( ROOM_W * 0.5, wy, mid_z), Vector2(span_z, h), Vector3(90, -90, 0), _wall_mat, walls)
 	_build_furniture()
 	_build_chairs()
+	_build_chars()
 	_build_rug()
 	_build_fill_light()
 
@@ -637,6 +638,25 @@ static func _collect_aabb(n: Node, parent_xf: Transform3D, out: Array[AABB]) -> 
 		out.append(xf * (n as MeshInstance3D).mesh.get_aabb())
 	for ch in n.get_children():
 		_collect_aabb(ch, xf, out)
+
+# ---------------- 角色层（二期 Task 1） ----------------
+
+## 坐在椅子上的角色（`Room/Chars`，`scripts/chars.gd`）。**二期只读表现层，房间只负责建它 +
+## 把四把椅子的锚点交出去**；人摆得对不对全归 `GameChars`（`chars_test` 管）。
+## 生命周期同 `_furn_mat` 那一类成员：`_build_chars()` 落定。
+var _chars: GameChars
+
+## 建角色层（二期 Task 1）。**只建节点，不摆人** —— 摆人要读座位锚点的 `global_transform`，
+## 那要求整棵子树**已经入树**；而 `build()` 是 `table_3d._init()` 里调的，那时还没进树
+## （同一期 `_build_furniture` 那段）。⇒ 角色在 `GameChars._ready()` 里自己摆。
+##
+## 与 `ROOM_ENABLED` 同理：`CHARS_ENABLED = false` 时 `GameChars.build()` 返回 null
+## ⇒ **这里不能当成必然拿到节点用**（本期的保命开关，退回到"只有椅子"的样子）。
+func _build_chars() -> void:
+	var seats := get_node_or_null("Seats") as Node3D
+	if seats == null:
+		return
+	_chars = GameChars.build(self, seats)
 
 # ---- 座位 ↔ peer（二期"往椅子上放人"的唯一入口） ----
 
