@@ -507,7 +507,7 @@ func take_shot(path: String) -> void:
 	if path.contains("logopen"):
 		# 摆拍（批次 12 D）：展开右上角**战报栏**，用来核对"展开的战报栏不压名册条"。
 		# **批次 13 ② 起名册条搬到了左上角 ⇒ 两者已天然分居左右、不会打架**；这条图仍照拍
-		# （战报栏的顶边还留在 134，见 `table_hud` 那段"约束已作废、值暂留"的说明）。
+		# （战报栏的顶边批次 13 辛 ② 已从 134 收到 **52**，见 `table_hud` 那段）。
 		# 走**真入口** `_toggle_log`（与玩家点「战报 ▾」同一条路），不直改 `log_panel.visible`。
 		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_logopen_table_plain.png`
 		g._toggle_log()

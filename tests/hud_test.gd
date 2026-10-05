@@ -192,12 +192,12 @@ func _run() -> void:
 	_check(int(bars[0].peer) == 2, "我这条挂的是我（乙，实得 %d）" % int(bars[0].peer))
 	# 反向契约：旧右侧名册栏必须从 game 上**删净**（同时留着就是重复：都挂"名次+名字+身家"）。
 	# 注意 `roster_strip_rows`（批次 12 D 新加的**名册条**的格数组；**批次 13 ② 起条在左上角、
-	# 竖排**，所以这里装的其实是"格"、名字沿用批次 12 的旧名）**不是**旧的 `roster_rows`，
+	# 批次 13 辛 ③ 起横排**，所以这里装的其实是"格"、名字沿用批次 12 的旧名）**不是**旧的 `roster_rows`，
 	# 两者名字像、东西完全不同 —— 这条钉的是旧的。
 	_check(g.get("roster_box") == null and g.get("roster_rows") == null,
 		"旧右侧名册栏已从 game 上删净（roster_box / roster_rows）")
 
-	# ---- 名册条：其余三人，一格一位（**批次 13 ② 起是左上角「暂停」旁的一列**，按身家倒序）----
+	# ---- 名册条：其余三人，一格一位（**批次 13 ② 起在左上角「暂停」旁；辛 ③ 起横排一行**，按身家倒序）----
 	_check(g.roster_strip != null, "名册条已建（批次 13 ② 起落点在左上角）")
 	_check(g.roster_strip.get_parent() == g.hud_layer,
 		"名册条挂在**屏幕层容器**上（不随摄像机旋转）")
@@ -322,12 +322,15 @@ func _run() -> void:
 	_check(content_max <= TH.CORNER_BAR_SIZE.y + 0.01,
 		"写死的高度装得下内容（内容最小高 %.1f ≤ %.1f）" % [content_max, TH.CORNER_BAR_SIZE.y])
 	# 名册行同理（行里那条倒计时行也是常驻占位）：量法同上面那条。
+	# **`ROSTER_ROW_SIZE.y` 是一个"改字号 / 徽章尺寸 / 倒计时行高就得重取"的数**（辛 ③ 刚调过），
+	# 所以这里把实测值打出来，下次调的人一眼看得到还差多少余量。
 	for r in rows:
 		var rr: Control = (r as Dictionary).root
 		var k2: Vector2 = rr.custom_minimum_size
 		rr.custom_minimum_size = Vector2.ZERO
 		var n2: float = rr.get_combined_minimum_size().y
 		rr.custom_minimum_size = k2
+		print("    [实测] 名册行内容最小高 %.1f / ROSTER_ROW_SIZE.y %.1f" % [n2, TH.ROSTER_ROW_SIZE.y])
 		_check(n2 <= TH.ROSTER_ROW_SIZE.y + 0.01,
 			"名册行装得下内容（%.1f ≤ %.1f）" % [n2, TH.ROSTER_ROW_SIZE.y])
 	# 身家条 + 名册行都不许挡住角按钮（左上暂停 / 右上战报 / 右上规则说明），也不许出屏。
@@ -358,8 +361,9 @@ func _run() -> void:
 			if (all_rects[i] as Rect2).intersects(all_rects[j] as Rect2):
 				quad_cross += 1
 	_check(quad_cross == 0, "身家条与名册行两两不相交（相交 %d 对）" % quad_cross)
-	# **批次 13 ②：名册条钉在左上角「暂停」按钮右侧、竖排**（⑩ 时代它在右上「战报」之下）。
-	# 竖排 ⇒ 只要求"每一格都在按钮右侧、整条在屏幕左半"（居中的横幅 / 战报气泡够不到这条窄列）。
+	# **批次 13 ②：名册条钉在左上角「暂停」按钮右侧**（⑩ 时代它在右上「战报」之下）；
+	# **辛 ③ 起改横排** ⇒ 仍然只要求"每一格都在按钮右侧、整条在屏幕左半"
+	#（横排之后"整条在屏幕左半"这条比竖排时代更要紧：条宽了，右边的居中的横幅 / 战报气泡离得更近）。
 	var left_ok := true
 	var opt_r: Rect2 = (g.opt_btn as Control).get_global_rect()
 	for r in rows:
@@ -367,6 +371,15 @@ func _run() -> void:
 		if rr2.position.x < opt_r.end.x:
 			left_ok = false
 	_check(left_ok, "名册条每一格都在「暂停」按钮右侧（实得暂停右缘 %.0f）" % opt_r.end.x)
+	# **朝向本身**：横排 = 每一格与前一格**同 y**、x **严格递增**。这是用户 ③「横向排列」那条的
+	# 可观察量（改回竖排这条立刻红）；容器的类名是实现细节，不钉。
+	var horiz_ok := rows.size() > 1
+	for i in range(1, rows.size()):
+		var pa: Rect2 = ((rows[i - 1] as Dictionary).root as Control).get_global_rect()
+		var pb: Rect2 = ((rows[i] as Dictionary).root as Control).get_global_rect()
+		if not is_equal_approx(pa.position.y, pb.position.y) or pb.position.x <= pa.position.x:
+			horiz_ok = false
+	_check(horiz_ok, "名册条**横排**：每格与前一方同 y、x 严格递增（批次 13 辛 ③）")
 	var strip_r: Rect2 = (g.roster_strip as Control).get_global_rect()
 	_check(strip_r.position.y <= opt_r.end.y and strip_r.end.y >= opt_r.position.y,
 		"名册条与「暂停」同一条 y 带（实得条 %.0f..%.0f / 暂停 %.0f..%.0f）"
@@ -1291,6 +1304,12 @@ func _run() -> void:
 	#    换镜头这一档把整排的投影盒**上沿往格子那侧**挪了 8 画布像素量级。
 	#    仍是**可点**的条带（远大于 0，按 3D 端 0.62 屏像素/画布像素折算 ≈ 28 屏像素），
 	#    这条断言要的就是"没盖住"。
+	#    **批次 13 辛 ⑤ 重取：28.5 / 12.7**（手牌两维一起 ×1.2：0.404/0.54 → **0.4848/0.648**，
+	#    用户要"卡牌上的字看得清"；同时 `HAND_BASE_PX.y` 1834 → **1822**，见 `table_props` 那段
+	#    —— 整排下沿在旧位置越出了**屏幕**下沿，`layout_test` 那条"整排手牌都在屏内"先红）。
+	#    缝因此**窄了 32.5 / 33.2**，是全批次里最薄的一档：牌大了一圈、整排又往上挪了一截，
+	#    两头都朝格子的方向压。**只要求不被压住**（`cell_hits == 0` / `hand_top > lowest_cell`
+	#    两条一个字没动、也没放宽）；这两个数就是那条余量的当前值，**再放大手牌就会先红**。
 	#    ⚠ 这两个数**跟着 3D 相机走**：改手牌尺寸 / 摆位 / **`CAM_DIST` / `CAM_FOV`** 都得回来重取，
 	#    改不动就红。这两个数**钉进断言**（不只写在注释里）。
 	#    **批次 7 起点击 = 直出**，一次点击不再**留在**选中态（抬起只在那一瞬间发生），
@@ -1309,11 +1328,18 @@ func _run() -> void:
 	var gap_sel: float = sel_top - lowest_cell
 	print("    [实测] 牌底可点条带：未选中 %.1f 画布像素、抬起（第 %d 张）后 %.1f —— 都不为 0"
 		% [gap_plain, sel_card, gap_sel])
+	# 整排的**屏幕包围盒**也打出来：`table_props.HAND_CARD_W` / `HAND_BASE_PX` 那两段注释里的
+	# 数字就是从这里取的（改手牌尺寸 / 摆位 / 相机都得回来重取，见那两段）。
+	print("    [实测] 手牌整排屏幕包围盒：y %.1f..%.1f / x %.1f..%.1f（近排格子下沿 %.1f、画布底 2048）"
+		% [hand_top, hand_bot, hand_x0, hand_x1, lowest_cell])
 	g._cancel_target()
 	_check(gap_plain > 0.0 and gap_sel > 0.0,
 		"选中 / 未选中两档下，近排格子都还有可点的条带（%.1f / %.1f 画布像素）" % [gap_plain, gap_sel])
-	_check(absf(gap_plain - 61.0) <= 1.0 and absf(gap_sel - 45.9) <= 1.0,
-		"满手 5 张 + 选中外侧那张，实测值就是注释里那两个数（%.1f / %.1f，期望 61.0 / 45.9）"
+	# **批次 13 辛 ⑤ 重取了这两个数**（手牌两维 ×1.2：0.404/0.54 → 0.4848/0.648）。
+	# 容差仍是 ±1.0（没有放宽）：牌一变大，投影盒的上沿朝格子那侧挪，缝必然变窄 ——
+	# 这两个数就是那条硬约束在"今天这一档尺寸"下的余量，改尺寸 / 相机就得回来重取。
+	_check(absf(gap_plain - 28.5) <= 1.0 and absf(gap_sel - 12.7) <= 1.0,
+		"满手 5 张 + 选中外侧那张，实测值就是注释里那两个数（%.1f / %.1f，期望 28.5 / 12.7）"
 			% [gap_plain, gap_sel])
 
 	# ③ 下沿：近排**每一格**（不再需要"找没被盖住的那一格"—— 今天一格都没被盖住）的下沿都必须

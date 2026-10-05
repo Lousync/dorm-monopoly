@@ -173,20 +173,21 @@ var rules_tab := ""
 ##（批次 13 ② 起在**左上角**「暂停」旁），
 ## 与已删除的右侧名册栏不是同一样东西（`regression_test` 的反向契约仍钉着旧的 `roster_rows` 必须不存在）。
 var corner_bars: Array = []
-## 名册条（批次 12 D1 建；**批次 13 ② 从右上角搬到左上角「暂停」旁并改竖排**）：
+## 名册条（批次 12 D1 建；**批次 13 ② 从右上角搬到左上角「暂停」旁；批次 13 辛 ③ 改横排 + 做小**）：
 ## 「他人」一格一位（名次徽章 + 棋子色小片 + 昵称 + 那一格的倒计时）。
 ## 由 `TableHud.build_play_ui` 建、`_refresh_roster` 刷；**常驻**（不在可折叠的战报栏里）。
 ## 每一格的字典形态与 `corner_bars` 里那条**同形**（`table_hud._make_roster_row`），
 ## 于是高亮 / 倒计时两处刷新函数可以直接把它们并进同一条循环（见 `_hl_bars`）。
 ##
-## **类型必须是 `VBoxContainer`**：批次 13 ② 起条改竖排 —— 屏幕顶部那整条横带被**居中**的东西
-## 占着（畸变横幅 y ≈ 6..48、战报气泡 y ≥ 52、选目标提示条 y 52..100），横排必然相撞；
-## 竖排只占 x ≈ 104..250 这一条窄列（详细理由与代价见 `table_hud.build_play_ui` 那一段）。
-## 这里原先写的是 `HBoxContainer`，`build_play_ui` 赋值时直接
-## `Invalid assignment … with value of type 'VBoxContainer'` **把整个界面构建打断在那一行**
-##（后面 `RulesPanel.build` / 移动弹窗全没跑，测试里表现为"条全空 + 卡住"）——
-## 改容器种类时**这一处必须一起改**，别只改 `table_hud`。
-var roster_strip: VBoxContainer
+## **类型必须是 `HBoxContainer`**（批次 13 辛 ③ 用户拍板要横排、并从竖向每格 64 收到横排每格 42 高）：
+## 条仍然只占**左上角**那一片（`ROSTER_X=104` 起、与「暂停」同一条 y 带），横排之后**宽度**才是
+## 要盯的量 —— 由 `_refresh_roster` 里那道**屏幕中线软夹**兜住（详细理由见 `table_hud.build_play_ui`
+## 那段"横排的由来"）。
+## **容器种类写错会当场炸**：批次 13 ② 把这里写成 `HBoxContainer` 而 `build_play_ui` 赋的是
+## `VBoxContainer`，赋值那行直接 `Invalid assignment …` **把整个界面构建打断**
+##（后面 `RulesPanel.build` / 移动弹窗全没跑，测试里表现为"条全空 + 卡住"，排错花掉 9 分钟）——
+## 改容器种类时**这一处必须与 `table_hud` 一起改**，别只改一边。
+var roster_strip: HBoxContainer
 var roster_strip_rows: Array = []
 ## 最近一次广播算出的身家表（peer -> `_refresh_players` 里那份 entry，带 rank / worth / money）。
 ## **名次徽章的唯一来源**：原先 `_rank_of` 是回头去 `corner_bars` 里翻，四角条只剩一条之后
@@ -2406,9 +2407,9 @@ func _refresh_my_energy(bar: Dictionary, peer: int) -> void:
 			Color(0.95, 0.78, 0.35) if lit else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 
-## 名册条（批次 12 D1 建；**批次 13 ② 搬左上角「暂停」旁、改竖排**）：其余玩家一格一位，
-## 按 `standing` 的顺序（身家倒序 = 名次）自上而下排 —— 用户 ② 要的就是"排列顺序根据排名实时变化"，
-## 所以**这一份顺序一个字都不用改**，搬位顺手就拿到了实时排序。
+## 名册条（批次 12 D1 建；**批次 13 ② 搬左上角「暂停」旁；批次 13 辛 ③ 改横排**）：其余玩家一格一位，
+## 按 `standing` 的顺序（身家倒序 = 名次）**自左往右**排 —— 用户 ② 要的就是"排列顺序根据排名实时变化"，
+## 所以**这一份顺序一个字都不用改**，搬位 / 改朝向顺手就拿到了实时排序。
 ##
 ## 格数按需增删（人少了把多出来的格**藏起来**、不拆节点，同四角条那套）；
 ## 条宽/条高（右边缘 / 下边缘）取**容器自己算的那份**，左边缘固定在 `ROSTER_X`。
@@ -2432,10 +2433,13 @@ func _refresh_roster(standing: Array, mine_peer: int, turn_peer: int, phase: Str
 			continue
 		root.visible = true
 		_fill_peer_bar(row, others[i], turn_peer, phase, false)
-	# 落位（**批次 13 ② 起条锚在 TOP_LEFT、竖排**）：左边缘固定在 `ROSTER_X`（暂停按钮右侧），
-	# 宽/高取**容器自己算的那份**（`get_combined_minimum_size()`：格是内容驱动的宽度，
-	# 自己按"格数 × 固定格宽"手算会与真实宽度对不上 —— 实测踩过）。
-	# **夹一道屏幕中线**：名册条整条只许待在左半，免得昵称一长就把右边缘推进居中的横幅 / 气泡里。
+	# 落位（**批次 13 ② 起条锚在 TOP_LEFT**；**批次 13 辛 ③ 起是横排，所以"宽"才是要盯的量**）：
+	# 左边缘固定在 `ROSTER_X`（暂停按钮右侧），宽/高取**容器自己算的那份**
+	#（`get_combined_minimum_size()`：格是内容驱动的宽度，自己按"格数 × 固定格宽"手算会与真实
+	# 宽度对不上 —— 实测踩过）。**这一段对横排 / 竖排都成立**（容器给的就是各自朝向的那一份），
+	# 所以③改朝向时这里一个字都没改。
+	# **夹一道屏幕中线**：名册条整条只许待在左半 —— 横排之后这条比竖排时代更要紧，
+	# 免得昵称一长就把右边缘推进居中的横幅 / 气泡里。
 	roster_strip.offset_left = TableHud.ROSTER_X
 	var strip_min: Vector2 = roster_strip.get_combined_minimum_size()
 	var left_limit: float = maxf(TableHud.ROSTER_X + 120.0, size.x * 0.5 - 20.0)
@@ -2494,7 +2498,15 @@ func _apply_corner_style(bar: Dictionary, active: bool, hot: bool) -> void:
 		border = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.9)
 	if hot:
 		bw = 2
-	root.add_theme_stylebox_override("panel", UIKit.card_stylebox(bg, 10, border, bw, 4))
+	var sb: StyleBoxTexture = UIKit.card_stylebox(bg, 10, border, bw, 4)
+	# 名册格比四角身家条矮一档 ⇒ 它那张卡片的**上下**内边距要跟着收（见 `table_hud.ROSTER_CARD_PAD`）。
+	# **这一笔不能少**：本函数每次都新造一张样式盒换上去，不贴回去那一格就弹回默认的 8+8
+	#（高 42 → 52），而**只有"行动者变了 / 亮灭变了"的那些格才会走到这里** ⇒
+	# 同一排的格会一半 42 一半 52、名册条一开一合。判据走 `bar` 上那一位 `slim_pad`
+	#（`table_hud._make_roster_row` 建的格才有；四角身家条没有 ⇒ 保持默认）。
+	if bool(bar.get("slim_pad", false)):
+		TableHud.slim_card_pad(sb)
+	root.add_theme_stylebox_override("panel", sb)
 
 func _refresh_actions() -> void:
 	var await_state := String(st.get("await", ""))
@@ -4498,11 +4510,16 @@ func _hud_intro() -> void:
 ## 展开/收起规则说明。**批次 13 ①**：面板与「战报」栏同在右上角 ⇒ 两者**互斥**
 ##（展开规则先收战报，见下）；格子详情卡仍然让位（隐藏）——它悬浮在被点格子上方，
 ## 右上角那几格仍会与面板重叠；收起后格详情卡照常弹出。
+##
+## **批次 13 辛 ①**：`rules_btn` **恒可见**（去掉了原先的 `rules_btn.visible = not on`）。
+## 用户的原话是「弹窗规则说明弹窗时，『规则说明』按钮不要消失」—— 按钮是**切换开关**，
+## 藏起来就等于把"用同一枚按钮收起"这条路掐断了；`rules_panel.gd` 那边同步把回调改成
+## `_set_rules_open(not rules_open)`。面板自带的那枚「收起 ▾」是**第二条路**，两条都保留。
+## 位置上两者本就不打架：按钮在 y 12..40、面板从 y 52 起。
 func _set_rules_open(on: bool) -> void:
 	if rules_open == on:
 		return
 	rules_open = on
-	rules_btn.visible = not on
 	rules_panel.visible = on
 	if on:
 		info_panel.visible = false

@@ -22,13 +22,17 @@ static func build(g: Node) -> void:
 ## `_toggle_log`）：两者占同一块地方，同时开会叠。
 static func _build_button(g: Node) -> void:
 	g.rules_btn = UIKit.with_icon(UIKit.button("规则说明", 13), "rules", 17)
-	g.rules_btn.tooltip_text = "查看操作提示与完整游戏规则"
+	# **批次 13 辛 ①**：按钮改成**切换开关**（展开态再点一次就收起），tooltip 要说出这件事，
+	# 否则"点一下没反应（其实是收起了）"会被当成坏了。
+	g.rules_btn.tooltip_text = "查看操作提示与完整游戏规则（再点一次收起）"
 	g.rules_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	g.rules_btn.offset_left = -118 - BTN_W
 	g.rules_btn.offset_right = -118
 	g.rules_btn.offset_top = 12
 	g.rules_btn.offset_bottom = 40
-	g.rules_btn.pressed.connect(func() -> void: g._set_rules_open(true))
+	# **走切换而不是写死 `true`**（批次 13 辛 ①）：`_set_rules_open` 里那句"展开了就藏按钮"
+	# 已删，按钮**恒可见**是**开关**。面板里那枚「收起 ▾」仍是另一条路（见下）。
+	g.rules_btn.pressed.connect(func() -> void: g._set_rules_open(not g.rules_open))
 	g.add_child(g.rules_btn)
 
 ## 展开态：面板 + 分页标签 + 滚动正文。**批次 13 ①：从左下角搬到右上角** ——

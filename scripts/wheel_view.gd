@@ -113,7 +113,12 @@ func _draw() -> void:
 			num_col = Color(0.62, 0.65, 0.72)
 		# 变换原点已是盘心 c（见上），此处只需给相对盘心的偏移，不能再加 c。
 		# y 传的是基线而非字形中心，故 +5 让字形视觉中心落在 NUM_R 上。
-		draw_string(f, Vector2(-20, -(NUM_R + 5.0)), str(i), HORIZONTAL_ALIGNMENT_CENTER, 40, 15, num_col)
+		# **批次 13 辛 ④**（用户：「转盘上的数字大一点」）：字号 **15 → 21**、居中框 **40 → 56**、
+		# x 偏移 **−20 → −28**（三处同步才仍然居中）。基线补偿按字号等比放大：0.35em ⇒ 15→5、21→**7**
+		#（只改字号不补这一项，字形会整体偏高约 2px）。
+		# 几何上仍安全：`SEGMENTS = 13`、数字在 `NUM_R = 126` 的半径上 ⇒ 每格弧长约 61px，
+		# 21 号字连「12」两个字也只有约 28px，不会与邻格数字打架（`NUM_R` 与扇区几何一字未动）。
+		draw_string(f, Vector2(-28, -(NUM_R + 7.0)), str(i), HORIZONTAL_ALIGNMENT_CENTER, 56, 21, num_col)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# 中心毂
 	draw_circle(c, 36.0, Color(0.30, 0.215, 0.06))

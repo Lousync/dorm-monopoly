@@ -444,13 +444,15 @@ static func build_play_ui(g: Node) -> void:
 	# 见 game.gd:_dock_band（贴底条按可用带夹位）
 	g.log_panel.offset_left = -300
 	g.log_panel.offset_right = -12
-	# 顶边 46 → **134**（批次 12 D1）：当时名册条（y 50..128）就钉在「战报」按钮之下这一块，
-	# 展开的战报栏若仍从 46 起、就会把名册条整个盖住（⑩ 明写"名册条不许与展开的战报栏打架"）。
-	# **批次 13 ② 名册条已搬到左上角 ⇒ 这条约束随之作废，134 现在只是个余量**。
-	# **本批不动它**（刻意克制）：改回 46 会让战报栏长高一截、是②之外的观感变动，留给下一批一起定；
-	# 留在这里会误导后来人以为"战报栏必须让开名册条"，所以把作废这件事写清楚。
-	# （`hud_test` 的"展开的战报栏不压名册条"两条新老位置都成立，不因这句而假绿。）
-	g.log_panel.offset_top = 134
+	# 顶边 **52**（批次 13 辛 ② 从 134 收回来）。来龙去脉：
+	#   * 批次 12 D1 把它从 46 抬到 **134** —— 当时名册条（y 50..128）钉在「战报」按钮之下，
+	#     战报栏若仍从 46 起就会把名册条整个盖住（⑩ 明写"名册条不许与展开的战报栏打架"）。
+	#   * 批次 13 ② 名册条搬到了**左上角** ⇒ 那条约束作废，134 只剩余量（当时刻意没动它）。
+	#   * 批次 13 辛 ② 用户明写「『战报』弹窗离战报按钮这么远干什么」⇒ 收到 **52**，
+	#     与「规则说明」面板**同一条顶边**（两枚按钮的实效下沿都是 46，让开 6 像素）。
+	# 右边缘仍是 −12、底边仍是 780、宽度不动。（`hud_test` 那条"展开的战报栏不压名册条"
+	# 按 `get_global_rect()` 实算、不写死这个数，两边位置都成立。）
+	g.log_panel.offset_top = 52
 	g.log_panel.offset_bottom = 780
 	# 默认收起：消息改在屏幕上方弹出（见 game.gd:_push_log_toast），
 	# 战报里的完整记录照旧保留，点「战报 ▾」展开看历史。
@@ -475,17 +477,18 @@ static func build_play_ui(g: Node) -> void:
 	# = 我；自己不在名册里（观战 / 掉线重连）时就是第 0 家 —— 与批次 5 同一语义。
 	g.corner_bars = [_make_corner_bar(g, hud, MY_BAR_SLOT)]
 
-	# ---- 名册条（批次 12 D1 建；**批次 13 ② 从右上角搬到左上角「暂停」旁、并瘦身**）----
+	# ---- 名册条（批次 12 D1 建；**批次 13 ② 从右上角搬到左上角「暂停」旁；批次 13 辛 ③ 改横排 + 做小**）----
 	# **他人**一人一格（名次徽章 + 棋子色小片 + 昵称 + 一条细倒计时），**常驻**（不在可折叠的战报栏里），
-	# 落在**左上角「暂停」按钮右侧**（`ROSTER_X` 起、与按钮同一条 y 带），**自上而下按名次排**
+	# 落在**左上角「暂停」按钮右侧**（`ROSTER_X` 起、与按钮同一条 y 带），**自左往右按名次排**
 	#（用户 ②：「只显示排名、小人、昵称即可，排列顺序根据排名实时变化，点击弹出该玩家的详细信息弹窗」）。
 	#
-	# **为什么是竖排而不是横排**（偏离"一行横着摆"的直觉，理由写在这里）：屏幕顶部那一整条横带
-	# 已被**居中**的东西占满 —— 畸变横幅（y ≈ 6..48）、战报气泡（y ≥ 52，药丸居中、
-	# 实测宽可达 600+）、选目标提示条（y 52..100）。横排名册条必然横穿这些药丸的地盘；
-	# 竖排只占 x ≈ 104..250 这一条窄列，居中元素要伸到那儿得横跨 780+ 像素，实际不会发生。
-	# **代价**（如实留痕）：四条时该列高约 262 像素，占着屏幕左侧一条 —— 左侧其余地方本来就是空的。
-	g.roster_strip = VBoxContainer.new()
+	# **横排的由来**（批次 13 辛 ③，用户拍板）：② 那一版做的是**竖排一列**，理由是"顶部那条横带
+	# 已被居中的畸变横幅 / 战报气泡 / 选目标提示占满"，但用户明确要横排 ⇒ **按用户的来**；
+	# 碰撞风险改由下面两条兜：① `ROSTER_X=104` 起、② `game._refresh_roster` 里那道
+	# **屏幕中线软夹**（`left_limit = max(ROSTER_X + 120, size.x*0.5 - 20)`）——
+	# 三人份实测右缘 ≈ 470，离屏心 640 还差 170，居中元素够不到。
+	# `hud_test` 里"每一格在暂停右侧""整条在屏幕左半""不压畸变横幅"三条就是钉这件事。
+	g.roster_strip = HBoxContainer.new()
 	g.roster_strip.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	g.roster_strip.offset_left = ROSTER_X
 	g.roster_strip.offset_right = ROSTER_X + 150.0    # 初值（一格）；刷新时按条自身的宽度重算
@@ -618,20 +621,32 @@ const ROSTER_X := 104.0
 const ROSTER_Y := 10.0
 
 ## 名册条里**一格**的尺寸（屏幕像素）。**高度写死、宽度留 0（内容驱动）**：
-##   * **高度** = `custom_minimum_size.y`（**批次 13 ② 从 78 收到 64**：瘦身之后格内只剩
-##     「徽章 / 小片 / 昵称」一行 + 一条**常驻占位**的细倒计时行；78 是"名字 + 身家两行"时代的值）。
-##     64 而不是更小：实测内容最小高 **61**（20 的徽章位撑起来的那一行 + 5 间距 + 14 的倒计时行
-##     + 上下各 4 的内边距）—— 再往下收就会被内容撑破，见 `hud_test` 那条"装得下内容"。
+##   * **高度** = `custom_minimum_size.y`（批次 13 ② 78 → 64；**批次 13 辛 ③ 64 → 42**，用户要"做小一点"）。
+##     42 的构成（自上而下）：卡片自身的上下内边距 3+3（见 `_make_roster_row` 里那处
+##     `content_margin` 收窄）+ MarginContainer 的 2+2 + 「徽章 / 小片 / 昵称」一行 **17**
+##     （12 号昵称撑起来的，比 16 的徽章位高）+ 2 间距 + 常驻占位的细倒计时行 **13**
+##     = **42.0**（`hud_test` 里那条"装得下内容"会把实测值打出来）。
+##     **再往下收就会被内容撑破**（那一格会变高、整条名册一开一合）；
+##     反过来说，**改这一行的字号 / 徽章尺寸 / 倒计时行高之后必须重新量一次**。
 ##     高度写死才能保证"窗口开了关、格高一动不动"。
 ##   * **宽度** = 0 = **由内容决定**（徽章 + 棋子色小片 + 昵称撑出来的自然宽度）。
 ##     为什么不写死：写死就得赌"最长的昵称"不超过它，赌错了格会被内容撑宽、从左半溢到中线那边
 ##     （批次 12 实测过：写死 112 而内容要 121 ⇒ 最右那格出屏 15px）。
 ##     内容驱动也顺带让 `game._refresh_roster` 能用**条自身的 `get_combined_minimum_size()`**
 ##     算出右边缘（那一份是容器给的权威值，不必自己重算一遍）。
-const ROSTER_ROW_SIZE := Vector2(0.0, 64.0)
+const ROSTER_ROW_SIZE := Vector2(0.0, 42.0)
 ## 名册条里格与格的间距（屏幕像素）。右边缘不靠手算加它 —— 直接取
-## `roster_strip.get_combined_minimum_size().x`（`VBoxContainer` 已经把这几个间距算进去了）。
-const ROSTER_SEP := 6.0
+## `roster_strip.get_combined_minimum_size().x`（容器已经把这几个间距算进去了；
+## **批次 13 辛 ③ 起是 `HBoxContainer`**，加的是横向的格间距）。
+const ROSTER_SEP := 5.0
+## 名册格那张卡片自身的**上下**内边距（`UIKit._sbt` 默认 8 —— 四角身家条 126 高，用得起）。
+## 名册格只有 42 高，8+8 会吃掉近一半，所以收到 3（批次 13 辛 ③）。**左右不动**（仍 12）。
+##
+## ⚠ **必须两处都贴**：`_make_roster_row` 建的时候贴一次，而 `game._apply_corner_style`
+##（行动者 / 可选中高亮）**每次都新造一张 `StyleBoxTexture` 换上去** —— 不跟着贴回去，
+## 那一格就在"42 高"和"52 高"之间跳（实测踩过：同一排里有的格 42、有的 52，名册条一开一合）。
+## 所以收口成本文件这个函数，两边都调它。
+const ROSTER_CARD_PAD := 3
 ## 「我」那条身家条上「能量」行的高度（屏幕像素）。行**常驻占位**，内容恒有（读数 + 小格），
 ## 所以它不是"按需显隐"那一类 —— 写死是为了让 `CORNER_BAR_SIZE` 有一个可核算的加数。
 const ENERGY_ROW_H := 19.0
@@ -792,7 +807,14 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 		"peer": GameData.NO_PEER, "border_active": false,
 	}
 
-## 名册条里**一格**（批次 12 D1 建；**批次 13 ② 瘦身 + 搬到左上角**）。
+## 把名册格那张卡片的上下内边距收成 `ROSTER_CARD_PAD`（见该常量那段说明：**两处调用点都必须调**）。
+static func slim_card_pad(sb: StyleBoxTexture) -> void:
+	if sb == null:
+		return
+	sb.content_margin_top = ROSTER_CARD_PAD
+	sb.content_margin_bottom = ROSTER_CARD_PAD
+
+## 名册条里**一格**（批次 12 D1 建；**批次 13 ② 瘦身 + 搬到左上角；批次 13 辛 ③ 再小一档**）。
 ## 内容 = **名次徽章 + 棋子色小片 + 昵称**（用户 ②：「只显示排名、小人、昵称即可」），
 ## 底下仍挂一条**常驻占位**的细倒计时行 —— 行动者若是**别人**，他的倒计时就落在这里
 ##（`game._refresh_corner_timer` 按 `_op_owner` 选格；用户选的是"每格仍带细倒计时"这一档）。
@@ -811,6 +833,12 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 static func _make_roster_row(g: Node, parent: Control) -> Dictionary:
 	var root := UIKit.panel_container(Color(0.085, 0.095, 0.138, 0.82), 10,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4)
+	# 把卡片自身的上下内边距收到 `ROSTER_CARD_PAD`（批次 13 辛 ③；默认是 8）——
+	# 这条格只有 42 高，8+8 就吃掉近一半，塞不下「一行 + 细倒计时行」。
+	# **只改这一枚**：`card_stylebox` 每次调用都新造一个 `StyleBoxTexture`（缓存的是纹理、
+	# 不是样式盒），所以这里动的是本实例，四角身家条（126 高）仍用默认值。
+	# **`game._apply_corner_style` 换样式盒时会再贴一遍**（同一条常量的两处调用点，见上面说明）。
+	slim_card_pad(root.get_theme_stylebox("panel") as StyleBoxTexture)
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
 	root.gui_input.connect(func(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
@@ -821,53 +849,56 @@ static func _make_roster_row(g: Node, parent: Control) -> Dictionary:
 	root.visible = false                 # 还没收到状态：一格都不显示
 	parent.add_child(root)
 
-	var m := UIKit.margins(7, 8, 4, 4)
+	var m := UIKit.margins(6, 6, 2, 2)   # 上下 2（批次 13 辛 ③ 从 4 收）：42 高的格省着用
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(m)
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 3)
+	outer.add_theme_constant_override("separation", 2)
 	outer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	m.add_child(outer)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 5)
+	row.add_theme_constant_override("separation", 4)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	outer.add_child(row)
 	# 名次徽章（批次 13 ② 新加）：身家倒序第几名，与玩家详情弹窗里那枚同一套画法。
 	var badge_slot := Control.new()
-	badge_slot.custom_minimum_size = Vector2(20, 20)
+	badge_slot.custom_minimum_size = Vector2(16, 16)   # 20 → 16（批次 13 辛 ③）
 	badge_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	badge_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(badge_slot)
 	var chip_slot := Control.new()
-	chip_slot.custom_minimum_size = Vector2(16, 16)
+	chip_slot.custom_minimum_size = Vector2(14, 14)    # 16 → 14（批次 13 辛 ③）
 	chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	chip_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(chip_slot)
-	# 昵称一律 `clip_text` + **固定 60px 最小宽**：格宽由内容驱动，但**名字不许把格撑开**
-	#（昵称再长也只在 60px 里裁掉 ⇒ 格宽、进而整条名册条的宽度都与昵称无关）。
+	# 昵称一律 `clip_text` + **固定 46px 最小宽**（批次 13 辛 ③ 从 60 收）：格宽由内容驱动，
+	# 但**名字不许把格撑开**（昵称再长也只在 46px 里裁掉 ⇒ 格宽、进而整条名册条的宽度都与昵称无关）。
 	# 【下面这条旧理由已过期，留此备查】原话是"撑开了名册条的右边缘就会与
 	# `game._refresh_roster` 算出来的对不上、并可能压到畸变横幅"—— `_refresh_roster` 今天
 	# **直接取条自身的 `get_combined_minimum_size()`** 推右边缘、再软夹一道屏幕中线（见 §②），
 	# 条怎么宽它都跟得上，所以"算出来的对不上"不再成立；这条裁剪保的是"格宽可预期"。
-	var name_l := UIKit.label("", 13, UIKit.TEXT)
+	var name_l := UIKit.label("", 12, UIKit.TEXT)      # 13 → 12（批次 13 辛 ③）
 	name_l.clip_text = true
-	name_l.custom_minimum_size = Vector2(60, 0)
+	name_l.custom_minimum_size = Vector2(46, 0)
 	name_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(name_l)
 
 	# 倒计时行（常驻占位、内容按需填）：与「我」那条同一形态，只是小一号 —— 行动者若是**别人**，
 	# 他的倒计时就落在名册条这一格上（`game._refresh_corner_timer` 按 `_op_owner` 选格）。
 	var timer_row := HBoxContainer.new()
-	timer_row.add_theme_constant_override("separation", 4)
-	timer_row.custom_minimum_size = Vector2(0, 14)
+	timer_row.add_theme_constant_override("separation", 3)
+	# 14 → 13（批次 13 辛 ③）：**必须 ≥ 行内 9 号字标签的自然高（≈12.3）** ——
+	# 否则行动者换到别人身上、这一行的内容一亮出来，这一格就被撑高 0.3px、整条名册一开一合
+	#（`hud_test` 那条"倒计时出现后每条仍各自一样高"钉的就是这个）。
+	timer_row.custom_minimum_size = Vector2(0, 13)
 	timer_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	outer.add_child(timer_row)
-	var timer_kind := UIKit.label("", 10, UIKit.ACCENT)
+	var timer_kind := UIKit.label("", 9, UIKit.ACCENT)  # 10 → 9（批次 13 辛 ③）
 	timer_kind.visible = false
 	timer_row.add_child(timer_kind)
 	var timer_track := ColorRect.new()
 	timer_track.color = Color(1, 1, 1, 0.13)
-	timer_track.custom_minimum_size = Vector2(0, 5)
+	timer_track.custom_minimum_size = Vector2(0, 4)    # 细进度条（5 → 4）
 	timer_track.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	timer_track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	timer_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -875,11 +906,11 @@ static func _make_roster_row(g: Node, parent: Control) -> Dictionary:
 	timer_row.add_child(timer_track)
 	var timer_fill := ColorRect.new()
 	timer_fill.color = UIKit.ACCENT
-	timer_fill.size = Vector2(0, 5)
+	timer_fill.size = Vector2(0, 4)
 	timer_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	timer_track.add_child(timer_fill)
-	var timer_left := UIKit.label("", 10, UIKit.ACCENT)
-	timer_left.custom_minimum_size = Vector2(32, 0)
+	var timer_left := UIKit.label("", 9, UIKit.ACCENT)   # 10 → 9（批次 13 辛 ③）
+	timer_left.custom_minimum_size = Vector2(26, 0)     # 32 → 26（同上）
 	timer_left.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	timer_left.visible = false
 	timer_row.add_child(timer_left)
@@ -891,6 +922,9 @@ static func _make_roster_row(g: Node, parent: Control) -> Dictionary:
 		"timer_row": timer_row, "timer_kind": timer_kind, "timer_track": timer_track,
 		"timer_fill": timer_fill, "timer_left": timer_left,
 		"peer": GameData.NO_PEER, "border_active": false,
+		# 「这一枚的卡片要按 `ROSTER_CARD_PAD` 收上下内边距」——`game._apply_corner_style`
+		# 换样式盒时靠它决定要不要再贴一遍（四角身家条没有这一位 ⇒ 用默认的 8）。
+		"slim_pad": true,
 	}
 
 # ================= 房主：初始化与主循环 =================

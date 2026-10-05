@@ -129,8 +129,27 @@ func _run() -> void:
 	print("== 点按钮展开 ==")
 	_click(g.rules_btn)
 	await create_timer(0.3).timeout
-	_check(g.rules_panel.visible and not g.rules_btn.visible, "点「📖 规则说明」后展开、按钮收起")
+	# **批次 13 辛 ① 改写了这一条**：旧断言是"展开后按钮收起"（`rules_btn.visible = not on`），
+	# 用户现在的原话是「弹窗规则说明弹窗时，『规则说明』按钮不要消失」⇒ 反过来钉：**按钮恒可见**。
+	# 不是放宽：`rules_btn.visible` 必须为真，藏起来就红。
+	_check(g.rules_panel.visible and g.rules_btn.visible,
+		"点「📖 规则说明」后展开、**按钮仍在**（批次 13 辛 ①）")
 	_check(g.rules_body.text.length() > 0, "展开后正文有内容")
+
+	# **批次 13 辛 ①：同一枚按钮现在是开关**（回调从 `_set_rules_open(true)` 改成
+	# `_set_rules_open(not rules_open)`）。这里**直接发按钮的 `pressed` 信号**、不走鼠标拾取：
+	#   * 要钉的正是"回调改成切换"这件事本身 —— 信号 → lambda → `_set_rules_open` 那条链；
+	#   * 鼠标拾取那一段上面那行 `_click(g.rules_btn)` 已经真走过一次，不必重复；
+	#   * **更实际的理由**：本套件的宿主对局是**活的**，多等 0.6 秒就可能让**结算层**冒出来
+	#     把后续的真点击整个吃掉（实测踩过："收起"那一下点到结算层的压暗底、面板关不掉）。
+	#     这里不加 `await`，后面几处点击的时序与改写前**一字不差**。
+	# **正着钉新行为**：旧回调下第二次 emit 是空操作 ⇒ 面板仍开着 ⇒ 最后那条红。
+	g.rules_btn.pressed.emit()
+	_check(not g.rules_panel.visible and g.rules_btn.visible,
+		"展开态再发一次 pressed → 收起（同一枚按钮当开关用，按钮恒在）")
+	g.rules_btn.pressed.emit()
+	_check(g.rules_panel.visible and g.rules_btn.visible,
+		"（前置）再发一次又展开、按钮仍在 —— 下面几段按展开态写")
 
 	print("== 换页 ==")
 	var turn_btn: Button = g.rules_tabs.get("turn")
