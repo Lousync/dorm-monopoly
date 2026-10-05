@@ -14,8 +14,12 @@ extends Node3D
 ## **二期 Task 2：座位上的人齐了** —— `slot 1/2/3` 各坐一个（**`slot 0` 仍为空**：那是「我」，
 ## 相机就在那儿，spec §5.1）。谁坐哪把椅子由 `set_chars(seats)` 喂进来，**那份座位序与
 ## `room.set_seats()` 是同一份**（`game.gd:_refresh_players()` 同一处喂）—— 各写一份就会坐错位。
-## 逐座位选模型（按棋子色，见 `CHAR_MODELS_BY_COLOR`）已做；**动画播放 / 随取景淡出**
-## 仍归后面的任务，这里一行都不提前写。
+## 逐座位选模型（按棋子色，见 `CHAR_MODELS_BY_COLOR`）已做。
+##
+## **二期 Task 3：人活了，并且为它付了账** —— ① 待机 `idle`（**循环模式必须自己设**，导入器
+## 给的是 `LOOP_NONE`，见 `_loop_idle`）；② 当前行动者 = **同一条 `idle` 提速**（`set_actor`）；
+## ③ **随取景淡出并停播**（`set_fade`）—— "读棋盘"那几档（推近端 / 2D 端）把动画与绘制一起停掉，
+## 二期不拖慢主玩法档。三条都**只读表现层**：行动者读 `st.turn`，取景读 `view_t` / `dolly`。
 ##
 ## ⚠ **静态依赖纪律**：`tests/layout_test.gd` 静态引用 `GameRoom` ⇒ `room.gd` 的整条静态依赖链
 ## （含本文件）会在 `--script` 启动时、**autoload 注册之前**被编译。所以本文件**不许静态引用
@@ -135,6 +139,52 @@ const CHAR_MODELS_BY_COLOR := [
 ## （一期只在那一侧留椅背 + 名牌）。`set_chars()` 跳过它，`char_peers()` 在那里给 `NO_PEER`。
 const MY_SLOT := 0
 
+# ---------------- 二期 Task 3：待机循环 / 当前行动者 / 随取景淡出并停播 ----------------
+#
+# 本任务把角色"弄活"，并**为它付账**（性能）：三件事都在这一节里 ——
+#   ① **待机循环**（`idle` + `LOOP_LINEAR`，必须自己设，见 `IDLE_ANIM`）；
+#   ② **当前行动者**（同一条 `idle` 提速，见 `ACTOR_SPEED`）；
+#   ③ **随取景淡出并停播**（"读棋盘"那几档不许被二期拖慢，见 `set_fade`）。
+# **一行玩法都不碰**：行动者是从表现层**读**来的（`game.gd:_refresh_players` 里的 `st.turn`），
+# 取景也是从**表现层读**来的（往上找那个暴露 `view_t` / `dolly` 的祖先）⇒ 没有新的状态、
+# 没有新的 `@rpc`。
+
+## 待机动画名（普查 §5.4：27 条里唯一合适的持续型动画 —— 只动躯干 + 双臂 + 头 4 条轨道，
+## 正是"呼吸 / 小幅摇摆"要的那一面，且**不碰 `root` / 腿**）。
+const IDLE_ANIM := "idle"
+
+## **当前行动者**的 `idle` 提速倍率（普查 §5.4 建议 1.3~1.5，取中档）。
+##
+## **为什么只能靠提速**：包里**没有第二条持续型动画** —— 唯一的另外两条（`walk` / `sprint`）
+## 是**位移动作**，坐着的人播它不合适（普查 §5.4 建议表）。⇒ "轮到我了"只能靠**同一条 `idle`
+## 快一点**表达。基准档见 `IDLE_SPEED`（= 1.0）。
+## **幅度取中档**：慢了看不出来，快了像"抖" —— 1.4 是"看得出比别人精神一点"的那一档。
+const ACTOR_SPEED := 1.4
+## 非行动者的 `idle` 速度（基准）。**必须有这个显式的基准**：`set_actor` 要能把上一个
+## 行动者**降回来**，不能只往上加。
+const IDLE_SPEED := 1.0
+
+## ---------------- 随取景淡出：阈值（见 `set_fade`） ----------------
+##
+## `set_fade(t)` 的 `t` 是**「读棋盘程度」**（0 = 3D 看屋子那几档，1 = 读棋盘那几档），
+## **由 `_process` 从表现层的取景量算出来**（`view_t` 与 `dolly` 合起来的那个标量，见 `_framing_t`）。
+## 两档阈值把 [0,1] 切成三段：
+##   * `t <= FADE_SOLID_T`(0.25) ⇒ **全亮 + 在播**（3D 默认档 1.0 / 拉远端 1.4）
+##   * `t >= FADE_GONE_T`(0.75)  ⇒ **全隐 + 停播**（推近端 0.7 / 2D 端 `view_t=1`）
+##   * 中间 ⇒ alpha 线性过渡，**仍在播**（停播只在"已经看不见"之后才发生 —— 提前停会
+##     让"半透明但看得见"的那几帧僵住）
+const FADE_SOLID_T := 0.25
+const FADE_GONE_T := 0.75
+
+## **推拉近端的档位**（= `table_3d.DOLLY_MIN`，一期 Task 7 定的 0.7）。
+##
+## ⚠ **不能静态写 `TableView3D.DOLLY_MIN`**：`table_3d` → `room` → `chars` 已经是**类名环**，
+## 再反向引用就编译不过（同 `seat_pose()` 那段"连 `GameRoom` 都不写"的纪律）。
+## ⇒ 这里**复制一份数值**，并由 `chars_test` 一条断言钉住"两边相等"
+## （`t3.DOLLY_MIN == GameChars.FADE_NEAR_DOLLY`）—— 哪天那个常量改了、这里没跟，那条会红。
+## **它的含义**：推拉到这一档 ⇒ `_framing_t` 顶到 1.0 ⇒ 角色**全隐 + 停播**。
+const FADE_NEAR_DOLLY := 0.7
+
 ## 一期那四把椅子（`Room/Seats`）—— 座位坐标的**唯一来源**（见 `seat_pose()`）。
 var _seats: Node3D
 
@@ -149,6 +199,28 @@ var _char_models: Array = []
 ## `_refresh_players()` 每次状态广播都会调 `set_chars()` —— 少了这条早退，每次广播都会把
 ## 三个人**整套重建一遍**（重新 `load()` GLB + 重新实例化 + 重新复制材质）。
 var _char_key := ""
+
+## 每个 slot 上的 `AnimationPlayer`（**下标 = 椅子号**，与 `_chars` / `_char_peers`
+## 三者**同进同出**）。`null` = 这个座位上没人 / 模型里没找到播放器。
+## 待机（`idle`）就是由它播的；`speed_scale` 是"当前行动者"的表达（见 `set_actor`）。
+var _char_players: Array = []
+
+## 当前行动者的 peer（`GameData.NO_PEER` = 没有行动者 / 还没读到）。
+## **只读表现层**：由 `game.gd:_refresh_players()` 从 `st.turn` 喂进来（`set_actor`），
+## 本文件不改任何玩法状态、也不发 RPC。
+var _actor_peer := GameData.NO_PEER
+
+## 当前的「读棋盘程度」（`set_fade` 的入参）。0 = 全亮在播、1 = 全隐停播。
+var _fade_t := 0.0
+
+## 取景宿主（那个暴露 `view_t` / `dolly` 的祖先节点 = `TableView3D`）。
+##
+## **为什么不静态引用 `TableView3D`**：见 `FADE_NEAR_DOLLY` 那段（类名环）。这里**运行时**
+## 往上找、并缓存（取景量是每帧读的，缓存掉那几次 `get_parent()`）。
+## **为什么"往上找"而不是让上层推**：`table_3d._apply_camera()` 是 `view_t` 的唯一出口，
+## 但它不认识本节点（`room.gd` 建我们时只交了座位表）⇒ 要么改 `table_3d` 多一条回调、
+## 要么由自己读。**自己读更小**：不动一期的取景契约，也不新增跨文件接口。
+var _framing_host: Node = null
 
 ## 建角色层。**只建节点，不摆人** —— 摆人要读座位锚点的 `global_transform`，那要求整棵子树
 ## **已经入树**；而 `build()` 是 `table_3d._init()` 里调的，那时还没入树（读全局量会打
@@ -192,16 +264,22 @@ func set_chars(seats: Array) -> void:
 	_clear()
 	for i in seats.size():
 		if i == MY_SLOT:
-			# 「我」这一侧不出人（spec §5.1）：三个数组都记一个"空位"，下标才对得上椅子号。
+			# 「我」这一侧不出人（spec §5.1）：四个数组都记一个"空位"，下标才对得上椅子号。
 			_chars.append(null)
 			_char_peers.append(GameData.NO_PEER)
 			_char_models.append("")
+			_char_players.append(null)
 			continue
 		var color := int((seats[i] as Dictionary).get("color", 0))
 		var model := model_for_color(color)
 		_chars.append(_place(i, model))
 		_char_peers.append(int((seats[i] as Dictionary).get("peer", GameData.NO_PEER)))
 		_char_models.append(model)
+		_char_players.append(_find_player(_chars[i]))
+	# 新摆的这批人要**立刻**带上当前的行动者档与取景档（不能等下一次 `_process` / `set_actor`：
+	# 重建之后的那几帧会各是"谁都没加速 + 全亮"，而出图恰好抓的就是这几帧）。
+	_apply_actor()
+	_apply_fade()
 
 ## 第 `slot` 把椅子上那个人**是哪一家**（`GameData.NO_PEER` = 那个座位上没人）。
 ##
@@ -233,6 +311,7 @@ func _clear() -> void:
 	_chars.clear()
 	_char_peers.clear()
 	_char_models.clear()
+	_char_players.clear()
 
 ## 第 `slot` 把椅子上**人该站的那一点**（位置 + 朝向）。
 ##
@@ -283,7 +362,58 @@ func _place(slot: int, model: String) -> Node3D:
 		head.scale *= HEAD_SHRINK
 	_shade(mi)
 	_no_shadow(mi)
+	# ---- 待机（Task 3）：**这条是"人活了"的那一口气** ----
+	# `idle` 由模型自带的 `AnimationPlayer` 播（普查 §三：这个包没有 `Skeleton3D`，
+	# 动画动的是**节点变换**）。
+	# ⚠ **循环模式必须自己设**（`_loop_idle`）—— 导入器给的是 `LOOP_NONE`，
+	# 不设的话 1.3333 s 之后三个人齐刷刷僵在末帧，且**日志里一个字都不说**。
+	var ap := _find_player(mi)
+	if ap != null:
+		if _loop_idle(ap):
+			ap.play(IDLE_ANIM)
+		else:
+			push_warning("角色模型里没有 `%s` 这条动画（待机播不出来）：%s" % [IDLE_ANIM, model])
 	return wrapper
+
+## 模型子树里的 `AnimationPlayer`（`null` = 没有）。走 `find_children` 按**类型**找，
+## 不写死节点名：导入器给它的名字将来若变，这里不会静默失效（`chars_test` 有一条钉着"找到播放器"）。
+static func _find_player(root: Node) -> AnimationPlayer:
+	if root == null:
+		return null
+	var found := root.find_children("*", "AnimationPlayer", true, false)
+	return found[0] as AnimationPlayer if not found.is_empty() else null
+
+## 把 `idle` 的循环模式设成 `LOOP_LINEAR`，返回是否设成了（那条动画存在才为 true）。
+##
+## **为什么非设不可**（普查 §三 实测细节 1）：glTF 格式里**没有循环标记**，导入器**不会**替你标
+## —— 27 条动画**逐条**都是 `loop_mode = 0 (LOOP_NONE)`。⇒ **"导入成功 ⇒ 会自动循环"是个
+## 会静默出错的假设**（表现是"站着的人动一下就僵住"，而不是任何报错）。
+##
+## **为什么是"复制一份再换回去"而不是就地改**：`instantiate()` 出来的动画资源与
+## `PackedScene` **共用同一份**（同 `_shade` 对材质那条理由）—— 就地改会污染缓存里的那份。
+## 这里取出来 `duplicate()`、改在副本上、再 `add_animation` 换回库里（同名覆盖）。
+## **它改的是本实例自己那份**，四个模型 / 多个实例之间互不串。
+##
+## ⚠ **找库要按"名字"找，不能按 `find_animation_library()` 的返回值判空**（本任务踩过）：
+## glTF 导入器把 27 条动画放进**默认库**，而 Godot 的默认库名**就是空 `StringName()`**
+## ⇒ `find_animation_library(src) == StringName("")` **既可能是"默认库里有它"、也可能是"没找到"**
+## （两者返回同一个值），照它分支会**静默走进"没找到"那一支**（红线验证当场把它抓出来了：
+## 改成 `LOOP_NONE` 之后那条断言仍是绿的）。⇒ 改成**逐库问 `has_animation()`**，不含糊。
+static func _loop_idle(ap: AnimationPlayer) -> bool:
+	var src := ap.get_animation(IDLE_ANIM)
+	if src == null:
+		return false
+	var a := src.duplicate() as Animation
+	a.loop_mode = Animation.LOOP_LINEAR
+	for lib_name in ap.get_animation_library_list():
+		var lib := ap.get_animation_library(lib_name)
+		if lib != null and lib.has_animation(IDLE_ANIM):
+			lib.add_animation(IDLE_ANIM, a)   # 同名覆盖：本实例从此用带循环标记的那一份
+			return true
+	# 一条 `idle` 在库里、却问不到它所在的库（不该发生）：退回**就地改**。
+	# 功能上仍是对的（循环模式对每个实例都一样），代价只是这一份共享资源被改脏 —— 比"没设上"好。
+	src.loop_mode = Animation.LOOP_LINEAR
+	return true
 
 ## 角色材质：**只调光照参数、绝不碰 `albedo_texture`**（普查 §7.2 那条硬约束）。
 ##
@@ -328,3 +458,146 @@ static func _shade(root: Node) -> void:
 static func _no_shadow(root: Node) -> void:
 	for n in root.find_children("*", "GeometryInstance3D", true, false):
 		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+# ---------------- Task 3：当前行动者（"轮到我了"） ----------------
+
+## 设当前行动者。**只读表现层** —— `game.gd:_refresh_players()` 从 `st.turn` 喂进来
+## （与 `set_chars` 同一处、同一份状态），本文件不新增任何玩法状态、不发 RPC。
+##
+## **表达方式 = 同一条 `idle` 提速**（`ACTOR_SPEED` / `IDLE_SPEED`）：包里没有第二条持续型动画
+## （`walk` / `sprint` 是位移动作），所以"轮到我了"只能靠**快一点**读出来。
+##
+## **不做早退**：`set_chars` 每次**重建**都会把新播放器带回基准速度 ⇒ 若这里按"peer 没变"早退，
+## 重建之后行动者的提速就丢了。四个赋值而已，每次广播都做也不贵。
+func set_actor(peer: int) -> void:
+	_actor_peer = peer
+	_apply_actor()
+
+## 当前记着的行动者 peer（`GameData.NO_PEER` = 没有）。
+func actor_peer() -> int:
+	return _actor_peer
+
+## 把"谁是行动者"刷到每个播放器的 `speed_scale` 上。`_char_peers` 是**下标 = 椅子号**的数组
+## ⇒ 逐槽位比对即可（同一个 peer 只会在一把椅子上）。
+func _apply_actor() -> void:
+	for i in _char_players.size():
+		var ap := _char_players[i] as AnimationPlayer
+		if ap == null or not is_instance_valid(ap):
+			continue
+		var is_actor: bool = _actor_peer != GameData.NO_PEER and i < _char_peers.size() \
+			and int(_char_peers[i]) == _actor_peer
+		ap.speed_scale = ACTOR_SPEED if is_actor else IDLE_SPEED
+
+## 第 `slot` 把椅子上那个播放器的 `speed_scale`（`0.0` = 那个座位上没人 / 没有播放器）。
+## 测试用它核"行动者明显比别人快"。
+func char_speed(slot: int) -> float:
+	var ap := char_player(slot)
+	return ap.speed_scale if ap != null else 0.0
+
+## 第 `slot` 把椅子上的 `AnimationPlayer`（`null` = 没人 / 没找到）。测试用它核循环模式与播放状态。
+func char_player(slot: int) -> AnimationPlayer:
+	if slot < 0 or slot >= _char_players.size():
+		return null
+	var ap := _char_players[slot] as AnimationPlayer
+	return ap if ap != null and is_instance_valid(ap) else null
+
+# ---------------- Task 3：随取景淡出并停播 ----------------
+
+## 设「读棋盘程度」`t ∈ [0,1]`，并据此淡出 + 停播。**契约（可执行，`chars_test` 钉着）**：
+##
+## | `t` | 表现 |
+## |---|---|
+## | `t <= FADE_SOLID_T`(0.25) | **全亮**（`GeometryInstance3D.transparency == 0`）+ **`idle` 在播** |
+## | `t >= FADE_GONE_T`(0.75) | **全隐**（外套节点 `visible = false`）+ **`AnimationPlayer.is_playing() == false`** |
+## | 中间 | 透明度线性过渡（`transparency = 1 − alpha`），**仍在播** |
+##
+## **停播只在"已经看不见"之后才发生**（`FADE_GONE_T`）：提前停会让"半透明但看得见"的那几帧僵住。
+##
+## **判据按"取景档"，不按"是否落在视口内"**（spec §5.3 的前提已被 Task 1 出图更正）：
+## 角色在 3D 端**恒在画内**（哪怕被画面边缘切掉一半）⇒ 视口判据**永远为真、等于没判**。
+## 真正的判据是"**是不是读棋盘的那几档**"：推近端 / 2D 端 ⇒ 淡出停播；默认档 / 拉远端 ⇒ 在。
+##
+## **为什么必须停播**（本任务的性能底线，spec §六）：读棋盘那一档是**主玩法档**，
+## 二期不许把它拖慢 —— `AnimationPlayer` 一停，那几档的逐帧动画求值归零；
+## 加上外套节点 `visible = false`，三个角色的绘制调用也一并省掉。
+##
+## **透明度走 `GeometryInstance3D.transparency`，不碰材质**：
+## 它是**逐实例**的（0 = 完全恢复不透明、走不透明管线）⇒ 在"在"的那几档上
+## **渲染与 Task 2 验收时逐位相同**（材质一个字节没动）；若去改材质的 `transparency = ALPHA`，
+## 会把角色整体推进透明管线、且**改动 `albedo_color` 那份被 Ruling F2 判过的观感**。
+func set_fade(t: float) -> void:
+	var nt := clampf(t, 0.0, 1.0)
+	if nt == _fade_t:
+		return
+	_fade_t = nt
+	_apply_fade()
+
+## 当前的「读棋盘程度」（测试读数用）。
+func fade_t() -> float:
+	return _fade_t
+
+## 每帧把取景量读进来、算成 `t`、再交给 `set_fade`（`view_t` / `dolly` 都是**每帧平滑逼近**的
+## 当前值，不是一个事件 ⇒ 只能轮询，不能等回调）。
+##
+## **代价可忽略**：`_framing_host` 缓存着，稳态下每帧只是两次属性读 + 一次比较
+## （`set_fade` 在 `t` 没变时早退）—— 真正贵的那部分（动画求值 / 绘制）在淡出档已经停了。
+func _process(_delta: float) -> void:
+	set_fade(_framing_t())
+
+## 从表现层读到的「读棋盘程度」：
+##   * 2D 端（`view_t → 1`）**整条都在读棋盘** ⇒ 直接就是 `view_t`；
+##   * 3D 端的**推近**（`dolly < 1`）也归读棋盘 ⇒ 把它也归一化到 [0,1] 再取**两者的大者**。
+## 两个轴的极值都对上 spec §5.3：`dolly = FADE_NEAR_DOLLY`(0.7) ⇒ 1.0（全隐停播）、
+## `dolly ≥ 1.0`（默认档 / 拉远端）⇒ 0.0（全亮在播）。
+func _framing_t() -> float:
+	var host := _host()
+	if host == null:
+		return 0.0
+	var vt := float(host.get("view_t"))
+	var dl = host.get("dolly")
+	if dl == null:
+		return vt
+	var near := clampf((1.0 - float(dl)) / (1.0 - FADE_NEAR_DOLLY), 0.0, 1.0)
+	return maxf(vt, near)
+
+## 取景宿主 = 往上第一个**同时**暴露 `view_t` 与 `dolly` 的祖先（= `TableView3D`）。
+## 走 `get()`（**鸭子类型**，不写类名）—— 见 `_framing_host` 那段（类名环）。
+func _host() -> Node:
+	if _framing_host != null and is_instance_valid(_framing_host):
+		return _framing_host
+	var n := get_parent()
+	while n != null:
+		if n.get("view_t") != null and n.get("dolly") != null:
+			_framing_host = n
+			return n
+		n = n.get_parent()
+	return null
+
+## 把 `_fade_t` 落到节点上：透明度 + 可见性 + 播放状态。
+func _apply_fade() -> void:
+	var a := clampf((FADE_GONE_T - _fade_t) / (FADE_GONE_T - FADE_SOLID_T), 0.0, 1.0)
+	var gone := a <= 0.001
+	for i in _chars.size():
+		var w := _chars[i] as Node3D
+		if w == null or not is_instance_valid(w):
+			continue
+		w.visible = not gone
+		_alpha(w, a)
+		var ap := _char_players[i] as AnimationPlayer if i < _char_players.size() else null
+		if ap == null or not is_instance_valid(ap):
+			continue
+		if gone:
+			if ap.is_playing():
+				ap.stop()
+		elif not ap.is_playing():
+			ap.play(IDLE_ANIM)
+
+## 一棵子树里所有几何实例的**逐实例透明度**（`a` = 不透明程度：1 = 全亮、0 = 全隐）。
+## 走 `GeometryInstance3D.transparency`（= `1 − a`）—— **不动材质**（见 `set_fade` 那段）。
+## 只在真的变了时才写（每帧调它，多数帧是空转）。
+static func _alpha(root: Node, a: float) -> void:
+	var tr := clampf(1.0 - a, 0.0, 1.0)
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var gi := n as GeometryInstance3D
+		if gi != null and not is_equal_approx(gi.transparency, tr):
+			gi.transparency = tr

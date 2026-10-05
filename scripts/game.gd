@@ -2507,6 +2507,11 @@ func _refresh_players() -> void:
 			var chars := room.get_node_or_null("Chars")
 			if chars != null:
 				chars.set_chars(seats)
+				# 二期 Task 3：**当前行动者**（"轮到我了"）—— 与 `set_chars` 同一处、同一份状态。
+				# 行动者就是快照里的 `turn`（= `hp[turn_i].peer`），**只读**：这里一个玩法状态都不改、
+				# 不发 RPC，只是把"谁在行动"转给表现层（同一个 `st.turn` 也已喂给轮盘与行动者光环，
+				# 见 `spin_wheel` / `set_ring` 那两处）。不在这里喂它就没人喂 —— 角色层不认识 `st`。
+				chars.set_actor(int(st.get("turn", GameData.NO_PEER)))
 	_money_flies.clear()     # 本帧飞钞队列（批次 13 ⑥：记在钱循环里、播在身家条刷完之后）
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
