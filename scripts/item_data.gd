@@ -25,11 +25,11 @@ const BLACK_REFRESH_COST := 1                  # 刷新固定 1 块地皮（不�
 const BLACK_EXIT_COST := 1                     # 出口费 1 块地皮
 const BLACK_TIMEOUT := 20.0                    # 逛黑市发呆兜底
 
-## target: "player" = 需选玩家；"tile" = 需点地图选格；缺省 = 自身/全体。
+## target: "player" = 需选玩家；"tile" = 需点地图选格；"own_tile" = 需点自己名下的一块地皮（顶楼加盖）；缺省 = 自身/全体。
 ## then: "own_prop" = 选完玩家后再点他名下的一块地皮（两段式，如强拆令/抄家队）。
 const ITEMS := {
 	# ---- 首批（已实装）----
-	"平均主义": {"quality": "紫", "cost": 5, "type": "active", "unique": false, "cooldown": 8,
+	"平均主义": {"quality": "紫", "cost": 5, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "所有玩家的现金同步至平均值。", "implemented": true, "icon": "item_balance"},
 	"作弊器": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "下一次转盘的点数由你决定。", "implemented": true, "icon": "item_dice"},
@@ -137,15 +137,15 @@ const ITEMS := {
 		"desc": "指定一名玩家下回合点数 +3。", "implemented": true, "target": "player", "icon": "item_rollcall"},
 
 	# ---- 紫·史诗 ----
-	"拆解钳": {"quality": "紫", "cost": 3, "type": "active", "unique": false, "cooldown": 5,
+	"拆解钳": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "摧毁一名指定玩家的一件随机道具。", "implemented": true, "target": "player", "icon": "item_wrench"},
-	"快递直达": {"quality": "紫", "cost": 4, "type": "active", "unique": false, "cooldown": 6,
+	"快递直达": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "立刻移动到地图上的任意一格。", "implemented": true, "target": "tile", "icon": "item_rocket"},
 	"强拆令": {"quality": "紫", "cost": 5, "type": "consumable", "unique": false, "cooldown": 4,
 		"desc": "指定一名玩家的一块地皮变为无主。", "implemented": true, "target": "player", "then": "own_prop", "icon": "item_demolish"},
-	"时间暂停": {"quality": "紫", "cost": 4, "type": "active", "unique": false, "cooldown": 5,
+	"时间暂停": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家下一回合休眠。", "implemented": true, "target": "player", "icon": "item_pause"},
-	"包场": {"quality": "紫", "cost": 4, "type": "active", "unique": false, "cooldown": 4,
+	"包场": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家接下来两个回合不能使用道具。", "implemented": true, "target": "player", "icon": "item_bookout"},
 	"重修卡": {"quality": "紫", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "每回合你可以使用两次道具，共三次。", "implemented": true, "icon": "item_retake"},
@@ -153,6 +153,26 @@ const ITEMS := {
 	# ---- 橙·传说 ----
 	"二两寒暑": {"quality": "橙", "cost": 3, "type": "active", "unique": true, "cooldown": 3,
 		"desc": "指定一名玩家接下来两个道具的消耗各 +2。", "implemented": true, "target": "player", "icon": "item_thermo"},
+
+	# ---- 紫·新批次（2026-10-04 定稿，待实装：implemented=false 不进货架池） ----
+	"老虎机": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "转三把数字，奖金按点数翻倍，连号豹子更肥。", "implemented": false, "icon": "item_slot"},
+	"出老千": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "开一场赌局，就算没赢也能和赢家平分奖金。", "implemented": false, "icon": "item_gamble"},
+	"代课": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "你的下一笔租金，由房东替你付。", "implemented": false, "icon": "item_substitute"},
+	"没收": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "指定玩家的一件随机道具，直接归你。", "implemented": false, "target": "player", "icon": "item_confiscate"},
+	"顶楼加盖": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "你的一块地皮直接加盖两层。", "implemented": false, "target": "own_tile", "icon": "item_roof"},
+	"转专业": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "与指定玩家各挑一块地皮互换。", "implemented": false, "target": "player", "icon": "item_transfer"},
+	"宿舍改造": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "学校八折收购他的一块地皮，补偿归他。", "implemented": false, "target": "player", "icon": "item_redevelop"},
+	"打印店": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "复印他的随机一件道具（橙货拒印）。", "implemented": false, "target": "player", "icon": "item_copy"},
+	"刮刮乐": {"quality": "紫", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
+		"desc": "刮开涂层，随机 ¥100~¥1000。", "implemented": false, "icon": "item_scratch"},
 }
 
 static func def(id: String) -> Dictionary:
