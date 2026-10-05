@@ -2572,9 +2572,12 @@ func _refresh_players() -> void:
 			# 二期 Task 2：**同一份座位序**再喂一遍给角色层（就在这一处、用同一份数组 ——
 			# 分开推两份就会"人坐错椅子"，而那正是二期最难查的那类错）。下标 = 椅子号，
 			# `GameChars` 自己跳过 slot 0（那是「我」）并按各家的棋子色选模型。
-			# 走 `get_node_or_null` + 动态调用：`CHARS_ENABLED = false` 时角色层根本不存在
-			# （本期的保命开关），而且 game.gd 不该把 `chars.gd` 写成静态依赖。
-			var chars := room.get_node_or_null("Chars")
+			# 走 `_chars_node()`（内部 `get_node_or_null`）+ 动态调用：`CHARS_ENABLED = false` 时
+			# 角色层根本不存在（本期的保命开关），而且 game.gd 不该把 `chars.gd` 写成静态依赖。
+			# 【终审 findings ⑥：与 `_chars_node()` 合并 —— 同一个节点只留**一条查找路径**，
+			#  免得哪天 `Chars` 换挂点时只改了一处、另一处静默找空。此处 `table3d != null` 已知，
+			#  所以 `_chars_node()` 的守卫不会改变行为。】
+			var chars := _chars_node()
 			if chars != null:
 				chars.set_chars(seats)
 				# 二期 Task 3：**当前行动者**（"轮到我了"）—— 与 `set_chars` 同一处、同一份状态。

@@ -357,10 +357,16 @@ func _place(slot: int, model: String) -> Node3D:
 	# 腿：**竖直压短**（不转）—— 手摆坐姿的另一半，见 `LEG_SQUASH`。
 	# 走 `find_child` 而不是写死 `root/leg-left`：层级见普查 §三（`character-a → root → leg-*`），
 	# 将来导入器多包一层时这里不会静默失效（腿没被压到 ⇒ 脚到不了地面，`chars_test` 立刻红）。
+	# ⚠ **只动 `scale.y`，不整份赋值**（本轮 fix round，终审 findings ⑤）：导入器把模型的比例搬到了
+	# 节点上（同 `head` 自带 0.1 那条，普查 §三）⇒ `leg.scale = Vector3(1, LEG_SQUASH, 1)` 会把
+	# `leg-*` 自带的 x/z **静默清成 1.0**。今天无害（普查 §4.1 实测腿节点是单位缩放，出图那条读数
+	# 也仍是 `(1.0, 0.8, 1.0)`），但哪天导入器改了 `leg-*` 的缩放，这里会悄悄改外形，而先红的
+	# 是脚底 / 髋那两条落位断言 —— 病因会指错方向。与 `head.scale *= HEAD_SHRINK` 同一条纪律：
+	# **只碰要碰的那一根轴**。
 	for nm in ["leg-left", "leg-right"]:
 		var leg := mi.find_child(nm, true, false) as Node3D
 		if leg != null:
-			leg.scale = Vector3(1.0, LEG_SQUASH, 1.0)
+			leg.scale.y = LEG_SQUASH
 	# 头：**再乘一个小系数**（见 `HEAD_SHRINK`）。走 `find_child` 与腿同一条理由（层级见普查 §三）。
 	var head := mi.find_child("head", true, false) as Node3D
 	if head != null:
@@ -578,6 +584,14 @@ func _host() -> Node:
 		n = n.get_parent()
 	return null
 
+## `_fade_t` 是不是已经落到「全隐 + 停播」那一档（本轮 fix round 新增）。
+##
+## **判据只有这一处**：`_apply_fade`（要不要隐藏 / `stop()`）与 `react`（要不要整条丢掉）都问它。
+## 两处各写一遍的话，哪天阈值语义一动就会出现"已经停播了、却还肯收反应"这种半档 ——
+## 而那一档的失败是**静默**的（见 `react()` 那段）：隐藏的播放器被重新点着、还再也停不下来。
+func _faded_out() -> bool:
+	return _fade_t >= FADE_GONE_T
+
 ## 把 `_fade_t` 落到节点上：透明度 + 可见性 + 播放状态。
 ##
 ## **已经趴下的那一家（`_dead_peers`）单独一支**：见 `_pose_die` / `REACT_DIE` 那段 ——
@@ -585,7 +599,7 @@ func _host() -> Node:
 ## 也不能因为 `stop()` 把姿态丢掉（从淡出回来时要重新摆回末帧）。
 func _apply_fade() -> void:
 	var a := clampf((FADE_GONE_T - _fade_t) / (FADE_GONE_T - FADE_SOLID_T), 0.0, 1.0)
-	var gone := a <= 0.001
+	var gone := _faded_out()
 	for i in _chars.size():
 		var w := _chars[i] as Node3D
 		if w == null or not is_instance_valid(w):
@@ -693,7 +707,21 @@ var _dead_peers := {}
 ## 事件是从**已同步的状态**读来的，允许"人还没摆上椅子"这种时序（广播可能早一帧）。
 ##
 ## ⚠ **不碰 `speed_scale`** —— 那是"当前行动者"的表达（`set_actor`），幅度含蓄、不放大。
+##
+## ⚠⚠ **已经淡到「全隐 + 停播」那一档时，反应一律丢掉、不排队**（本轮 fix round，终审 findings ①）。
+## 那一档（推近端 / 2D 端 = **读棋盘的主玩法档**）对二期的承诺就是"角色**停播 + 不绘制**"
+##（spec §5.3 / §六）。而 `react()` 原先不看淡出档：对手在读棋盘那一档付租 ⇒ 这里照常 `play()`
+## ⇒ **在一个 `visible = false` 的节点上重新开播**；0.17~0.67 s 后 `_react_finished` 又把它接到
+## **`LOOP_LINEAR` 的 `idle`** 上 ⇒ **待机从此一直播下去**；而 `set_fade` 在 `t` 没变时早退
+##（见那里）⇒ `_apply_fade` 不会再被调用 ⇒ 这个播放器在整个读棋盘档里**逐帧求值到取景变化为止**
+## —— 那条性能承诺**静默失效**（⑭(b)(c) 抓不到：它在淡出与断言之间没有任何事件，这正是修它的原因）。
+##
+## **为什么是"丢"而不是"排队等取景回来再补播"**：补播出来的是一条**过期的反应** —— 那件事早就
+## 过去了，等角色淡回来再看它突然动一下只会莫名其妙；而在读棋盘那一档，玩家**根本没看见**那次
+## 事件 ⇒ 补播没有意义。
 func react(peer: int, kind: String) -> void:
+	if _faded_out():
+		return                      # 全隐 + 停播那一档：丢掉，不排队（见上）
 	var i := _slot_of_peer(peer)
 	if i < 0:
 		return

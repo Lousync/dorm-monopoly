@@ -761,6 +761,12 @@ func take_shot(path: String) -> void:
 			g._broadcast_state()
 			await get_tree().create_timer(0.35).timeout
 			get_tree().paused = true   # 冻住：自动对局下一拍会把 _shop_peer 改掉
+	# 【终审 findings ⑦】react 摆拍**定格住的那个播放器与被定住的位置** —— 声明在这里（外层块），
+	# 好让下面那三帧连拍**每一帧出图前重放一次 `seek + pause`**：取景树没暂停（只有 shop 那一支
+	# 会 `get_tree().paused = true`），自动对局还在 3 倍速跑，0.6~1.8 s 的窗口里同一个 peer 的
+	# 又一次 `pay` / `play` / `rob` 会把定住的姿态顶掉 ⇒ 拍到的就不是想要的那条。
+	var shot_react_ap: AnimationPlayer = null
+	var shot_react_at := 0.0
 	if path.contains("react") and g.multiplayer.is_server():
 		# 摆拍（二期 Task 4）：四个玩法事件各拍一张。走**真入口** `chars.react(peer, kind)`
 		#（与 gameplay 触发的是同一个函数、同一条链），出图只看**它把哪条动画摆到了身上**。
@@ -784,7 +790,6 @@ func take_shot(path: String) -> void:
 			# 用 **slot 2（对面那把椅子）**：它是正对镜头的那一个（一期 Ruling G2 验收的那把）。
 			var slot_r := 2 if peers_r.size() > 2 else 1
 			var peer_r: int = int(peers_r[slot_r]) if peers_r.size() > slot_r else GameData.NO_PEER
-			print("SHOTREACT kind=%s slot=%d peer=%d" % [kind, slot_r, peer_r])
 			chars_r.react(peer_r, kind)
 			if kind != "die":
 				var ap_r: AnimationPlayer = chars_r.char_player(slot_r)
@@ -792,8 +797,18 @@ func take_shot(path: String) -> void:
 				if ap_r != null and ap_r.current_animation != "":
 					a_r = ap_r.get_animation(ap_r.current_animation)
 				if a_r != null:
-					ap_r.seek(a_r.length * 0.45, true)
+					shot_react_ap = ap_r                 # 记住：连拍每一帧前重放（见下面的循环）
+					shot_react_at = a_r.length * 0.45
+					ap_r.seek(shot_react_at, true)
 					ap_r.pause()
+			# **打"最终落在哪条动画上"，不打印"请求了什么"**（终审 findings ⑦）：请求的名字对、
+			# 却在中途被同一个人另一次事件顶成别的动画时，只记请求那一行**看不出来**，
+			# 出图错了也发现不了。`assigned_animation`（不是 `current_animation`）才留得住名字
+			#（暂停 / 播完停下时后者会被清成 `""`，同 `chars.gd._pose_die` 那段）。
+			var ap_now: AnimationPlayer = chars_r.char_player(slot_r)
+			print("SHOTREACT kind=%s slot=%d peer=%d → assigned=%s 在播=%s" % [kind, slot_r, peer_r,
+				(String(ap_now.assigned_animation) if ap_now != null else "<无播放器>"),
+				("是" if (ap_now != null and ap_now.is_playing()) else "否")])
 	# 文件名带 deckout：抽卡「抽出」只有 `DeckReveal.OUT` = 0.34s，常规三帧的第一帧（0.6s）
 	# 已经落在翻面之后 —— 拍不到"卡刚亮出来的那一刻"。这里按两个时间点各补一张（**不等 0.6s**）：
 	#   0.06s（卡片刚起）与 0.16s（快到位）。批次 8 起演出在屏幕层、相机不参与 ⇒ 不再需要
@@ -808,10 +823,18 @@ func take_shot(path: String) -> void:
 	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
 	for i in 3:
 		await get_tree().create_timer(0.6).timeout
+		# react 摆拍：**出图前重放一次定格**（树没暂停、自动对局一直在跑，见上面 `shot_react_ap`
+		# 那段）。`seek(x, true)` 立刻把姿态落到分件上 ⇒ 紧接着的 `frame_post_draw` 拍到的就是它。
+		if shot_react_ap != null and is_instance_valid(shot_react_ap):
+			shot_react_ap.seek(shot_react_at, true)
+			shot_react_ap.pause()
 		await RenderingServer.frame_post_draw
 		var p := path if i == 0 else path.replace(".png", "_%d.png" % i)
 		get_viewport().get_texture().get_image().save_png(p)
 		print("SHOT SAVED ", p)
+		# 出图那一刻**真的**是哪条动画（不是请求的那条）—— 只打这一行就能看出"拍错了"。
+		if shot_react_ap != null and is_instance_valid(shot_react_ap):
+			print("SHOTREACT frame%d assigned=%s" % [i, String(shot_react_ap.assigned_animation)])
 	get_tree().quit(0)
 
 func _dev_player_edit(edit: Callable) -> void:

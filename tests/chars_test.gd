@@ -25,6 +25,10 @@ extends SceneTree
 ##      **全隐 + `is_playing() == false`**，推回默认档又活过来）；
 ##      ⑮ **`set_fade(t)` 的阈值契约**（`FADE_SOLID_T` / `FADE_GONE_T` 四个点）；
 ##      ⑯ 淡出用的推拉近端与一期 `DOLLY_MIN` 同值；⑰ **当前行动者靠 `idle` 提速**（"轮到我了"）。
+##   **【fix round 新增】** ⑱ **淡出档上的反应一律丢掉**（`react()` 的早退）：淡到"全隐 + 停播"
+##      之后三条一次性动作各来一次（人仍全隐、播放器仍未在播，等过标称时长后仍然如此），
+##      `die` 再单独打一次（还要多钉一条"破产记忆没被种下"）——
+##      ⑭(b)(c) **抓不到它**（那两条在淡出与断言之间没有任何事件，这正是终审 findings ① 的由来）。
 ##
 ## 坐姿不是包里的 `sit`（腿是一整块刚体、无膝关节，`sit` 把腿平举 ⇒ 会捅进桌子 1.66 世界），
 ## 是**手摆**（普查 §5.2）：整体下移 `SEAT_ROOT_Y` + 腿竖直压到 `LEG_SQUASH`
@@ -205,7 +209,8 @@ func _irradiance(light: OmniLight3D, p: Vector3, ambient: float) -> float:
 	return light.light_energy * shape * decay * cos_i + ambient
 
 ## 喂进去的座位序（**故意让"色号"与"座位号"处处不等** —— 见断言 ⑨：
-## 按椅子号取模型的话，slot 1 会拿到 `model_for_color(1)` = g，与期望的 d 不同 ⇒ 必红）。
+## 按椅子号取模型的话，slot 1 会拿到 `model_for_color(1)` = g，与期望的 **p** 不同 ⇒ 必红
+## —— 调色板现在是 `k / g / n / p`，slot 1 的色号是 3 ⇒ 期望 `p`）。
 func _seats() -> Array:
 	return [
 		{"peer": 2, "color": 1, "name": "乙"},   # slot 0 = 我（近侧，不渲染）
@@ -536,7 +541,8 @@ func _run() -> void:
 	_check(casting == 0, "三个角色都不投影（违规 %d 个 —— 吊灯仍是全场唯一投影源）" % casting)
 
 	# ⑨ **模型按棋子色选**（本轮新增）：喂进来的座位序里色号与座位号**处处不等** ⇒
-	#    按椅子号取模型的话，slot 1 会拿到 `model_for_color(1)`（g）而不是期望的 d ⇒ 必红。
+	#    按椅子号取模型的话，slot 1 会拿到 `model_for_color(1)`（g）而不是期望的 **p** ⇒ 必红
+	#    —— 调色板是 `k / g / n / p`（没有 `d`，那是上一个调色板的残留），slot 1 色号 3 ⇒ `p`。
 	#    另外比一下**真正实例化出来那个节点的名字**（不只是自己记的那个字符串）。
 	var model_bad: Array = []
 	var mm_log := ""
@@ -614,13 +620,19 @@ func _run() -> void:
 	#    glTF **没有循环标记**，导入器给 27 条动画**逐条**都是 `LOOP_NONE`
 	#    ⇒「导入成功 ⇒ 会自动循环」是个**会静默出错的假设**（表现只是"人动一下就僵住"）。
 	#    断言**从引擎里那份动画上读** `loop_mode`（不读实现里的常量 —— 读常量等于把实现重述一遍）。
+	#
+	#    ⚠ **动画名按字面核 `"idle"`，不读 `GameChars.IDLE_ANIM`**（本轮 fix round，终审 findings ③）：
+	#    名字那一半原先读实现里的常量 ⇒ 把它改成 `"sit"` / `"walk"`（包里都存在、都闭环）之后
+	#    **这条仍然全绿**，而"坐着的人在呼吸"这个**内容决定**就悄悄没了 —— 与 Task 4 那四条
+	#    按字面名字核的断言（`"interact-right"` / `"holding-left"` / `"emote-no"` / `"die"`）同一类。
+	#    `ACTOR_SPEED` / `FADE_*_T` 那几个是**阈值**（本身就是契约），读常量是对的，不算同类问题。
 	var play_bad: Array = []
 	var loop_bad: Array = []
 	var anim_log := ""
 	for i in CHAR_SLOTS:
 		var ap: AnimationPlayer = chars.char_player(i)
-		var a: Animation = ap.get_animation(GameChars.IDLE_ANIM) if ap != null else null
-		if ap == null or not ap.is_playing() or ap.current_animation != GameChars.IDLE_ANIM:
+		var a: Animation = ap.get_animation("idle") if ap != null else null
+		if ap == null or not ap.is_playing() or ap.current_animation != "idle":
 			play_bad.append(i)
 		if a == null or a.loop_mode != Animation.LOOP_LINEAR:
 			loop_bad.append(i)
@@ -630,12 +642,14 @@ func _run() -> void:
 			(a.loop_mode if a != null else -1), (a.length if a != null else -1.0)]
 	print("  [实测] %s" % anim_log)
 	_check(play_bad.is_empty(),
-		"**三个人都在播 `idle`**（没在播的座位 %s —— 待机是常驻的，`_place` 里 `play()`）" % str(play_bad))
+		"**三个人都在播 `idle`**（按**字面名字**核；没在播的座位 %s —— 待机是常驻的，"
+			% str(play_bad) + "`_place` 里 `play()`。把 `IDLE_ANIM` 指到 `sit` / `walk` 这条立刻红）")
 	_check(loop_bad.is_empty(),
 		"**`idle` 真的被设成了 `LOOP_LINEAR`**（没设上的座位 %s —— glTF 没有循环标记，"
 			% str(loop_bad)
 			+ "导入器给的是 `LOOP_NONE`；不自己设的话 1.3333 s 之后三个人齐刷刷僵在末帧、"
-			+ "**而日志里一个字都不说**。把 `_loop_idle` 里那句设回 `LOOP_NONE` 这条立刻红）")
+			+ "**而日志里一个字都不说**。把 `_loop_idle` 里那句设回 `LOOP_NONE` 这条立刻红；"
+			+ "把 `IDLE_ANIM` 指到别的动画（循环标记就设到那条上去了）这条也红）")
 
 	# ⑬ **真的在动**（"两帧比对" —— **只有一帧相同不能证明它在动，也不能证明它没在动**）。
 	#    口径：把同一个分件（`head`，`idle` 动的 4 条轨道之一）在**两个动画相位**上各量一次
@@ -960,6 +974,76 @@ func _run() -> void:
 	_check(rah != null and rah.assigned_animation == "die" and absf(rah_pos - ra4_len) <= 0.001,
 		"已经破产的那家**不再做别的动作**（实得 assigned=\"%s\" 位置 %.4f —— 破产是终局表现）"
 			% [(rah.assigned_animation if rah != null else "<没有播放器>"), rah_pos])
+
+	# ================= 本轮 fix round：淡出档上的反应（终审 findings ①） =================
+	#
+	# **要钉住的契约**：读棋盘那一档（推近端 / 2D 端）的"停播"是**真停播** —— 事件在那一档到来时，
+	# 反应必须被**丢掉**（不排队、不补播），不许把一个 `visible = false` 的播放器重新点着。
+	# ⚠ **⑭(b)(c) 抓不到它**：那两条在"淡出"与"断言"之间**什么事都没发生**（这正是终审发现它的原因）。
+	# ⇒ 这里补上"淡出**之后**再来一次事件"这一手：**三条一次性小动作**逐个断言"人仍全隐、
+	#   播放器仍未在播"，等过最长那条的标称时长（`interact-right` / `emote-no` = 0.6667 s）再复核一次；
+	#   **破产那一条单独再打一次**（它走的是另一支："停末帧 + 记进 `_dead_peers`"）。
+	# **变红口子**：把 `react()` 开头那句 `if _faded_out(): return` 去掉 —— 前半段当场红
+	#（`play()` 立刻把 `is_playing()` 翻成真，而 `set_fade` 在 `t` 没变时早退 ⇒ **再没人来停它**），
+	# 后半段也红（0.17~0.67 s 后 `_react_finished` 把它接到 **`LOOP_LINEAR` 的 `idle`** 上 ⇒ 一直播下去），
+	# 破产那一条则表现为"破产记忆被种下"（`char_dead` 翻真）。
+	# ⚠ **为什么三条在前、`die` 单独放最后**：`die` 会**停在末帧**（`pause()`）—— 若把它排在三条中间，
+	# 它的 `pause()` 会把"后面还播着"的证据一起盖掉（第一版就是这么写的，红线验证当场发现它盖住了
+	# 后半段的变红口子 ⇒ 现在拆开打）。
+	# **为什么走取景真接口、而不是直接 `set_fade()`**：`_process` 每帧都按当前取景覆写 `_fade_t`
+	# ⇒ 只有把取景真的推到 2D 端，这一档才**稳得住**（⑮ 那种"不 `await` 的直接调用"撑不过一次等帧）。
+	# **为什么用 slot 1（peer 3）**：它是这一档里唯一还没破产的那个（slot 2 的 peer 4 在 (f) 已趴下；
+	# 破产那家单独走 `_apply_fade` 的趴着那一支）。
+	print("== 本轮 fix round：淡出档上的反应一律丢掉（不排队）==")
+	t3.snap_dolly(1.0)
+	t3.snap_view(1.0)
+	for k in frames:
+		await process_frame
+	var fr_bad: Array = []
+	var fr_log := ""
+	var fr_peer := int((seats[CHAR_SLOTS[0]] as Dictionary).get("peer", 0))
+	for kind in ["play", "pay", "rob"]:
+		chars.react(fr_peer, kind)
+		await process_frame
+		var ap: AnimationPlayer = chars.char_player(CHAR_SLOTS[0])
+		var vis: bool = t[CHAR_SLOTS[0]].visible
+		var playing: bool = ap != null and ap.is_playing()
+		if vis or playing:
+			fr_bad.append(kind)
+		fr_log += "%s⇒可见%s/在播%s | " % [kind, ("是" if vis else "否"), ("是" if playing else "否")]
+	print("  [实测] 淡出档上三条一次性事件（peer %d / slot %d）：%s" % [fr_peer, CHAR_SLOTS[0], fr_log])
+	_check(fr_bad.is_empty(),
+		"**淡到「全隐 + 停播」之后，事件一律被丢掉（不排队）**（人仍全隐、播放器仍未在播；漏掉的 kind %s —— "
+			% str(fr_bad) + "去掉 `react()` 的早退，`play()` 会在一个 `visible = false` 的节点上重新开播）")
+	# 等过最长那条的标称时长（0.6667 s；speed 1.0）再复核一次：**「没被点着」要经得起时间**
+	#（前半段只证明"那一刻没被点着"；这一半证明"之后也没有自己播起来"）。
+	await create_timer(1.0).timeout
+	var fr2_bad: Array = []
+	for i in CHAR_SLOTS:
+		var ap2: AnimationPlayer = chars.char_player(i)
+		if t[i].visible or (ap2 != null and ap2.is_playing()):
+			fr2_bad.append(i)
+	_check(fr2_bad.is_empty(),
+		"反应名义时长过去之后**仍然是全隐 + 停播**（不听话的座位 %s —— 这一半钉住的是那条回位链："
+			% str(fr2_bad) + "被点着一次之后，`_react_finished` 会把它接到循环的 `idle` 上，再也没人停它）")
+	# 破产那一条**单独再打一次**（见上："停末帧 + 记住"是另一支）⇒ 除了"仍全隐 / 仍未在播"，
+	# 再钉一条**「连破产记忆都没被种下」**：它同样必须先过那道早退。
+	chars.react(fr_peer, "die")
+	await process_frame
+	var apd: AnimationPlayer = chars.char_player(CHAR_SLOTS[0])
+	var die_hidden: bool = not t[CHAR_SLOTS[0]].visible
+	var die_stopped: bool = apd == null or not apd.is_playing()
+	var die_unmemorized: bool = not chars.char_dead(CHAR_SLOTS[0])
+	_check(die_hidden and die_stopped and die_unmemorized,
+		"**破产那一条在淡出档同样被丢掉**（仍全隐 %s / 仍未在播 %s / 破产记忆未种下 %s —— "
+			% [("是" if die_hidden else "否"), ("是" if die_stopped else "否"),
+				("是" if die_unmemorized else "否")]
+			+ "`die` 这一支是「停末帧 + 记住」，所以除了停播，还要钉住「记忆没被种下」）")
+	# 复位取景（后面的原始读数与收尾按默认档走）
+	t3.snap_view(0.0)
+	t3.snap_dolly(1.0)
+	for k in frames:
+		await process_frame
 
 	# 供报告的原始读数。⚠ 节点在 ⑩ ⑪ 里**重建过**（那两条本来就要换一批实例）⇒ 这里重新取一遍，
 	# 别用早先那批引用（旧引用已经 `queue_free` 了，读它会报 `previously freed`）。

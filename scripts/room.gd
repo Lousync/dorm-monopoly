@@ -648,7 +648,9 @@ var _chars: GameChars
 
 ## 建角色层（二期 Task 1）。**只建节点，不摆人** —— 摆人要读座位锚点的 `global_transform`，
 ## 那要求整棵子树**已经入树**；而 `build()` 是 `table_3d._init()` 里调的，那时还没进树
-## （同一期 `_build_furniture` 那段）。⇒ 角色在 `GameChars._ready()` 里自己摆。
+## （同一期 `_build_furniture` 那段）。⇒ **摆人一律由 `set_chars()` 驱动**
+##（`game.gd:_refresh_players()` 同一处喂；`chars.gd` **没有 `_ready()`**，也不许在 `_ready` 里摆人 ——
+## 那刻还没有任何状态，"谁坐哪"无从谈起，而入树前读座位锚点的 `global_transform` 会静默写错值）。
 ##
 ## 与 `ROOM_ENABLED` 同理：`CHARS_ENABLED = false` 时 `GameChars.build()` 返回 null
 ## ⇒ **这里不能当成必然拿到节点用**（本期的保命开关，退回到"只有椅子"的样子）。
