@@ -49,6 +49,38 @@ const SEAT_ROOT_Y := -0.2
 ## 留在分件自己身上是安全的：**这个包里没有任何 `scale` 轨道**，动画顶不掉它（普查 §5.3）。
 const LEG_SQUASH := 0.8
 
+## 角色的**色调**（本轮 fix round：把角色收进房间的暗色调）。乘在模型自带 `albedo_color` 上 ——
+## 而在 Godot 里 `albedo_color` **乘在 `albedo_texture` 上** ⇒ 压暗整张贴图，一张不丢（`_shade`）。
+##
+## **病因（出图实证，Ruling E2）**：这个包的贴图是 Kenney 展示用的**高饱和亮色** ——
+## 实测「网格真正贴上去那一块」的平均色：手臂 `0.754/0.543/0.407`（有效 albedo 亮度 **0.58**）、
+## 躯干 `0.536/0.364/0.284`（0.40）、裤腿 `0.240/0.496/0.389`（0.43）、头 `0.329/0.312/0.321`（0.32）。
+## 而屋里最亮的**木头外框**只有 **0.16**、家具只有 **0.08**（同一把尺子：色调 ⊙ 贴图那一块的平均色）
+## ⇒ 角色是画面上**唯一发亮的东西**，读作"桌上摆了个玩偶"、"灰头 + 橙身"（Ruling E2）。
+##
+## **做法 = 一期 Task 8 对家具做的同一手**（那次能整片换材质是因为家具是纯色、无所谓；角色有脸、
+## 有衣服，只能乘法压暗）。
+##
+## **取值**：`0.36/0.30/0.26`（亮度 **0.317**）—— 与一期家具的 `FURN_ALBEDO`（`0.34/0.27/0.21`，
+## 亮度 0.281）**同族、略亮一点**：角色要能"认人"（spec §十 F8：不靠名牌、靠角色本身认人），
+## 压到与家具一样暗就把这一条弄丢了。
+##
+## **判据（可执行，`chars_test` 钉着）**：角色的有效 albedo × 照度 **不许高过桌面那一笔**
+## （同一把照度代理式、同一把 albedo 尺子）。实测比值 **0.83**；
+## **改回 `Color(1,1,1)`（= 不压暗）这条立刻红**（实测 2.65）。
+const CHAR_TINT := Color(0.36, 0.30, 0.26)
+
+## **头部额外缩放**（本轮 fix round 的有界实验，见 `.superpowers/sdd/3D房间-二期-实施计划/fix-chars-t1-report.md`）。
+## `head` 节点自己带一层嵌套 `scale 0.1`（导入器把模型的比例搬到了节点上），这里**再乘一个小系数**，
+## 让"头几乎占可见身高四成"的**吉祥物剪影**收一点。
+##
+## **值 = 0.82**。实验口径：近景摆拍比对 `1.0`（原样）/ `0.8` / `0.72` 三档 + 拉远端（屋子那一档）
+## 比对 `1.0` 对 `0.82` —— 两处都是 1.0 的头明显更大更"玩偶"；**保留 0.82**。
+## `0.72` 那档**过头了**：头与肩之间露出缝（脖子那一截空了），取 0.8~0.82 这一档。
+## **它是"乘"不是"设"**（`head.scale *= HEAD_SHRINK`）：模型自带的 0.1 是导入器的比例，
+## 覆盖掉会把头放大十倍。
+const HEAD_SHRINK := 0.82
+
 ## 角色模型（Task 1 只放一个人，先固定用 a；Task 2 起按 peer 的棋子色索引挑，**18 个里选 3 个**）。
 const CHAR_MODEL := "character-a.glb"
 
@@ -118,6 +150,10 @@ func _place(slot: int) -> Node3D:
 		var leg := mi.find_child(nm, true, false) as Node3D
 		if leg != null:
 			leg.scale = Vector3(1.0, LEG_SQUASH, 1.0)
+	# 头：**再乘一个小系数**（见 `HEAD_SHRINK`）。走 `find_child` 与腿同一条理由（层级见普查 §三）。
+	var head := mi.find_child("head", true, false) as Node3D
+	if head != null:
+		head.scale *= HEAD_SHRINK
 	_shade(mi)
 	_no_shadow(mi)
 	return wrapper
@@ -129,8 +165,11 @@ func _place(slot: int) -> Node3D:
 ## 不随房间明暗变化的东西，与"暗木 + 灰墙"的层次脱节。
 ##
 ## **为什么不能照抄 `room.gd._paint()`**：那把**整份材质换掉**（家具是纯色、无所谓），套到角色
-## 身上会把**贴图（脸 / 衣服）一起抹掉** —— 换来的是一块暗木头。⇒ 这里只动 `shading_mode`
-## 这一项，`albedo_color` / `albedo_texture` / uv 那一套一概不碰。
+## 身上会把**贴图（脸 / 衣服）一起抹掉** —— 换来的是一块暗木头。⇒ 这里动两项：`shading_mode`
+## （受光）与 `albedo_color`（色调，见 `CHAR_TINT`）；**`albedo_texture` / uv 那一套一概不碰**。
+##
+## ⚠ **`albedo_texture` 一个字节都不许动** —— `chars_test` 有一条钉着"贴图还是角色自己那张"，
+## 而角色**只靠贴图认人**（spec §十 F8）。色调一律走 `albedo_color`（它在 Godot 里乘在贴图上）。
 ##
 ## 做法照 `room.gd._dim_subtree()`：**按面覆盖 + 先复制一份**。复制那一步不是可选的：
 ## `instantiate()` 出来的材质与 `PackedScene` **共用同一份资源**，直接改会污染缓存里的那份
@@ -145,7 +184,11 @@ static func _shade(root: Node) -> void:
 			if src == null:
 				continue
 			var m := src.duplicate() as BaseMaterial3D
-			m.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL   # 唯一被动的那一项
+			m.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+			# **色调**：乘在自带底色上（在 Godot 里 `albedo_color` 是乘在 `albedo_texture` 上的）
+			# ⇒ 整张脸 / 衣服一起压暗，而贴图本身一个字节没动（见 `CHAR_TINT` 那段）。
+			m.albedo_color = Color(src.albedo_color.r * CHAR_TINT.r, src.albedo_color.g * CHAR_TINT.g,
+				src.albedo_color.b * CHAR_TINT.b, src.albedo_color.a)
 			gi.set_surface_override_material(s, m)
 
 ## 一棵子树里的几何实例**逐个关投影**（房间的纪律：全场唯一投影源是那盏吊灯）。
