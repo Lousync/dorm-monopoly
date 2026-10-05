@@ -182,6 +182,11 @@ func _run() -> void:
 				shadow_casters.append(n)
 		_check(shadow_casters.is_empty(),
 			"房间物件一律不投影（违规 %d 个）" % shadow_casters.size())
+		# 外壳必须齐：四面墙 + 一地板 + 一天花板。
+		_check(room.get_node_or_null("Ceiling") != null, "房间有天花板（吊灯要挂得住）")
+		_check(room.get_node_or_null("Floor") != null, "房间有地板")
+		var walls: Node = room.get_node_or_null("Walls")
+		_check(walls != null and walls.get_child_count() == 4, "房间有四面墙")
 
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
