@@ -37,6 +37,19 @@ SOFTWARE.
 - 来源：https://kenney.nl/assets/boardgame-pack
 - 用途：玩家棋子 / 头像（`pieceRed_05.png` 等 4 色）
 
+## Kenney — Furniture Kit
+- 路径：`assets/models/`
+- 授权：**CC0 1.0（公有领域）**，可自由商用、修改、分发，无需署名
+  （以包内 `License.txt` 为准：Furniture Kit (2.0) — Creative Commons Zero, CC0）
+- 来源：https://kenney.nl/assets/furniture-kit
+  （本次实际下载直链：https://kenney.nl/media/pages/assets/furniture-kit/440e0608a4-1677580847/kenney_furniture-kit.zip）
+- 用途：3D 宿舍房间的家具（书桌 / 书架 / 收纳箱 / 椅子 / 床 / 台灯 等 **25 件**，
+  即 `assets/models/*.glb`）。
+  格式：采用包内 **glTF 二进制（`.glb`）**，Godot 4 原生导入；该批模型为**自包含**
+  ——材质为纯色着色，无外部贴图依赖（已逐件核对，无 image / 外部 buffer 引用）。
+  包内另有 **FBX / OBJ / DAE / STL 各 140 件**同源模型与 **702 张** 2D 侧视 / 等距 PNG，
+  本项目**均未采用**。
+
 ## Twemoji
 - 路径：`assets/icons/`
 - 授权：**CC-BY 4.0**。版权所有 Twitter, Inc 及贡献者。仅需保留本署名说明即可商用
