@@ -1957,6 +1957,44 @@ func _run() -> void:
 	_check(hot.size() > 0 and not _corner_bar_hot(g, _bar_of(g, 1)),
 		"取消选目标后名册行高亮熄灭")
 
+	print("== 拖动指向（#24）：拖到名册格松手 = 选定；拖到别处松手 = 取消 ==")
+	# 按下手牌 = 一次"拖动指向"的起点（`_drag_active`），配对松开由 `table3d.on_table_release`
+	# 交给 `_on_table_release` 收尾：拖动超过阈值才结算，单击保留旧交互。
+	g.my_peer = 2
+	var s_drag: Dictionary = _state(2, false)
+	s_drag.await = "item"
+	s_drag.await_peer = 2
+	for p in s_drag.players:
+		if int(p.peer) == 2:
+			p.items = [{"id": "强拆令", "cd": 0}, {"id": "跑腿券", "cd": 0}]
+	g.s_state(s_drag)
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	_check(g._on_table_click(g.table3d.table_props.hand_rect(0).get_center()),
+		"拖动：按下强拆令被手牌消费")
+	_check(g._tgt_stage == "peer" and g._drag_active,
+		"拖动：按下后进选玩家态且 _drag_active 置真（tgt_stage=「%s」）" % g._tgt_stage)
+	# 拖到 peer1 那一行松手（起点假装在别处，> 阈值）
+	var dbar := _bar_of(g, 1)
+	var dc: Vector2 = (dbar.root as Control).get_global_rect().get_center()
+	g._drag_press_pos = dc + Vector2(160, 160)
+	g._on_table_release(dc, MOUSE_BUTTON_LEFT)
+	await process_frame
+	_check(g._tgt_stage == "tile" and g._tgt_peer == 1,
+		"拖到 peer1 松手 → 走既有选目标链（强拆令两段式 ⇒ 转选地块，实得「%s」/%d）"
+			% [g._tgt_stage, g._tgt_peer])
+	# 单击（移动 < 阈值）：不结算，保留选目标态（旧的"点卡再点目标"仍可用）
+	g._drag_active = true
+	g._drag_press_pos = Vector2(10, 10)
+	g._on_table_release(Vector2(11, 11), MOUSE_BUTTON_LEFT)
+	_check(g._tgt_stage == "tile", "单击（未拖动）不结算：保留选目标态")
+	# 拖到非目标处松手 → 取消
+	g._drag_active = true
+	g._drag_press_pos = Vector2(10, 10)
+	g._on_table_release(Vector2(400, 400), MOUSE_BUTTON_LEFT)
+	_check(g._tgt_stage == "", "拖到非目标处松手 → 取消（tgt_stage 清空）")
+
 	print("== 棋子动画（批次 11 Task 1）：走子抬 y、传送淡到看不见 ==")
 	# 棋子那四样动作（逐格走 / 传送 / 弹入 / 光环）在 3D 里重写了（设计 §4.1）。走子与传送
 	# 必须有**可观察量** —— 否则"传送看不见"这类事没法断言。这里量两个只读量：

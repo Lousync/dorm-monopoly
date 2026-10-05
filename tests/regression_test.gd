@@ -102,6 +102,7 @@ func _run() -> void:
 	_test_camera_window_resize(g)
 	await _test_roll_button_off_home_view(g)
 	await _test_targeting(g)
+	await _test_new_items(g)
 
 	# 掉线路径会触发换场景，放到最后
 	var lobby = load("res://scenes/lobby.tscn").instantiate()
@@ -583,3 +584,77 @@ func _test_targeting(g) -> void:
 	# 非法 arg2（不属于目标）→ 回落随机，不崩
 	var ok3: bool = await g._apply_item_effect(p1, inst2, 2, 9999)
 	_check(ok3, "非法 arg2 回落随机仍返回成功")
+
+	# 保安队长（#26）：只挑**有冷却的主动件**，绝不碰被动
+	var tgt := _mk_player(2, "乙")
+	tgt.items = [{"id": "招财猫", "cd": 0}, {"id": "交换生", "cd": 0}]
+	g.hp = [p1, tgt]
+	var ok4: bool = await g._apply_item_effect(p1, {"id": "保安队长", "cd": 0}, 2)
+	_check(ok4, "保安队长返回成功")
+	_check(int(tgt.items[0].cd) == 0, "保安队长不动被动（招财猫 cd 仍 0）")
+	_check(int(tgt.items[1].cd) == 2, "保安队长只给有冷却的主动件 +2（交换生 cd=2）")
+
+## 数值专场行为代码（§六 #3）+ 紫档新批次（§六 #11）
+func _test_new_items(g) -> void:
+	print("== 道具：数值专场行为 + 紫档新批次 ==")
+	var p1 := _mk_player(1, "我")
+	var p2 := _mk_player(2, "乙")
+	g.my_peer = 1
+	g.hp = [p1, p2]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0, "soil": false})
+
+	# 数值专场行为：招财猫 +400 / 保安巡逻 ×1.3 / 校园卡 +1000
+	p1.items = [{"id": "招财猫", "cd": 0}]
+	_check(int(g._rent_gain(p1, 1000)) == 1400, "招财猫：租金 +400（实得 %d）" % int(g._rent_gain(p1, 1000)))
+	p1.items = [{"id": "保安巡逻", "cd": 0}]
+	_check(int(g._rent_gain(p1, 1000)) == 1300, "保安巡逻：收租 +30%（实得 %d）" % int(g._rent_gain(p1, 1000)))
+	p1.items = [{"id": "校园卡", "cd": 0}]
+	_check(int(g._salary_amount(p1)) == GameData.SALARY + 1000, "校园卡：过起点 +1000")
+
+	# 二手交易：弃本道具 +¥2000
+	p1.items = [{"id": "二手交易", "cd": 0}]
+	p1.money = 0
+	var ok_se: bool = await g._apply_item_effect(p1, p1.items[0], -1)
+	_check(ok_se and int(p1.money) == 2000, "二手交易：+¥2000（实得 %d）" % int(p1.money))
+
+	# 刮刮乐：¥100~1000 十档
+	p1.money = 0
+	var ok_sc: bool = await g._apply_item_effect(p1, {"id": "刮刮乐", "cd": 0}, -1)
+	_check(ok_sc and int(p1.money) >= 100 and int(p1.money) <= 1000 and int(p1.money) % 100 == 0,
+		"刮刮乐：¥100~1000 十档（实得 %d）" % int(p1.money))
+
+	# 顶楼加盖：自有地 +2 级
+	var pi := _prop_idx(0)
+	g.htiles[pi].owner = 1
+	g.htiles[pi].level = 1
+	var ok_rf: bool = await g._apply_item_effect(p1, {"id": "顶楼加盖", "cd": 0}, pi)
+	_check(ok_rf and int(g.htiles[pi].level) == 3, "顶楼加盖：+2 级（实得 Lv%d）" % int(g.htiles[pi].level))
+
+	# 没收：抢一件道具过来
+	p2.items = [{"id": "饭卡", "cd": 0}]
+	p1.items = []
+	var ok_cf: bool = await g._apply_item_effect(p1, {"id": "没收", "cd": 0}, 2)
+	_check(ok_cf and p1.items.size() == 1 and p2.items.is_empty(), "没收：抢走对方一件道具")
+
+	# 打印店：复制件带 fake 标记（用后焚毁不回池）
+	p2.items = [{"id": "饭卡", "cd": 0}]
+	p1.items = []
+	var ok_cp: bool = await g._apply_item_effect(p1, {"id": "打印店", "cd": 0}, 2)
+	_check(ok_cp and p1.items.size() == 1 and bool(p1.items[0].get("fake", false)),
+		"打印店：复制件带 fake 标记")
+
+	# 代课：置下笔租金反转标记
+	p1.items = []
+	var ok_sub: bool = await g._apply_item_effect(p1, {"id": "代课", "cd": 0}, -1)
+	_check(ok_sub and bool(p1.get("sub_rent", false)), "代课：置下笔租金反转标记")
+
+	# 转专业：交换两块地归属（arg2=我的地, arg3=他的地）
+	var pa := _prop_idx(0)
+	var pb := _prop_idx(1)
+	g.htiles[pa].owner = 1
+	g.htiles[pb].owner = 2
+	var ok_tr: bool = await g._apply_item_effect(p1, {"id": "转专业", "cd": 0}, 2, pa, pb)
+	_check(ok_tr and int(g.htiles[pa].owner) == 2 and int(g.htiles[pb].owner) == 1,
+		"转专业：交换两块地归属")

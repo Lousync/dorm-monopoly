@@ -60,6 +60,18 @@ static func build_play_ui(g: Node) -> void:
 	# 那个容器从一个局部量变成可引用的成员。
 	g.hud_layer = hud
 
+	# 指向性道具的**屏幕层瞄准箭头**（#24，杀戮尖塔式）：由 `game._update_aim_arrow` 每帧驱动，
+	# 选目标态（`_tgt_stage != ""`）期间从手牌那张卡指向鼠标/目标，其余收起。纯表现、不吃鼠标。
+	g.aim_arrow = AimArrow.new()
+	hud.add_child(g.aim_arrow)
+
+	# 悬停手牌的**放大预览**（#23）：屏幕层一张大 `ItemCard`，内容随悬停那张牌换（`_set_hand_preview`）。
+	g.hand_preview = Control.new()
+	g.hand_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.hand_preview.z_index = 32
+	g.hand_preview.visible = false
+	hud.add_child(g.hand_preview)
+
 	# ---- 悬停棋子的信息条（批次 11 Task 3）----
 	# 悬停到桌面上一枚棋子时浮出「昵称 / 身家 / 名次 / 已出局」。**内容与判据一字未改**：
 	# 原先它是画布里的一个 PanelContainer（`board_view._token_tip`，批次 11 Task 1 随棋子一起删了），

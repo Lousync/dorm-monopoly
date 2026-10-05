@@ -679,6 +679,8 @@ var _hand_n := 0
 var _hand_items: Array = []      # 最近一次 set_hand 的背包（重摆位置时要用，见 set_hand_selected）
 var _hand_sel := -1              # 选中的那张（-1 = 都不选）；由 game.gd 同步过来
 var _hand_disc := -1             # 待确认丢弃的那张（-1 = 无）；由 game.gd 同步过来
+## 「此刻用不出的牌」的槽位集合（§六 手牌置灰）：由 `set_hand_unusable` 写，卡面按它压暗。
+var _hand_unusable := {}
 ## 批次 12 B1：逐槽的卡面视口 / 视口里那张 `ItemCard` / 该槽**当前烘的是哪件道具**（id 没变就不重画）。
 var _hand_face_vps: Array[SubViewport] = []
 var _hand_face_cards: Array = []
@@ -860,7 +862,7 @@ func _apply_hand_layout() -> void:
 		# 牌面（批次 12 B1）：这一槽挂的是**商店那张卡**（`_set_hand_face_card` 按 id 懒建 / 换牌才重画）。
 		# 贴图是那张卡的 `ViewportTexture`，在 `_make_card` 里就贴好、之后不再动 ——
 		# **这里只换视口里的内容**（换 id），不碰材质，免得把活引用换掉。
-		_set_hand_face_card(i, id)
+		_set_hand_face_card(i, id, _hand_item_state(_hand_items[i], i))
 		# 摆位：扇形（外侧岔开）+ 弧（外侧靠后）+ 朝自己倾斜
 		var k := float(i) - float(_hand_n - 1) * 0.5
 		var px := HAND_BASE_PX + Vector2(HAND_STEP_PX * k, -HAND_ARC_PX * absf(k))
@@ -895,12 +897,15 @@ func _apply_hand_layout() -> void:
 ## 位置与尺寸在 `add_child` **之后**再写一遍：`ItemCard.make` 里已经设过，但挂进 SubViewport 时
 ## 它是"视口的根控件"，布局可能按视口尺寸重算一次 —— 这里补一遍，卡面尺寸就与 `HAND_FACE_CARD`
 ## 严格一致（测试里那条"卡面宽高比 == 牌身宽高比"依赖它）。
-func _set_hand_face_card(i: int, id: String) -> void:
+func _set_hand_face_card(i: int, id: String, state: Dictionary = {}) -> void:
 	if i < 0 or i >= _hand_face_vps.size() or i >= _hand_face_ids.size():
 		return
-	if _hand_face_ids[i] == id:
+	# 签名含状态（冷却剩余 / 次数 / 融化）：冷却回合变了要重画卡面右上角标（§六 #22）
+	var sig := "%s|%d|%d|%d|%d" % [id, int(state.get("count", -1)), int(state.get("cooling", false)),
+		int(state.get("melt", false)), int(state.get("dim", false))]
+	if _hand_face_ids[i] == sig:
 		return
-	_hand_face_ids[i] = id
+	_hand_face_ids[i] = sig
 	var vp: SubViewport = _hand_face_vps[i]
 	var old = _hand_face_cards[i]
 	if old != null and is_instance_valid(old):
@@ -908,12 +913,29 @@ func _set_hand_face_card(i: int, id: String) -> void:
 		#（`UPDATE_ONCE`）—— 不摘的话新卡会与旧卡同框画一帧（观感上是"旧图闪一下"）。
 		vp.remove_child(old)
 		(old as Node).queue_free()
-	var card := ItemCard.make(id, HAND_FACE_CARD, {})
+	var card := ItemCard.make(id, HAND_FACE_CARD, state)
 	vp.add_child(card)
 	card.position = Vector2(HAND_FACE_PAD, HAND_FACE_PAD)
 	card.size = HAND_FACE_CARD
 	_hand_face_cards[i] = card
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+## 一张手牌的道具状态（供卡面角标 / 置灰）：黑卡次数 / 香皂融化回合 / 冷却剩余 + 是否用不出。
+func _hand_item_state(item: Dictionary, slot: int) -> Dictionary:
+	var s := ItemData.badge_state(item)
+	s["dim"] = _hand_unusable.has(slot)
+	return s
+
+## 「此刻用不出的牌」的槽位（§六 手牌置灰）：由 game 按回合窗口 / 冷却 / 体力等算出，
+## 每次状态广播重设。传空数组 = 都不置灰。
+func set_hand_unusable(slots: Array) -> void:
+	var m := {}
+	for s in slots:
+		m[int(s)] = true
+	if str(m) == str(_hand_unusable):
+		return
+	_hand_unusable = m
+	_apply_hand_layout()   # 重摆一次：卡面签名含 dim，置灰会随之刷新
 
 ## 第 i 槽的**卡面视口**（批次 12 B1 的可观察量，给测试用）：里面挂着一张 `ItemCard`，
 ## 手牌正面贴的就是它的 `ViewportTexture`。越界给 null。
@@ -1028,6 +1050,16 @@ func hand_rect(i: int) -> Rect2:
 	if n < 4:
 		return _hand_mat_rect(i)          # 相机 / 视口不可用（理论上不会）：退回桌面落点
 	return Rect2(mn, mx - mn)
+
+## 第 i 张手牌此刻在**屏幕**上的中心（卡心世界点 → `camera.unproject_position`）。
+## 屏幕层画瞄准箭头要的是屏幕像素，故这里**不做 canvas 换算**（与 `hand_rect` 的区别）。
+## 越界 / 相机缺失返回 null。
+func hand_screen_pos(i: int) -> Variant:
+	if i < 0 or i >= _hand_n:
+		return null
+	if _t3 == null or _t3.camera == null:
+		return null
+	return _t3.camera.unproject_position(_hand[i].global_position)
 
 ## 退化口径：牌位在**桌面平面**上的落点包围盒（不算抬高与倾斜）。
 func _hand_mat_rect(i: int) -> Rect2:

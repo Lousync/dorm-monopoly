@@ -135,20 +135,34 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	lb_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lb.add_child(lb_l)
 
-	# 右上徽章：计数位（冷却剩余 / 黑卡次数 / 香皂回合）
+	# 右上徽章（用户 §六 #22）：**一次性** → 「一次性」文字标；**冷却中** → 沙漏 + 剩余回合；
+	# 其余计数位（黑卡剩余次数 / 香皂融化回合）→ 数字。
 	var count := int(state.get("count", -1))
-	var rb := _badge(bs, Color(0.15, 0.17, 0.26), Color(0.7, 0.9, 1.0))
-	rb.position = Vector2(size.x - bs * 0.58, -bs * 0.42)
-	card.add_child(rb)
-	if count >= 0:
-		var rb_l := UIKit.label(str(count), int(bs * 0.46), Color(0.7, 0.9, 1.0))
+	var cooling: bool = bool(state.get("cooling", false))
+	var is_once: bool = String(d.get("type", "")) == "consumable"
+	if is_once:
+		var pw := bs * 2.1
+		var ph := bs * 0.9
+		var ob := _pill(Vector2(pw, ph), Color(0.34, 0.19, 0.48), Color(0.72, 0.55, 1.0))
+		ob.position = Vector2(size.x - pw * 0.6, -ph * 0.42)
+		card.add_child(ob)
+		var ol := UIKit.label("一次性", int(ph * 0.5), Color(0.92, 0.84, 1.0))
+		ol.set_anchors_preset(Control.PRESET_FULL_RECT)
+		ol.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ol.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ol.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ob.add_child(ol)
+	elif count >= 0:
+		var rb := _badge(bs, Color(0.15, 0.17, 0.26), Color(0.7, 0.9, 1.0))
+		rb.position = Vector2(size.x - bs * 0.58, -bs * 0.42)
+		card.add_child(rb)
+		var txt := ("⏳%d" % count) if cooling else str(count)
+		var rb_l := UIKit.label(txt, int(bs * 0.42), Color(0.7, 0.9, 1.0))
 		rb_l.set_anchors_preset(Control.PRESET_FULL_RECT)
 		rb_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		rb_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		rb_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		rb.add_child(rb_l)
-	else:
-		rb.visible = false
 
 	# 状态表现：是否冷却必须显式给出。count 同时承载「剩余次数(黑卡)/融化回合(香皂)/
 	# 冷却回合」，单看 count > 0 会把还有次数的黑卡也画成冷却中（见 fix/v0.0.2）。
@@ -165,5 +179,13 @@ static func _badge(side: float, bg: Color, border: Color) -> Panel:
 	var b := Panel.new()
 	b.size = Vector2(side, side)
 	b.add_theme_stylebox_override("panel", UIKit.stylebox(bg, int(side * 0.5), border, 2, 2))
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return b
+
+## 胶囊徽章（文字标用，如「一次性」）：圆角矩形而非圆。
+static func _pill(sz: Vector2, bg: Color, border: Color) -> Panel:
+	var b := Panel.new()
+	b.size = sz
+	b.add_theme_stylebox_override("panel", UIKit.stylebox(bg, int(sz.y * 0.5), border, 2, 2))
 	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return b

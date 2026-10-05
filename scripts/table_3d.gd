@@ -417,6 +417,12 @@ var on_table_click: Callable = Callable()
 ## 语义，漏掉这一动会让信息条留在上一枚棋子上不掉（旧 2D 那条链每个 motion 都会重算）。
 var on_table_hover: Callable = Callable()
 
+## 被实体层吃掉的那次按下的**配对松开**（左键拖动指向时用它收尾：拖到目标松手 = 打出，
+## 否则收回）。签名 `func(screen_pos: Vector2, button: int)` —— 给的是**屏幕坐标**（`mb.position`），
+## 不是画布坐标（收尾要拿它去命中屏幕层的名册条 / 反算棋盘格，两者都在屏幕/窗口空间）。
+## 只在「被消费的按下」其配对松开那一下触发（见 `_unhandled_input`），默认无效 = 不回调。
+var on_table_release: Callable = Callable()
+
 ## 被实体层吃掉的那次按下的按钮（MOUSE_BUTTON_NONE = 无）。只为了在配对的松开时
 ## 把这一对事件一起拦掉：2D 侧若只收到「松开」而没收到「按下」，会把上一次按下的拖拽
 ## 状态当成这次松开在收尾（见 _unhandled_input 里的反例）。按 button_index 认，
@@ -798,6 +804,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		# 一次明明被实体吃掉的点击，却给 2D 板子送了个取消。
 		if not mb.pressed and mb.button_index == _consumed_press_btn:
 			_consumed_press_btn = MOUSE_BUTTON_NONE
+			# 先把这个"配对松开"交给 game 收尾（拖动指向：拖到目标松手 = 打出）——
+			# 屏幕坐标原样带出；随后照旧吞掉，不转发进 SubViewport。
+			if on_table_release.is_valid():
+				on_table_release.call(mb.position, mb.button_index)
 			get_viewport().set_input_as_handled()
 			return
 		var pos = screen_to_viewport(mb.position)

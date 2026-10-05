@@ -263,7 +263,7 @@ func _item_row(it: Dictionary) -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(ItemCard.make(iid, ITEM_CARD_SIZE, {}))
+	box.add_child(ItemCard.make(iid, ITEM_CARD_SIZE, ItemData.badge_state(it)))
 	var name_l := UIKit.label(iid, 15, UIKit.TEXT)
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_l.custom_minimum_size = Vector2(ITEM_CARD_SIZE.x, 0)

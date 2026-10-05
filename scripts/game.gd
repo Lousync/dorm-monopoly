@@ -85,6 +85,7 @@ var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1
 var _tgt_stage := ""        # ""=无 / "peer"=选玩家 / "tile"=选地块
 var _tgt_peer := -1         # 两段式：已选定的目标玩家
 var _tgt_tiles: Array = []  # 当前可选的地块 idx
+var _tgt_swap_mine := -1    # 转专业两段式：已选定的「我的那块地」（-1 = 还没选）
 var target_hint: Control
 var target_hint_l: Label
 var shop_layer: Control          # 小卖部全屏界面（触发时独占，见 table_hud.gd）
@@ -222,6 +223,15 @@ var _tip_peer := GameData.NO_PEER
 ## 抽卡演出的屏幕层大字卡（批次 8）：由 `TableHud.build_play_ui` 建、`s_card` 调它。
 ## 演出不再动 2D 相机（旧 `board.play_deck_card` 那一路已删），见 scripts/deck_reveal.gd。
 var deck_reveal: DeckReveal
+## 指向性道具的屏幕层瞄准箭头（#24，`scripts/aim_arrow.gd`）：由 `TableHud.build_play_ui` 建，
+## `_update_aim_arrow` 每帧驱动（`_tgt_stage != ""` 期间显示）。
+var aim_arrow: AimArrow
+## 悬停桌面手牌时的**屏幕层放大预览**（#23）：一张大 `ItemCard`，跟着悬停那张牌浮出/收起。
+var hand_preview: Control
+## 本次「按住手牌」是不是一次**拖动指向**（在 `_on_hand_clicked` 里按"是否进了选目标态"置位；
+## `_on_table_release` 读它决定收尾）。`_drag_press_pos` = 按下时的屏幕点，用来区分"拖动"与"单击"。
+var _drag_active := false
+var _drag_press_pos := Vector2.ZERO
 ## 玩家道具弹窗（批次 9，见 scripts/player_popup.gd）：点身家条 / 名册行打开（`_on_corner_bar_clicked`），
 ## 装立牌退场后没有落点的**公开背包 + 能量**。由 `TableHud.build_play_ui` 建，**挂在 `game` 上并
 ## 排在所有建期屏幕层控件之后**（模态靠树序，见 `build_play_ui` 末尾那段）；数据由
@@ -369,6 +379,7 @@ func _ready() -> void:
 	board.cancel_clicked.connect(_cancel_target)
 	table3d.on_table_click = _on_table_click   # 桌面实体（转盘 / 手牌）先于桌垫内容消费点击
 	table3d.on_table_hover = _on_table_hover   # 悬停桌面实体（棋子）⇒ 屏幕层信息条的显隐
+	table3d.on_table_release = _on_table_release  # 被实体吃掉的按下，其配对松开 ⇒ 拖动指向收尾
 	Net.chat_received.connect(_refresh_chat)
 	Net.connection_lost.connect(_on_conn_lost)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -890,8 +901,8 @@ func _play_turn(p: Dictionary) -> void:
 			p.cheat_roll = -1
 			_log("%s 掏出【作弊器】——这次转盘他说了算" % p.name, "#8fb7f2")
 		if roll == 7 and _has_item(p, "幸运数7"):
-			p.money = int(p.money) + 700
-			_log("%s 掷出 7，【幸运数7】额外 +¥700" % p.name, "#74d188")
+			p.money = int(p.money) + 1400
+			_log("%s 掷出 7，【幸运数7】额外 +¥1400" % p.name, "#74d188")
 		if at_mode != "":
 			print("AT roll %s: %d" % [p.name, roll])
 		s_roll.rpc(roll)
@@ -1386,11 +1397,20 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 	var op := _player_by_peer(int(htiles[idx].owner))
 	if op.is_empty() or not bool(op.alive):
 		return
-	rent = _rent_gain(op, rent)   # 招财猫 +50 / 包租婆 ×1.2
-	rent = _rent_pay(p, rent)     # 保安巡逻 -30%
+	rent = _rent_gain(op, rent)   # 招财猫 +400 / 保安巡逻 ×1.3
+	rent = _rent_pay(p, rent)     # 宿舍威望 ×0.8（黄金科技）
 	var ab_mult := _ab_rent_mult()
 	if ab_mult != 1.0:
 		rent = int(rent * ab_mult)   # 畸变：通胀 ×2 / 房价崩盘 ×0.5（中性，香皂无效）
+	# 代课（紫·新批次）：使用者的**下一笔租金反转** —— 地主付给他。地主持皂则抵消（道具已耗）。
+	if bool(p.get("sub_rent", false)):
+		p.sub_rent = false
+		if _immune_debuff(op):
+			_log("%s 的【代课】被 %s 的香皂/护盾抵消，照常付租" % [p.name, op.name], "#8fb7f2")
+		else:
+			_log("%s 的【代课】生效：这笔租金改由房东 %s 付" % [p.name, op.name], "#8fb7f2")
+			_pay(op, rent, p)
+			return
 	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name], "#ef7b74")
 	_pay(p, rent, op)
 
@@ -1464,7 +1484,7 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 
 ## 机会卡发道具（指定 id / 指定品质）；背包满则作废提示，唯一池过滤照旧
 func _grant_card_item(p: Dictionary, id: String) -> void:
-	if p.items.size() >= 5:
+	if p.items.size() >= _bag_cap(p):
 		_log("%s 背包已满，道具【%s】作废了" % [p.name, id], "#8a90a5")
 		return
 	if _grant_item(p, id):
@@ -1649,12 +1669,15 @@ func _on_table_hover(canvas_px: Vector2) -> int:
 	if not (is_finite(canvas_px.x) and is_finite(canvas_px.y)):
 		_set_token_hover(GameData.NO_PEER)
 		table3d.table_props.set_hand_hover(-1)
+		_set_hand_preview(-1)
 		return GameData.NO_PEER
 	var tp = table3d.table_props
 	var peer: int = tp.token_hit(canvas_px)
 	_set_token_hover(peer)
 	# 手牌：棋子优先（两样都命中时棋子赢），没命中棋子才轮到牌。
-	tp.set_hand_hover(-1 if peer != GameData.NO_PEER else tp.hand_hit(canvas_px))
+	var hi: int = -1 if peer != GameData.NO_PEER else tp.hand_hit(canvas_px)
+	tp.set_hand_hover(hi)
+	_set_hand_preview(hi)   # #23：悬停手牌浮出屏幕层大卡预览
 	return peer
 
 ## 悬停目标变了才重写条的内容；**同一枚棋子时也要重读内容 + 重摆位置**（悬停期间镜头会动、
@@ -1746,13 +1769,38 @@ func _hand_clickable(hi: int) -> bool:
 		return false
 	return bool(ItemData.def(String(items[hi].id)).get("implemented", false))
 
+## 「此刻用不出的牌」的槽位（§六 手牌置灰）：非我道具阶段 / 冷却中 / 体力不足 / 本回合已用 /
+## 被禁道具 / 未实装 —— 点它不会有反应，就在卡面上压暗。被动件不参与（它们不可"使用"，
+## 但仍可选中以丢弃）。判据与 `_use_item` 的守卫同源。
+func _hand_unusable_slots() -> Array:
+	var out: Array = []
+	var p := _state_player(my_peer)
+	var items: Array = p.get("items", [])
+	var using: bool = String(st.get("await", "")) == "item" and int(st.get("await_peer", -1)) == my_peer
+	var limit := 2 if _has_item(p, "重修卡") else 1
+	var used_up: bool = int(p.get("item_used_n", 0)) >= limit or bool(p.get("item_used", false))
+	var silenced: bool = int(p.get("silence", 0)) > 0
+	for i in items.size():
+		var it: Dictionary = items[i]
+		var d := ItemData.def(String(it.id))
+		if String(d.get("type", "")) == "passive":
+			continue
+		if (not using) or int(it.get("cd", 0)) > 0 \
+				or int(p.get("stamina", 0)) < _item_cost(p, it) \
+				or used_up or silenced or not bool(d.get("implemented", false)):
+			out.append(i)
+	return out
+
 ## 点手中的牌 = **直接使用**（杀戮尖塔式，批次 7）：点一张牌就出它，不再有"选中 → 再点确认"。
 ## 需要选目标的进选目标态，作弊器弹点数框，其余直接发 —— 分派逻辑复用既有的 `_on_use_pressed`，
 ## 一行没改。右键丢弃的两步确认（`_on_discard_clicked`）也不动。
 ## 调用前提由 `_hand_clickable` 保证（轮到我 + 道具阶段 + 没在选目标 + 已实装）。
 func _on_hand_clicked(hi: int) -> void:
+	_drag_press_pos = get_viewport().get_mouse_position()   # 拖动指向的起点（判"拖动 vs 单击"）
 	_on_item_slot_clicked(my_peer, hi)   # 玩法侧唯一入口：记 selected_slot + 桌上那张牌抬起
 	_on_use_pressed()                    # 既有的出牌分发（选玩家 / 选地块 / 点数框 / 直接发）
+	# 进了选目标态 = 这次按下是一次"拖动指向"的起点；否则（直接出 / 作弊器点数框）不参与收尾。
+	_drag_active = _tgt_stage != ""
 
 ## 清掉「当前选中的道具」：玩法侧（selected_slot）+ 手牌表现（桌上那张牌还抬着）。
 ## `board.set_item_selected` 照旧一起调，但它那个落点（座位卡的**牌位**那一排）是**批次 3 Task 6**
@@ -2415,6 +2463,8 @@ func _refresh_table_props() -> void:
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
 	# 自己的道具 = 桌上一排「手中牌」（Task 4 显示 / Task 5 点选）
 	table3d.table_props.set_hand(mine.get("items", []))
+	# 此刻用不出的牌压暗（§六 手牌置灰：非道具阶段 / 冷却中 / 体力不足 / 本回合已用 / 被禁）
+	table3d.table_props.set_hand_unusable(_hand_unusable_slots())
 	# 选中反馈（抬起 + 提亮）画在桌上那张牌身上：set_hand 重摆位置时不会带上它，
 	# 所以每次广播都按玩法侧的 selected_slot 重设一遍（单一来源始终是 selected_slot）。
 	table3d.table_props.set_hand_selected(selected_slot)
@@ -3392,23 +3442,21 @@ func _stamina_cap(p: Dictionary) -> int:
 	return 5 + (1 if _has_item(p, "充电宝") else 0) + (1 if _has_tech(p, "精力充沛") else 0)
 
 func _salary_amount(p: Dictionary) -> int:
-	return GameData.SALARY + (300 if _has_item(p, "校园卡") else 0)
+	return GameData.SALARY + (1000 if _has_item(p, "校园卡") else 0)
 
 func _buy_price(p: Dictionary, price: int) -> int:
 	return maxi(0, price - (300 if _has_item(p, "砍价高手") else 0))
 
 func _rent_gain(op: Dictionary, rent: int) -> int:
 	if _has_item(op, "招财猫"):
-		rent += 50
-	if _has_item(op, "包租婆"):
-		rent = int(rent * 1.2)
+		rent += 400
+	if _has_item(op, "保安巡逻"):
+		rent = int(rent * 1.3)   # 保安巡逻（紫·数值专场 2026-10-04）：收取的租金 +30%
 	if _has_tech(op, "点石成金"):
 		rent = int(rent * 1.25)   # 点石成金（钻石科技）
 	return maxi(0, rent)
 
 func _rent_pay(payer: Dictionary, rent: int) -> int:
-	if _has_item(payer, "保安巡逻"):
-		rent = int(rent * 0.7)
 	if _has_tech(payer, "宿舍威望"):
 		rent = int(rent * 0.8)   # 宿舍威望（黄金科技）
 	return maxi(0, rent)
@@ -3569,8 +3617,8 @@ func _item_turn_start(p: Dictionary) -> void:
 		else:
 			_pay(p, 600, {})
 	if _has_item(p, "信托基金"):
-		p.money = int(p.money) + 100
-		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(100)], "#74d188")
+		p.money = int(p.money) + 200
+		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(200)], "#74d188")
 	if _ab_has("奖学金季"):
 		p.money = int(p.money) + 300
 		_log("【奖学金季】%s 领到 %s 补贴" % [p.name, GameData.fmt_money(300)], "#74d188")
@@ -3665,7 +3713,7 @@ func _arm_item_timeout(epoch: int, peer: int) -> void:
 		_log("%s 在道具阶段发呆，跳过" % _name_by_peer(peer), "#8a90a5")
 		_item_action = {"epoch": epoch, "action": "skip"}
 
-func _use_item(peer: int, slot: int, arg: int, arg2: int = -1) -> void:
+func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -> void:
 	var p := _player_by_peer(peer)
 	if p.is_empty() or _awaiting_item != peer:
 		return
@@ -3690,7 +3738,7 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1) -> void:
 		items.remove_at(slot)
 	p.stamina = int(p.stamina) - cost
 	it.cd = int(d.cooldown)
-	if not await _apply_item_effect(p, it, arg, arg2):
+	if not await _apply_item_effect(p, it, arg, arg2, arg3):
 		# 前置条件不满足 → 退还体力/冷却
 		it.cd = prev_cd
 		p.stamina = int(p.stamina) + cost
@@ -3702,12 +3750,15 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1) -> void:
 	_consume_cost_pen(p)
 	# 一次性道具（type=consumable，紫档主动等）：用后自动丢弃回池。
 	# 橙档焚毁件（蛋蛋节 / 亡牌飞行员coco）已在上面按 items_consumed 永久离池，这里不重复。
-	if String(d.type) == "consumable" \
-			and String(it.id) != "蛋蛋节" and String(it.id) != "亡牌飞行员coco":
+	# 打印店复制件（`fake`）也是用后即弃，但**不回池**（原主那件还在，回池会污染唯一性）。
+	var once: bool = String(d.type) == "consumable" \
+		and String(it.id) != "蛋蛋节" and String(it.id) != "亡牌飞行员coco"
+	if once or bool(it.get("fake", false)):
 		var ci: int = items.find(it)
 		if ci >= 0:
 			items.remove_at(ci)
-		_log("%s 的【%s】用后回池" % [p.name, String(it.id)], "#8a90a5")
+		_log("%s 的【%s】用后%s" % [p.name, String(it.id),
+			"焚毁（复制件）" if bool(it.get("fake", false)) else "回池"], "#8a90a5")
 	if int(p.item_used_n) >= limit:
 		p.item_used = true
 		if limit == 2:
@@ -3730,7 +3781,7 @@ func _own_props(peer: int) -> Array:
 
 ## 道具效果本体（不含体力/冷却/每回合/焚毁；对局与试验场共用）。
 ## 返回 true = 效果已发生；false = 前置条件不满足（调用方退还体力/冷却）。
-func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1) -> bool:
+func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1, arg3: int = -1) -> bool:
 	var id := String(it.id)
 	var t := _player_by_peer(arg)
 	var need_target: bool = String(ItemData.def(id).get("target", "")) != ""
@@ -3817,7 +3868,15 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 			s_tp.rpc(int(p.peer), near)
 			_log("%s 用【占座】挪到最近的自家地皮（格 %d）" % [p.name, near], "#8fb7f2")
 		"夜跑":
-			await _move_and_resolve(p, 3)
+			# 数值专场改版：原「前进 3 格」→「再转一次转轮」。在道具阶段就地再掷一次：
+			# 转轮照常演（`s_roll`），新点数按正常规则移动 + 结算落点。
+			var nr := randi_range(0, 12)
+			s_roll.rpc(nr)
+			_log("%s 用【夜跑】再转一次：%d 点" % [p.name, nr], "#8fb7f2")
+			await _wait(WheelView.SPIN_TIME + 0.15)
+			if not running:
+				return true
+			await _move_and_resolve(p, nr)
 		"团购拼单":
 			p.money = int(p.money) + 400
 			t.money = int(t.money) + 400
@@ -3830,16 +3889,9 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 			p.loan_left = 3
 			_log("%s 办了【助学贷款】：+¥1500，之后 3 回合各还 ¥600" % p.name, "#74d188")
 		"二手交易":
-			var other := []
-			for oi in p.get("items", []):
-				if oi != it:
-					other.append(oi)
-			if other.is_empty():
-				return false
-			var rm: Dictionary = other[randi_range(0, other.size() - 1)]
-			_remove_item(p, String(rm.id))
-			p.money = int(p.money) + 800
-			_log("%s 二手卖掉【%s】，得 ¥800" % [p.name, String(rm.id)], "#74d188")
+			# 数值专场改版：**弃掉本道具**，立刻 +¥2000（本件是 consumable，用后由 _use_item 回池）
+			p.money = int(p.money) + 2000
+			_log("%s 二手卖掉【二手交易】，得 ¥2000" % p.name, "#74d188")
 		"喇叭":
 			var cpen: Array = t.get("cost_pen", [])
 			cpen.append(1)
@@ -3917,12 +3969,19 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 			_log("%s 拼车到 %s 所在的格子" % [p.name, t.name], "#8fb7f2")
 			await _resolve_tile(p)
 		"保安队长":
-			if (t.get("items", []) as Array).is_empty():
+			# 只挑**有冷却的主动道具**：被动本无冷却，加冷却没意义（用户 §六 #26 报的"加到了被动上"）；
+			# 一次性（type=consumable、冷却 0）加了也没用（用后即回池）⇒ 一并排除。
+			var cands: Array = []
+			for ci2 in (t.items as Array).size():
+				var d2 := ItemData.def(String(t.items[ci2].id))
+				if String(d2.get("type", "")) != "passive" and int(d2.get("cooldown", 0)) > 0:
+					cands.append(ci2)
+			if cands.is_empty():
 				return false
 			if _immune_debuff(t):
 				_log("%s 被香皂/护盾挡下了" % t.name, "#8fb7f2")
 			else:
-				var ti := randi_range(0, (t.items as Array).size() - 1)
+				var ti: int = cands[randi_range(0, cands.size() - 1)]
 				t.items[ti].cd = mini(5, int(t.items[ti].get("cd", 0)) + 2)
 				_log("%s 让 %s 的【%s】冷却 +2" % [p.name, t.name, String(t.items[ti].id)], "#c9a6ff")
 		"反作弊":
@@ -3987,6 +4046,67 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 			else:
 				t.silence = maxi(int(t.get("silence", 0)), 3)
 				_log("%s 包场：%s 接下来两个回合不能使用道具" % [p.name, t.name], "#c9a6ff")
+		# ---- 紫·新批次（2026-10-04 定稿 · 2026-10-05 实装） ----
+		"刮刮乐":
+			var sc := randi_range(1, 10) * 100
+			p.money = int(p.money) + sc
+			_log("%s 刮开【刮刮乐】：+¥%d" % [p.name, sc], "#74d188")
+		"顶楼加盖":
+			if arg < 0 or arg >= htiles.size() \
+					or int(htiles[arg].get("owner", GameData.NO_OWNER)) != int(p.peer):
+				return false
+			htiles[arg].level = mini(4, int(htiles[arg].get("level", 0)) + 2)
+			_log("%s 用【顶楼加盖】把【%s】加盖到 Lv%d" % [p.name, String(GameData.TILES[arg].name), int(htiles[arg].level)], "#8fb7f2")
+		"没收":
+			if t.is_empty() or (t.get("items", []) as Array).is_empty():
+				return false
+			if p.items.size() >= _bag_cap(p):
+				return false                      # 背包满不可用（退体力）
+			var nitems: Array = t.items
+			var ni := randi_range(0, nitems.size() - 1)
+			var got: Dictionary = nitems[ni]
+			nitems.remove_at(ni)
+			p.items.append(got)
+			_log("%s 用【没收】抢走了 %s 的【%s】" % [p.name, t.name, String(got.id)], "#c9a6ff")
+		"宿舍改造":
+			var re_props := _own_props(int(t.peer))
+			if re_props.is_empty():
+				return false
+			var ri: int = re_props[randi_range(0, re_props.size() - 1)]
+			var comp := int(float(int(GameData.TILES[ri].price)) * 0.8)
+			htiles[ri].owner = GameData.NO_OWNER
+			htiles[ri].level = 0
+			t.money = int(t.money) + comp
+			_log("%s 用【宿舍改造】征收了 %s 的【%s】，补偿 %s" % [p.name, t.name, String(GameData.TILES[ri].name), GameData.fmt_money(comp)], "#74d188")
+		"打印店":
+			var printable: Array = []
+			for pit in (t.get("items", []) as Array):
+				if String(ItemData.def(String(pit.id)).get("quality", "")) != "橙":
+					printable.append(pit)
+			if printable.is_empty() or p.items.size() >= _bag_cap(p):
+				return false
+			var pid := String(printable[randi_range(0, printable.size() - 1)].id)
+			p.items.append({"id": pid, "cd": 0, "fake": true})   # 复制件：用后焚毁、不回池（见 _use_item）
+			_log("%s 用【打印店】复印了 %s 的【%s】（一次性复制件）" % [p.name, t.name, pid], "#8fb7f2")
+		"代课":
+			p.sub_rent = true
+			_log("%s 用【代课】：下一笔租金由房东替他付" % p.name, "#8fb7f2")
+		"转专业":
+			# 两段式变体：arg=对方 peer，arg2=我的地，arg3=对方的地
+			if arg2 < 0 or arg3 < 0 or arg2 >= htiles.size() or arg3 >= htiles.size():
+				return false
+			if int(htiles[arg2].get("owner", GameData.NO_OWNER)) != int(p.peer) \
+					or int(htiles[arg3].get("owner", GameData.NO_OWNER)) != int(t.peer):
+				return false
+			var o1 := int(htiles[arg2].owner)
+			htiles[arg2].owner = int(htiles[arg3].owner)
+			htiles[arg3].owner = o1
+			_log("%s 与 %s 交换地皮 #%d↔#%d" % [p.name, t.name, arg2, arg3], "#8fb7f2")
+		"老虎机":
+			await _run_slot_machine(p)
+		"出老千":
+			_log("%s 用【出老千】：本场赌局没赢也能分钱" % p.name, "#f0a0c0")
+			await casino.run(p, int(p.peer))
 		# ---- 橙 ----
 		"二两寒暑":
 			var cpen2: Array = t.get("cost_pen", [])
@@ -4000,6 +4120,98 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 
 ## 小抄：把命运牌堆顶卡私密发给该玩家
 @rpc("authority", "call_local", "reliable")
+# ================= 老虎机（紫·新批次） =================
+
+## 老虎机：3 个转轮各 0~9；奖金 = 三数之和 × 倍率 × ¥50。
+## 普通 ×2 / 连号 ×4（任意顺序）/ 豹子 ×10（三同号）；豹子 0·0·0 固定 ¥1000。
+func _run_slot_machine(p: Dictionary) -> void:
+	var d1 := randi_range(0, 9)
+	var d2 := randi_range(0, 9)
+	var d3 := randi_range(0, 9)
+	var sum := d1 + d2 + d3
+	var mult := 2
+	if d1 == d2 and d2 == d3:
+		mult = 10
+	elif _is_consecutive(d1, d2, d3):
+		mult = 4
+	var prize := sum * mult * 50
+	if d1 == 0 and d2 == 0 and d3 == 0:
+		prize = 1000
+	p.money = int(p.money) + prize
+	s_slot.rpc([d1, d2, d3], prize)
+	_log("%s 玩【老虎机】：%d%d%d → 奖金 %s" % [p.name, d1, d2, d3, GameData.fmt_money(prize)], "#74d188")
+	await _wait(2.4)
+
+func _is_consecutive(a: int, b: int, c: int) -> bool:
+	var arr := [a, b, c]
+	arr.sort()
+	return int(arr[1]) - int(arr[0]) == 1 and int(arr[2]) - int(arr[1]) == 1
+
+@rpc("authority", "call_local", "reliable")
+func s_slot(digits: Array, prize: int) -> void:
+	_show_slot(digits, prize)
+
+## 老虎机全屏演出（屏幕层）：三格先滚后定，再亮奖金。
+func _show_slot(digits: Array, prize: int) -> void:
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.z_index = 70
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.03, 0.02, 0.05, 0.86)
+	layer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(cc)
+	var panel := UIKit.panel_container(Color(0.10, 0.06, 0.16, 0.98), 18, UIKit.ACCENT_DEEP, 2, 16)
+	panel.custom_minimum_size = Vector2(560, 0)
+	cc.add_child(panel)
+	var m := UIKit.margins(26, 26, 22, 20)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	m.add_child(v)
+	var title := UIKit.label("🎰 老虎机", 24, UIKit.ACCENT)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 16)
+	v.add_child(row)
+	var labs: Array = []
+	for i in 3:
+		var lab := UIKit.label("0", 60, UIKit.ACCENT)
+		lab.custom_minimum_size = Vector2(90, 108)
+		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lab.add_theme_stylebox_override("normal", UIKit.stylebox(
+			Color(0.04, 0.03, 0.06, 0.9), 10, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.5), 2))
+		row.add_child(lab)
+		labs.append(lab)
+	var prize_l := UIKit.label("", 20, UIKit.GOOD)
+	prize_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(prize_l)
+	var tw := create_tween()
+	for i in 12:
+		tw.tween_callback(func() -> void:
+			for l in labs:
+				if is_instance_valid(l):
+					(l as Label).text = str(randi_range(0, 9))).set_delay(0.06)
+	tw.tween_callback(func() -> void:
+		for i2 in 3:
+			if is_instance_valid(labs[i2]):
+				(labs[i2] as Label).text = str(int(digits[i2])))
+	tw.tween_callback(func() -> void:
+		prize_l.text = "奖金 %s" % GameData.fmt_money(prize)
+		Fx.play("cash", 0.0))
+	tw.tween_interval(1.6)
+	tw.tween_callback(func() -> void:
+		if is_instance_valid(layer):
+			layer.queue_free())
+
+## 小抄：把命运牌堆顶卡私密发给该玩家
 func s_peek_card(peer: int, text: String) -> void:
 	if peer == my_peer:
 		_log("（小抄）命运牌堆下一张：%s" % text, "#f0c064")
@@ -4051,7 +4263,7 @@ func _bot_shop(p: Dictionary, idx: int) -> void:
 		if id == "":
 			continue
 		var price := ItemData.price(String(ItemData.def(id).quality))
-		if int(p.money) >= price and p.items.size() < 5 and price > best_price:
+		if int(p.money) >= price and p.items.size() < _bag_cap(p) and price > best_price:
 			best = i
 			best_price = price
 	if best != -1:
@@ -4340,7 +4552,7 @@ func _bot_blackshop(p: Dictionary) -> void:
 		if val > best_val:
 			best_val = val
 			best_slot = i
-	if best_slot >= 0 and p.items.size() < 5:
+	if best_slot >= 0 and p.items.size() < _bag_cap(p):
 		_black_buy(int(p.peer), best_slot)
 		while _black_pay_mode == "buy" and _black_peer == int(p.peer):
 			var ps := _prop_indices_sorted(int(p.peer))
@@ -4379,12 +4591,12 @@ func c_black_pay(prop_idx: int) -> void:
 	_black_pay(multiplayer.get_remote_sender_id(), prop_idx)
 
 @rpc("any_peer", "call_remote", "reliable")
-func c_use_item(slot: int, arg: int, arg2: int = -1) -> void:
+func c_use_item(slot: int, arg: int, arg2: int = -1, arg3: int = -1) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if sender == _awaiting_item:
-		_use_item(sender, slot, arg, arg2)
+		_use_item(sender, slot, arg, arg2, arg3)
 
 @rpc("any_peer", "call_remote", "reliable")
 func c_item_skip() -> void:
@@ -4419,7 +4631,7 @@ func _apply_egg_festival(p: Dictionary) -> void:
 	for o in hp:
 		if int(o.peer) == int(p.peer) or not bool(o.alive):
 			continue
-		if o.items.size() >= 5:
+		if o.items.size() >= _bag_cap(o):
 			o.money = int(o.money) + 100
 			_log("%s 背包已满，改收 %s 现金" % [o.name, GameData.fmt_money(100)], "#74d188")
 			continue
@@ -4516,10 +4728,15 @@ func _on_use_pressed() -> void:
 	if iid == "作弊器":
 		_open_cheat_picker(slot)
 	elif tgt == "player":
-		# 交换生：只能选「持有道具」的玩家；两段式道具：只能选「名下有地」的玩家
-		_begin_peer_target(slot, iid == "交换生", then == "own_prop")
+		# 交换生：只能选「持有道具」的玩家；两段式道具（强拆令/抄家队/转专业）：只能选「名下有地」的玩家
+		if iid == "转专业" and _selectable_props(my_peer).is_empty():
+			_log("你没有可交换的地皮（退体力/冷却）", "#8a90a5")
+			return
+		_begin_peer_target(slot, iid == "交换生", then == "own_prop" or iid == "转专业")
 	elif tgt == "tile":
 		_begin_tile_target(slot, range(GameData.TILES.size()))
+	elif tgt == "own_tile":
+		_begin_tile_target(slot, _selectable_props(my_peer))
 	else:
 		_send_use_item(slot, -1)
 
@@ -4602,13 +4819,13 @@ func c_discard(slot: int) -> void:
 		return
 	_discard_item(sender, slot)
 
-func _send_use_item(slot: int, arg: int, arg2: int = -1) -> void:
+func _send_use_item(slot: int, arg: int, arg2: int = -1, arg3: int = -1) -> void:
 	_cancel_target()
 	_close_cheat_picker()
 	if multiplayer.is_server():
-		_use_item(my_peer, slot, arg, arg2)
+		_use_item(my_peer, slot, arg, arg2, arg3)
 	else:
-		c_use_item.rpc(slot, arg, arg2)
+		c_use_item.rpc(slot, arg, arg2, arg3)
 
 func _open_cheat_picker(slot: int) -> void:
 	cheat_slot = slot
@@ -4674,11 +4891,13 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_stage = "peer"
 	_tgt_peer = -1
 	_tgt_tiles = []
+	_tgt_swap_mine = -1
 	# 入口是**屏幕左上角名册条里对手那一格**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
 	# → 顶部名册条右上（批次 12 D）→ **名册条左上角、暂停按钮旁（批次 13 ②）**）——
 	# 与规则说明（`rules_text.gd` 基础操作页）同源口径，
 	# 别再说"立牌 / 玩家卡 / 四角条"（玩家会照着找一样已经不存在的东西）。
-	_show_target_hint("点左上角名册条里对手那一格选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
+	_show_target_hint("拖到左上角名册条里对手那一格松手（或直接点它；Esc/右键取消）" \
+		if not then_prop else "拖到对手那一格松手，再选他的一块地（Esc/右键取消）")
 	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）
@@ -4692,7 +4911,8 @@ func _begin_tile_target(slot: int, idxs) -> void:
 	_tgt_stage = "tile"
 	_tgt_peer = -1
 	_tgt_tiles = arr
-	_show_target_hint("点地图选择目标格（Esc/右键取消）")
+	_tgt_swap_mine = -1
+	_show_target_hint("拖到棋盘上的高亮格松手（或直接点它；Esc/右键取消）")
 	# 直接进选格态（快递直达）：那份"可选玩家"高亮一并熄灭（同 board 的 set_select_tiles）
 	_push_peer_highlight([])
 	if board != null:
@@ -4746,7 +4966,19 @@ func _rank_of(peer: int) -> int:
 ## 座位卡与立牌都已退场，这里只是后果函数。
 func _on_seat_clicked(peer: int) -> void:
 	if _tgt_stage == "peer" and peer != my_peer:
-		var then := String(ItemData.def(_target_item_id()).get("then", ""))
+		var iid := _target_item_id()
+		if iid == "转专业":
+			# 转专业两段式变体：先选**我**的一块地，再选**他**的一块地
+			_tgt_peer = peer
+			_tgt_stage = "tile"
+			_tgt_swap_mine = -1
+			_tgt_tiles = _selectable_props(my_peer)
+			_show_target_hint("选你的一块地（Esc/右键取消）")
+			_push_peer_highlight([])
+			if board != null:
+				board.set_select_tiles(_tgt_tiles)
+			return
+		var then := String(ItemData.def(iid).get("then", ""))
 		if then == "own_prop":
 			# 两段式：进入选地块，只高亮该玩家名下地皮
 			var props := _selectable_props(peer)
@@ -4756,7 +4988,7 @@ func _on_seat_clicked(peer: int) -> void:
 			_tgt_peer = peer
 			_tgt_stage = "tile"
 			_tgt_tiles = props
-			_show_target_hint("点选 %s 名下的一块地（Esc/右键取消）" % _name_by_peer(peer))
+			_show_target_hint("拖到 %s 名下的一块地松手（或点它；Esc/右键取消）" % _name_by_peer(peer))
 			# 从"选玩家"走进"选地块"：那份可选玩家高亮随之熄灭（同 board 的 set_select_tiles）
 			_push_peer_highlight([])
 			if board != null:
@@ -4768,10 +5000,24 @@ func _on_seat_clicked(peer: int) -> void:
 
 ## 选地块完成（棋盘格子点击）
 func _finish_tile_target(idx: int) -> void:
+	# 转专业：第一下选的是**我的地**，存下后改高亮对方的地，等第二下才真发
+	if _target_item_id() == "转专业" and _tgt_swap_mine < 0:
+		_tgt_swap_mine = idx
+		_tgt_tiles = _selectable_props(_tgt_peer)
+		_show_target_hint("选 %s 名下的一块地（Esc/右键取消）" % _name_by_peer(_tgt_peer))
+		if board != null:
+			board.set_select_tiles(_tgt_tiles)
+		return
 	var slot := _tgt_slot
 	var peer := _tgt_peer
+	var mine := _tgt_swap_mine
 	_log("选定目标格 #%d" % idx, "#f0c064")
-	_send_use_item(slot, peer if peer >= 0 else idx, idx if peer >= 0 else -1)
+	if peer >= 0 and mine >= 0:
+		_send_use_item(slot, peer, mine, idx)   # 转专业：arg2=我的地, arg3=他的地
+	elif peer >= 0:
+		_send_use_item(slot, peer, idx)         # 两段式：arg=peer, arg2=他的地
+	else:
+		_send_use_item(slot, idx)               # 快递直达 / 顶楼加盖：arg=格
 
 func _target_item_id() -> String:
 	var p := _state_player(my_peer)
@@ -4798,12 +5044,122 @@ func _cancel_target() -> void:
 	_tgt_stage = ""
 	_tgt_peer = -1
 	_tgt_tiles = []
+	_tgt_swap_mine = -1
 	if target_hint != null:
 		target_hint.visible = false
 	# 可选玩家高亮随选目标态一起熄灭（与 board.clear_select 同一处收口）
 	_push_peer_highlight([])
 	if board != null:
 		board.clear_select()
+	if aim_arrow != null and is_instance_valid(aim_arrow):
+		aim_arrow.hide_aim()
+
+# ---------------- 拖动指向：收尾（#24） ----------------
+
+## 屏幕像素：按下到松手移动超过它才算"拖动"，否则当单击（保留旧的"点卡再点目标"）。
+const DRAG_THRESHOLD := 12.0
+
+## `table3d.on_table_release`：被实体消费的那次按下，其**配对松开**。拖动指向的收尾在这里。
+##   * 单击（没怎么动）→ 保留选目标态，等玩家点目标（旧交互仍可用）；
+##   * 右键 → 取消；
+##   * 拖到合法目标松手 → 选定；拖到别处松手 → 取消（收回手牌）。
+func _on_table_release(screen_pos: Vector2, button: int) -> void:
+	if not _drag_active:
+		return
+	_drag_active = false
+	if _tgt_stage == "":
+		return
+	if button == MOUSE_BUTTON_RIGHT:
+		_cancel_target()
+		return
+	if screen_pos.distance_to(_drag_press_pos) < DRAG_THRESHOLD:
+		return                                   # 单击：保留选目标态，等玩家点目标
+	_resolve_release_target(screen_pos)
+
+## 松手落点结算：选玩家态命中名册格 → `_on_seat_clicked`；选地块态反算棋盘格 → `_finish_tile_target`；
+## 都没命中 → 取消。
+func _resolve_release_target(screen_pos: Vector2) -> void:
+	if _tgt_stage == "peer":
+		var peer := _bar_peer_at(screen_pos)
+		if peer != GameData.NO_PEER and peer in _hl_peers:
+			_on_seat_clicked(peer)
+		else:
+			_cancel_target()
+		return
+	if _tgt_stage == "tile":
+		if table3d != null and board != null:
+			var canvas = table3d.screen_to_viewport(screen_pos)
+			if canvas != null:
+				var idx: int = board._index_at(canvas)
+				if idx in _tgt_tiles:
+					_finish_tile_target(idx)
+					return
+		_cancel_target()
+
+## 屏幕点命中的名册格 / 身家条的 peer（没有则 NO_PEER）。只查可见的候选落点。
+func _bar_peer_at(screen_pos: Vector2) -> int:
+	for b in _hl_bars():
+		var root: Control = b.root
+		if root == null or not is_instance_valid(root) or not root.visible:
+			continue
+		if root.get_global_rect().has_point(screen_pos):
+			return int(b.get("peer", GameData.NO_PEER))
+	return GameData.NO_PEER
+
+## 每帧驱动瞄准箭头：选目标态期间从手牌那张卡指向鼠标；鼠标压在合法名册格上时吸附到它中心。
+func _update_aim_arrow() -> void:
+	if aim_arrow == null or not is_instance_valid(aim_arrow):
+		return
+	if _tgt_stage == "" or table3d == null or table3d.table_props == null or table3d.camera == null:
+		aim_arrow.hide_aim()
+		return
+	var src = table3d.table_props.hand_screen_pos(_tgt_slot)
+	if src == null:
+		aim_arrow.hide_aim()
+		return
+	var tip: Vector2 = get_viewport().get_mouse_position()
+	if _tgt_stage == "peer":
+		for b in _hl_bars():
+			var root: Control = b.root
+			if root == null or not is_instance_valid(root) or not root.visible:
+				continue
+			if int(b.get("peer", GameData.NO_PEER)) in _hl_peers and root.get_global_rect().has_point(tip):
+				tip = root.get_global_rect().get_center()
+				break
+	aim_arrow.show_aim(src as Vector2, tip)
+
+## 悬停手牌 → 屏幕层放大预览（#23）：内容随悬停那张牌换，位置贴着那张牌上方；没悬停则收起。
+func _set_hand_preview(hi: int) -> void:
+	if hand_preview == null or not is_instance_valid(hand_preview):
+		return
+	var show := hi >= 0 and table3d != null and table3d.table_props != null
+	var items: Array = _state_player(my_peer).get("items", []) if show else []
+	if show and hi >= items.size():
+		show = false
+	if not show:
+		hand_preview.visible = false
+		return
+	var it: Dictionary = items[hi]
+	var id := String(it.get("id", ""))
+	var sig := "%s|%d" % [id, int(it.get("cd", 0))]
+	# 内容变了才重建（悬停同一张时只重摆位置）
+	if String(hand_preview.get_meta("preview_sig", "")) != sig:
+		for c in hand_preview.get_children():
+			c.queue_free()
+		var card := ItemCard.make(id, Vector2(240, 330), ItemData.badge_state(it))
+		card.position = Vector2.ZERO
+		hand_preview.add_child(card)
+		hand_preview.size = Vector2(240, 330)
+		hand_preview.set_meta("preview_sig", sig)
+	# 贴在悬停那张牌上方（拿不到屏幕点就落屏幕底部中央）
+	var pos := Vector2((size.x - 240.0) * 0.5, size.y - 330.0 - 24.0)
+	var sp = table3d.table_props.hand_screen_pos(hi)
+	if sp != null:
+		pos = (sp as Vector2) - Vector2(120.0, 330.0 + 24.0)
+	pos.x = clampf(pos.x, 8.0, maxf(8.0, size.x - 240.0 - 8.0))
+	pos.y = clampf(pos.y, 8.0, maxf(8.0, size.y - 330.0 - 8.0))
+	hand_preview.position = pos
+	hand_preview.visible = true
 
 # ================= 选项菜单 / 房主暂停 / 设置 =================
 
@@ -4950,6 +5306,7 @@ func _spawn_money_fly(peer: int, diff: int) -> void:
 func _process(_delta: float) -> void:
 	_place_info_panel()   # 格详情卡要跟着格子走（镜头会平移/缩放/旋转）
 	_place_token_tip()    # 悬停信息条同理（它跟着**棋子**走；悬停期间镜头也会动）
+	_update_aim_arrow()   # 指向性道具的瞄准箭头（#24）：跟着手牌那张卡与鼠标，逐帧重画
 	# 待决格描一圈脉冲高亮（批次 12 C1）：决策面板可以被 ✕ 关掉，这圈高亮是
 	# "我还有个没决定的事，就在那格"的第一眼提示；右下角那枚「回格上决定」是第二处兜底。
 	# 传 -1 = 没有待决；`set_pending_tile` 自己按"变了才改"早退，逐帧调是免费的。
