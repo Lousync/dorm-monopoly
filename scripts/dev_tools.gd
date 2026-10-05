@@ -31,6 +31,11 @@ var fps_probe := 0.0
 ## 而**机器人根本不会主动装修**（实测：预热 60 秒只到第 9 轮、场上 **0 块房子**），所以"打到 15 轮
 ## 再采"采不到满盘，只能像 `level` 摆拍那样**在房主侧注入局面**（不动玩法代码）。见 `fps_probe_run`。
 var fps_houses := false
+## `--dolly=档位`（一期 Task 7）：帧率探针**开始采样前**把推拉推到这一档（如 `--dolly=1.8` = 拉远端）。
+## 用途：量"**推拉拉远之后阴影贴图密度摊薄**"那份代价（`设计决策留痕` §十三 记过"射程一大、
+## 密度稀 ~2.4×"）。不传 = 不动推拉（旧口径一字不差）。走真接口 `table3d.snap_dolly`，
+## **只碰表现层**，一行玩法都不动。**注意要配 `--` 分隔符**（同本项目所有开关）。
+var dolly_arg := -1.0
 
 # ---------------- 转发给宿主 ----------------
 
@@ -421,6 +426,14 @@ func fps_probe_run() -> void:
 				g.htiles[i].level = GameData.MAX_LEVEL
 		g._broadcast_state()
 		await get_tree().create_timer(0.3, true, false, true).timeout
+	# **推拉档注入**（一期 Task 7，`--dolly=档位`）：在"局面自述"之前摆好 —— 相机是取样那段帧时间
+	# 的一部分，摆晚了量的还是旧档。读在这里而不是让宿主转发：本函数是探针唯一的入口。
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--dolly="):
+			dolly_arg = float(a.substr(8))
+	if dolly_arg > 0.0 and g.table3d != null:
+		g.table3d.snap_dolly(dolly_arg)
+		await get_tree().create_timer(0.3, true, false, true).timeout
 	Engine.time_scale = 1.0
 	# 采样起点的**局面自述**（批次 11 T4）：帧率数字必须连着"当时场上有几块房子"一起读 ——
 	# 旧口径开采在 round=1、0 块房子，那种数字不能拿来代表"满盘装修"。
@@ -496,6 +509,14 @@ func take_shot(path: String) -> void:
 	# 没有这个分支就拍不出 2D 端那张图（default 只能拍到 3D 端）。
 	if path.contains("view2d") and g.table3d != null:
 		g.table3d.snap_view(1.0)
+	# 文件名带 dollyfar / dollynear（一期 Task 7）：把**推拉**推到那一端出图。
+	# 与上面 tilt / view2d 同形同理由：走**真接口**（`snap_dolly`），不手搓相机 ——
+	# 手搓的那份数学会和 `_apply_camera` 漂开，摆出来的图就不是玩家真能滚到的那一档。
+	# `dollyfar` = 拉远端（看屋子：远墙 + 三件家具）、`dollynear` = 推近端（读棋盘：格子最大）。
+	if path.contains("dollyfar") and g.table3d != null:
+		g.table3d.snap_dolly(g.table3d.DOLLY_MAX)
+	if path.contains("dollynear") and g.table3d != null:
+		g.table3d.snap_dolly(g.table3d.DOLLY_MIN)
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
 		# 倍率是「全景的倍数」：2.0 ≈ 屏幕时代那个 0.8（0.8/0.40，见 board_view 顶部常量）

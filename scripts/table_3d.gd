@@ -23,6 +23,11 @@ const CAM_FOV := 39.0            # 收窄默认 75°：探针实测默认 FOV �
                                  # 余量往后退，否则桌垫出画）；另外 `hand_rect`（手牌命中盒）是拿
                                  # 3D 相机把牌**投回画布**算的 ⇒ `hud_test` 的「牌底可点条带」
                                  # （69.1 / 58.8 → 61.0 / 45.9）也跟着这一味走，必须重取。
+                                 # **一期 Task 7 现值：33.4 / 13.3**（那一次动的是 `CAM_DIST`
+                                 # 而不是 FOV，见 `CAM_DIST` 段 —— 缝窄了 14 画布像素、抬起那张
+                                 # 一度压进格子 1.2px，重取 `table_props.HAND_BASE_PX` 收回来）。
+                                 # **本常量 39 一期一个字没动**：换镜头会连带改 2D 端的格宽与余量，
+                                 # 而 2D 端那条契约是本项目唯一不许碰的（见 `CAM_DIST` 段实测）。
 ## 相机到注视点的水平距离（3D 端）。
 ##
 ## **批次 5 Task 2 重调过（5.8 → 5.2）、批次 10 Task 2 又收到 4.7**：桌面从 8×8 变成
@@ -87,7 +92,72 @@ const CAM_FOV := 39.0            # 收窄默认 75°：探针实测默认 FOV �
 ##   比抬俯角便宜。代价：近端格子不再"扑上来"（透视变平）—— 如实留痕。
 ## * 两端同一条镜头 ⇒ 2D 端同步退到 `VIEW_DIST_2D` **9.20**（2D 格宽 50.0 → 53.2px），
 ##   面积比 **0.97**（A2 是 0.92）。
-const CAM_DIST := 5.77
+##
+## ---- **一期 Task 7（2026-10-06）：5.77 → 8.90 —— 判据回滚到「木桌四角」+ 默认档偏屋子** ----
+## 这一档动的是**取景契约本身**（用户 2026-10-05 拍板"默认看屋子"；设计 §四 追加一节）：
+## 3D 端的入画判据从**桌垫四角**收回到**木桌四角**（`WOOD_HALF_W/D`），
+## 并新增"上缘留出房间带"。原来那份契约（只认桌垫）是批次 10 为"把棋盘放大"松的，
+## 这次收回来的理由就是"**木桌远边必须进画**，否则房间根本露不了头"。
+##
+## **为什么只动这一个常量（批次 10 的"四个一起取"这次不适用）**：
+## 四条约束把另外三个锁死了 ——
+##   * `CAM_FOV` / `VIEW_DIST_2D`：**2D 端那条契约是本项目唯一不许碰的**。换镜头（FOV）
+##     会同时改 2D 端的格宽与余量 ⇒ 必须连带重取 `VIEW_DIST_2D`。实测（探针扫过）：
+##     FOV 36 → 2D 端桌垫余量跌到 24.3px、FOV 33 → **-12.1px 出画**，而 2D 格宽会涨到
+##     57.9 / 63.5px。**留 39 与 9.20 ⇒ 2D 端逐位不变**（格宽仍是 **53.2px**、桌垫余量 55.3px）。
+##   * `CAM_TILT_DEG`：A2b 已量过"抬俯角几乎换不到格宽"（且会把 3D 端推向 2D 端、手牌斜切）。
+## ⇒ 只剩距离。**判据（与 32px 硬底线共同定档）**：把取景一路往外推到
+##   **默认档格子屏幕宽刚好撑住 §九 的 32px 底线**（"32px 还能撑住的**最外**取景"）。
+##   实测（探针逐档扫，DIST → 默认档格宽）：8.60 → 33.4px、**8.90 → 32.3px**、9.00 → 32.0px。
+##   取 **8.90**（留 0.3px 浮点余量，与本文件既有的 47.3/47.0、53.2/52.6 同一种留法）。
+##
+## **本档实测（1280×800 视口、FOV 39、俯角 50°、推拉默认 1.0）**：
+##   * 21 档余量（判据沿轨道从木桌四角插值到桌垫四角）：**171 → 55px**、最紧 **55.3px @ wt=1.00**
+##     （批次 12 A2b 那条"最紧 11.6px @ wt=0.00"随之作废 —— 判据与距离都换了）；
+##   * **房间带 = 视口高 22.9%**（木桌远边 y=183）：默认档上缘能看到远墙的墙脚（y=143）与
+##     三件家具，不再是"一条细带子"；
+##   * 格宽：默认 **32.3px** / 推近端（`DOLLY_MIN` 0.7）**44.5px** / 2D 端 **53.2px**（未动）。
+##
+## **代价（如实留痕）**：3D 端格宽 47.3 → **32.3px**（**1/3 没了**）—— 默认档的格内文字
+## 在屏幕上只有 6px 量级、读不出来，**"读棋盘"要靠 Ctrl+滚轮推近（44.5px）或滚到 2D 端**。
+## 这不是回退，是用户拍板的取舍：默认那档归"看屋子"，推拉的近端归"读棋盘"。
+const CAM_DIST := 8.90
+
+# ---------------- 一期 Task 7：**推拉轴**（`Ctrl` + 滚轮） ----------------
+#
+# 为什么要有第二轴（设计 §四 追加一节）：3D 端"整块棋盘读得清"与"屋子看得见"在**同一条
+# 距离轴上是互斥的**（拉远才看得见屋子、格子就小）。批次 4 曾把"推拉"整个删掉、
+# 只留"滚轮 = 3D↔2D 推移"，这一轴**不是替掉滚轮**（滚轮仍是切 3D/2D 的唯一入口，不许抢），
+# 是**在档内补一个自由度**：按住 `Ctrl` 滚轮 = 改相机到注视点的距离。
+#
+# **只在 3D 端生效**：`_apply_camera()` 里把这一维乘在**3D 端那段距离**上、再与
+# `VIEW_DIST_2D` 插值 ⇒ 它的权重就是 `(1.0 - view_t)`，`view_t = 1` 时**归零**
+# ⇒ **2D 端的取景与格宽逐字节不变**（那条契约是本项目唯一不许碰的，见 CAM_DIST 段）。
+#
+# 三档（实测，`DIST = 8.90`）：
+#   | 档 | 格宽 | 房间带 | 看得到什么 |
+#   |---|---|---|---|
+#   | 推近端 `DOLLY_MIN` 0.7 | **44.5px** | 13.0% | 桌子占满、房间退场（**桌垫四角仍在画面内**，余量 73.7px）|
+#   | 默认 1.0 | **32.3px** | 22.9% | 木桌四角入画 + 上缘一带屋子 |
+#   | 拉远端 `DOLLY_MAX` 1.4 | **23.7px** | **30.0%** | 远墙（墙脚 y=197）+ 书架/书桌/收纳箱全见 |
+#
+# **`DOLLY_MIN` 的取值不是随手取的**：近端的硬要求只有"格宽 ≥ 默认档"，但**再往外推就
+# 把棋盘自己推出画了** —— 实测 0.6 时桌垫四角余量 **-43.9px**（角被切掉，"读棋盘"这一端
+# 反而读不全）。0.7 留 73.7px 余量；0.65 量级只剩十几像素 ⇒ 取 0.7。
+# **`DOLLY_MAX` 的取值（⚠ 这一条踩过一次坑，别按 1.8 改回去）**：几何上 1.8 的"房间带"更大
+# （34.1%），但**相机在 1.15 档就已经出屋了** —— `z = d3d·cos50°` 一过 `ROOM_D/2 = 9`
+# 就穿到近墙外、`y` 一过天花板就窜到屋顶上，而近墙与天花板都是**双面**的
+# ⇒ **整张摆拍全黑**（实测 `shots/t7_dollyfar_table_3d`... 那一版），四角余量与"远墙入画"
+# 那些断言**全是绿的**（它们只量投影、量不出遮挡）。
+# ⇒ 远端的上限由**房间**订：先按 `room.gd` 的 `ROOM_NEAR_EXTRA` / `ROOM_CEIL_Y` 把屋子
+# **往相机这一侧**放大到能站下（远半侧一个数不动，见那两段），再取
+# **1.40**（相机 `z=12.46` 离近墙 1.54、`y=14.85` 离天花板 1.15）：**房间带 30.0%**
+# —— 已经够到设计 §四 原本要的 32%（默认档 1.0 是 22.9%），且三件家具都在画面内。
+# 再往后（1.5 → 31.2%、1.8 → 34.1%）每档只多 1% 出头的带子，却要继续放大屋子
+# 与摊薄阴影贴图密度（§十三 那条 ~2.4×），**不划算**。
+const DOLLY_MIN := 0.7           # 推近端（1.0 = 默认档；0.7 实测格宽 44.5px、桌垫四角余量 73.7px）
+const DOLLY_MAX := 1.4           # 拉远端（23.7px / 房间带 30.0% / 远墙 + 三件家具入画；上限由房间订）
+const DOLLY_STEP := 0.1          # Ctrl+滚轮每格改多少（0.7↔1.8 共 11 格）
 
 ## 3D 端**注视点往近端挪**多少（世界单位，+z = 近端）。
 ##
@@ -154,6 +224,17 @@ const VIEW_DIST_2D := 9.20       # 2D 端「相机到注视点的 3D 距离」�
                                  #     面积比 **0.97**（A2 是 0.92）、2D 格宽 **53.2px**。
                                  # ⚠ **本常量与 `CAM_FOV` 是一套的**：改 FOV 就必须按"2D 端余量 + 面积比"
                                  # 两条重取它（`layout_test` 的两条断言 + 格宽下限都会红）。
+                                 #
+                                 # ---- **一期 Task 7：9.20 一个字未动** ----
+                                 # 那次动的是 `CAM_DIST`（5.77 → 8.90），**只因为它是唯一不会波及
+                                 # 2D 端的那一维**。两条随它作废的旧读数（别按它们认今天的账）：
+                                 #   * "**整轨最紧那处仍在 3D 端**" —— 判据回滚到木桌四角、3D 端又退远
+                                 #     之后**最紧的一档挪到了 2D 端**（实测 55.3px @ wt=1.00，3D 端 171px）；
+                                 #   * "**面积比 0.97**" —— 那个 0.97 比的是「3D 默认档 ↔ 2D 端」，
+                                 #     而用户拍板"默认看屋子"之后默认档**有意**缩到 32px 硬底线
+                                 #     （实测 2D端/3D默认档 = **2.57**，**不再是门槛**）。
+                                 #     `layout_test` 那条门槛**换了对比对象**：比「**2D 端 ↔ 3D 推近端**」
+                                 #     两张"读棋盘"的视图（实测 **1.17** ∈ [0.6,1.6]，区间一字未动）。
 const VIEW_STEP := 0.25          # 滚轮每格改多少（4 格从 3D 走到 2D）
 const VIEW_SNAP := 6.0           # 平滑逼近速率：每秒把剩余差距衰减 e^-6（帧率无关的指数逼近）
 
@@ -454,6 +535,25 @@ var view_t: float = 0.0:
 		_apply_camera()
 var view_target := 0.0
 
+## 推拉量（一期 Task 7）：**相机的距离倍率**，1.0 = 默认档、越小越近（格子越大）。
+## `dolly_target` 是 `Ctrl` + 滚轮改的**目标**、`dolly` 是每帧逼近的**当前值** ——
+## 与 `view_t` / `view_target` 是**同一套形状**（目标值 + 每帧指数逼近，见 `_process`），
+## 别另造一套。夹在 [`DOLLY_MIN`, `DOLLY_MAX`]，两个端点的实测数字见上面那三档表。
+##
+## **用属性 setter 而不是裸 var**：理由与 `view_t` 那条一字不差 —— "改距离"与"重摆相机"
+## 是同一次变化的两半，只做一半就是静默脱钩。`dolly` 的唯一写点本该是 `snap_dolly` 与
+## `_process`，但它是公开 var，谁一句 `dolly = x` 都能绕过去；赋值即重摆相机就绕不过去。
+## setter 里 clamp、相等则早退（`_process` 每帧都赋值），再调 `_apply_camera()`。
+## **`_apply_camera` 不许写 `dolly`**（与"不许写 view_t"同一条，会递归）。
+var dolly: float = 1.0:
+	set(v):
+		var nd := clampf(v, DOLLY_MIN, DOLLY_MAX)
+		if nd == dolly:
+			return
+		dolly = nd
+		_apply_camera()
+var dolly_target := 1.0
+
 func _init() -> void:
 	_build_environment()
 	_build_table()
@@ -658,12 +758,28 @@ func snap_view(t: float) -> void:
 	view_t = view_target
 	_apply_camera()
 
+## 设推拉目标（`Ctrl` + 滚轮走这里）。夹到 [`DOLLY_MIN`, `DOLLY_MAX`]。
+func set_dolly(v: float) -> void:
+	dolly_target = clampf(v, DOLLY_MIN, DOLLY_MAX)
+
+## 设推拉目标**并立即到位**：摆拍与测试用（与 `snap_view` 同形、同理由 ——
+## 末尾那一笔显式 `_apply_camera()` 要在，因为值没变时 setter 会早退，
+## 而"摆到这一档"这件事本身必须发生）。
+func snap_dolly(v: float) -> void:
+	dolly_target = clampf(v, DOLLY_MIN, DOLLY_MAX)
+	dolly = dolly_target
+	_apply_camera()
+
 ## 按 view_t 摆相机 —— 全文件唯一摆相机的地方（相机的位置与朝向只有这一个来源）。
 ##
 ## 俯角与「到注视点的 3D 距离」**一起**插值 —— 理由是让**两端的桌面占屏比例接近**（面积比
 ## 0.86），批次 5~9 的代价是**中段会出现一个比两端都紧的取景点** —— 但**批次 10 T2 之后
 ## 最紧的一档挪到了 3D 端**（wt=0.00、余量 81.6px；两端 81.6 / 112.1px）：相机一近，3D 端
 ## 自己成了全轨最紧处，中段那笔距离插值的"夹"反而松了。别把"中段最紧"当不变量。
+## ⚠ **一期 Task 7 之后上面那一整段读数作废**（判据换成"木桌四角 ↔ 桌垫四角"插值、
+## `CAM_DIST` 又退到 8.90）：今天的读数是 **171 → 55px、最紧 55.3px @ wt=1.00**，
+## 最紧的一档**又回到了 2D 端**（见 `CAM_DIST` 段）。留着只为说明"最紧在哪一头，
+## 是判据与距离一起定的"，别当现值用。
 ## 别把这条读成"距离不插值就会溢出"：实测反了（批次 5 的几何下量的）—— 把距离固定在 3D 端的
 ## 9.02、只插角度，底边余量是 35.1 / 21.9 / 54.2 px（wt=0/0.5/1.0），**比当时那条曲线更宽松**；
 ## 近边溢出只出现在"距离固定在 2D 端"那种假想曲线上。
@@ -688,7 +804,12 @@ func _apply_camera() -> void:
 	if camera == null:
 		return
 	var rad := deg_to_rad(lerpf(CAM_TILT_DEG, CAM_TILT_2D_DEG, view_t))
-	var d3d := lerpf(CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)), VIEW_DIST_2D, view_t)
+	# 推拉（一期 Task 7）：`dolly` 乘在**3D 端那一段距离**上，再与 `VIEW_DIST_2D` 插值。
+	# 写成"先乘再插值"是**有意的**：插值的那一端是常量 ⇒ 推拉对这一维的贡献正好是
+	# `(1.0 - view_t)`（距离之差 = `(1-wt)·d3d_3D·(dolly-1)`），`view_t = 1` 时**归零**、
+	# 结果**逐位等于** `VIEW_DIST_2D` ⇒ **2D 端的取景与格宽在推拉前后逐字节相同**
+	# （`layout_test` 有一条断言钉着它，见那里的「推拉不改 2D 端」）。
+	var d3d := lerpf(CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)) * dolly, VIEW_DIST_2D, view_t)
 	var pos := Vector3(0.0, d3d * sin(rad), d3d * cos(rad))
 	# 注视点：3D 端往近端挪一点（把整排手牌带回屏内），2D 端回原点（见 LOOK_NEAR_Z_3D）。
 	var look := Vector3(0.0, 0.0, lerpf(LOOK_NEAR_Z_3D, 0.0, view_t))
@@ -718,11 +839,19 @@ func _apply_camera() -> void:
 ## 下面两次赋值（逼近值、最后贴到目标值）都走 setter，而 setter 里就是"赋值即摆相机 + 推送"。
 ## 少一处显式调用不是省事，是要让"只有改 view_t 这一条路能改相机"成为结构上的事实。
 func _process(delta: float) -> void:
-	if is_equal_approx(view_t, view_target):
+	# 两维（视角推移 + 推拉）各有自己的目标；**都在这一处逼近**（照 `view_t` 那一套，
+	# 不另造一套）。两条都到位时早退 —— `_apply_camera` 由两个属性 setter 负责调，
+	# 这里一次显式调用都不需要（同 `view_t` 那条注释）。
+	if is_equal_approx(view_t, view_target) and is_equal_approx(dolly, dolly_target):
 		return
-	view_t = lerpf(view_target, view_t, exp(-VIEW_SNAP * delta))
-	if absf(view_t - view_target) < 0.001:
-		view_t = view_target
+	if not is_equal_approx(view_t, view_target):
+		view_t = lerpf(view_target, view_t, exp(-VIEW_SNAP * delta))
+		if absf(view_t - view_target) < 0.001:
+			view_t = view_target
+	if not is_equal_approx(dolly, dolly_target):
+		dolly = lerpf(dolly_target, dolly, exp(-VIEW_SNAP * delta))
+		if absf(dolly - dolly_target) < 0.001:
+			dolly = dolly_target
 
 func _build_viewport() -> void:
 	viewport = SubViewport.new()
@@ -824,12 +953,27 @@ func _unhandled_input(event: InputEvent) -> void:
 		# 也不代表它松开了（滚轮事件照旧改视角，与左/右键的配对互不相干）。这里若顺手清掉，
 		# 一个被消费的按下在"滚一格再松开"之后就又漏进 2D 了。
 		# 滚轮改的是**目标值**，不是当前值：相机由 _process 平滑推移过去（推移感，不是硬切）。
+		#
+		# **一期 Task 7：先判 `Ctrl`** —— 按住 Ctrl 的这一滚归**推拉**（改相机到注视点的距离），
+		# 不按 Ctrl 的**原样**走视角推移。**顺序不能反**：滚轮是切 3D/2D 的**唯一入口**
+		#（没有按钮），被推拉抢走就等于把那条路删了。修饰键读事件自己的旗标
+		#（`InputEventMouseButton` 继承 `InputEventWithModifiers`，Godot 生成鼠标事件时会填上
+		# 当前键盘修饰态）—— 不轮询 `Input.is_key_pressed`，免得"别的用途按住 Ctrl"时误判；
+		# 但**兜底也认一次实时态**：旗标万一没填上，Ctrl+滚轮会静默变成切视角（正是本项目最恨的
+		# 那种"看着没事、其实功能没了"），多这一句的代价远小于它。
+		var ctrl: bool = mb.ctrl_pressed or Input.is_key_pressed(KEY_CTRL)
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			set_view(view_target + VIEW_STEP)     # 向前滚 = 推向 2D 桌面
+			if ctrl:
+				set_dolly(dolly_target + DOLLY_STEP)   # Ctrl+前滚 = 拉远（看屋子）
+			else:
+				set_view(view_target + VIEW_STEP)      # 前滚 = 推向 2D 桌面
 			get_viewport().set_input_as_handled()
 			return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			set_view(view_target - VIEW_STEP)     # 向后滚 = 拉回 3D 第一人称
+			if ctrl:
+				set_dolly(dolly_target - DOLLY_STEP)   # Ctrl+后滚 = 推近（看棋盘）
+			else:
+				set_view(view_target - VIEW_STEP)      # 后滚 = 拉回 3D 第一人称
 			get_viewport().set_input_as_handled()
 			return
 		# 旗标的生命期恰好是「被消费的按下 → 它的松开」。所以同一个键**又按下**时先清掉：

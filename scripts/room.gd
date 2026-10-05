@@ -3,6 +3,10 @@ extends Node3D
 ## 3D 房间（一期）：天花板 / 地板 / 四面墙 / 家具 / 四把椅子与名牌 / 吊灯可见几何 / 补光。
 ##
 ## **只摆位与长相，不碰玩法** —— 与 `table_props.gd` 同一条纪律。
+## **房间不是对称的**（一期 Task 7 起）：**远半侧**（`z ∈ [-ROOM_D/2, 桌心]`）是玩家看得见的那间屋子，
+## 全按 `ROOM_D` 推导；**近半侧**多出一段 `ROOM_NEAR_EXTRA`，只为了给 3D 相机一个站的地方
+## （`Ctrl`+滚轮拉远时相机要往后走，而它原本贴在近墙上）—— 那一段**永远不在画面里**。
+## 详见 `ROOM_NEAR_EXTRA` 那段。
 ## **一律不投影**：那盏吊灯是全场唯一投影源（见 `table_3d.LAMP_LIGHT_POS`），
 ## 房间多一个投影物件就多一张阴影图，性能与氛围两头不讨好。
 ##
@@ -14,8 +18,28 @@ const ROOM_ENABLED := true
 ## 房间尺寸。以桌心为原点；桌面在 y = 0。
 ## 天花板必须高于吊灯的光（`LAMP_LIGHT_POS.y = 10.0`），否则灯吊到了屋顶外。
 const ROOM_W := 22.0          # 房间宽（x）
-const ROOM_D := 18.0          # 房间深（z）
-const ROOM_CEIL_Y := 13.0     # 天花板高
+## 房间深（z）—— **远半侧**：**远墙恒在 `z = -ROOM_D * 0.5`**（家具、四把椅子、取景全按它推导）。
+const ROOM_D := 18.0
+## **近半侧**（相机这一侧）额外多出来的进深。**一期 Task 7 追加**，理由是一期新增的
+## `Ctrl`+滚轮推拉：那个轴的"拉远端"要把相机往后挪，而**默认档的相机已经贴在近墙上了** ——
+## `CAM_DIST = 8.90`、俯角 50° ⇒ 相机在 `z = +8.90`，而房间近墙原在 `z = +9.00`
+## ⇒ 一往后拉就**穿墙到屋外**（实测 `dolly = 1.15` 的摆拍**整张全黑**：
+## 近墙与天花板双双挡在相机与桌子之间）。
+## 两种补法的取舍（实测）：**把 `ROOM_D` 整体放大不行** —— 远墙跟着往后退，
+## 默认档的远墙带会从 18% 掉到 **5%**（远墙脚 y 143 → 40，几乎贴到视口顶端）；
+## **只把近半侧加长**则**远半侧一个数都不动**（远墙、家具、椅子、默认档取景全部不变），
+## 而多出来的那一截 `z ∈ [+9, +14]` **永远不在画面里**（50° 俯角下面那条视线只到 `z ≈ +4.8`）⇒
+## 视觉上零代价。**这不是"把房间偷偷放大"**：可见的那间屋子仍是 `22 × 18`。
+## 取 5.0 是照着"拉远端"那一档订的：`dolly = 1.40` 时相机在 `z = +12.46`，离近墙还有 1.54。
+const ROOM_NEAR_EXTRA := 5.0
+## 天花板高。**一期 Task 7：13.0 → 16.0**（同一件事的另一半：拉远端把相机**顶高**到
+## `y = d3d·sin50°`，`dolly = 1.40` 时到 `+14.85` —— 天花板还留在 13 的话相机就窜到屋顶上方，
+## 而天花板是**双面**的 ⇒ 又一张全黑的摆拍）。**这一项视觉上也是零代价**：
+## 四面墙是**纯色平面**（`_lit_mat(.., "")`、无贴图），加高只把墙往画面上方延长，
+## 而画面上方永远是那条近黑背景；天花板本身在 50° 俯角下**从不入画**。
+## ⇒ 屋子读起来的进深与层高没变（可见部分仍是 `22 × 18`、墙脚到视口顶边那一截），
+## 变的只是"相机有地方站"。
+const ROOM_CEIL_Y := 16.0
 
 ## 地板高度（**公开常量**：`table_3d` 建桌子底座时读它 —— 方向是 `table_3d` → `GameRoom`，
 ## 与 `GameRoom.build()` 同向；房间仍然不反向依赖桌子）。
@@ -92,6 +116,10 @@ var _ceil_mat: StandardMaterial3D
 
 func _make_materials() -> void:
 	_floor_mat = _lit_mat(Color(0.30, 0.26, 0.22), "res://assets/textures/wood_floor.jpg")
+	# 地板比"可见房间"多出**近半侧**那一截（见 `ROOM_NEAR_EXTRA`）⇒ 木纹的重复密度按
+	# **地板自己的尺寸**算，否则地板一长、木条被拉长 1.28×（`_lit_mat` 里那份是按
+	# `ROOM_W`/`ROOM_D` 写的，那里服务的是墙 / 天花板 —— 它们不带贴图，无所谓）。
+	_floor_mat.uv1_scale = Vector3(ROOM_W / 3.0, (ROOM_D + ROOM_NEAR_EXTRA) / 3.0, 1.0)
 	_wall_mat  = _lit_mat(Color(0.42, 0.40, 0.38), "")   # 白灰墙
 	_ceil_mat  = _lit_mat(Color(0.34, 0.33, 0.33), "")
 
@@ -200,8 +228,12 @@ func _build_shell() -> void:
 	# 而取景判据正是按木桌四角量的；另外与桌垫共面还会闪）。
 	# 地板降到 `FLOOR_Y` 之后这两条都不再成立（外框在 3.7 之上，离地板远得很），
 	# 见 `FLOOR_Y` 那段。
-	_plane("Floor",   Vector3(0, FLOOR_Y, 0),      Vector2(ROOM_W, ROOM_D), Vector3.ZERO,         _floor_mat)
-	_plane("Ceiling", Vector3(0, ROOM_CEIL_Y, 0),  Vector2(ROOM_W, ROOM_D), Vector3.ZERO,         _ceil_mat)
+	# 地板 / 天花板 / 东西两面墙、连近墙一起：**都按"远半侧 + 近半侧"那两段摆**（见 `ROOM_NEAR_EXTRA`）。
+	# 远墙（WallN）**不动** —— 它与家具、椅子、取景是同一份基准。
+	var span_z: float = ROOM_D + ROOM_NEAR_EXTRA           # 地板的总进深（远墙 → 近墙）
+	var mid_z: float = ROOM_NEAR_EXTRA * 0.5               # 地板中心（远半侧对称 ⇒ 中心朝近端挪半段）
+	_plane("Floor",   Vector3(0, FLOOR_Y, mid_z),     Vector2(ROOM_W, span_z), Vector3.ZERO, _floor_mat)
+	_plane("Ceiling", Vector3(0, ROOM_CEIL_Y, mid_z), Vector2(ROOM_W, span_z), Vector3.ZERO, _ceil_mat)
 	# 四面墙：竖直的 PlaneMesh（默认躺在 XZ 平面，绕 X 转 90° 立起来）
 	var walls := Node3D.new()
 	walls.name = "Walls"
@@ -211,9 +243,10 @@ func _build_shell() -> void:
 	var h := ROOM_CEIL_Y - FLOOR_Y
 	var wy := (ROOM_CEIL_Y + FLOOR_Y) * 0.5
 	_plane("WallN", Vector3(0, wy, -ROOM_D * 0.5), Vector2(ROOM_W, h), Vector3(90, 0, 0),    _wall_mat, walls)
-	_plane("WallS", Vector3(0, wy,  ROOM_D * 0.5), Vector2(ROOM_W, h), Vector3(-90, 0, 0),   _wall_mat, walls)
-	_plane("WallW", Vector3(-ROOM_W * 0.5, wy, 0), Vector2(ROOM_D, h), Vector3(90, 90, 0),   _wall_mat, walls)
-	_plane("WallE", Vector3( ROOM_W * 0.5, wy, 0), Vector2(ROOM_D, h), Vector3(90, -90, 0),  _wall_mat, walls)
+	_plane("WallS", Vector3(0, wy,  ROOM_D * 0.5 + ROOM_NEAR_EXTRA),
+		Vector2(ROOM_W, h), Vector3(-90, 0, 0), _wall_mat, walls)
+	_plane("WallW", Vector3(-ROOM_W * 0.5, wy, mid_z), Vector2(span_z, h), Vector3(90, 90, 0),  _wall_mat, walls)
+	_plane("WallE", Vector3( ROOM_W * 0.5, wy, mid_z), Vector2(span_z, h), Vector3(90, -90, 0), _wall_mat, walls)
 	_build_furniture()
 	_build_chairs()
 

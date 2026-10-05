@@ -754,14 +754,24 @@ func _run() -> void:
 	var min_margin := INF
 	var min_margin_wt := -1.0
 	var margin_log := ""
-	# 四角一律从**桌垫**（TABLE_SIZE）现取，不写死 ±4：桌面不再是正方形（进深由窗口比例定）。
-	# 为什么是桌垫而不是外圈木纹：木纹是"桌子本身"，第一人称下桌子伸出画面是自然的；
-	# 要全程入画的是**看得见的棋面**（桌垫）。
-	var hw: float = t3.TABLE_SIZE.x * 0.5
-	var hd: float = t3.TABLE_SIZE.y * 0.5
+	# 【一期 Task 7】判据按 `view_t` 插值：3D 端（wt=0）= **木桌四角**、2D 端（wt=1）= **桌垫四角**。
+	# 方向容易搞反：**木桌比桌垫大** ⇒ 3D 端是**收紧**、不是放宽（设计 §四）。
+	# 为什么 3D 端要收紧回木桌：房间里要有"上缘那条带子"，**木桌远边必须进画** ——
+	# 只认桌垫的话木纹可以整条出画，上缘就永远只剩桌垫自己的边缘（批次 10 松掉的那条，
+	# 现在按用户 2026-10-05 的拍板收回来）。
+	# 四角一律从**两个现成的常量**取，不写死数字：桌面不是正方形（进深由窗口比例定）。
+	var hw_mat: float = t3.TABLE_SIZE.x * 0.5
+	var hd_mat: float = t3.TABLE_SIZE.y * 0.5
+	var hw_wood: float = t3.WOOD_HALF_W        # Step 0 刚加的（= TABLE_W/2 + WOOD_FRAME）
+	var hd_wood: float = t3.WOOD_HALF_D
+	# **推拉只扫默认档**（`dolly == 1.0`）：这条契约是"默认取景"的契约，推拉值漏进来
+	# 就不是同一条合同了（那条轴由下面那组推拉断言管）。
+	t3.snap_dolly(1.0)
 	for i in 21:
 		var wt := i * 0.05
 		t3.snap_view(wt)
+		var hw: float = lerpf(hw_wood, hw_mat, wt)
+		var hd: float = lerpf(hd_wood, hd_mat, wt)
 		var m := INF
 		for sx in [-hw, hw]:
 			for sz in [-hd, hd]:
@@ -774,25 +784,52 @@ func _run() -> void:
 	_check(min_margin > 5.0,
 		"整条轨道 21 档都留有余量（最小 %.1f px @ view_t=%.2f，须 > 5px；每档余量 %s）"
 			% [min_margin, min_margin_wt, margin_log])
+
+	# 【一期 Task 7 新增】上缘必须留出房间带 —— 木桌远边不得贴到视口顶端，否则"房间"根本没露头。
+	# ⚠ **这里不再钉死 32%**（2026-10-05 改）：32% 与"格子 ≥32px"数学上互斥（spec §四 追加一节），
+	# 解结的办法是加推拉轴、把二选一交给玩家现场掌控 ⇒ 默认档的**硬门是格子 ≥32px**（下面那条），
+	# 房间带取"32px 还能撑住的**最外**取景"、实测值打印出来（**不许静默取值**）。
+	t3.snap_view(0.0)
+	var top_edge_y := INF
+	for sx in [-hw_wood, hw_wood]:
+		top_edge_y = minf(top_edge_y, (t3.camera.unproject_position(
+			Vector3(sx, 0.0, -hd_wood)) as Vector2).y)
+	print("  [实测] 默认档房间带 = 视口高 %.1f%%（木桌远边 y=%.1f / 视口 %.0f）"
+		% [100.0 * top_edge_y / vr.size.y, top_edge_y, vr.size.y])
+	_check(top_edge_y >= vr.size.y * 0.03,
+		"3D 端上缘留出房间带（木桌远边 y=%.1f ≥ 视口高 3%% = %.1f）"
+			% [top_edge_y, vr.size.y * 0.03])
 	# 【R42】只钉「四个角都在画面内」是能被骗过去的：把 VIEW_DIST_2D 调大让桌面整体变小，
 	# 四角照样落在画面内，而 2D 端就成了一张小图 —— 验收要求是「始终在画面内**且大小接近**」。
 	# 所以再钉一条：两端桌面投影**包围盒的面积比**必须落在 [0.6, 1.6]（用 unproject_position
 	# 把四角投影出来算包围盒）。少了这条，"把桌面缩小"这种退化会全绿通过。
 	var boxes: Array = []
-	for wt in [0.0, 1.0]:
-		t3.snap_view(wt)
+	# 【一期 Task 7 改】"两端大小接近"这一对**换了对象**：原来比的是「3D 默认档 ↔ 2D 端」，
+	# 那时两端都是"读棋盘"的档。用户拍板"默认看屋子"之后，3D 默认档**有意**缩到 32px 硬底线
+	# （面积只有 2D 端的 ~2.6 分之一）—— 这时再拿它对 2D 端比"大小接近"就**前提不成立**了。
+	# **不是放宽、是换对比对象**：仍然比"两张**读棋盘**的视图"，即 **2D 端 ↔ 3D 推近端**
+	# （`DOLLY_MIN`，实测 44.5px 对 53.2px —— 正是这条断言要的"大小接近"）；
+	# 默认档与 2D 端的面积比仍按实测打印出来（读数、不当门槛）。**区间 [0.6,1.6] 一个字没动。**
+	for spec in [[0.0, t3.DOLLY_MIN], [0.0, 1.0], [1.0, 1.0]]:
+		t3.snap_dolly(spec[1])
+		t3.snap_view(spec[0])
 		var mn := Vector2(INF, INF)
 		var mx := Vector2(-INF, -INF)
-		for sx in [-hw, hw]:
-			for sz in [-hd, hd]:
+		for sx in [-hw_mat, hw_mat]:
+			for sz in [-hd_mat, hd_mat]:
 				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
 				mn = mn.min(sp)
 				mx = mx.max(sp)
 		boxes.append(Rect2(mn, mx - mn))
-	var area_ratio: float = (boxes[1] as Rect2).get_area() / (boxes[0] as Rect2).get_area()
-	_check(area_ratio > 0.6 and area_ratio < 1.6,
-		"两端桌面投影大小接近（面积比 %.2f，须在 [0.6,1.6]；3D 端 %s / 2D 端 %s）"
-			% [area_ratio, boxes[0], boxes[1]])
+	var area_near: float = (boxes[2] as Rect2).get_area() / (boxes[0] as Rect2).get_area()
+	var area_def: float = (boxes[2] as Rect2).get_area() / (boxes[1] as Rect2).get_area()
+	print("  [实测] 桌面投影面积比：2D端/3D推近端 = %.2f（门槛 [0.6,1.6]）；2D端/3D默认档 = %.2f"
+		% [area_near, area_def]
+		+ "（**读数**：默认档是「看屋子」那一档，有意比 2D 端小，不当门槛）")
+	_check(area_near > 0.6 and area_near < 1.6,
+		"两端**读棋盘**的视图投影大小接近（2D端 / 3D推近端 面积比 %.2f，须在 [0.6,1.6]；3D 推近端 %s / 2D 端 %s）"
+			% [area_near, boxes[0], boxes[2]])
+	t3.snap_dolly(1.0)
 	# ---- 批次 10 T2：钉住"字更大"的可执行判据 = 一格的**屏幕宽度** ----
 	# 前面两条（余量 / 面积比）只保证「整块桌垫在画面里、两端大小接近」——**只把相机往后退**
 	# 就照样全绿，而桌子在屏幕里整体缩小、"字更大"这个本批目标恰恰落空。
@@ -800,18 +837,26 @@ func _run() -> void:
 	#  都不会变 —— 那种挪法说明不了任何事。这条拦的是**只动相机**那一档。）
 	# 补一条**绝对尺寸**：
 	# 取**最不利**的一格（远端正中：50° 俯角下它被透视压得最扁），量它四角投影的包围盒宽。
+	t3.snap_dolly(1.0)
 	t3.snap_view(0.0)
 	await process_frame
 	t3.board.fit_overview(true)      # 量格宽要 BoardView 的取景变换（_view_from_world）是当前态
 	await process_frame
 	var probe_idx: int = t3.board.grid_to_index(GameData.BOARD_COLS / 2, 0)   # 远端正中那格
 	var probe_w3: float = _tile_screen_w(t3, probe_idx)
+	t3.snap_dolly(t3.DOLLY_MIN)
+	await process_frame
+	var probe_w_near: float = _tile_screen_w(t3, probe_idx)
+	t3.snap_dolly(t3.DOLLY_MAX)
+	await process_frame
+	var probe_w_far: float = _tile_screen_w(t3, probe_idx)
+	t3.snap_dolly(1.0)
 	t3.snap_view(1.0)
 	await process_frame
 	var probe_w2: float = _tile_screen_w(t3, probe_idx)
 	t3.snap_view(0.0)
-	print("    格子屏幕宽（批次 12 A2b）：3D 端 %.1fpx / 2D 端 %.1fpx（批次 12 A2 是 41.2 / 50.0）"
-		% [probe_w3, probe_w2])
+	print("    格子屏幕宽（一期 Task 7）：3D 默认档 %.1fpx / 推近端(%.1f) %.1fpx / 拉远端(%.1f) %.1fpx / 2D 端 %.1fpx"
+		% [probe_w3, t3.DOLLY_MIN, probe_w_near, t3.DOLLY_MAX, probe_w_far, probe_w2])
 	# **下限按实测基线修正，不是许愿值**（计划 Step 1 的注 + Ruling R3）：计划初稿写的 70px
 	# 是"许愿值"（作者估的基线 ~63px 并未实测）。量出来的起点是 **34.5px（3D）/ 37.9px（2D）**
 	# ⚠ **这一对是【几何改完、相机还没动】时的值**（T2 的 BASE = T1 之后），**不是批次 9 的基线**；
@@ -864,11 +909,108 @@ func _run() -> void:
 	#      不溢出"**（22px 下 4 字名 ≈ 88px < 盒宽 92）；`TILE` 仍是 112.0 未动；
 	#   ② 探针只守**远端正中**那一格（`probe_idx = grid_to_index(BOARD_COLS/2, 0)`）—— **远端
 	#      【角】格没被覆盖**（角格通常投影更宽 ⇒ 这条偏保守，宁可漏也不误红）。
-	_check(probe_w3 >= 47.0,
-		"3D 端格子屏幕宽 ≥ 47.0px（实得 %.1f；批次 12 A2 是 41.2，本批换镜头 CAM_FOV 55→39 拿到）"
-			% probe_w3)
+	#
+	# ---- **一期 Task 7：3D 端那条下限换了判据（47.0 → 32.0）** ----
+	# 批次 12 A2b 那条 47.0 钉的是"3D 端格子变大"（用户当时要"棋盘比例放大"）。
+	# 用户 2026-10-05 拍板"**默认看屋子**"之后，3D 默认档**有意**后退到**格子 32px 的硬底线**
+	#（spec §九 的回退触发器）：默认那档归"看屋子"，"读棋盘"改由 **Ctrl+滚轮推近端**（44.5px）
+	# 与 **2D 端**（53.2px）承担 ⇒ 47.0 这条**前提反转**，不是放宽。
+	# 三条一起钉住那个取舍（缺一条就能靠"悄悄改一个端点"骗过去）：
+	#   ① 默认档 ≥ 32px（硬底线，**再往外推一点点就红** —— 这条与"房间带尽量大"共同定档）；
+	#   ② 推近端 ≥ 默认档（"读棋盘"的退路不许丢，spec §九 后半句）；
+	#   ③ 2D 端下限 52.6 **一个字没动**（那条契约本期不许碰）。
+	_check(probe_w3 >= 32.0,
+		"**默认档**格子屏幕宽 ≥ 32.0px（spec §九 硬底线；实得 %.1f —— 批次 12 A2b 是 47.3，" \
+			% probe_w3 + "本档为「看屋子」有意后退到 32px 上沿）")
+	_check(probe_w_near >= probe_w3,
+		"**推近端**格子屏幕宽 ≥ 默认档（实得 %.1f ≥ %.1f —— 「读棋盘」那条退路不许丢）"
+			% [probe_w_near, probe_w3])
+	_check(probe_w_far > 0.0,
+		"拉远端格子屏幕宽 > 0（实得 %.1f —— 那一端是「看屋子」用的，**不设下限**，只钉" \
+			% probe_w_far + "它还看得见棋盘）")
 	_check(probe_w2 >= 52.6,
-		"2D 端格子屏幕宽 ≥ 52.6px（实得 %.1f；批次 12 A2 是 50.0）" % probe_w2)
+		"2D 端格子屏幕宽 ≥ 52.6px（实得 %.1f；那条契约本期一字未动）" % probe_w2)
+
+	# ---- 一期 Task 7：推拉轴的两条专属断言（③ 不改 2D 端 / ④ 拉远端把远墙拉进画）----
+	print("== 一期 Task 7：Ctrl+滚轮推拉（第二条轴）==")
+	# ③ **推拉不改 2D 端**：`view_t = 1` 时推拉的权重为 0 ⇒ 推拉前后 2D 端的取景与格宽
+	# **逐字节相同**。这条是本期唯一不许碰的契约（2D 端"桌垫四角入画"），
+	# 而推拉是一个**新加的自由度** —— 它最容易的翻车方式就是"顺手把 2D 端也乘了一下"。
+	# 量法：三个推拉档各摆一次 2D 端，比 `camera.global_transform`（精确 `==`，不是近似）
+	# 与格子屏幕宽。基准取推拉默认档。
+	var ref_xf := Transform3D()
+	var ref_tw := 0.0
+	var dolly_2d_ok := true
+	var dolly_2d_log := ""
+	for dv in [1.0, t3.DOLLY_MIN, t3.DOLLY_MAX]:
+		t3.snap_dolly(dv)
+		t3.snap_view(1.0)
+		await process_frame
+		var xf: Transform3D = t3.camera.global_transform
+		var tw := _tile_screen_w(t3, probe_idx)
+		dolly_2d_log += "dolly%.1f:pos%s/w%.3f " % [dv, xf.origin, tw]
+		if dv == 1.0:
+			ref_xf = xf
+			ref_tw = tw
+		elif xf != ref_xf or tw != ref_tw:
+			dolly_2d_ok = false
+	_check(dolly_2d_ok,
+		"推拉不改 2D 端（`view_t = 1` 时推拉权重为 0：相机变换与格宽逐字节相同；%s）" % dolly_2d_log)
+
+	# ④ **拉远端把远墙拉进画** —— 否则"看屋子"那一端形同虚设。
+	# 远墙在 `z = -ROOM_D * 0.5`；判据三条一起（缺一条就能骗过去）：
+	#   * 墙脚线（`y = FLOOR_Y` 那一圈）**落在视口内** —— 墙脚在画内 ⇒ 墙脚之上那一片就是远墙；
+	#   * 它比**木桌远边**更靠上（屏幕 y 更小）—— 否则那条线可能是被桌子挡住的/看错成地板缝；
+	#   * ⚠ **并且必须比默认档看得更多**（墙脚线在屏幕上更靠下 = 露出更多墙）。
+	#     这第三条是**实测补上的**：地板降到 `FLOOR_Y` 之后，**默认档的上缘本来就能打到远墙**
+	#     （实测墙脚 y=143 就在画内，spec §六 记着这件事）⇒ 只钉"入画"那两条**恒真**，
+	#     等于一条什么都没断言的断言。加一条"远墙带必须比默认档大出一档"（实测 **+54px**），
+	#     "看屋子"那一端才真的被钉住（**不许静默留一条恒真的断言**）。
+	#   * ⚠ **还有一件投影量不出来的事**（Task 7 实施时踩的坑）：远端**必须在屋里** ——
+	#     相机一过近墙 / 天花板就窜到屋外，而它们是**双面**的 ⇒ **整张摆拍全黑**，
+	#     上面这三条**全是绿的**。`DOLLY_MAX` 的上限因此由 `room.gd` 的
+	#     `ROOM_NEAR_EXTRA` / `ROOM_CEIL_Y` 订（见那两段与 `table_3d.DOLLY_MAX` 段）；
+	#     这条投影断言拦不住它，**靠出图核**（`shots/t7b_dollyfar_table_plain.png`）。
+	t3.snap_dolly(t3.DOLLY_MAX)
+	t3.snap_view(0.0)
+	await process_frame
+	var far_z: float = -GameRoom.ROOM_D * 0.5
+	var wall_in := 0
+	var wall_log := ""
+	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
+		var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, GameRoom.FLOOR_Y, far_z))
+		wall_log += "(%.0f,%.0f) " % [sp.x, sp.y]
+		if sp.x >= vr.position.x and sp.x <= vr.position.x + vr.size.x \
+				and sp.y >= vr.position.y and sp.y <= vr.position.y + vr.size.y:
+			wall_in += 1
+	var wood_edge_y := INF
+	for sx in [-hw_wood, hw_wood]:
+		wood_edge_y = minf(wood_edge_y, (t3.camera.unproject_position(
+			Vector3(sx, 0.0, -hd_wood)) as Vector2).y)
+	var wall_y := INF
+	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
+		wall_y = minf(wall_y, (t3.camera.unproject_position(
+			Vector3(sx, GameRoom.FLOOR_Y, far_z)) as Vector2).y)
+	# 默认档的墙脚线（同样三点取最高那条）—— "拉远端比默认档多看多少"
+	t3.snap_dolly(1.0)
+	t3.snap_view(0.0)
+	await process_frame
+	var wall_y_def := INF
+	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
+		wall_y_def = minf(wall_y_def, (t3.camera.unproject_position(
+			Vector3(sx, GameRoom.FLOOR_Y, far_z)) as Vector2).y)
+	print("  [实测] 拉远端（dolly %.1f）：远墙墙脚 %s/ 木桌远边 y=%.0f（视口 %.0f 高）"
+		% [t3.DOLLY_MAX, wall_log, wood_edge_y, vr.size.y])
+	print("  [实测] 远墙带：默认档墙脚 y=%.0f → 拉远端 y=%.0f（露出多 %.0fpx = 视口高 %.1f%%）"
+		% [wall_y_def, wall_y, wall_y - wall_y_def, 100.0 * (wall_y - wall_y_def) / vr.size.y])
+	_check(wall_in == 3 and wall_y < wood_edge_y,
+		"拉远端把远墙拉进画（墙脚三点入画 %d/3、且都在木桌远边之上：墙脚 y=%.0f < 木桌远边 y=%.0f）"
+			% [wall_in, wall_y, wood_edge_y])
+	_check(wall_y - wall_y_def >= vr.size.y * 0.05,
+		"拉远端比默认档**多看一截屋子**（远墙带 %.0fpx ≥ 视口高 5%% = %.0fpx：默认档 y=%.0f → 拉远端 y=%.0f）"
+			% [wall_y - wall_y_def, vr.size.y * 0.05, wall_y_def, wall_y])
+	t3.snap_dolly(1.0)
+	t3.snap_view(0.0)
 	# 滚轮改的是目标值，不是硬切
 	t3.snap_view(0.0)
 	t3.set_view(1.0)
@@ -933,6 +1075,53 @@ func _run() -> void:
 	_check(is_equal_approx(t3.view_target, 0.0) and t3.view_t >= -0.0001,
 		"连推 10 格到 3D 端 ⇒ 目标夹在 0.0 不过冲（实得目标 %.2f / 当前 %.3f）"
 			% [t3.view_target, t3.view_t])
+
+	# ---- 一期 Task 7：`Ctrl` + 滚轮 = 推拉（**同一条件，两种语义**）----
+	# 这条必须走**真输入链路**：`Ctrl` 那条判断若接反（或干脆漏了），功能静默变成"切视角"，
+	# 而**看代码很难发现**。三条一起钉：
+	#   ① 带 Ctrl 的一滚只改 `dolly_target`、`view_target` 一动不动（不抢滚轮原来的活）；
+	#   ② 不带 Ctrl 的一滚仍走视角推移、且**推拉目标一动不动**（两维互不串）；
+	#   ③ 两端夹在 [`DOLLY_MIN`, `DOLLY_MAX`]（同 `view_target` 那条 clamp 的道理）。
+	t3.snap_view(0.0)
+	t3.snap_dolly(1.0)
+	var ctrl_up := InputEventMouseButton.new()
+	ctrl_up.button_index = MOUSE_BUTTON_WHEEL_UP
+	ctrl_up.pressed = true
+	ctrl_up.ctrl_pressed = true
+	root.push_input(ctrl_up)
+	_check(is_equal_approx(t3.dolly_target, 1.0 + t3.DOLLY_STEP) and is_equal_approx(t3.view_target, 0.0),
+		"Ctrl+滚轮向前一格 ⇒ 只改推拉目标（实得 %.2f），视角目标仍 0（实得 %.2f）"
+			% [t3.dolly_target, t3.view_target])
+	await process_frame
+	_check(t3.dolly > 1.0 and t3.dolly <= 1.0 + t3.DOLLY_STEP + 0.0001,
+		"注入后推拉当前值朝目标走且不过冲（实得 %.3f，目标 %.2f）" % [t3.dolly, t3.dolly_target])
+	var ctrl_down := InputEventMouseButton.new()
+	ctrl_down.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	ctrl_down.pressed = true
+	ctrl_down.ctrl_pressed = true
+	root.push_input(ctrl_down)
+	_check(is_equal_approx(t3.dolly_target, 1.0),
+		"Ctrl+滚轮向后一格 ⇒ 推拉目标减回默认档（实得 %.2f）" % t3.dolly_target)
+	await process_frame
+	t3.snap_dolly(1.0)
+	for i in 20:
+		root.push_input(ctrl_up)
+		await process_frame
+	_check(is_equal_approx(t3.dolly_target, t3.DOLLY_MAX),
+		"连拉 20 格 ⇒ 推拉目标夹在 DOLLY_MAX（实得 %.2f / 上限 %.2f）"
+			% [t3.dolly_target, t3.DOLLY_MAX])
+	for i in 20:
+		root.push_input(ctrl_down)
+		await process_frame
+	_check(is_equal_approx(t3.dolly_target, t3.DOLLY_MIN),
+		"连推 20 格 ⇒ 推拉目标夹在 DOLLY_MIN（实得 %.2f / 下限 %.2f）"
+			% [t3.dolly_target, t3.DOLLY_MIN])
+	# 不带 Ctrl：回到视角推移，且推拉目标**一动不动**（留在刚夹到的下限）
+	root.push_input(wheel_up)
+	_check(is_equal_approx(t3.view_target, t3.VIEW_STEP) and is_equal_approx(t3.dolly_target, t3.DOLLY_MIN),
+		"不按 Ctrl 的一滚 ⇒ 仍走视角推移（实得 %.2f），推拉目标纹丝不动（实得 %.2f）"
+			% [t3.view_target, t3.dolly_target])
+	t3.snap_dolly(1.0)
 	t3.snap_view(0.0)
 
 	print("== 事件注入端到端：屏幕点 → 3D 映射 → SubViewport 内的 2D 控件 ==")
