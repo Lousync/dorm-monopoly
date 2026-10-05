@@ -740,9 +740,14 @@ func _build_viewport() -> void:
 	# 只需"桌子已经在那儿"。它**只摆位与长相**，一行玩法都不碰。
 	# `ROOM_ENABLED=false` 时 `build()` 返回 null（本期的保命开关，退回到"只有桌子"的样子）
 	# ⇒ 这里**不能**当成必然拿到节点用（下一行没有别的话要接它，是故意的）。
-	# `TABLE_SIZE` 一起传进去：四把椅子要围着桌子摆，房间得知道桌子多大（**只收这个数**，
+	# 桌面尺寸一起传进去：四把椅子要围着桌子摆，房间得知道"桌子到哪儿为止"（**只收这个数**，
 	# 房间仍然不反向依赖桌子 —— 与 `LAMP_LIGHT_POS` 同一条规矩）。
-	var room := GameRoom.build(self, LAMP_LIGHT_POS, TABLE_SIZE)
+	# **传的是连木纹外框一起的半个桌面**（`WOOD_HALF_W` / `WOOD_HALF_D` 那两项；Task 7 Step 0
+	# 会把它们提成常量，届时这里换成那两个名字，行为一字不变）：椅子是贴着**整张桌子**的外沿
+	# 摆的、不是贴着桌垫摆的，而木纹的宽度是桌子的实现 ⇒ 由桌子这边算好递过去，
+	# `room.gd` 里就不必再写一遍那 0.7（一期 Task 5 Fix round 1）。
+	var room := GameRoom.build(self, LAMP_LIGHT_POS,
+		Vector2(TABLE_SIZE.x * 0.5 + WOOD_FRAME, TABLE_SIZE.y * 0.5 + WOOD_FRAME))
 
 # ---------------- 屏幕层暗角（设计稿 §三 / §6.4） ----------------
 

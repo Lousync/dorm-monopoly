@@ -350,6 +350,34 @@ func _run() -> void:
 			"家具与椅子都站在地板上（底面 == FLOOR_Y=%.2f 容差 0.05；悬空 %d / 陷入 %d；逐件偏差 %s）"
 				% [GameRoom.FLOOR_Y, lifted, sunk, stand_log])
 
+		# ---- 一期 Task 5 Fix round 1：spec §六 的比例（**能自动逮住"缩放定错档"的那条**）----
+		# §六 那张用户拍过板的比例表有两个可执行判据，两个都从**实测 AABB**（= 节点的世界 AABB，
+		# 也就是 `FURNITURE_SCALE` 已经乘进去之后的尺寸）算 —— **不写死任何米数**，缩放改档它跟着变：
+		#   ① **书桌顶面与桌面齐平**（桌面在 y = 0）。实得 `FLOOR_Y + 3.84 = +0.14`，容差 ±0.35。
+		#   ② **椅背顶高出桌面**，正余量。实得 `+1.00`，下界 +0.2。
+		# **变红验证**（Fix round 1 做过）：把 `FURNITURE_SCALE` 临时改回 5.0 ⇒ 两条同时红
+		#（书桌顶面 −1.78、椅背顶 −0.66），其余断言不受影响 —— 这正是 ×5 那档的病：
+		# 家具只有真实家具的一半大，§六 要的"椅背挂名牌"摆不出来。
+		var desk_top := INF
+		if stand_boxes.has("desk"):
+			desk_top = (stand_boxes["desk"] as AABB).end.y
+		_check(absf(desk_top) <= 0.35,
+			"书桌顶面与桌面齐平（顶面 y=%.2f，|y| ≤ 0.35；桌面在 y=0 —— spec §六）" % desk_top)
+		# 椅背顶取**座位框里除名牌之外**那部分几何的 AABB 顶（名牌挂在椅背顶上、会把它再抬 0.2）
+		var back_top := -INF
+		if seat_root != null:
+			var s0: Node3D = seat_root.get_child(0)
+			for ch in s0.get_children():
+				if ch.name == "Nameplate":
+					continue
+				for m in (ch as Node).find_children("*", "GeometryInstance3D", true, false):
+					var g2 := m as MeshInstance3D
+					if g2 == null or g2.mesh == null:
+						continue
+					back_top = maxf(back_top, (g2.global_transform * g2.mesh.get_aabb()).end.y)
+		_check(back_top >= 0.2,
+			"椅背顶高出桌面（顶面 y=%.2f ≥ 0.2；桌面在 y=0 —— spec §六「椅背挂名牌」那条）" % back_top)
+
 		# ---- 一期 Task 5：四把椅子 + 椅背名牌 + 座位锚点 ↔ peer 映射 ----
 		# **这一节是二期的接口**（spec §十：每把椅子定死「位置 + 朝向」、并挂一个名牌挂点，
 		# 二期"把人放上去"只改这一处）。这里量两件：
