@@ -84,6 +84,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/casino_test.gd    # 赌场单测
 & $G --headless --path . --script tests/regression_test.gd # 回归单测（审查发现的问题逐条钉住）
 & $G --headless --path . --script tests/aberration_test.gd # 畸变单测（两道闸门 + 逐条效果）
+& $G --headless --path . --script tests/tech_test.gd    # 开局科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
 & $G --headless --path . --script tests/hud_test.gd      # HUD 回归（名册/底栏/客户端视角）

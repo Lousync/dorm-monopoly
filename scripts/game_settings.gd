@@ -28,12 +28,19 @@ var ab_freq := "关"   # 随机触发频率（关 = 整局不触发）
 var ab_dur := 2       # 持续型畸变的默认时长基准（玩家回合数，条目可覆盖）
 var ab_cond := true   # 是否允许条件型畸变触发
 
+# ---- 开局科技（doc/game-design/开局科技.md；关 = 发车不定档不选卡） ----
+const TECH_SW: Array[String] = ["off", "on"]
+const TECH_SW_LABELS := {"off": "关", "on": "开"}
+
+var tech_on := false  # 科技开关（默认关）
+
 func copy() -> GameSettings:
 	var s := GameSettings.new()
 	s.timeout_tier = timeout_tier
 	s.ab_freq = ab_freq
 	s.ab_dur = ab_dur
 	s.ab_cond = ab_cond
+	s.tech_on = tech_on
 	return s
 
 ## 某环节的操作窗口秒数；<= 0 表示不限时。

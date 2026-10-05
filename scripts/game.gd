@@ -112,6 +112,14 @@ var ab_cond_row: HBoxContainer  # 对局内设置面板：条件触发 chips（�
 var ab_title: Label           # 对局内设置面板：畸变小节标题（与只读行互斥显隐）
 var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
+# ---------------- 开局科技（host 状态，规则见 doc/game-design/开局科技.md） ----------------
+var _tech_tier := ""          # 本局科技等级（掷骰定档，空 = 未开科技）
+var _tech_wait_token := -1    # 当前等待选卡的 token（-1 = 无）
+var _tech_pick := {}          # {"token", "name"}：选卡应答
+var _awaiting_tech_peer := 0  # 正在选科技的玩家（0 = 无，进快照 await 状态）
+var _tech_offered: Array = [] # 当前给该玩家的 3 个候选（校验回包用）
+var _tech_offer_layer: Control  # 选卡弹层（临时全屏层，答完即毁）
+
 # ---------------- 格详情卡 / 规则说明（左下角，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
 var _info_tile := -1              # 格详情卡当前挂在哪一格（-1 = 没显示）
@@ -348,6 +356,8 @@ func _build_hp() -> Array:
 			"item_used_n": 0, "cost_pen": [], "first_used": false,
 			"roll_bonus": 0, "reroll_next": false, "silence": 0, "silence2": 0, "shield": 0,
 			"charm_used": false, "emg_used": false, "loan_left": 0, "rework": 3,
+			# 开局科技新增字段（tech = 所选科技名；wuyun/yanguang/kingtu = 对应科技的计数）
+			"tech": "", "wuyun_left": 0, "yanguang_left": 0, "kingtu": 0,
 		})
 	return out
 
@@ -367,10 +377,176 @@ func _host_setup() -> void:
 		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
 	_log("转盘决定步数（0~12）：转到 12 满值再动一次，转到 0 就地再结算脚下格子；连续三次 10+ 会被查寝抓走哦")
 	await _wait(1.5)
+	if _settings.tech_on:
+		await _tech_phase()   # 开局科技：掷骰定档 + 全员三选一（见开局科技.md）
 	_broadcast_state()
 	if at_mode == "host":
 		get_tree().create_timer(3.0).timeout.connect(_autotest_watch)
 	_run_game()
+
+# ================= 房主：开局科技 =================
+# 掷骰定档（1~2 白银 / 3~4 黄金 / 5~6 钻石，等分、全场同档）→ 每人私密同档三选一
+# （bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。规则：doc/game-design/开局科技.md。
+
+func _tech_phase() -> void:
+	var pips := randi_range(1, 6)
+	_tech_tier = TechData.tier_by_dice(pips)
+	_log("【开局科技】掷骰定档：掷出 %d —— 本局科技等级「%s」！" % [pips, _tech_tier], "#f0c064")
+	_broadcast_state()
+	await _wait(0.8)
+	for p in hp:
+		if not running:
+			return
+		var names := _tech_sample(_tech_tier)
+		var token := _tech_ask(p, names)
+		var sec := GameSettings.turn_seconds(_settings.timeout_tier, "prompt")
+		var deadline := Time.get_ticks_msec() + int(maxf(sec, 5.0) * 1000.0)
+		while running and _tech_pick.get("token", -1) != token:
+			if bool(p.bot):
+				_tech_pick = {"token": token, "name": String(names[randi_range(0, names.size() - 1)])}
+				break
+			if Time.get_ticks_msec() >= deadline:
+				_tech_pick = {"token": token, "name": String(names[randi_range(0, names.size() - 1)])}
+				_log("%s 选科技超时，随机拍了一张" % p.name, "#8a90a5")
+				break
+			await _wait(_WINDOW_TICK)
+		_awaiting_tech_peer = 0
+		var picked := String(_tech_pick.get("name", ""))
+		if picked == "":
+			picked = String(names[randi_range(0, names.size() - 1)])
+		p.tech = picked
+		_log("【开局科技】%s 选了「%s」：%s" % [p.name, picked, String(TechData.def(picked).get("desc", ""))], "#74d188")
+		_tech_apply_instant(p, picked)
+		_broadcast_state()
+		await _wait(0.4)
+	_log("【开局科技】全员选定，发车！", "#f0c064")
+
+## 从某档池子里抽 3 张不同的科技名
+func _tech_sample(tier: String) -> Array:
+	var pool := (TechData.pool(tier) as Array).duplicate()
+	pool.shuffle()
+	return pool.slice(0, 3)
+
+## 私发选卡弹层：房主本人直接本地调，客户端走 rpc_id；bot 不发（循环里自动随机选）。返回本次 token
+func _tech_ask(p: Dictionary, names: Array) -> int:
+	_pending_token += 1
+	var token := _pending_token
+	_tech_pick = {"token": -1, "name": ""}
+	_tech_wait_token = token
+	_tech_offered = names.duplicate()
+	_awaiting_tech_peer = int(p.peer)
+	_broadcast_state()
+	if not bool(p.bot):
+		if int(p.peer) == 1:
+			_show_tech_offer(token, _tech_tier, names)
+		else:
+			s_tech_offer.rpc_id(int(p.peer), token, _tech_tier, names)
+	return token
+
+## 即时型科技效果：选中的当下结算；其余为状态钩子（各挂点 _has_tech 现查）
+func _tech_apply_instant(p: Dictionary, picked: String) -> void:
+	match picked:
+		"助学金":
+			p.money = int(p.money) + 2000
+		"二手教材":
+			if _grant_item_of_quality(p, "白", "二手教材") == "":
+				p.money = int(p.money) + 600   # 白档缺货兜底（开局背包必空，理论到不了）
+		"风险投资":
+			p.money = maxi(0, int(p.money) - 5000)
+		"富二代":
+			p.money = int(p.money) * 2
+		"厄运保单":
+			p.wuyun_left = 4
+		"地产眼光":
+			p.yanguang_left = 2
+		_:
+			pass
+
+func _has_tech(p: Dictionary, name: String) -> bool:
+	return String(p.get("tech", "")) == name
+
+@rpc("authority", "call_local", "reliable")
+func s_tech_offer(token: int, tier: String, names: Array) -> void:
+	_show_tech_offer(token, tier, names)
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_tech_pick(token: int, tech: String) -> void:
+	if not multiplayer.is_server():
+		return
+	if multiplayer.get_remote_sender_id() != _awaiting_tech_peer:
+		return
+	if token != _tech_wait_token or not (tech in _tech_offered):
+		return
+	_tech_pick = {"token": token, "name": tech}
+
+## 房主/客户端共同入口：应答选卡（房主本地写应答，客户端发回房主）
+func _tech_answer(token: int, tech: String) -> void:
+	if multiplayer.is_server():
+		if token == _tech_wait_token and tech in _tech_offered:
+			_tech_pick = {"token": token, "name": tech}
+	else:
+		c_tech_pick.rpc_id(1, token, tech)
+
+## 科技三选一弹层（临时全屏层，答完即毁；超时由房主兜底随机，本地无倒计时条）
+func _show_tech_offer(token: int, tier: String, names: Array) -> void:
+	_close_tech_offer()
+	_tech_offer_layer = Control.new()
+	_tech_offer_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tech_offer_layer.z_index = 60
+	_tech_offer_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_tech_offer_layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.04, 0.04, 0.08, 0.6)
+	_tech_offer_layer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tech_offer_layer.add_child(cc)
+	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2, 18)
+	panel.custom_minimum_size = Vector2(560, 0)
+	cc.add_child(panel)
+	var m := UIKit.margins(20, 18, 18, 14)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	m.add_child(v)
+	v.add_child(UIKit.title_label("开局科技 · %s" % tier, 20))
+	v.add_child(UIKit.label("本局全员同档，三选一；超时将随机选择", 13, UIKit.TEXT_DIM))
+	for n in names:
+		var d: Dictionary = TechData.def(String(n))
+		var btn := UIKit.button("%s　%s" % [String(n), String(d.get("desc", ""))], 14)
+		btn.pressed.connect(func() -> void:
+			_tech_answer(token, String(n))
+			_close_tech_offer())
+		v.add_child(btn)
+
+func _close_tech_offer() -> void:
+	if _tech_offer_layer != null and is_instance_valid(_tech_offer_layer):
+		_tech_offer_layer.queue_free()
+	_tech_offer_layer = null
+
+## 开疆拓土：名下地皮首达 5 / 10 / 15 块各 +¥800（获得地皮后调用）
+func _check_tech_milestone(p: Dictionary) -> void:
+	if not _has_tech(p, "开疆拓土"):
+		return
+	var claimed := int(p.get("kingtu", 0))
+	var need := [5, 10, 15]
+	while claimed < need.size() and (_own_props(int(p.peer)) as Array).size() >= int(need[claimed]):
+		p.kingtu = claimed + 1
+		p.money = int(p.money) + 800
+		_log("【开疆拓土】%s 名下 %d 块地，领取 %s 补贴" % [p.name, need[claimed], GameData.fmt_money(800)], "#74d188")
+		claimed += 1
+
+## 兼职达人：经过（路过或停留）自己的地皮 +¥300（移动路径逐格结算调用）
+func _tech_pass_gain(p: Dictionary, idx: int) -> void:
+	if not _has_tech(p, "兼职达人") or idx == 0:
+		return
+	if String(GameData.TILES[idx].get("type", "")) != "property":
+		return
+	if int(htiles[idx].get("owner", GameData.NO_OWNER)) != int(p.peer) \
+			or bool(htiles[idx].get("soil", false)):
+		return
+	p.money = int(p.money) + 300
 
 func _autotest_watch() -> void:
 	# 房主在到达目标轮数后稍等片刻再退出，给客户端留出收尾时间；
@@ -452,6 +628,8 @@ func _note_roll_hot(p: Dictionary, roll: int) -> bool:
 	if int(p.hot_chain) < 3:
 		return false
 	p.hot_chain = 0
+	if _has_tech(p, "心理素质"):
+		return false   # 心理素质：连续三次 10+ 也查不走
 	return true
 
 func _play_turn(p: Dictionary) -> void:
@@ -523,6 +701,8 @@ func _play_turn(p: Dictionary) -> void:
 		var path := GameData.compute_path(int(p.pos), step)
 		if path.is_empty():
 			_log("%s 转了个 0，原地待命一回合" % p.name, "#8a90a5")
+			if roll == 0 and _has_tech(p, "摸鱼时刻"):
+				p.money = int(p.money) + 500   # 摸鱼时刻：原始掷出 0 才有补贴（隔离压到 0 不算）
 			# 0 点再结算：脚下格子里有可结算的内容就再来一次（角格除外，不重复领工资）
 			if not GameData.is_corner(int(p.pos)):
 				await _resolve_tile(p, true)
@@ -537,6 +717,8 @@ func _play_turn(p: Dictionary) -> void:
 				p.money = int(p.money) + _salary_amount(p)
 				_log("%s 踏上起点，领取工资 %s" % [p.name, GameData.fmt_money(_salary_amount(p))], "#74d188")
 				_maybe_emergency(p)
+			else:
+				_tech_pass_gain(p, idx)   # 兼职达人：路过/停留自有地皮 +¥300
 		p.pos = path[path.size() - 1]
 		s_move.rpc(int(p.peer), path, STEP_TIME)
 		await _wait(0.35 + path.size() * STEP_TIME)
@@ -548,6 +730,9 @@ func _play_turn(p: Dictionary) -> void:
 		if not running or not bool(p.alive):
 			return
 		if roll == 12:
+			if _has_tech(p, "满分奖励"):
+				p.money = int(p.money) + 300
+				_log("【满分奖励】%s 转出满值，+¥300" % p.name, "#74d188")
 			_log("%s 转到 12 满值，奖励再动一次！" % p.name, "#f0c064")
 			await _wait(0.5)
 			continue
@@ -875,6 +1060,9 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 				await _run_shop(p, idx)
 		"casino":
 			_log("%s 踏进【宿舍赌场】，全员开赌！" % p.name, "#f0a0c0")
+			if _has_tech(p, "赌场熟客"):
+				p.money = int(p.money) + 1000
+				_log("【赌场熟客】%s 凭熟脸拿 %s 出场费" % [p.name, GameData.fmt_money(1000)], "#74d188")
 			await casino.run(p)
 		"go_jail":
 			_log("%s 撞上查寝！被押送到宿委会" % p.name, "#c9a6ff")
@@ -889,6 +1077,9 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 				_log("%s 在【%s】歇了口气，无事发生" % [p.name, d.name])
 		"start":
 			_log("%s 恰好停在起点，工资已到账！" % p.name, "#74d188")
+			if _has_tech(p, "起点打卡"):
+				p.money = int(p.money) + 400
+				_log("【起点打卡】%s 打卡成功，+¥400" % p.name, "#74d188")
 	if not bool(p.alive):
 		_check_end()
 
@@ -933,6 +1124,10 @@ func _card_kind(card: Dictionary) -> String:
 func _resolve_buy(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
 	var price := _buy_price(p, int(d.price))
+	if _has_tech(p, "地产眼光") and int(p.get("yanguang_left", 0)) > 0:
+		p.yanguang_left = int(p.yanguang_left) - 1
+		price = int(price / 2.0)   # 地产眼光：前 2 块地皮半价（向下取整）
+		_log("【地产眼光】%s 半价拿地（剩 %d 次）" % [p.name, int(p.yanguang_left)], "#f0c064")
 	if int(p.money) < price:
 		_log("%s 的现金买不起【%s】，只能眼馋路过" % [p.name, d.name])
 		return
@@ -944,6 +1139,7 @@ func _resolve_buy(p: Dictionary, idx: int) -> void:
 		p.money = int(p.money) - price
 		htiles[idx].owner = int(p.peer)
 		_log("%s 以 %s 买下了【%s】" % [p.name, GameData.fmt_money(price), d.name], "#f0c064")
+		_check_tech_milestone(p)   # 开疆拓土里程碑
 
 func _resolve_upgrade(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -960,6 +1156,8 @@ func _resolve_upgrade(p: Dictionary, idx: int) -> void:
 		p.money = int(p.money) - cost
 		t.level = int(t.level) + 1
 		_log("%s 花费 %s 把【%s】升级到 Lv%d" % [p.name, GameData.fmt_money(cost), d.name, int(t.level)], "#f0c064")
+		if _has_tech(p, "装修返现"):
+			p.money = int(p.money) + 150   # 装修返现：每级 +¥150
 
 func _resolve_rent(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -980,8 +1178,13 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 		var m := int(card.money)
 		if m >= 0:
 			p.money = int(p.money) + m
+			if m > 0 and _has_tech(p, "喜报频传"):
+				p.money = int(p.money) + 200   # 喜报频传：事件卡进账 +¥200
 		elif _immune_debuff(p):
 			_log("%s 的【空想者的香皂】挡下了扣钱" % p.name, "#8fb7f2")
+		elif _has_tech(p, "厄运保单") and int(p.get("wuyun_left", 0)) > 0:
+			p.wuyun_left = int(p.wuyun_left) - 1   # 厄运保单：抵消一次事件卡扣钱（4 次/局）
+			_log("【厄运保单】替 %s 报销了这笔扣款（剩 %d 次）" % [p.name, int(p.wuyun_left)], "#74d188")
 		else:
 			_pay(p, -m, {})
 	if card.has("from_each"):
@@ -1373,7 +1576,7 @@ func _broadcast_state() -> void:
 			"sleep": int(p.get("sleep", 0)),
 			"stamina": int(p.get("stamina", 3)), "items": p.get("items", []),
 			"item_used": bool(p.get("item_used", false)), "silence": int(p.get("silence", 0)),
-			"shield": int(p.get("shield", 0)),
+			"shield": int(p.get("shield", 0)), "tech": String(p.get("tech", "")),
 		})
 	var await_state := ""
 	var await_peer := -1
@@ -1383,6 +1586,9 @@ func _broadcast_state() -> void:
 	elif _awaiting_prompt != 0:
 		await_state = "prompt"
 		await_peer = _awaiting_prompt
+	elif _awaiting_tech_peer != 0:
+		await_state = "tech"
+		await_peer = _awaiting_tech_peer
 	elif _awaiting_item != 0:
 		await_state = "item"
 		await_peer = _awaiting_item
@@ -1407,6 +1613,7 @@ func _broadcast_state() -> void:
 		"timeout_tier": _settings.timeout_tier,
 		"aberrations": _ab_active,
 		"ab_freq": _settings.ab_freq, "ab_dur": _settings.ab_dur, "ab_cond": _settings.ab_cond,
+		"tech_tier": _tech_tier,
 		"winner": winner, "roll_epoch": _roll_epoch,
 	})
 
@@ -2249,7 +2456,7 @@ func _bag_cap(p: Dictionary) -> int:
 	return 5 + (2 if _has_item(p, "置物架") else 0)
 
 func _stamina_cap(p: Dictionary) -> int:
-	return 5 + (1 if _has_item(p, "充电宝") else 0)
+	return 5 + (1 if _has_item(p, "充电宝") else 0) + (1 if _has_tech(p, "精力充沛") else 0)
 
 func _salary_amount(p: Dictionary) -> int:
 	return GameData.SALARY + (300 if _has_item(p, "校园卡") else 0)
@@ -2262,11 +2469,15 @@ func _rent_gain(op: Dictionary, rent: int) -> int:
 		rent += 50
 	if _has_item(op, "包租婆"):
 		rent = int(rent * 1.2)
+	if _has_tech(op, "点石成金"):
+		rent = int(rent * 1.25)   # 点石成金（钻石科技）
 	return maxi(0, rent)
 
 func _rent_pay(payer: Dictionary, rent: int) -> int:
 	if _has_item(payer, "保安巡逻"):
 		rent = int(rent * 0.7)
+	if _has_tech(payer, "宿舍威望"):
+		rent = int(rent * 0.8)   # 宿舍威望（黄金科技）
 	return maxi(0, rent)
 
 ## 应急基金：现金低于 5000 时补足（每局一次，触发即弃）
@@ -2283,8 +2494,11 @@ func _maybe_emergency(p: Dictionary) -> void:
 func _item_cost(p: Dictionary, it: Dictionary) -> int:
 	var d := ItemData.def(String(it.id))
 	var cost := int(d.get("cost", 0))
-	if _has_item(p, "错峰用电") and not bool(p.get("first_used", false)):
-		cost -= 1
+	if not bool(p.get("first_used", false)):
+		if _has_item(p, "错峰用电"):
+			cost -= 1
+		if _has_tech(p, "灵活就业"):
+			cost -= 1   # 灵活就业（黄金科技）：与错峰用电可叠加为首件 −2
 	var pen: Array = p.get("cost_pen", [])
 	if not pen.is_empty():
 		cost += int(pen[0])
@@ -2311,6 +2525,8 @@ func _move_and_resolve(p: Dictionary, steps: int) -> void:
 			p.money = int(p.money) + _salary_amount(p)
 			_log("%s 顺路踏上起点，领工资 %s" % [p.name, GameData.fmt_money(_salary_amount(p))], "#74d188")
 			_maybe_emergency(p)
+		else:
+			_tech_pass_gain(p, idx)   # 兼职达人（道具/事件触发的移动同样结算）
 	if not path.is_empty():
 		p.pos = path[path.size() - 1]
 		s_move.rpc(int(p.peer), path, 0.09)
@@ -2392,6 +2608,8 @@ func _item_turn_start(p: Dictionary) -> void:
 			_log("【校历】%s 体力已满，溢出折算为 %s" % [p.name, GameData.fmt_money(300)], "#74d188")
 	else:
 		p.stamina = mini(int(p.get("stamina", 3)) + 1, cap)
+	if _has_tech(p, "卷王") and int(p.get("stamina", 3)) < _stamina_cap(p):
+		p.stamina = int(p.stamina) + 1   # 卷王：回合开始额外 +1（上限照封）
 	p.item_used = false
 	p.item_used_n = 0
 	p.first_used = false
@@ -2422,6 +2640,17 @@ func _item_turn_start(p: Dictionary) -> void:
 	if _ab_has("奖学金季"):
 		p.money = int(p.money) + 300
 		_log("【奖学金季】%s 领到 %s 补贴" % [p.name, GameData.fmt_money(300)], "#74d188")
+	# ---- 开局科技：回合开始型（见 tech_data / 开局科技.md） ----
+	if _has_tech(p, "助困金") and int(p.get("money", 0)) < 1000:
+		p.money = int(p.money) + 500   # 贫困线兜底（先于其他进账判定）
+	if _has_tech(p, "零花钱规划"):
+		p.money = int(p.money) + 100
+	if _has_tech(p, "风险投资"):
+		p.money = int(p.money) + 800
+	if _has_tech(p, "天选之人"):
+		p.money = int(p.money) + 500
+	if _has_tech(p, "反思津贴") and int(p.get("skip", 0)) > 0:
+		p.money = int(p.money) + 500   # 宿委会反省回合的带薪反思
 	_maybe_emergency(p)
 
 func _has_usable(p: Dictionary) -> bool:
@@ -2534,6 +2763,8 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1) -> void:
 		return
 	p.item_used_n = int(p.get("item_used_n", 0)) + 1
 	p.first_used = true
+	if _has_tech(p, "勤工俭学"):
+		p.money = int(p.money) + 100   # 勤工俭学：每用一件主动道具 +¥100
 	_consume_cost_pen(p)
 	if int(p.item_used_n) >= limit:
 		p.item_used = true
@@ -2722,6 +2953,8 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 			var o1 := int(htiles[mi].owner)
 			htiles[mi].owner = int(htiles[yi].owner)
 			htiles[yi].owner = o1
+			_check_tech_milestone(p)   # 开疆拓土：互换后双方地皮数都可能跨档
+			_check_tech_milestone(t)
 			_log("%s 与 %s 交换了地皮 #%d↔#%d" % [p.name, t.name, mi, yi], "#c9a6ff")
 		"时光倒流":
 			p.reroll_next = true
@@ -2883,6 +3116,8 @@ func _shop_buy(peer: int, slot: int) -> void:
 	var id := String(arr[slot])
 	var price := ItemData.price(String(ItemData.def(id).quality))
 	var p := _player_by_peer(peer)
+	if _has_tech(p, "学生折扣"):
+		price = maxi(0, price - 200)   # 学生折扣：小卖部现金价立减（黑市按地皮计价不适用）
 	if p.is_empty() or p.items.size() >= 5:
 		return
 	var free := false
@@ -3403,6 +3638,8 @@ func _discard_item(peer: int, slot: int) -> void:
 	var id := String(items[slot].id)
 	items.remove_at(slot)
 	_log("%s 丢弃了【%s】（回道具池）" % [p.name, id], "#8a90a5")
+	if _has_tech(p, "旧物回收"):
+		p.money = int(p.money) + 150   # 旧物回收：丢弃一件回收 ¥150
 	_broadcast_state()
 
 @rpc("any_peer", "call_remote", "reliable")

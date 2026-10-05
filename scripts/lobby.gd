@@ -15,7 +15,9 @@ var _room_label: Label
 # 房主开局设置弹窗（见 doc/game-design/开局设置.md §三之一）
 var _set_wrap: Control
 var _set_chips: HBoxContainer
+var _set_tech_chips: HBoxContainer
 var _set_tier := GameSettings.TIER_CURRENT
+var _set_tech := false   # 开局科技开关（发车前配置；对局内不可改）
 
 var _at_mode := ""
 var _shot_path := ""
@@ -271,6 +273,13 @@ func _build_settings_dialog() -> void:
 			_set_tier = id
 			UIKit.chip_select(_set_chips, id))
 	v.add_child(_set_chips)
+	# 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡
+	v.add_child(UIKit.label("开局科技：掷骰定档，每人三选一（白银 / 黄金 / 钻石）", 13, UIKit.TEXT_DIM))
+	_set_tech_chips = UIKit.chip_row(GameSettings.TECH_SW, GameSettings.TECH_SW_LABELS,
+		func(id: String) -> void:
+			_set_tech = id == "on"
+			UIKit.chip_select(_set_tech_chips, id))
+	v.add_child(_set_tech_chips)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	v.add_child(row)
@@ -294,12 +303,15 @@ func _on_open_settings() -> void:
 	if not multiplayer.is_server():
 		return
 	_set_tier = Net.game_settings.timeout_tier
+	_set_tech = Net.game_settings.tech_on
 	UIKit.chip_select(_set_chips, _set_tier)
+	UIKit.chip_select(_set_tech_chips, "on" if _set_tech else "off")
 	_set_wrap.visible = true
 
 ## 弹窗「确定」：只保存并关闭，不再顺带开局
 func _on_settings_save() -> void:
 	Net.game_settings.timeout_tier = _set_tier
+	Net.game_settings.tech_on = _set_tech
 	_set_wrap.visible = false
 
 func _on_leave() -> void:
