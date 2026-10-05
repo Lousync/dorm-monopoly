@@ -131,9 +131,14 @@ func _subtree_albedo_lum(root: Node) -> float:
 		mx = maxf(mx, m.albedo_color.get_luminance())
 	return mx
 
-## 一棵子树里所有几何实例的世界 AABB 的并集（一件都量不到给空 AABB）。
-## 口径与"家具整体落在房间里"那几条**同一条**（逐个 `GeometryInstance3D` 的 AABB 过自己的
-## 世界变换再并起来），不另立一套。
+## 一棵子树里所有几何实例的世界 AABB 的并集（一件都量不到给**空 AABB** —— `size == (0,0,0)`）。
+## 口径与"家具整体落在房间里 / 家具与椅子都站在地板上"那几条**同一条**（逐个
+## `GeometryInstance3D` 的 AABB 过自己的世界变换再并起来），不另立一套。
+##
+## 【终审 F4】这三处（家具的"整体落在房间里"、"站在地板上"、地毯）此前各写一份内联循环，
+## 口径一改就会**只改一处**（助手改了、内联那两处静默留在旧口径上）⇒ 现在全部走这里。
+## **"量不到几何"按 `size == Vector3.ZERO` 判**（旧内联版那个 `got_mesh` 旗标的等价写法：
+## 一件几何都没量到时返回的正是空盒）—— 房间里的物件都是 `PlaneMesh` / `.glb`，没有退化 AABB。
 func _subtree_world_aabb(root: Node) -> AABB:
 	var out := AABB()
 	var got := false
@@ -149,6 +154,28 @@ func _subtree_world_aabb(root: Node) -> AABB:
 ## 【批次 12 A1 删除】原先这里有个 `_shade_screen_bbox(t3, shade)`：把灯罩当成"底口半径 × 罩高"
 ## 的盒子投影到屏幕，用来判"台灯还看得见吗"。灯罩已随 A1 整体删除（`Lamp` 节点不存在了），
 ## 这个助手也跟着删掉 —— 留着只会在下一个读它的人那里暗示"还有灯罩可量"。
+
+## 木桌**远边**（`z = -WOOD_HALF_D` 那条边、两角取屏幕上**更高**的那条）的屏幕 y。
+##
+## 【终审 F4】"默认档房间带"与"拉远端把远墙拉进画"两处量的是**同一条线**（此前各写一遍）——
+## 抽成一处，改口径时不会只改一处。
+func _wood_far_edge_y(t3) -> float:
+	var y := INF
+	for sx in [-t3.WOOD_HALF_W, t3.WOOD_HALF_W]:
+		y = minf(y, (t3.camera.unproject_position(
+			Vector3(sx, 0.0, -t3.WOOD_HALF_D)) as Vector2).y)
+	return y
+
+## 远墙**墙脚**三点（`y = FLOOR_Y`、`z = -ROOM_D/2`、x = −半宽 / 0 / +半宽）投影到屏幕。
+##
+## 【终审 F4】这三点的投影此前写了**三遍**（入画计数 / 拉远端的墙脚线 / 默认档的墙脚线）——
+## 抽成一处。返回 `Array[Vector2]`，调用方各取所需（计数或取 `.y` 的最高那条）。
+func _far_wall_base_screen(t3) -> Array:
+	var out: Array = []
+	var fz: float = -GameRoom.ROOM_D * 0.5
+	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
+		out.append(t3.camera.unproject_position(Vector3(sx, GameRoom.FLOOR_Y, fz)))
+	return out
 
 ## 一格在**屏幕**上的包围盒宽度（批次 10 T2 的"字更大"判据）。
 ##
@@ -291,15 +318,9 @@ func _run() -> void:
 			# 实现重述一遍，缩放改成什么值都照样过，正是本文件反复警告的那类永真断言。
 			var boxes := {}
 			for n in furn.get_children():
-				var wb := AABB()
-				var got_mesh := false
-				for m in n.find_children("*", "GeometryInstance3D", true, false):
-					var g := m as MeshInstance3D
-					if g == null or g.mesh == null:
-						continue
-					var a: AABB = g.global_transform * g.mesh.get_aabb()
-					wb = a if not got_mesh else wb.merge(a)
-					got_mesh = true
+				# 走公共助手（终审 F4；"量到没量到"按空盒判，见 `_subtree_world_aabb` 的注释）
+				var wb := _subtree_world_aabb(n)
+				var got_mesh := wb.size != Vector3.ZERO
 				boxes[n.name] = wb
 				# 前提：真量到了几何。空盒（一个几何实例都没有）会让下面那条**恒真**。
 				_check(got_mesh, "%s 有可量的几何实例（否则它的 AABB 是空盒、下面那条恒真）" % n.name)
@@ -395,15 +416,9 @@ func _run() -> void:
 		var stand_log := ""
 		var stand_boxes := {}
 		for n in stand:
-			var wb := AABB()
-			var got_mesh := false
-			for m in (n as Node).find_children("*", "GeometryInstance3D", true, false):
-				var g := m as MeshInstance3D
-				if g == null or g.mesh == null:
-					continue
-				var a: AABB = g.global_transform * g.mesh.get_aabb()
-				wb = a if not got_mesh else wb.merge(a)
-				got_mesh = true
+			# 走公共助手（终审 F4；"量到没量到"按空盒判，见 `_subtree_world_aabb` 的注释）
+			var wb := _subtree_world_aabb(n as Node)
+			var got_mesh := wb.size != Vector3.ZERO
 			if not got_mesh:
 				unmeasured += 1
 				continue
@@ -618,8 +633,10 @@ func _run() -> void:
 		# 【一期 Task 8】从"只有一盏灯"改成"**只有一处投影源**" —— 房间需要补光（`Room/FillLight`，
 		# 见 `room.gd.FILL_LIGHT_POS`），但**投影必须仍然唯一**：第二张阴影图 = 性能与氛围
 		# 两头不讨好（那盏吊灯仍是手牌 / 牌堆 / 转盘 / 棋子 / 房子所有影子的唯一来源）。
-		# ⚠ **这不是放宽**：原来那条"只有一盏灯"守的就有一半是这件事，而"灯共几盏"这一半
-		# 没有变松 —— 它被下面那条"补光不碰桌面"接住了（多出来的灯必须证明自己没碰桌面）。
+		# ⚠ **这不是放宽**：原来那条"只有一盏灯"守的有一半是这件事，另一半（**灯共几盏**）
+		# 由下面「补光恰好一盏」那组断言守着 —— 原注释在这里写"它被下面那条『补光不碰桌面』
+		# 接住了"，**那句是错的**（终审 F2 改正）：补光**缺席**时"不碰桌面"恰恰是最松的一条
+		#（`0.0 <= 0.08` 恒真），两条一起才拦得住。见下面那段。
 		var casters: Array = []
 		for n in lights:
 			if (n as Light3D).shadow_enabled:
@@ -703,40 +720,60 @@ func _run() -> void:
 				% [i_light_min, i_light_max, lamp_l.light_energy, lamp_l.omni_range,
 					lamp_l.omni_attenuation])
 
-		# ---- 一期 Task 8 新增 ①：**补光不许改掉桌面** ----
+		# ---- 一期 Task 8 新增 ①：**补光存在、且不许改掉桌面** ----
 		# 房间那一盏补光（`Room/FillLight`，不投影）是为了给墙 / 家具方向感与明暗；它**不许**
 		# 顺手把批次 13 ⑧ 那条"桌面各位置亮度一致"改掉（那是用户签过字的）。用**同一把照度代理式**
 		# 量它落在桌面采样点上的那一点贡献（设计 §五「尺子只能用一把」—— 这里**不许**改成
 		# "屏幕取像素"，那会变成第二把尺子）。
 		# 阈值 `FILL_ON_TABLE_MAX` 的取值口径见它的声明处（先实测、再定档）。
-		var fill_max := 0.0
-		var fill_non_omni := ""
-		# 「实得」那一栏报的是**补光自己的类名**（`OmniLight3D` / `DirectionalLight3D` …）。
-		# 【一期 Task 9 Step 0 修】原先这里直接插 `fill_non_omni` —— 而那个变量**只在
-		# "抓到非 omni"时才被赋值**、断言通过时它是空串 ⇒ 消息永远印成 `实得「」`，
-		# 一条**通过**的断言反而把"实得什么"留白（断言本身是对的，坏的只是消息）。
-		# 现在改成把每一盏非吊灯的**类名**都记下来（非 omni 的另外点名）—— 通过时印
-		# `OmniLight3D`、不通过时印 `DirectionalLight3D（非 omni）`，两头都读得懂。
+		#
+		# 【终审 F2 修：这三条**必须都要求补光真存在**】改前这里是 `fill_max := 0.0` 与
+		# `fill_non_omni := ""` 两条 —— 它们**只在"存在非吊灯的灯"时才被写**：一盏非吊灯都没有时
+		# 循环体一次都不跑 ⇒ `"" == ""` 与 `0.0 <= 0.08` **双双恒真**（把 `Room/FillLight` 删掉 /
+		# 改名 / 挪出 `FILL_RANGE`，十五套件全绿而无人在守这盏灯 —— 正是 Task 8 的整件事）。
+		# 消息那头也退化回 Task 9 Step 0 ③ 点名要修的 `实得「」` 空插值（"消息修好了"只修在
+		# "补光存在"那条路上）。⇒ 现在每条都带 `fill_lights.size() == 1`、消息一律印**真值**
+		#（灯共几盏 / 非吊灯几盏 / 每一盏的类名）。
+		var fill_lights: Array = []
 		var fill_kinds := ""
+		var fill_max := 0.0
 		for n in lights:
 			if n == lamp_l:
 				continue
+			fill_lights.append(n)
 			# 照度代理式是按 **omni** 写的（射程形状 + 距离衰减 + 桌面法线朝上的 N·L）——
 			# 补光换成平行光，这把尺子就量不了它，"不碰桌面"只剩肉眼（那正是要避免的）。
+			# 「实得」那一栏报的是**每一盏非吊灯的类名**（非 omni 的另外点名）—— 通过时印
+			# `OmniLight3D`、不通过时印 `DirectionalLight3D（非 omni）`，两头都读得懂。
 			var nl := n as OmniLight3D
 			if nl == null:
-				fill_non_omni = String((n as Node).name)
 				fill_kinds += "%s（非 omni） " % (n as Node).get_class()
 				continue
 			fill_kinds += "%s " % (n as Node).get_class()
 			for p in samples:
 				fill_max = maxf(fill_max, _mat_sample_irradiance(nl, p, 0.0))
-		_check(fill_non_omni == "",
-			"补光是 OmniLight3D（照度代理式只认 omni；实得「%s」—— 换平行光就没人量得动它了）"
-				% fill_kinds.strip_edges())
-		_check(fill_max <= FILL_ON_TABLE_MAX,
-			"补光对桌面的照度贡献 ≤ %.2f（实得 %.4f，灯共 %d 盏 —— 超了就是把批次 13 ⑧ 的"
-				% [FILL_ON_TABLE_MAX, fill_max, lights.size()]
+		# ①-a **补光恰好一盏**（存在性 —— 这条是终审 F2 补回来的；原 `lights.size() == 1` 的那一半
+		#     被降级成了读数，见上面 :621 那段改正的注释）。
+		#     变红验证（实跑过）：把 `room.gd._build_shell` 里那一句 `_build_fill_light()` 注掉
+		#     （补光整盏不存在）⇒ 本条与下面两条一起红（layout_test 3 FAILURES）。
+		#     **改名不算**：这条数的是"非吊灯的灯有几盏"，与节点名无关（改名不动运行时、也不该红）。
+		#     下面三条的"实得"都印**真值**：一盏非吊灯都没有时印 `（没有非吊灯的灯）`，
+		#     不再退回 Task 9 Step 0 ③ 那个 `实得「」` 空插值。
+		var fill_kinds_s: String = fill_kinds.strip_edges()
+		if fill_kinds_s == "":
+			fill_kinds_s = "（没有非吊灯的灯）"
+		_check(fill_lights.size() == 1,
+			"补光恰好一盏（灯共 %d 盏 ⇒ 非吊灯 %d 盏；实得「%s」—— 一盏都没有时下面两条恒真）"
+				% [lights.size(), fill_lights.size(), fill_kinds_s])
+		# ①-b **是 omni**（照度代理式只认 omni）。
+		_check(fill_lights.size() == 1 and fill_lights[0] is OmniLight3D,
+			"补光是 OmniLight3D（照度代理式只认 omni；实得 %d 盏非吊灯「%s」—— 换平行光就没人量得动它了）"
+				% [fill_lights.size(), fill_kinds_s])
+		# ①-c **不碰桌面**（`FILL_ON_TABLE_MAX` 封顶）。`fill_lights.size() == 1` 这一半不能省：
+		#     少了它，补光缺席时 `fill_max` 是 0.0 ⇒ 这条断言恒真。
+		_check(fill_lights.size() == 1 and fill_max <= FILL_ON_TABLE_MAX,
+			"补光对桌面的照度贡献 ≤ %.2f（实得 %.4f，量到 %d 盏非吊灯 —— 超了就是把批次 13 ⑧ 的"
+				% [FILL_ON_TABLE_MAX, fill_max, fill_lights.size()]
 				+ "「桌面均匀」偷偷改掉了）")
 
 		# ---- 一期 Task 8 新增 ②：**家具不再是画面里最亮的东西** ----
@@ -998,10 +1035,7 @@ func _run() -> void:
 	# 解结的办法是加推拉轴、把二选一交给玩家现场掌控 ⇒ 默认档的**硬门是格子 ≥32px**（下面那条），
 	# 房间带取"32px 还能撑住的**最外**取景"、实测值打印出来（**不许静默取值**）。
 	t3.snap_view(0.0)
-	var top_edge_y := INF
-	for sx in [-hw_wood, hw_wood]:
-		top_edge_y = minf(top_edge_y, (t3.camera.unproject_position(
-			Vector3(sx, 0.0, -hd_wood)) as Vector2).y)
+	var top_edge_y := _wood_far_edge_y(t3)      # 【终审 F4】与 ④ 那条共用同一处投影
 	print("  [实测] 默认档房间带 = 视口高 %.1f%%（木桌远边 y=%.1f / 视口 %.0f）"
 		% [100.0 * top_edge_y / vr.size.y, top_edge_y, vr.size.y])
 	_check(top_edge_y >= vr.size.y * 0.03,
@@ -1178,35 +1212,32 @@ func _run() -> void:
 	#     相机一过近墙 / 天花板就窜到屋外，而它们是**双面**的 ⇒ **整张摆拍全黑**，
 	#     上面这三条**全是绿的**。`DOLLY_MAX` 的上限因此由 `room.gd` 的
 	#     `ROOM_NEAR_EXTRA` / `ROOM_CEIL_Y` 订（见那两段与 `table_3d.DOLLY_MAX` 段）；
-	#     这条投影断言拦不住它，**靠出图核**（`shots/t7b_dollyfar_table_plain.png`）。
+	#     这条投影断言拦不住它 —— 【终审 F3 起不再"只能靠出图核"】：下面新增了一条
+	#     "相机全程在屋里"的断言（扫 `DOLLY_MIN/中点/DOLLY_MAX` × `view_t 0/0.5/1`，留 0.5 余量），
+	#     它是这件事的可执行合同（出图核仍照旧做：`shots/t7b_dollyfar_table_plain.png`）。
 	t3.snap_dolly(t3.DOLLY_MAX)
 	t3.snap_view(0.0)
 	await process_frame
-	var far_z: float = -GameRoom.ROOM_D * 0.5
+	# 墙脚三点与木桌远边都走公共投影（终审 F4：这三点此前写了三遍、木桌远边写了两遍）
+	var wall_pts: Array = _far_wall_base_screen(t3)
 	var wall_in := 0
 	var wall_log := ""
-	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
-		var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, GameRoom.FLOOR_Y, far_z))
+	for sp in wall_pts:
 		wall_log += "(%.0f,%.0f) " % [sp.x, sp.y]
 		if sp.x >= vr.position.x and sp.x <= vr.position.x + vr.size.x \
 				and sp.y >= vr.position.y and sp.y <= vr.position.y + vr.size.y:
 			wall_in += 1
-	var wood_edge_y := INF
-	for sx in [-hw_wood, hw_wood]:
-		wood_edge_y = minf(wood_edge_y, (t3.camera.unproject_position(
-			Vector3(sx, 0.0, -hd_wood)) as Vector2).y)
+	var wood_edge_y := _wood_far_edge_y(t3)
 	var wall_y := INF
-	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
-		wall_y = minf(wall_y, (t3.camera.unproject_position(
-			Vector3(sx, GameRoom.FLOOR_Y, far_z)) as Vector2).y)
+	for sp in wall_pts:
+		wall_y = minf(wall_y, sp.y)
 	# 默认档的墙脚线（同样三点取最高那条）—— "拉远端比默认档多看多少"
 	t3.snap_dolly(1.0)
 	t3.snap_view(0.0)
 	await process_frame
 	var wall_y_def := INF
-	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
-		wall_y_def = minf(wall_y_def, (t3.camera.unproject_position(
-			Vector3(sx, GameRoom.FLOOR_Y, far_z)) as Vector2).y)
+	for sp in _far_wall_base_screen(t3):
+		wall_y_def = minf(wall_y_def, sp.y)
 	print("  [实测] 拉远端（dolly %.1f）：远墙墙脚 %s/ 木桌远边 y=%.0f（视口 %.0f 高）"
 		% [t3.DOLLY_MAX, wall_log, wood_edge_y, vr.size.y])
 	print("  [实测] 远墙带：默认档墙脚 y=%.0f → 拉远端 y=%.0f（露出多 %.0fpx = 视口高 %.1f%%）"
@@ -1217,6 +1248,43 @@ func _run() -> void:
 	_check(wall_y - wall_y_def >= vr.size.y * 0.05,
 		"拉远端比默认档**多看一截屋子**（远墙带 %.0fpx ≥ 视口高 5%% = %.0fpx：默认档 y=%.0f → 拉远端 y=%.0f）"
 			% [wall_y - wall_y_def, vr.size.y * 0.05, wall_y_def, wall_y])
+
+	# ---- 【终审 F3 新增】相机**全程在屋里** ----
+	# 这是"全黑摆拍而断言全绿"的那条盲区（Task 7 真踩过：`dolly = 1.15` 时相机穿到近墙外，
+	# 而近墙与天花板都是**双面**的 ⇒ 整张出图全黑，见 `shots/t7_dollyfar_table_plain.png` 那张
+	# 77 KB 全黑图）。上面 ④ 那三条**只量投影**、量不出遮挡（原注释就写着"这条投影断言拦不住它，
+	# **靠出图核**"）—— 相机位置是 `dolly` 与 `view_t` 的**确定函数**
+	#（`table_3d._apply_camera`：`pos = (0, d3d·sin, d3d·cos)`）⇒ 可以直接扫成可执行的合同，
+	# 把"天花板 / 近墙还剩多少余量"从注释里的两个数变成断言。
+	# 房间盒取 `room.gd` 的**公开常量**（不写死）：`|x| ≤ ROOM_W/2`、`y ∈ [FLOOR_Y, ROOM_CEIL_Y]`、
+	# `z ∈ [−ROOM_D/2, +ROOM_D/2 + ROOM_NEAR_EXTRA]`。**留 0.5 的余量**：余量 > 0 只说明"还没出屋"，
+	# 相机**贴着**天花板 / 近墙时画面已经全黑（透视被挡在面外）⇒ 要它**在贴面之前**先红。
+	# 实测最小余量 **1.15**（天花板，`dolly = DOLLY_MAX`、`view_t = 0`）。
+	# 变红验证：把 `table_3d.DOLLY_MAX` 临时改成 1.5（相机 `y = 15.91`、离天花板只剩 0.09）⇒ 本条红。
+	# 三档 × 三段视角都扫：3D 端那一段（`view_t = 0`）是推拉的权重所在，中段与 2D 端一并钉住
+	#（`view_t` 越大相机越收回桌心，两端都不是最险的档，但多扫两行换"整条轨道"这句话）。
+	var cam_bad := 0
+	var cam_worst := INF
+	var cam_log := ""
+	for dv in [t3.DOLLY_MIN, (t3.DOLLY_MIN + t3.DOLLY_MAX) * 0.5, t3.DOLLY_MAX]:
+		for wt in [0.0, 0.5, 1.0]:
+			t3.snap_dolly(dv)
+			t3.snap_view(wt)
+			await process_frame
+			var cp: Vector3 = t3.camera.global_position
+			# 五个面各自到相机的余量（x 对称，取一次绝对值）
+			var m_cam: float = minf(minf(GameRoom.ROOM_W * 0.5 - absf(cp.x), cp.y - GameRoom.FLOOR_Y),
+				minf(minf(GameRoom.ROOM_CEIL_Y - cp.y,
+					GameRoom.ROOM_D * 0.5 + GameRoom.ROOM_NEAR_EXTRA - cp.z),
+					cp.z + GameRoom.ROOM_D * 0.5))
+			cam_worst = minf(cam_worst, m_cam)
+			cam_log += "d%.2f/w%.1f:%s(余%.2f) " % [dv, wt, cp, m_cam]
+			if m_cam < 0.5:
+				cam_bad += 1
+	_check(cam_bad == 0,
+		"相机全程在屋里、且离每个面都留有余量（越界 %d 档，最小余量须 ≥ 0.5；实得最小 %.2f；%s）"
+			% [cam_bad, cam_worst, cam_log])
+
 	t3.snap_dolly(1.0)
 	t3.snap_view(0.0)
 	# 滚轮改的是目标值，不是硬切

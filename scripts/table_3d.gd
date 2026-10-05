@@ -157,7 +157,8 @@ const CAM_DIST := 8.90
 # 与摊薄阴影贴图密度（§十三 那条 ~2.4×），**不划算**。
 const DOLLY_MIN := 0.7           # 推近端（1.0 = 默认档；0.7 实测格宽 44.5px、桌垫四角余量 73.7px）
 const DOLLY_MAX := 1.4           # 拉远端（23.7px / 房间带 30.0% / 远墙 + 三件家具入画；上限由房间订）
-const DOLLY_STEP := 0.1          # Ctrl+滚轮每格改多少（0.7↔1.8 共 11 格）
+const DOLLY_STEP := 0.1          # Ctrl+滚轮每格改多少（0.7↔1.4 共 **7** 格 —— 终审 F6 改正：
+                                 # 原写"0.7↔1.8 共 11 格"，而 1.8 从来不是这一档的取值（见上面那段警告））
 
 ## 3D 端**注视点往近端挪**多少（世界单位，+z = 近端）。
 ##
@@ -806,10 +807,17 @@ func _apply_camera() -> void:
 	var rad := deg_to_rad(lerpf(CAM_TILT_DEG, CAM_TILT_2D_DEG, view_t))
 	# 推拉（一期 Task 7）：`dolly` 乘在**3D 端那一段距离**上，再与 `VIEW_DIST_2D` 插值。
 	# 写成"先乘再插值"是**有意的**：插值的那一端是常量 ⇒ 推拉对这一维的贡献正好是
-	# `(1.0 - view_t)`（距离之差 = `(1-wt)·d3d_3D·(dolly-1)`），`view_t = 1` 时**归零**、
-	# 结果**逐位等于** `VIEW_DIST_2D` ⇒ **2D 端的取景与格宽在推拉前后逐字节相同**
+	# `(1.0 - view_t)`（距离之差 = `(1-wt)·d3d_3D·(dolly-1)`），`view_t = 1` 时**归零** ⇒
+	# **2D 端的取景与格宽在推拉前后逐字节相同**
 	# （`layout_test` 有一条断言钉着它，见那里的「推拉不改 2D 端」）。
-	var d3d := lerpf(CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)) * dolly, VIEW_DIST_2D, view_t)
+	# 【终审 F7】**"归零"由结构保证，不再靠舍入巧合**：`lerpf(X, VIEW_DIST_2D, 1.0)` 只在
+	# `X + (9.20 − X)` 的两次舍入互相抵消时才**恰好**舍回 9.20 —— 重取 `CAM_DIST` /
+	# `VIEW_DIST_2D` 就会让推拉的三个档各自留一点残差 ⇒ 上面那条断言**假红**，而且红得像是
+	# "推拉漏进 2D 端了"。⇒ 2D 端**取常量本身**（`view_t >= 1.0` 那一支）。
+	# 取值一字未动：`view_t = 1` 时两条写法给的都是 `VIEW_DIST_2D`（`view_t` 由 `snap_view` /
+	# `set_view` 钳在 [0,1]，`>= 1.0` 与 `= 1.0` 是同一件事）。
+	var d3d := VIEW_DIST_2D if view_t >= 1.0 else lerpf(
+		CAM_DIST / cos(deg_to_rad(CAM_TILT_DEG)) * dolly, VIEW_DIST_2D, view_t)
 	var pos := Vector3(0.0, d3d * sin(rad), d3d * cos(rad))
 	# 注视点：3D 端往近端挪一点（把整排手牌带回屏内），2D 端回原点（见 LOOK_NEAR_Z_3D）。
 	var look := Vector3(0.0, 0.0, lerpf(LOOK_NEAR_Z_3D, 0.0, view_t))

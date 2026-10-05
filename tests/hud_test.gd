@@ -204,12 +204,16 @@ func _run() -> void:
 		# 名牌色取**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`），**不是按座位序号取色**。
 		# 这一份状态的 color 恰好等于 peer-1，而座位序是 [我, 下家, 对家, 上家] = [2,3,4,1]
 		# ⇒ 座位 0 是 peer 2（color 1 → 蓝）；**按序号取色**的话这块会是 PLAYER_COLORS[0]（橙）⇒ 必红。
+		# 【终审 F5】期望值必须**与实现同一条口径**：`room.gd._refresh_nameplates` 用的是
+		# `clampi(color, 0, size-1)`，这里原先写的是 `% size` —— 今天 `p.color ∈ 0..3` 两者同值，
+		# 但色号一旦越界，这条断言的期望色就与实现无关了（消息是给人看的，会误导下一个改色号的人）。
+		# ⇒ 照实现写钳位（两处**不共享助手**是有意的：`room.gd` 在本轮只许改注释）。
 		var colors_ok := true
 		var got_colors: Array = []
 		for i in seat_peers.size():
 			var pl: Dictionary = g._state_player(int(seat_peers[i]))
 			var want: Color = GameData.PLAYER_COLORS[
-				int(pl.get("color", 0)) % GameData.PLAYER_COLORS.size()]
+				clampi(int(pl.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
 			var seat: Node = room5.get_node_or_null("Seats/Seat%d" % i)
 			var plate: MeshInstance3D = null
 			if seat != null:

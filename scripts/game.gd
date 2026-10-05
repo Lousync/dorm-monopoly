@@ -2487,6 +2487,12 @@ func _refresh_players() -> void:
 			var seats: Array = []
 			for peer in _seat_peers():
 				var pl := _state_player(int(peer))
+				# 【终审 F5 · 只加注释，行为一字未动】`pl` 理论上**必非空** —— `_seat_peers()`
+				# 就是从 `st.players` 推出来的（同一个 `st`）⇒ 下面两个 `get` 的缺省值
+				# （`0` / `"?"`，`_state_player` 找不到人时返回 `{}`）**今天不可达**，是防御性写法。
+				# **留着的理由**：它**静默** —— 万一哪天变成可达（`_seat_peers()` 改了取数口径、
+				# 或喂进来一份没同步的 `st`），这块名牌会拿**别人家的棋子色** + 一个 `?` 顶上，
+				# 查起来比直接炸难得多。谁动 `_seat_peers()` 时请顺手确认这条前提仍成立。
 				seats.append({
 					"peer": int(peer),
 					"color": int(pl.get("color", 0)),
