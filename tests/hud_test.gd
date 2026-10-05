@@ -2283,7 +2283,7 @@ func _run() -> void:
 	g._process(0.0)
 	await process_frame
 	_check(g.shop_layer.visible, "**别人在逛，我也看得到小卖部**（门槛改成了 shop_open >= 0）")
-	_check(String(g.shop_tile_l.text).contains(str(shop_i)),
+	_check(String(g.shop_tile_l.text).begins_with("第 %d 号店" % g._shop_ordinal(shop_i)),
 		"看到的是那一家的货架（实得「%s」）" % String(g.shop_tile_l.text))
 	_check(g.shop_watch_l.visible and String(g.shop_watch_l.text).contains("丙"),
 		"旁观说明条写着「谁在挑」（实得「%s」）" % String(g.shop_watch_l.text))

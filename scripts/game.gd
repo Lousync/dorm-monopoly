@@ -53,6 +53,7 @@ var _extra_move := false   # 特浓咖啡：本次落地后再行动一次（_pl
 var _shop_peer := 0        # 正在逛小卖部的玩家（0 = 无）
 var _shop_tile := -1
 var _shop_epoch := 0
+var _shop_collapsed := false   # #25：本机把店里界面「收起来看棋盘」（**本地** UI 态，不广播）
 var _awaiting_item := 0    # 道具阶段行动者（0 = 无）
 var _item_epoch := 0
 var _item_action := {}
@@ -94,6 +95,8 @@ var shop_cards: Array = []       # 每格 {holder: CenterContainer, price_l: Lab
 var shop_btns: Array = []
 var shop_refresh_btn: Button
 var shop_leave_btn: Button
+var shop_close_btn: Button         # #25：面板右上角 ✕（收起界面看棋盘，不结束逛店）
+var shop_reopen_btn: Button        # #25：收起后屏幕右下角的「回到小卖部」入口
 var shop_tile_l: Label
 var shop_money_l: Label           # 面板里的现金读数（买按钮置灰时看得出理由）
 ## 「XX 正在挑选」说明条（批次 12 C2）：小卖部全员可见后，非本人看到的是只读货架，
@@ -1525,6 +1528,17 @@ func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 			if int(t.owner) == int(p.peer):
 				t.owner = GameData.NO_OWNER
 				t.level = 0
+		# 破产清空道具（台账 §四.1 / 经济与胜负.md §三）：唯一道具随之**回池**
+		#（`_item_pool` 只把「存活玩家」的背包算作唯一性占用），焚毁标记 `items_consumed` 不动；
+		# 出局者进入观战、被动不再生效，故一并清掉道具派生的临时状态。
+		var dropped: int = (p.get("items", []) as Array).size()
+		p.items = []
+		p.stamina = 0
+		p.sub_rent = false
+		p.shield = 0
+		p.charm_used = false
+		if dropped > 0:
+			_log("%s 的 %d 件道具全部清空（唯一道具回池）" % [p.name, dropped], "#8a90a5")
 		_log("%s 无力支付 %s，宣告破产出局！名下地产收归学校" % [p.name, GameData.fmt_money(amount)], "#ef7b74")
 		s_card.rpc("%s 破产出局！" % p.name, "bust")
 
@@ -4281,7 +4295,7 @@ func _shop_buy(peer: int, slot: int) -> void:
 	var p := _player_by_peer(peer)
 	if _has_tech(p, "学生折扣"):
 		price = maxi(0, price - 200)   # 学生折扣：小卖部现金价立减（黑市按地皮计价不适用）
-	if p.is_empty() or p.items.size() >= 5:
+	if p.is_empty() or p.items.size() >= _bag_cap(p):
 		return
 	var free := false
 	for pit in p.get("items", []):
@@ -4325,6 +4339,24 @@ func _shop_leave(peer: int) -> void:
 	_log("%s 走出了小卖部" % _name_by_peer(peer), "#8a90a5")
 	_shop_peer = 0
 	_broadcast_state()
+
+## #25：收起 / 展开店里界面。**纯本地 UI 态**——不广播、不改 `_shop_peer`：
+## 逛店会话照旧（倒计时继续），收起只为「去看一眼棋盘」，随时可点右下角入口回来。
+func _set_shop_collapsed(v: bool) -> void:
+	_shop_collapsed = v
+	_apply_shop_ui()   # 立即生效：`_process` 在暂停 / 摆拍冻帧时不跑，不能只靠它兜底
+
+## 按「有人在逛 + 本机是否收起」落 `shop_layer` 与右下角「回到小卖部」入口的显隐。
+## `_process` 逐帧调；`_set_shop_collapsed` 也直接调一次，保证暂停帧里点一下就有反馈。
+func _apply_shop_ui() -> void:
+	var open_now: bool = String(st.get("phase", "")) == "playing" \
+		and int(st.get("shop_open", -1)) >= 0 and int(st.get("shop_peer", 0)) != 0
+	shop_layer.visible = open_now and not _shop_collapsed
+	if shop_reopen_btn != null:
+		shop_reopen_btn.visible = open_now and _shop_collapsed
+		if shop_reopen_btn.visible:
+			shop_reopen_btn.text = "🛒 小卖部（购物中）· 点此继续" \
+				if int(st.get("shop_peer", 0)) == my_peer else "🛒 小卖部 · 点此查看"
 
 # ================= 黑市（§8：仅由机会卡进入，一切消费用地产） =================
 
@@ -5330,8 +5362,11 @@ func _process(_delta: float) -> void:
 	# 并给旁观者一条「XX 正在挑选」说明。
 	var shop_open_now: bool = phase == "playing" and int(st.get("shop_open", -1)) >= 0 \
 		and int(st.get("shop_peer", 0)) != 0
-	shop_layer.visible = shop_open_now
-	if shop_open_now:
+	# #25：进店默认展开；会话结束（离开 / 超时 / 换人）时复位，下次进店重新展开。
+	if not shop_open_now:
+		_shop_collapsed = false
+	_apply_shop_ui()
+	if shop_open_now and not _shop_collapsed:
 		# 置顶（照 _menu_show）：build_play_ui 里后建的屏幕层控件（暂停按钮 / 格详情卡 /
 		# 战报开关与战报栏）默认按树序画在压暗底之上——亮着、看着能点，点击却被
 		# dim 的 MOUSE_FILTER_STOP 吃掉。已置顶时不重复搬。
@@ -5486,6 +5521,16 @@ func _place_overlay_bar(c: Control) -> void:
 	c.position = Vector2(_clamp_dock_x(vp.x * 0.5 - c.size.x * 0.5, c.size.x, _dock_band()),
 		maxf(vp.y - c.size.y - 16.0, 8.0))
 
+## 小卖部格号 → 第几家店（1 起）。棋盘共 6 家，格号是散的，面板上标「第 N 家」更好认。
+func _shop_ordinal(idx: int) -> int:
+	var n := 0
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			n += 1
+			if i == idx:
+				return n
+	return 0
+
 ## 小卖部全屏界面刷新：按货架逐格换卡面 / 标价 / 可买判定（缓存签名，避免每帧重建）。
 func _refresh_shop_ui() -> void:
 	var open := int(st.get("shop_open", -1))
@@ -5529,9 +5574,9 @@ func _refresh_shop_ui() -> void:
 		var price := ItemData.price(String(ItemData.def(id).quality))
 		price_l.text = GameData.fmt_money(price)
 		b.visible = true
-		b.disabled = (not mine_shop) or bag.size() >= 5 or (not free_buy and money < price)
+		b.disabled = (not mine_shop) or bag.size() >= _bag_cap(mine) or (not free_buy and money < price)
 	if shop_tile_l != null:
-		shop_tile_l.text = "第 %d 号店 · 刷新费随全场次数递增" % open
+		shop_tile_l.text = "第 %d 号店 · 刷新费随全场次数递增" % _shop_ordinal(open)
 	if shop_money_l != null:
 		# 现金变了签名就变（sig 里含 money），所以在这里刷就够了
 		shop_money_l.text = "现金 %s" % GameData.fmt_money(money)

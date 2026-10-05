@@ -204,6 +204,13 @@ static func build_play_ui(g: Node) -> void:
 	shead.add_child(sh_sp)
 	g.shop_tile_l = UIKit.label("", 14, Color(0.78, 0.7, 0.58))
 	shead.add_child(g.shop_tile_l)
+	# #25：收起界面看棋盘（**不结束逛店**）——店里全屏压暗底会吞掉所有棋盘点击，
+	# 原先只能靠「离开」才看得到棋盘。收起后由右下角「回到小卖部」入口再展开。
+	g.shop_close_btn = UIKit.button("✕", 14)
+	g.shop_close_btn.custom_minimum_size = Vector2(32, 26)
+	g.shop_close_btn.tooltip_text = "收起界面看棋盘（不结束逛店）"
+	g.shop_close_btn.pressed.connect(func() -> void: g._set_shop_collapsed(true))
+	shead.add_child(g.shop_close_btn)
 
 	# 「XX 正在挑选」说明条（批次 12 C2 / 设计 §⑧）：小卖部改为**全员可见**之后，
 	# 非本人看到的是同一份货架、但**只读**（买 / 刷新 / 离开全置灰）。没有这条，
@@ -301,6 +308,22 @@ static func build_play_ui(g: Node) -> void:
 	g.shop_timer_left.custom_minimum_size = Vector2(56, 0)
 	g.shop_timer_left.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	g.shop_timer_row.add_child(g.shop_timer_left)
+
+	# #25：收起店里界面后，右下角这枚入口负责把界面再拉回来。**必须另挂 `g`**：
+	# 收起时 `shop_layer` 整体 `visible=false`，挂在它下面的东西会一起消失。走 bottom-right 锚点。
+	g.shop_reopen_btn = UIKit.button("🛒 小卖部 · 点此继续", 15, "good")
+	g.shop_reopen_btn.visible = false
+	g.shop_reopen_btn.z_index = 72
+	g.shop_reopen_btn.anchor_left = 1.0
+	g.shop_reopen_btn.anchor_right = 1.0
+	g.shop_reopen_btn.anchor_top = 1.0
+	g.shop_reopen_btn.anchor_bottom = 1.0
+	g.shop_reopen_btn.offset_left = -330
+	g.shop_reopen_btn.offset_right = -24
+	g.shop_reopen_btn.offset_top = -62
+	g.shop_reopen_btn.offset_bottom = -24
+	g.shop_reopen_btn.pressed.connect(func() -> void: g._set_shop_collapsed(false))
+	g.add_child(g.shop_reopen_btn)
 
 	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
 	g.black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,

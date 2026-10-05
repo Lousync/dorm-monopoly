@@ -103,6 +103,7 @@ func _run() -> void:
 	await _test_roll_button_off_home_view(g)
 	await _test_targeting(g)
 	await _test_new_items(g)
+	_test_bankrupt_shop(g)
 
 	# 掉线路径会触发换场景，放到最后
 	var lobby = load("res://scenes/lobby.tscn").instantiate()
@@ -658,3 +659,63 @@ func _test_new_items(g) -> void:
 	var ok_tr: bool = await g._apply_item_effect(p1, {"id": "转专业", "cd": 0}, 2, pa, pb)
 	_check(ok_tr and int(g.htiles[pa].owner) == 2 and int(g.htiles[pb].owner) == 1,
 		"转专业：交换两块地归属")
+
+## 破产清道具（台账 §四.1）+ 小卖部背包上限 / #25 收起
+func _test_bankrupt_shop(g) -> void:
+	print("== 破产清道具 + 小卖部收起 / 背包上限 ==")
+	var p1 := _mk_player(1, "我")
+	var p2 := _mk_player(2, "乙")
+	g.my_peer = 1
+	g.hp = [p1, p2]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0, "soil": false})
+
+	# 破产：现金清零 + 地产收归 + **道具清空**
+	var pi := _prop_idx(0)
+	g.htiles[pi].owner = 2
+	g.htiles[pi].level = 2
+	p2.money = 100
+	p2.items = [{"id": "招财猫", "cd": 0}, {"id": "砍价高手", "cd": 0}]
+	p2.alive = true
+	g._pay(p2, 999999, p1)
+	_check(not bool(p2.alive), "破产：alive=false")
+	_check(int(p2.money) == 0, "破产：现金清零")
+	_check(int(g.htiles[pi].owner) == GameData.NO_OWNER and int(g.htiles[pi].level) == 0,
+		"破产：地产收归无主且等级清零")
+	_check((p2.items as Array).is_empty(), "破产：道具清空（剩 %d 件）" % p2.items.size())
+
+	# 唯一道具回池：招财猫 / 砍价高手都是唯一，出局后 `_item_pool` 应重新包含
+	p1.items = []
+	p2.alive = false
+	var pool: Array = g._item_pool("白")
+	_check(pool.has("招财猫") and pool.has("砍价高手"), "破产后唯一道具回池")
+
+	# 小卖部背包上限：置物架 → 7（原先 `_shop_buy` 写死 5）
+	var stile := -1
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			stile = i
+			break
+	g._shop_peer = 1
+	g._shop_tile = stile
+	p1.money = 100000
+	var five := [{"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0},
+		{"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0}]
+	p1.items = five.duplicate(true)
+	g.shops[stile] = {"slots": ["兼职中介", "", ""]}
+	g._shop_buy(1, 0)
+	_check(p1.items.size() == 5, "小卖部：满 5 件不买（无置物架）")
+	p1.items = [{"id": "置物架", "cd": 0}, {"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0},
+		{"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0}]
+	g.shops[stile] = {"slots": ["兼职中介", "", ""]}
+	g._shop_buy(1, 0)
+	_check(p1.items.size() == 6, "小卖部：持置物架可买到第 6 件（上限 7）")
+
+	# #25：收起是**本地** UI 态，不动会话（`_shop_peer` 不变）
+	g._shop_collapsed = false
+	g._set_shop_collapsed(true)
+	_check(g._shop_collapsed and g._shop_peer == 1, "#25 收起：本地标记置位、会话不变")
+	g._set_shop_collapsed(false)
+	_check(not g._shop_collapsed, "#25 展开：本地标记复位")
+	g._shop_peer = 0

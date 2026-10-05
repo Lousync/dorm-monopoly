@@ -738,6 +738,22 @@ func take_shot(path: String) -> void:
 			g._broadcast_state()
 			await get_tree().create_timer(0.35).timeout
 			get_tree().paused = true   # 冻住：自动对局下一拍会把 _shop_peer 改掉
+	if path.contains("shopopen") and g.multiplayer.is_server():
+		# 摆拍（#25）：**本人**视角的小卖部 —— 核对右上角 ✕「收起界面看棋盘」在不在、
+		# 排布不挤。文件名再带 `collapsed` 则顺带收起，核对右下角「回到小卖部」入口。
+		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_shopopen_table_plain.png`
+		var idx_o := _find_tile("shop")
+		if idx_o >= 0:
+			g._shop_tile = idx_o
+			if not g.shops.has(idx_o):
+				g.shops[idx_o] = {"slots": ["", "", ""]}
+			g._stock_shop(idx_o, true)
+			g._shop_peer = g.my_peer
+			g._broadcast_state()
+			await get_tree().create_timer(0.35).timeout
+			if path.contains("collapsed"):
+				g._set_shop_collapsed(true)
+			get_tree().paused = true   # 冻住：自动对局下一拍会把 _shop_peer 改掉
 	# 文件名带 deckout：抽卡「抽出」只有 `DeckReveal.OUT` = 0.34s，常规三帧的第一帧（0.6s）
 	# 已经落在翻面之后 —— 拍不到"卡刚亮出来的那一刻"。这里按两个时间点各补一张（**不等 0.6s**）：
 	#   0.06s（卡片刚起）与 0.16s（快到位）。批次 8 起演出在屏幕层、相机不参与 ⇒ 不再需要
