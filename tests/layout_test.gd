@@ -48,10 +48,33 @@ func _house_w_px(t3, h: Node3D, bm: BoxMesh) -> float:
 	var r: Vector2 = t3.world_to_canvas_px(plate.global_transform * Vector3(bm.size.x * 0.5, 0.0, 0.0))
 	return l.distance_to(r)
 
-## 某个距离上「能量 × 衰减」估出的相对照度（光池亮度 × 形状的**代理式**，见 C3 那段注释）。
-## `pow` 的底夹到 0：射程之外照度为 0（Godot 的 omni 光在射程外也确实是 0）。
-func _corner_irradiance(light: OmniLight3D, dist: float) -> float:
-	return light.light_energy * pow(maxf(1.0 - dist / light.omni_range, 0.0), light.omni_attenuation)
+## 桌面上一点吃到的**相对照度**（"桌面各位置亮度一致"那条断言的**代理式**，见光照段那段注释）。
+##
+## 与**渲染器同口径**地估：Compatibility 后端（本项目用的 `gl_compatibility`）就是 GLES3，
+## 它的 omni 衰减在 `drivers/gles3/shaders/scene.glsl` 的 `get_omni_spot_attenuation`：
+##     `atten = max(1 − (d/range)^4, 0)^2 × d^(−衰减指数)`
+## 直射那一份 = `能量 × atten × N·L`（桌面法线朝上 ⇒ `N·L = 灯高 / d`，夹到 0），
+## 再加上**与位置无关**的环境光那一份 = `环境能量 × 环境色亮度`。
+##
+## **为什么不能只写 `pow(clamp(1 − d/range, 0, 1), atten)`**（那条更"像衰减"的写法）：
+## 它把 `(1 − (d/range)^4)^2` 那一项整个丢掉了，而在**衰减指数被压到 0**（本批就是这么取的）
+## 时，那一项正是**唯一**还会随距离变化的因子 —— 用它估的话，射程被改小到 12.5（远端角
+## 直接被乘到 0、画面上就是一条黑边）也照样"均匀"。**断言会变成永真**，正是要避免的那种。
+##
+## **环境光那一份必须算进去**：它是渲染器实际会加上去的一层（`frag_color.rgb += emission + ambient_light`），
+## 与位置无关 ⇒ 它让"桌面均匀"这条更容易满足，也让"环境光被压回 0.1"那种回归漏不出去。
+func _mat_sample_irradiance(light: OmniLight3D, p: Vector3, ambient: float) -> float:
+	var d: float = light.global_position.distance_to(p)
+	if d < 0.0001:
+		d = 0.0001
+	var nd: float = d / light.omni_range
+	nd = nd * nd
+	nd = nd * nd                                     # (d/range)^4
+	var shape: float = maxf(1.0 - nd, 0.0)
+	shape = shape * shape                            # (1 − (d/range)^4)^2
+	var decay: float = pow(maxf(d, 0.0001), -light.omni_attenuation)
+	var cos_i: float = clampf((light.global_position.y - p.y) / d, 0.0, 1.0)  # N·L（N = 桌面法线 +Y）
+	return light.light_energy * shape * decay * cos_i + ambient
 
 ## 【批次 12 A1 删除】原先这里有个 `_shade_screen_bbox(t3, shade)`：把灯罩当成"底口半径 × 罩高"
 ## 的盒子投影到屏幕，用来判"台灯还看得见吗"。灯罩已随 A1 整体删除（`Lamp` 节点不存在了），
@@ -143,80 +166,37 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
-	# ---- 批次 6 Task 1：房间剪影 + 台灯（唯一主光源） ----
-	# 观感的主角是**光**：近黑的屋子里只有一盏台灯亮着，四周落进剪影。可执行的判据只有四条：
-	#   ① 剪影**近黑、高粗糙、不透明**（不吃灯就走不进画面）；② 全场**只有一盏灯**（台灯）；
-	#   ③ 环境光压到很低、背景近黑；④ 灯杆 / 灯罩**不在桌垫窗口内**（它不该挡棋盘）。
-	# 位置 / 范围 / 衰减是对着出图调的估值，测试只钉「关系」不钉「数值」
-	# （否则每次对图微调都要改测试）。
-	print("== 批次 6：房间剪影（近黑、不吃灯就走不进画面） ==")
-	var room: Node = t3.get_node_or_null("Room")
-	_check(room != null, "容器带房间层 Room")
-	if room == null:
-		_check(false, "房间层缺了，房间 / 台灯断言整段跳过")
-	else:
-		var boxes: Array = []
-		for ch in room.get_children():
-			var mi := ch as MeshInstance3D
-			if mi != null and mi.mesh is BoxMesh:
-				boxes.append(mi)
-		# 至少：三面墙 + 书架（几块板）+ 床架（几块板）
-		_check(boxes.size() >= 8, "房间剪影都用 BoxMesh 拼（实得 %d 块）" % boxes.size())
-		# **三面墙各查一遍**（批次 6 Task 3 补回）：上面那条只钉"块数 ≥ 8"而实际 13
-		# ⇒ 少一面墙照样过（删后墙那条断言时把 `WallBack != null` 也一起删掉了）。
-		# 三面墙是房间的骨架，缺一面就"漏"到背景色外面去了，这里逐面点名。
-		var walls_ok := true
-		for wn in ["WallBack", "WallLeft", "WallRight"]:
-			var wmi := room.get_node_or_null(wn) as MeshInstance3D
-			if wmi == null or not (wmi.mesh is BoxMesh):
-				walls_ok = false
-		_check(walls_ok, "三面墙都在（WallBack / WallLeft / WallRight —— 块数断言盖不住少一面）")
-		var dark := true
-		var matte := true
-		var opaque := true
-		var one_mat: StandardMaterial3D = null
-		var shared := true
-		var off_table := 0
-		var casting := 0
-		var half_w_r: float = t3.TABLE_SIZE.x * 0.5 + t3.WOOD_FRAME
-		var half_d_r: float = t3.TABLE_SIZE.y * 0.5 + t3.WOOD_FRAME
-		for b in boxes:
-			var mi2 := b as MeshInstance3D
-			var bm2 := mi2.mesh as BoxMesh
-			var m2 := mi2.material_override as StandardMaterial3D
-			if m2 == null or m2.albedo_color.get_luminance() > 0.12:
-				dark = false
-			if m2 == null or m2.roughness < 0.8:
-				matte = false
-			if m2 == null or m2.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
-				opaque = false
-			if one_mat == null:
-				one_mat = m2
-			elif m2 != one_mat:
-				shared = false
-			# 剪影一律落在木桌之外（不许压在桌面上 / 遮棋盘）
-			var bp2: Vector3 = mi2.global_position
-			if absf(bp2.x) - bm2.size.x * 0.5 < half_w_r \
-					and absf(bp2.z) - bm2.size.z * 0.5 < half_d_r:
-				off_table += 1
-			# 剪影不投影：它们又大又远，投影纯是每帧白跑一张阴影图（性能是本批次点名的）
-			if mi2.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
-				casting += 1
-		_check(dark, "剪影材质近黑（亮度 ≤ 0.12 —— 底色压到近黑，抬起来的是下面那条自发光底光）")
-		_check(matte, "剪影材质高粗糙（roughness ≥ 0.8，不吃镜面高光）")
-		_check(opaque, "剪影是不透明档（写深度、能彼此遮挡，不是透明队列）")
-		_check(shared, "所有剪影共用一份材质（不为每件单建 —— 本批次点名要避免的浪费）")
-		_check(off_table == 0, "房间剪影都落在木桌之外（压到桌子上的 %d 块）" % off_table)
-		_check(casting == 0, "剪影都不投影（开着投影的 %d 块 —— 白跑阴影图）" % casting)
+	# ---- 批次 6 Task 1 → 批次 13 甲：台灯（唯一主光源）+ 桌面照度均匀 ----
+	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
+	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：
+	#   ① 全场只有这一盏、开着阴影；② 暖色；③ 吊在桌面上方；
+	#   ④ 它的**平面落点**在桌垫窗口之外（光不许压在棋盘上 —— 批次 13 甲"只抬 y、不动水平"
+	#      那条裁定就是为它让的路）；⑤ **远端角落在射程的 0.9 以内**（射程之外照度归零 ⇒ 桌角
+	#      直接黑掉，而本批把衰减压平之后射程那一项**重新有了话事权**，见 `_mat_sample_irradiance`）；
+	#   ⑥ **桌面各位置的照度一致**（批次 13 ⑧ 反转出来的那一条，见下面那段）。
+	#
+	# **批次 6 那整段「房间剪影」已随批次 13 丙（用户 ⑨）删除** —— 三面墙 / 书架 / 床架
+	# 连同"块数 ≥ 8 / 三面墙点名 / 近黑 / 高粗糙 / 不透明 / 共用材质 / 不压桌子 / 不投影"
+	# 那**八条**断言（与"容器带 Room"那道门）一起没了。
+	# **这不是放宽，是载体没了**：那八条量的全是**剪影物体自己的材质与摆放**，物件被用户 ⑨
+	# 要求删掉之后，它们既无从量起、背后那套"剪影可辨"（`ROOM_EMISSION` 底光）也随 `room_mat`
+	# 一起删了。谁把剪影加回来，得**连这套判据一起加回来**（只把物体加回去 = 无人守）。
 
-	print("== 批次 6 / 批次 12 A1：唯一主光源（台灯的可见几何已整体删除） ==")
+	# 环境光要参与"桌面均匀"那条代理式（它那一份**与位置无关**，是渲染器真会加上去的一层）⇒ 先取。
+	var wenv: WorldEnvironment = null
+	for c in t3.get_children():
+		if c is WorldEnvironment:
+			wenv = c
+	var amb_irr := 0.0
+	if wenv != null:
+		amb_irr = wenv.environment.ambient_light_energy \
+			* wenv.environment.ambient_light_color.get_luminance()
+
+	print("== 批次 6 / 批次 12 A1 / 批次 13 甲：唯一主光源 + 桌面照度均匀 ==")
 	# 用 get("lamp_light") 而不是 t3.lamp_light：**红跑**（还没实现）时前者给 null、
 	# 后者是 "Invalid access to property" 的脚本错误，会把 _run() 打断在半路、
 	# 后面的断言一条都跑不到（红跑还会挂住不退）。
 	var lamp_l = t3.get("lamp_light")
-	# **批次 12 A1 新增**：台灯那四件可见几何（底座 / 灯杆 / 灯臂 / 灯罩）连同只服务于它们的
-	# 常量一起删了 —— 树里不该再有名为 `Lamp` 的节点（用户 ①「台灯先去掉」）。
-	# 留的是**光**（`LampLight`）：全场唯一光源 + 唯一投影光源，删了屋子会全黑、影子全丢。
 	_check(t3.get_node_or_null("Lamp") == null,
 		"台灯的可见几何已删净（树里没有名为 Lamp 的节点）")
 	_check(lamp_l != null, "唯一主光源仍在（`lamp_light` / 节点名 LampLight）")
@@ -231,78 +211,80 @@ func _run() -> void:
 			"全场只有台灯这一盏灯（实得 %d 盏）" % lights.size())
 		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 牌堆才投得出影子）")
 		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
-		_check(lamp_l.light_energy > 0.5, "台灯有能量（实得 %.2f）" % lamp_l.light_energy)
 		var lp: Vector3 = lamp_l.global_position
 		_check(lp.y > t3.table_mesh.global_position.y + 1.0,
-			"主光源吊在桌面上方（实得 y=%.2f）" % lp.y)
-		# **批次 12 A1 的验收内核**：删的只是**实物**，光必须是**同一个世界点**。
-		# 位置逐位比 `LAMP_LIGHT_POS`（= 旧"灯罩里那一点"合成出来的坐标）—— 少了这一条，
-		# "删几何时顺手把光挪了半米"这种改动会静默通过，而整套光照参数都是对着那个点取的。
-		_check(lp.distance_to(t3.LAMP_LIGHT_POS) < 0.001,
-			"光源仍在删除前的那个世界点（实得 %s / 期望 %s）" % [lp, t3.LAMP_LIGHT_POS])
-		# 光池要够到棋盘（远端那半块不能是死黑、读不出字），但**不许漫到整间屋子**。
-		# 尺子用**桌垫四角**（不是木桌四角 —— 批次 10 T2 的灯位下桌垫四角到灯 3.92~9.02、
-		# 木桌四角是 4.48~9.88，别把两者混起来）。
+			"主光源吊在桌面上方（实得 y=%.2f —— 批次 13 甲抬到 10 高，桌面上的 N·L 才收得平）" % lp.y)
+		# 【批次 13 甲删掉的那条】原来这里断言「光源位置逐位 == `LAMP_LIGHT_POS`」。
+		# **意图反转，不是放宽**：那条钉的是**批次 12 A1 那次"删可见几何时不许顺手挪光"**
+		#（当时整套光照参数都是照着那个世界点取的）。本批**有意**把光抬高了（y 2.73 → 10）
+		# 并整套重取了参数 ⇒ "位置不许动"这条契约的对象在本批不存在了。
+		# **仍然不许动的是它的水平位置**（`x` / `z`）—— 那一条由下面「光源不在桌垫窗口内」继续守着
+		#（把灯挪到桌子正上方就会压在棋盘上 ⇒ 立刻红）。
 		#
-		# **固定波 B：原来那两条不可判别，已换掉。** 原话是"四角都在射程内 ⇒ 不落死黑"，
-		# 但（当时：杆 2.3 / 衰减 1.15）远端角在 12.5 射程的 9.6 处只剩近端约两成强度 ——
-		# 出图量到远端那两列只有 **0.008（3D）/ 0.012（2D）**，字读不出来，「在射程内」**必要而不充分**，单独拿它当
-		# "不是死黑"的证据等于没测（本批次审查用像素采样打掉了这条结论）。换成三条**真管用**的：
-		#   ① **余量**：远端角要落在 0.9×射程 以内（只判"在射程内"时，射程被收到 10 也照过）；
-		#   ② **形状**：远端角到灯 ≤ 近端角 × 4（灯偏在桌子一侧、池子拉成长条时这条红）；
-		#   ③ **衰减**：指数不许比 1.0 更陡 —— 1.15 → 0.72 那一次实测：能量只 +11%，远端列却从
-		#      0.017 涨到 0.074（左列只涨 1.34 倍）⇒ 指数越大掉得越快，1.15 正是上面那次实测的成因。
-		#      量测表见 `.superpowers/sdd/v0.5.0-批次6-实施计划/fix-wave-report.md`。
-		#   ④ **亮度 × 形状耦合**（批次 6 Task 3 补）：上面 ①②③ 全是**形状 / 相对关系**，
-		#      没有任何一条管"够不够亮" ⇒ 把 `LAMP_ENERGY` 单独退回 2.6（衰减仍是 0.72）时
-		#      三条一条都不红，而那次实测的桌面均值只有 0.0566（批次 5 的一半，观感是"把桌子调暗了"）。
-		#      ④ 把能量与衰减合起来估一个**远端角的相对照度**并钉下限 —— 它同时管亮度与形状，
-		#      是"能量退回 2.6 / 衰减回到 1.15"两种回归都能红的那一条。
+		# 光池要够到棋盘：**远端角落在射程的 0.9 以内**。本批把衰减指数压到 0 之后，
+		# 射程那一项 `(1 − (d/range)^4)^2` **重新成了唯一还会随距离变化的因子**（见下面那段）：
+		# 射程一收，桌角就直接被乘到 0 —— 这条比改动前更该留着。
 		var corners: Array = []
 		for sx in [-t3.TABLE_SIZE.x * 0.5, t3.TABLE_SIZE.x * 0.5]:
 			for sz in [-t3.TABLE_SIZE.y * 0.5, t3.TABLE_SIZE.y * 0.5]:
 				corners.append(Vector3(sx, t3.table_mesh.global_position.y, sz))
-		var d_near := INF
 		var d_far := 0.0
 		for cw in corners:
-			var dd: float = lp.distance_to(cw)
-			d_near = minf(d_near, dd)
-			d_far = maxf(d_far, dd)
+			d_far = maxf(d_far, lp.distance_to(cw))
 		_check(d_far <= lamp_l.omni_range * 0.9,
-			"远端角落在射程的 0.9 以内（远端 %.2f ≤ %.2f，射程 %.1f）"
+			"远端角落在射程的 0.9 以内（远端 %.2f ≤ %.2f，射程 %.1f —— 射程之外照度归零、桌角会黑掉）"
 				% [d_far, lamp_l.omni_range * 0.9, lamp_l.omni_range])
-		_check(d_far <= d_near * 4.0,
-			"光池不拉成长条（远端 %.2f ≤ 近端 %.2f × 4）" % [d_far, d_near])
-		_check(lamp_l.omni_attenuation <= 1.0,
-			"衰减不比线性更陡（attenuation %.2f ≤ 1.0 —— 更陡时远端角只剩近端约两成、字读不出）"
-				% lamp_l.omni_attenuation)
-		# ④ 亮度 × 形状耦合（见上面那段注释）。**代理式**：把 Godot 的 omni 衰减近似成
-		# `pow(clamp(1 - d/range, 0, 1), attenuation)`，再乘能量 —— 它不必与渲染器逐位一致
-		#（判的是"能量与衰减合起来够不够把远端托起来"，不是复现某一张图的像素）。
-		# 下限 1.1 的来历是**实测**（批次 6 的灯位）：能量 3.9 / 衰减 0.72 时远端角 1.355
-		#（出图桌垫均值 0.1202），而能量退回 2.6 时只有 0.903（均值 0.0566 = 判红的那一档）；
-		# 照抄审查者建议的 3.5 / 0.85 恰好在 1.00（那一组实测 0.0988、两条目标都在界外）⇒ 取 1.1
-		# 把它也挡在外面。**批次 10 T2 重取**：灯挪到 z=0 之后 d_far 9.38 → 9.02 ⇒ 远端角 **1.552**
-		#（出图棋盘整块均值 0.1266、左列 0.250 —— 变亮了，离下限更远、更安全）。
-		var i_far: float = _corner_irradiance(lamp_l, d_far)
-		var i_near: float = _corner_irradiance(lamp_l, d_near)
-		_check(i_far >= 1.1,
-			"远端角吃到的相对照度够亮（能量 %.2f × 衰减 %.2f ⇒ %.3f ≥ 1.1 —— 只把能量退回 2.6 时 0.90）"
-				% [lamp_l.light_energy, lamp_l.omni_attenuation, i_far])
-		_check(i_far >= i_near * 0.25,
-			"远端角没塌成近端的零头（远端照度 %.3f ≥ 近端 %.3f × 0.25 —— 与②同源、按亮度加权）"
-				% [i_far, i_near])
-		# 【删掉的那条】原来这里断言「`omni_range` < 到后墙的距离」，错在两处：
-		#   ① **量错了地方**：拿的是墙的**中心**（距灯 13.15），而不是**包围盒最近面**（~11.8）——
-		#      墙其实**本来就在射程内**，那条断言在管一件不存在的事；
-		#   ② 就算收紧到最近面，"射程止于墙"也**不是**房间明暗的成因：三面墙在这两个摆拍视角里
-		#      **都出画**，房间里看到的是**背景色**（`background_color` 直出、不过光照）。
-		# ⇒ **别用 `LAMP_RANGE` 去调房间明暗**（调不动，只会连桌子一起改）。房间的黑由本文件
-		#   「背景色近黑」那条断言 + 剪影材质近黑那条钉住，这里不再留一条假判据。
+		# 【批次 13 甲换掉的那一组】原来是「远端角照度 ≥ 1.1 / ≥ 近端 × 0.25 / 衰减 ≤ 1.0 /
+		# 光池不拉成长条」。它们钉的是**批次 6/10 那套「中心亮、四周暗」的分布**（远端要够亮、
+		# 但又不许亮过近端太多，衰减不许比线性更陡）—— 本批用户 ⑧ 要的正是**取消渐变**
+		# ⇒ **意图反转**：换成下面两条"均匀"断言（含 N·L 与射程形状的同一口径代理式）。
+		#
+		# ---- 批次 13 ⑧：**桌面各位置的亮度一致** ----
+		# 采样点 = 桌垫**四角 + 中心**。四角正是改动前落差最大的两处：近灯那对角 N·L ≈ 0.70、
+		# 远端那对角只有 0.30，再乘 0.72 的衰减 ⇒ 批次 10 实测**左/右 4.4:1**。
+		# 代理式见 `_mat_sample_irradiance`：**与渲染器同口径**（GLES3 的
+		# `max(1 − (d/range)^4, 0)^2 × d^(−指数)` × 能量 × N·L），再加上环境光那一份。
+		var samples: Array = corners.duplicate()
+		samples.append(Vector3(0.0, t3.table_mesh.global_position.y, 0.0))
+		var i_min := INF
+		var i_max := 0.0
+		var i_light_min := INF      # 只算灯的直射那一份（环境光单列 —— 见两条各守什么）
+		var i_light_max := 0.0
+		for p in samples:
+			var lit: float = _mat_sample_irradiance(lamp_l, p, 0.0)
+			i_light_min = minf(i_light_min, lit)
+			i_light_max = maxf(i_light_max, lit)
+			var total: float = lit + amb_irr
+			i_min = minf(i_min, total)
+			i_max = maxf(i_max, total)
+		# ① **均匀**（本批的核心判据 = "桌面完全均匀"的可执行定义）。**含环境光**：它也是渲染器
+		#    真会加上去的一层、且与位置无关 ⇒ 含它才与画面一致。
+		#    1.4 是设计给的界；本档实测 **1.27**（1.314 / 1.035）。
+		#    **同一口径、同一组采样点下改动前那套参数是 5.1:1**（能量 3.9 / 射程 12.5 / 指数 0.72 /
+		#    光高 2.73 ⇒ 近左角 1.09、远右角 0.21 —— 出图逐列实测的 4.4:1 是另一个口径）⇒ 必红。
+		#    **本条会红在哪**（实跑验证：光挪回 2.73 高、其余不动 ⇒ 实测 **1.88** 红；
+		#    射程收回 12.5 ⇒ 按同一公式 **2.66**，且上面那条"远端角 ≤ 0.9×射程"同时红：
+		#    13.18 > 11.25 是算术）。
+		#    ⚠ **把 `LAMP_ATTEN` 单独调回 0.72 本条仍绿**（射程 30 下只有 `d^-0.72` 那一项在动，
+		#    实测 1.24）—— 那一档红的是下面 ②（远端角的直射照度掉到 0.13）。两条各守一半，
+		#    **别以为一条能顶两条**。
+		_check(i_max / i_min <= 1.4,
+			"桌面各位置亮度一致（最高 %.3f / 最低 %.3f = %.2f ≤ 1.4，含环境光 %.3f —— 用户 ⑧）"
+				% [i_max, i_min, i_max / i_min, amb_irr])
+		# ② **灯仍是主角、且够亮**（把 ① 里与位置无关的环境光那一份摘掉，单看直射）。
+		#    少了这条，"环境光抬到 0.75 + 灯只给一点点"也能把 ① 糊过去（而那不是"一盏灯照亮桌面"）。
+		#    本档实测 **0.85 ~ 1.12**：下界 0.5 挡"能量塌掉 / 射程被收小 / 光被挪远"，
+		#    上界 1.8 挡"能量退回批次 6 的 3.9"（衰减已压到 0 ⇒ 那会把近灯那一列推到 ~3.6、烤白）。
+		_check(i_light_min >= 0.5 and i_light_max <= 1.8,
+			"灯的直射照度在采用档位附近（最低 %.3f ≥ 0.5、最高 %.3f ≤ 1.8 —— 能量 %.2f / 射程 %.1f / 指数 %.2f）"
+				% [i_light_min, i_light_max, lamp_l.light_energy, lamp_l.omni_range,
+					lamp_l.omni_attenuation])
 		# 光**不许压在棋盘上**：它的平面落点要在**桌垫窗口之外**
 		#（窗口 = 棋盘 + 一圈留白；压在窗口里就成了"棋盘上方的灯"）。
 		# **批次 12 A1**：原先这里查的是"灯杆 / 灯罩 / 光源三个都不在窗口内"（实物已删），
 		# 今天只剩光这一个 —— 判据本身没变，只是对象少了两件。
+		# **批次 13 甲**：这条就是那条"水平位置不动"裁定的**唯一执行者** —— 抬 y 不改平面落点，
+		# 所以它在；把灯挪到桌心（x → 0）会让它立刻红。
 		_check(not t3.TEX_WINDOW_PX.has_point(t3.world_to_canvas_px(lamp_l.global_position)),
 			"光源不在桌垫窗口内（画布 %s）" % t3.world_to_canvas_px(lamp_l.global_position))
 		# 【批次 12 A1 删掉的那两条】
@@ -310,54 +292,30 @@ func _run() -> void:
 		#      它当年是 `CAM_DIST` **最紧**的一条约束（4.60 时就红），删掉它之后相机才能收到 4.15
 		#     （批次 12 A2）；
 		#   ② 「灯罩的屏幕位置不落在桌垫上」—— 同上，随灯罩一起去。
-		# 两条都不是"放宽"，是**判据的载体没了**：删掉的是**实物**，光本身的位置与参数一字未动
-		#（那条"光的位置逐位不变"的断言就钉在上面）。
+		# 两条都不是"放宽"，是**判据的载体没了**。
 
-	print("== 批次 6：环境光与背景压到近黑 ==")
-	var wenv: WorldEnvironment = null
-	for c in t3.get_children():
-		if c is WorldEnvironment:
-			wenv = c
+	print("== 批次 13 甲：环境光托底 + 背景仍近黑 ==")
 	_check(wenv != null, "容器带 WorldEnvironment")
 	if wenv != null:
 		var en := wenv.environment
-		_check(en.ambient_light_energy < 0.25,
-			"环境光压到很低（energy %.2f < 0.25 —— 四周近不近黑就看它）"
+		# 环境光是**与位置无关**的那一层，本批把它从"压到很低"**反转成"托底"**：
+		# 原先那条断言是 `< 0.25`（那时候环境光一高，"一盏台灯 + 中心亮四周暗"就被淹没了）；
+		# 本批用户 ⑧ 要的是"桌面各位置亮度一致、暗部的字也读得出" ⇒ 它得**抬**（见 `LAMP_ATTEN`
+		# 那张表：环境光那一份把极差从 1.33:1 压到 1.26:1）。
+		# **钉区间而不是单边**：下界 0.30 防"又压回去"（远端那两列重新读不出字），
+		# 上界 0.75 防"抬过头"（桌面被均匀洗成一块死平的光、与灯的暖色叠加后发灰）。
+		_check(en.ambient_light_energy >= 0.30 and en.ambient_light_energy <= 0.75,
+			"环境光落在新档位区间 [0.30, 0.75]（energy %.2f —— 与位置无关的那一层，托住暗部）"
 				% en.ambient_light_energy)
 		_check(en.background_color.get_luminance() < 0.03,
-			"背景色近黑（亮度 %.3f）" % en.background_color.get_luminance())
-		# ---- 批次 6 终审修复波 D：剪影**不许比背景更暗** ----
-		# 见 `table_3d.gd` 的 `ROOM_EMISSION` 那段：台灯照不到最远的床架（出图实测 1/255，
-		# 而它身后的近黑背景是 4~6/255），"剪影可辨"靠的是共用材质上那层自发光底光。
-		# 无头下渲染不出图，这里按**同一口径的数据**估一个代理式：
-		#   剪影 ≈ 自发光（不过光照、与距离无关）+ 环境光给它的那一层（albedo × 环境能量 × 环境色）
-		#   背景 = `background_color`（直出、不过光照）
-		# 两者都是"直达画面"的量，可以直接比。**台灯那一项故意不计**（保守：剪影即使一点灯都
-		# 没吃到也应当亮于背景 —— 正是"床架那一坨看不见的黑"要治的病）。这个顺序已由出图核对：
-		# 床架 18/255 > 背景 4~6/255。少了底光这一条就反过来（环境那层只有 0.006，背景是 0.014）。
-		var rmat = t3.get("room_mat") as StandardMaterial3D
-		_check(rmat != null, "剪影材质可读（room_mat）")
-		if rmat != null:
-			var e_lum := 0.0
-			if rmat.emission_enabled:
-				e_lum = rmat.emission.get_luminance() * rmat.emission_energy_multiplier
-			var a_lum: float = rmat.albedo_color.get_luminance() * en.ambient_light_energy \
-				* en.ambient_light_color.get_luminance()
-			var bg_lum: float = en.background_color.get_luminance()
-			_check(e_lum > 0.0,
-				"剪影带自发光底光（能量 %.4f —— 台灯够不到最远那件，见 ROOM_EMISSION）" % e_lum)
-			_check(e_lum + a_lum > bg_lum,
-				"剪影亮于背景（底光 %.4f + 环境 %.4f > 背景 %.4f —— 没有底光时反过来：床架实测 1/255 < 背景 4~6/255）"
-					% [e_lum, a_lum, bg_lum])
-			# ---- 收尾：**光够不够亮**这一条必须与出图夹逼挂钩 ----
-			# 上面那条 `e_lum + a_lum > bg_lum` 的算术门槛只到 ~0.009（bg_lum 0.014 - a_lum 0.006），
-			# 而夹逼里**被否掉的 0.021 那档 e_lum ≈ 0.0185 照样过** ⇒ 采用量级根本没被守住，
-			# 将来退回"测得出但看不见"的发光也会绿。夹逼事实见 `table_3d.ROOM_EMISSION` 那段：
-			#   0.021 ⇒ 出图 1/255（等于没发光，否掉）；0.11 ⇒ 床架 18/255（采用）。
-			# 把下限钉在**采用量级（0.11 ⇒ e_lum ≈ 0.097）的约一半**：`e_lum >= 0.05`。
-			# 于是 0.03（e_lum ≈ 0.026）与 0.021 都必红，采用的 0.11 仍有近 2× 余量。
-			_check(e_lum >= 0.05,
-				"剪影底光够亮（e_lum %.4f ≥ 0.05 —— 下限与夹逼挂钩：0.021 那档实测仅 1/255，必须红）" % e_lum)
+			"背景色近黑（亮度 %.3f —— 桌子之外仍是暗底：⑨ 删的是物件，不是背景）"
+				% en.background_color.get_luminance())
+		# 【批次 13 丙删掉的那三条】剪影底光那一组（`room_mat.emission` 与
+		# `albedo × 环境能量 × 环境色` 要和背景亮度比大小）—— **载体没了**：`room_mat` 与三件剪影
+		# 随用户 ⑨ 一并删除。它们当年守的是"剪影不许比它身后的背景更暗"（床架出图 1/255 < 背景
+		# 4~6/255），而**今天画面里已经没有剪影**，这个比较没有对象了。
+		# **"背景近黑"那条仍留在上面** —— 它守的是"暗底"，与剪影有没有无关。
+
 
 	print("== 贴图窗口 = 桌垫（棋盘 + 一圈留白），不再铺满整张画布 ==")
 	# 批次 5 Task 2：座位栏退场，画布不再需要为它们预留 —— 窗口从"整张画布"
@@ -2003,6 +1961,34 @@ func _run() -> void:
 		_check(m0 != null and m9 != null and m0 != m9, "不同等级用的是**不同的材质**")
 		_check(m0 != null and is_same(m0, m5),
 			"同等级共用**同一份材质**（不是一格格新建 —— 4 份材质摊到 56 格上）")
+		# ---- 批次 13 乙（用户 ⑦）：正面**以自发光为主** ⇒ 牌面颜色与灯的位置 / 这一牌摆在
+		# 哪一排**无关**。用户报的是"最底那一栏的房子在 3D 视角下立牌没有颜色"：薄牌后倾 25°、
+		# 最底那两排背对着那盏偏在一侧的灯 ⇒ 只吃得到环境光 + 原先那层**白色**弱自发光 ⇒ 冲成近灰。
+		# 这一组是**无头下唯一能钉住它**的东西（观感本身要靠出图），钉三件：
+		#   ① 自发光**开着**且**照着同一张等级纹理**（`emission_texture == albedo_texture`）；
+		#   ② 算子是 `MULTIPLY` —— **默认是 `ADD`**，而 `ADD` + 白色 = "白 + 贴图"⇒ 牌面冲成白板
+		#     （这是最容易手滑改回去的一处）；
+		#   ③ 自发光那一份**压过**受光那一份（`albedo_color` 已压到 0.30）：比值取的是**两个材质
+		#     常数**（自发光能量 0.75 / albedo 亮度 0.30 = **2.5**）—— 桌面上那份照度（≈1.2）不在
+		#     材质里，把它算进去真值是 ≈2.1，所以 2.0 这个界两边都够得着；
+		#     自发光不到受光的两倍时，「哪一排骨面朝哪边」就又开始说话（正是用户 ⑦ 报的那件事）。
+		var face_emit_ok: bool = m0 != null and m9 != null \
+			and m0.emission_enabled and m9.emission_enabled \
+			and m0.emission_texture == tex3 and m9.emission_texture == tex1 \
+			and m0.emission_operator == BaseMaterial3D.EMISSION_OP_MULTIPLY \
+			and m9.emission_operator == BaseMaterial3D.EMISSION_OP_MULTIPLY
+		_check(face_emit_ok,
+			"房子正面以自发光为主（emission_texture == 等级纹理 且 算子 = MULTIPLY —— 各排同色，用户 ⑦）")
+		# `m0` 是 3 级那份、`m9` 是 1 级那份（两份都查，免得"只给一级改了"漏过）。
+		var face_emit_min := INF
+		for fm in [m0, m9]:
+			if fm == null:
+				continue
+			face_emit_min = minf(face_emit_min,
+				fm.emission_energy_multiplier / maxf(fm.albedo_color.get_luminance(), 0.001))
+		_check(face_emit_min >= 2.0,
+			"自发光那一份 ≥ 受光那一份 × 2（比值 %.2f ≥ 2.0 —— 不到两倍就又变成「看灯的脸色」）"
+				% face_emit_min)
 		if h0 != null and h5 != null and h9 != null:
 			var bm0 := (h0.get_node("Plate") as MeshInstance3D).mesh as BoxMesh
 			var bm5 := (h5.get_node("Plate") as MeshInstance3D).mesh as BoxMesh

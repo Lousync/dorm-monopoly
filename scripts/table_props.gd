@@ -1684,13 +1684,36 @@ const HOUSE_T := 0.014
 const HOUSE_SCALE := 1.3
 ## 牌身底色：暗底（接棋子牌身 `TOKEN_BODY_COLOR` 那一族，两块立牌观感一致）。
 ## **批次 12 A3/⑥ 一起提亮**（0.145/0.155/0.20 → 0.21/0.23/0.29）：理由与棋子那条同一个
-##（近黑屋子里只有一盏偏在一侧的灯），再配一层自发光（`HOUSE_EMIT_ENERGY`）。
+##（只有一盏偏在一侧的灯），再配一层自发光（`HOUSE_EMIT_ENERGY`）。
+## **批次 13 甲/乙**：灯被抬平之后**牌身不再"越靠远端越黑"**（照度极差 4.4:1 → 1.33:1），
+## 这一项**不动** —— 牌身从来不是用户 ⑦ 报的那一处（他报的是**牌面没颜色**，见
+## `HOUSE_FACE_EMIT` 那段）。
 const HOUSE_BODY_COLOR := Color(0.21, 0.23, 0.29)
 ## 牌身自发光能量（批次 12 ⑥，用户「房子太暗」）。0.35：与棋子的 0.45 有意错开一档 ——
 ## 房子小、数量多（56 块），太亮会在桌面上铺成一片"发光的小方块"，把格子本身的光影压平。
 const HOUSE_EMIT_ENERGY := 0.35
-## 等级纹理那层（正面）的弱自发光能量：0.3 —— 让等级配色在暗处仍读得出。
-const HOUSE_FACE_EMIT := 0.30
+## 正面（等级纹理那一层）的自发光能量 —— **批次 13 乙：0.30 → 0.75**。
+##
+## **用户 ⑦**（2026-10-05）：「最底下一栏地点的房子在 3D 视角下立牌**没有颜色**」。
+## **根因是几何，不是材质参数小**：房子薄牌**后倾 25°**（`HOUSE_LEAN_DEG`，用户没要求改），
+## 最底那两排（世界 z ≈ 1.7~2.2 = 靠近镜头那一侧）的牌面法线朝"上 + 朝近端" ⇒
+## **背对着那盏偏在左后方、又吊得很低的灯** ⇒ 它们几乎吃不到直射光，只剩环境光 + 原先那层
+## **白色**的弱自发光 ⇒ 牌面被冲成**近灰**（等级配色读不出来）。2D 端看不到这个毛病，因为
+## 那一端薄牌**躺平**（法线朝上）、灯在正上方。⇒ 与用户描述完全吻合。
+##
+## **改法（裁定）**：正面改成**以自发光为主**，于是**牌面颜色与灯的位置无关**：
+##   * `emission_texture` = 该等级的烘焙纹理（**与 albedo 同一张**）、`emission` = 白、
+##     算子 = `EMISSION_OP_MULTIPLY` ⇒ 发光那一份 = 纹理 × 白色 × 能量，**色相与贴图逐位一致**
+##     （`ADD` 是默认算子，白加白会把牌面冲成白板 —— 必须显式写 `MULTIPLY`）；
+##   * `albedo_color` 压到 **0.30**（原来白）：正面剩下的那点直射/环境光只当"方向感的残余"，
+##     不再决定颜色 —— 这就是"把对直射光的依赖降下来"那一半。
+## ⇒ 各排牌面 = 同一份自发光（与位置无关）+ 一点位置相关的小尾巴 ⇒ **各排同色**。
+##
+## **取值 0.75 是对着出图夹出来的口径**：自发光那一份 ≈ `0.75 × 纹理`，再加上受光那一份
+## （≈ `0.30 × 直射照度 0.85~1.12 × N·L`，全表 0.2 上下）⇒ 牌面合成 ≈ `0.95 × 纹理`
+## ⇒ 与 2D 端那张印刷房子**同一个明度档**（不冲白、也不暗成灰）。
+## **注意它与 `HOUSE_EMIT_ENERGY`（牌身）是两码事**：那一条管绿色的薄板、这一条管正面的房子。
+const HOUSE_FACE_EMIT := 0.75
 ## 烘纹理用的画布尺寸 = 印刷图案（26×18）的**整 2 倍**。
 ## 为什么不是设计稿里写的"约 64×48"：64×48 是 4:3，而印刷那块是 26:18 = 13:9 ——
 ## 贴到"按印刷宽高做的"方片上会把房子**横向压窄约 8%**（与桌垫上那座房子对不齐）。
@@ -1910,20 +1933,26 @@ func _build_house_mats() -> void:
 		var m := StandardMaterial3D.new()
 		var tex: Texture2D = _house_texs[lv - 1]
 		if tex != null:
-			# `albedo_color` 用**白色**：贴图自己就带着等级配色（同 `HouseIcon` 的绘制），
-			# 再乘一遍等级色会把它压暗（手牌牌面用白也是这个理）。
-			m.albedo_color = Color.WHITE
+			# `albedo_color` **压到 0.30**（批次 13 乙；原先取白）：贴图自己带着等级配色，
+			# 受光那一份从此只当"方向感的残余"，牌面的颜色由下面的 `emission` 决定
+			#（见 `HOUSE_FACE_EMIT` 那段：用户 ⑦ 报的"最底那排没颜色"就是受光那一份背对灯造成的）。
+			# **alpha 仍从这张贴图来**（`ALPHA_SCISSOR` 的裁边靠它）⇒ 这一项不能删。
+			m.albedo_color = Color(0.30, 0.30, 0.30)
 			m.albedo_texture = tex
+			m.emission_texture = tex
 		else:
 			# 降级（烘不出纹理，理论上不会）：退回**纯等级色**的一块面 —— 同 2D "素材缺失退回纯色"
-			m.albedo_color = GameData.level_color(lv)
+			m.albedo_color = GameData.level_color(lv) * 0.30
+			m.emission = GameData.level_color(lv)
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		m.roughness = 0.75
-		# 正面那层弱自发光（批次 12 ⑥）：等级配色在暗处也读得出。
-		# **取白**（等级色已经烘在贴图里，再染一层会把色相推歪，同 `albedo_color` 那条理由）。
+		# 正面**以自发光为主**（批次 13 乙）：等级配色与灯的位置、与这一排放哪儿都无关。
+		# **取白 + `MULTIPLY`**：色相已经烘在贴图里，白色只是"不染色"那一档；
+		# 用默认的 `ADD` 会变成"白 + 贴图"⇒ 牌面冲成白板（见 `HOUSE_FACE_EMIT` 那段）。
 		m.emission_enabled = true
 		m.emission = Color.WHITE
+		m.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
 		m.emission_energy_multiplier = HOUSE_FACE_EMIT
 		_house_mats.append(m)
 
