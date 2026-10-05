@@ -519,6 +519,17 @@ func take_shot(path: String) -> void:
 		g._ab_active = [{"id": "断网", "left": 3}]
 		g._broadcast_state()
 		await get_tree().create_timer(0.25).timeout
+	if path.contains("tech") and g.multiplayer.is_server():
+		# 摆拍：亮出开局科技三选一弹层（海克斯式三卡），并程序化选中中间一张，
+		# 展示绿框 + 绿光的选中态与点亮后的「确定」。走真入口 _show_tech_offer +
+		# _tech_pick_card（与玩家点卡同一条刷新链），不直改样式。
+		# 用法：--autotest=host --rounds=6 --shot=shots/xx_tech_table_plain.png
+		var tech_names: Array = (TechData.pool(TechData.TIER_SILVER) as Array).duplicate()
+		tech_names.shuffle()
+		g._show_tech_offer(990605, TechData.TIER_SILVER, tech_names.slice(0, 3))
+		await get_tree().create_timer(0.3).timeout
+		g._tech_pick_card(1)
+		await get_tree().create_timer(0.3).timeout
 	if path.contains("pause"):
 		# 摆拍：打开暂停菜单。**这张 PNG 证明不了卡与菜单的层级**：`--shot=pause` 是先开菜单、
 		# 之后才 `show_card`（门是 `not path.contains("plain") or path.contains("card")`，所以不带

@@ -77,7 +77,8 @@ func _run() -> void:
 	g.running = true   # 科技阶段内部有 while running 守卫，需临时解冻
 	await g._tech_phase()
 	g.running = false
-	_check(g._tech_tier in ["白银", "黄金", "钻石"], "定档结果合法：%s" % g._tech_tier)
+	_check(g._tech_tier == TechData.TIER_SILVER,
+		"定档固定白银（黄金/钻石池定稿前的临时口径）：%s" % g._tech_tier)
 	_check(String(p1.tech) != "" and String(p1.tech) in TechData.pool(g._tech_tier)
 		and String(p2.tech) in TechData.pool(g._tech_tier), "全员都拿到了本档科技")
 	_check(int(g._awaiting_tech_peer) == 0, "科技阶段结束：等待态清零")

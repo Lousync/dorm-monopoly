@@ -151,6 +151,9 @@ var _tech_pick := {}          # {"token", "name"}：选卡应答
 var _awaiting_tech_peer := 0  # 正在选科技的玩家（0 = 无，进快照 await 状态）
 var _tech_offered: Array = [] # 当前给该玩家的 3 个候选（校验回包用）
 var _tech_offer_layer: Control  # 选卡弹层（临时全屏层，答完即毁）
+var _tech_cards: Array = []     # 弹层里的三张卡（选中态刷新 / 摆拍程序化选中用）
+var _tech_picked: Array = [-1]  # 选中下标（-1 = 未选；数组形式便于跨闭包读写）
+var _tech_ok: Button            # 弹层的「确定」按钮（选中前置灰）
 
 # ---------------- 格详情卡 / 规则说明（**右上角**，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
@@ -509,13 +512,15 @@ func _host_setup() -> void:
 	_run_game()
 
 # ================= 房主：开局科技 =================
-# 掷骰定档（1~2 白银 / 3~4 黄金 / 5~6 钻石，等分、全场同档）→ 每人私密同档三选一
-# （bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。规则：doc/game-design/开局科技.md。
+# 定档 → 每人私密同档三选一（bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。
+# 规则：doc/game-design/开局科技.md。定档设计为掷骰（1~2 白银 / 3~4 黄金 / 5~6 钻石，
+# 见 TechData.tier_by_dice）；黄金/钻石池定稿前暂固定白银档（见 _tech_phase 内注释）。
 
 func _tech_phase() -> void:
-	var pips := randi_range(1, 6)
-	_tech_tier = TechData.tier_by_dice(pips)
-	_log("【开局科技】掷骰定档：掷出 %d —— 本局科技等级「%s」！" % [pips, _tech_tier], "#f0c064")
+	# 临时口径：黄金/钻石池仍是占位草案（待批），定稿前不掷骰、只从白银池三选一。
+	# 池子补齐后恢复掷骰定档：var pips := randi_range(1, 6); _tech_tier = TechData.tier_by_dice(pips)（含定档公告）。
+	_tech_tier = TechData.TIER_SILVER
+	_log("【开局科技】本局科技等级「%s」（黄金/钻石池定稿前暂只开放白银池）！" % _tech_tier, "#f0c064")
 	_broadcast_state()
 	await _wait(0.8)
 	for p in hp:
@@ -611,43 +616,126 @@ func _tech_answer(token: int, tech: String) -> void:
 	else:
 		c_tech_pick.rpc_id(1, token, tech)
 
-## 科技三选一弹层（临时全屏层，答完即毁；超时由房主兜底随机，本地无倒计时条）
+## 科技三选一弹层（临时全屏层，答完即毁）：海克斯式三卡点选（选中卡绿框 + 绿光），
+## 下方「确定」提交；本地倒计时条走完自关，超时由房主兜底随机、结果以公告为准
 func _show_tech_offer(token: int, tier: String, names: Array) -> void:
 	_close_tech_offer()
 	_tech_offer_layer = Control.new()
 	_tech_offer_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_tech_offer_layer.z_index = 60
+	_tech_offer_layer.z_index = 60   # 与弹问层同带（table_hud 建层注释）
 	_tech_offer_layer.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_tech_offer_layer)
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.04, 0.04, 0.08, 0.6)
+	dim.color = Color(0.04, 0.04, 0.08, 0.72)
 	_tech_offer_layer.add_child(dim)
 	var cc := CenterContainer.new()
 	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_tech_offer_layer.add_child(cc)
-	var panel := UIKit.panel_container(UIKit.PANEL, 14, UIKit.ACCENT, 2, 18)
-	panel.custom_minimum_size = Vector2(560, 0)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 18, UIKit.ACCENT_DEEP, 1, 16)
+	panel.custom_minimum_size = Vector2(880, 0)
 	cc.add_child(panel)
-	var m := UIKit.margins(20, 18, 18, 14)
+	var m := UIKit.margins(26, 26, 22, 18)
 	panel.add_child(m)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
+	v.add_theme_constant_override("separation", 14)
 	m.add_child(v)
-	v.add_child(UIKit.title_label("开局科技 · %s" % tier, 20))
-	v.add_child(UIKit.label("本局全员同档，三选一；超时将随机选择", 13, UIKit.TEXT_DIM))
-	for n in names:
-		var d: Dictionary = TechData.def(String(n))
-		var btn := UIKit.button("%s　%s" % [String(n), String(d.get("desc", ""))], 14)
-		btn.pressed.connect(func() -> void:
-			_tech_answer(token, String(n))
-			_close_tech_offer())
-		v.add_child(btn)
+	var title := UIKit.title_label("开局科技 · %s" % tier, 24)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var hint := UIKit.label("本局全员同档 —— 点选一张科技，再点「确定」生效；超时将随机选择", 13, UIKit.TEXT_DIM)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(hint)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	_tech_cards = []
+	_tech_picked = [-1]
+	var ok := UIKit.button("确　定", 17, "good")
+	ok.disabled = true
+	_tech_ok = ok
+	ok.custom_minimum_size = Vector2(190, 44)
+	ok.pressed.connect(func() -> void:
+		if _tech_picked[0] == -1:
+			return
+		_tech_answer(token, String(names[_tech_picked[0]]))
+		_close_tech_offer())
+	for i in names.size():
+		var n := String(names[i])
+		var d: Dictionary = TechData.def(n)
+		var card := PanelContainer.new()
+		card.custom_minimum_size = Vector2(240, 184)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var cm := UIKit.margins(16, 16, 14, 14)
+		card.add_child(cm)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 8)
+		cm.add_child(cv)
+		cv.add_child(UIKit.bold_label(n, 18, UIKit.TEXT))
+		var ds := UIKit.label(String(d.get("desc", "")), 13, UIKit.TEXT_DIM)
+		ds.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		ds.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		cv.add_child(ds)
+		card.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.pressed:
+				_tech_pick_card(i)
+				Fx.play("click", -6.0, randf_range(0.95, 1.05)))
+		card.mouse_entered.connect(func() -> void:
+			if _tech_picked[0] != i:
+				card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+					UIKit.PANEL_LIGHT.lightened(0.05), 16, UIKit.BORDER.lightened(0.30), 1, 10)))
+		card.mouse_exited.connect(func() -> void:
+			if _tech_picked[0] != i:
+				_tech_refresh_cards(_tech_cards, _tech_picked[0]))
+		_tech_cards.append(card)
+		row.add_child(card)
+	var cc_ok := CenterContainer.new()
+	cc_ok.add_child(ok)
+	v.add_child(row)
+	v.add_child(cc_ok)
+	# 倒计时条（与弹问倒计时同一 Tween 口径）：走完自关，等房主超时随机的公告
+	var tier_src := _settings.timeout_tier if multiplayer.is_server() \
+			else String(st.get("timeout_tier", GameSettings.TIER_CURRENT))
+	var total := maxf(GameSettings.turn_seconds(String(tier_src), "prompt"), 5.0)
+	var bar := UIKit.progress(UIKit.GOOD)
+	v.add_child(bar)
+	var tw_bar := _tech_offer_layer.create_tween()
+	tw_bar.tween_property(bar, "value", 0.0, total)
+	tw_bar.tween_callback(_close_tech_offer)
+	_tech_refresh_cards(_tech_cards, -1)
+
+## 程序化选中一张科技卡（点卡与摆拍/测试共用同一条链）：刷选中态 + 点亮「确定」+ 选中小弹跳
+func _tech_pick_card(idx: int) -> void:
+	_tech_picked = [idx]
+	_tech_refresh_cards(_tech_cards, idx)
+	if _tech_ok != null and is_instance_valid(_tech_ok):
+		_tech_ok.disabled = false
+	if idx >= 0 and idx < _tech_cards.size():
+		var card: PanelContainer = _tech_cards[idx]
+		card.pivot_offset = card.size / 2.0
+		var tw := card.create_tween()   # 绑在卡上：层被提前关掉时一并销毁
+		tw.tween_property(card, "scale", Vector2.ONE * 1.04, 0.08)
+		tw.tween_property(card, "scale", Vector2.ONE, 0.10)
+
+## 重刷科技卡选中态：选中卡绿框 + 绿光 + 暗绿底，其余恢复常态
+func _tech_refresh_cards(cards: Array, sel: int) -> void:
+	for i in cards.size():
+		var card: PanelContainer = cards[i]
+		if i == sel:
+			card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+				Color(0.10, 0.18, 0.12), 16, UIKit.GOOD, 3, 12,
+				Color(UIKit.GOOD.r, UIKit.GOOD.g, UIKit.GOOD.b, 0.32)))
+		else:
+			card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+				UIKit.PANEL_LIGHT, 16, UIKit.BORDER, 1, 8))
 
 func _close_tech_offer() -> void:
 	if _tech_offer_layer != null and is_instance_valid(_tech_offer_layer):
 		_tech_offer_layer.queue_free()
 	_tech_offer_layer = null
+	_tech_cards = []
+	_tech_picked = [-1]
+	_tech_ok = null
 
 ## 开疆拓土：名下地皮首达 5 / 10 / 15 块各 +¥800（获得地皮后调用）
 func _check_tech_milestone(p: Dictionary) -> void:
@@ -1977,6 +2065,11 @@ func s_state(state: Dictionary) -> void:
 	if _prompt_token != -1 and not (String(state.get("await", "")) == "prompt" \
 			and int(state.get("await_peer", -1)) == my_peer):
 		_close_prompt()
+	# 科技选卡层兜底：等待已不在我身上（答完 / 房主超时随机）⇒ 收起（与 _close_prompt 同款；
+	# 若没收这条，超时玩家的选卡层会一直挂着挡住全屏输入）
+	if _tech_offer_layer != null and not (String(state.get("await", "")) == "tech" \
+			and int(state.get("await_peer", -1)) == my_peer):
+		_close_tech_offer()
 	var tier := String(state.get("timeout_tier", GameSettings.TIER_CURRENT))
 	if tier != _settings.timeout_tier:
 		_settings.timeout_tier = tier

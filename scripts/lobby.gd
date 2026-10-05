@@ -274,7 +274,7 @@ func _build_settings_dialog() -> void:
 			UIKit.chip_select(_set_chips, id))
 	v.add_child(_set_chips)
 	# 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡
-	v.add_child(UIKit.label("开局科技：掷骰定档，每人三选一（白银 / 黄金 / 钻石）", 13, UIKit.TEXT_DIM))
+	v.add_child(UIKit.label("开局科技：每人三选一（黄金/钻石池定稿前暂只开放白银池）", 13, UIKit.TEXT_DIM))
 	_set_tech_chips = UIKit.chip_row(GameSettings.TECH_SW, GameSettings.TECH_SW_LABELS,
 		func(id: String) -> void:
 			_set_tech = id == "on"
@@ -384,6 +384,8 @@ func _shot() -> void:
 		Net.host_add_bot()
 	Net.chat_history = ["房主：开了开了，都进来", "机器人A：来了来了"]
 	_refresh_chat()
+	if _shot_path.contains("settings"):
+		_on_open_settings()   # 摆拍：打开「游戏设置」弹窗（含操作限时 + 开局科技开关）
 	await get_tree().create_timer(1.2).timeout
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(_shot_path)
