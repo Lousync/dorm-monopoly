@@ -564,6 +564,34 @@ func _build_table() -> void:
 	wood_mesh.material_override = wmat
 	add_child(wood_mesh)
 
+	# ---- 桌子底座（一期 Task 5 Step 0，2026-10-05 用户拍板；spec §六「地板高度与桌子底座」）----
+	# 地板降到 `GameRoom.FLOOR_Y`（真实桌高）之后，一叠"桌垫 + 一圈木纹"在画面上就是**悬在屋里
+	# 的一块板**。补一块从地板顶到木纹外框底面的裙板，桌子才读作"摆在屋里的一张桌子"。
+	#
+	# 三条约束：
+	#   * **别动木纹外框本身的位置**（`wood_mesh.position.y = -0.012`）—— Task 7 的取景判据量的
+	#     就是它；底座顶面顶到它的**底面**（-0.012），两层不共面。
+	#   * **尺寸 = 木纹外框那两维**（`TABLE_W * 0.5 + WOOD_FRAME` / `TABLE_D * 0.5 + WOOD_FRAME`）。
+	#     Task 7 Step 0 会把它们提成 `WOOD_HALF_W` / `WOOD_HALF_D`，届时这两行改成那两个常量。
+	#   * **一律 `cast_shadow = OFF`** —— 房间的纪律，全场唯一投影源仍是那盏吊灯。
+	var base_mesh := MeshInstance3D.new()
+	base_mesh.name = "TableBase"
+	var bm := BoxMesh.new()
+	bm.size = Vector3((TABLE_W * 0.5 + WOOD_FRAME) * 2.0, -0.012 - GameRoom.FLOOR_Y,
+		(TABLE_D * 0.5 + WOOD_FRAME) * 2.0)
+	base_mesh.mesh = bm
+	base_mesh.position = Vector3(0.0, (GameRoom.FLOOR_Y - 0.012) * 0.5, 0.0)
+	var bmat := StandardMaterial3D.new()
+	bmat.albedo_texture = UIKit.tex("res://assets/textures/wood_floor.jpg")
+	bmat.albedo_color = wmat.albedo_color            # 与外框同一份木色（底座是"桌子本身"那一圈）
+	bmat.roughness = 0.88
+	bmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	bmat.texture_repeat = true
+	bmat.uv1_scale = Vector3(bm.size.x / 3.0, bm.size.z / 3.0, 1.0)   # 每 3 世界单位一轮，同外框那条
+	base_mesh.material_override = bmat
+	base_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(base_mesh)
+
 	# 批次 6：**原来那盏吊在桌心正上方的暖色顶灯整个搬走了** —— 位置 / 颜色 / 能量 / 射程 /
 	# 阴影开关一并挪进 `_build_lamp()`，成为台灯的光源（`lamp_light`）。
 	# 为什么不留在这里"改成台灯"：灯的位置现在由**台灯这件实物**决定（光源在灯罩里、跟着灯罩
@@ -712,7 +740,9 @@ func _build_viewport() -> void:
 	# 只需"桌子已经在那儿"。它**只摆位与长相**，一行玩法都不碰。
 	# `ROOM_ENABLED=false` 时 `build()` 返回 null（本期的保命开关，退回到"只有桌子"的样子）
 	# ⇒ 这里**不能**当成必然拿到节点用（下一行没有别的话要接它，是故意的）。
-	var room := GameRoom.build(self, LAMP_LIGHT_POS)
+	# `TABLE_SIZE` 一起传进去：四把椅子要围着桌子摆，房间得知道桌子多大（**只收这个数**，
+	# 房间仍然不反向依赖桌子 —— 与 `LAMP_LIGHT_POS` 同一条规矩）。
+	var room := GameRoom.build(self, LAMP_LIGHT_POS, TABLE_SIZE)
 
 # ---------------- 屏幕层暗角（设计稿 §三 / §6.4） ----------------
 

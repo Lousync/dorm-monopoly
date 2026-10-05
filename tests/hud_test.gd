@@ -184,6 +184,46 @@ func _run() -> void:
 	g.my_peer = 2
 	g.s_state(_state(2, false))          # 走客户端真正跑的那个处理函数
 	await process_frame
+
+	# ---- 一期 Task 5：椅子顺序 == `game._seat_peers()`（**同一份顺序，别各写一份**）----
+	# ① **必须放在 `g.s_state(...)` 之后**：座位是 `_refresh_players()` 喂进房间的，而它每次状态
+	#    广播都跑（**不在 `_ready`** —— 那一刻 `st` 还空着、`_seat_peers()` 给空数组，
+	#    名牌留成空且再没人重喂）。
+	# ② **先断言 `_seat_peers()` 非空**：两边都是 `[]` 的话 `[] == []` 恒真，等于什么都没断言。
+	# ③ 这条只能在**有 game 实例**的地方做（`layout_test` 是裸容器、没有 `st`）。
+	print("== 一期 Task 5：椅子顺序 == game._seat_peers()（房间 ↔ 房主同一份顺序）==")
+	var seat_peers: Array = g._seat_peers()
+	_check(seat_peers.size() > 0, "（前提）房主的座位序非空（实得 %d 项）" % seat_peers.size())
+	var room5: Node = g.table3d.get_node_or_null("Room") if g.table3d != null else null
+	_check(room5 != null, "桌面上挂着 3D 房间（Room 节点）")
+	if room5 != null:
+		var in_room: Array = room5.seat_peers()
+		_check(in_room == seat_peers,
+			"椅子顺序 == game._seat_peers()（房间 %s / 房主 %s —— 各写一份就会在二期坐错位）"
+				% [str(in_room), str(seat_peers)])
+		# 名牌色取**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`），**不是按座位序号取色**。
+		# 这一份状态的 color 恰好等于 peer-1，而座位序是 [我, 下家, 对家, 上家] = [2,3,4,1]
+		# ⇒ 座位 0 是 peer 2（color 1 → 蓝）；**按序号取色**的话这块会是 PLAYER_COLORS[0]（橙）⇒ 必红。
+		var colors_ok := true
+		var got_colors: Array = []
+		for i in seat_peers.size():
+			var pl: Dictionary = g._state_player(int(seat_peers[i]))
+			var want: Color = GameData.PLAYER_COLORS[
+				int(pl.get("color", 0)) % GameData.PLAYER_COLORS.size()]
+			var seat: Node = room5.get_node_or_null("Seats/Seat%d" % i)
+			var plate: MeshInstance3D = null
+			if seat != null:
+				plate = seat.get_node_or_null("Nameplate/Plate") as MeshInstance3D
+			var pm: StandardMaterial3D = null
+			if plate != null:
+				pm = plate.material_override as StandardMaterial3D
+			got_colors.append(pm.albedo_color if pm != null else Color.BLACK)
+			if pm == null or not pm.albedo_color.is_equal_approx(want):
+				colors_ok = false
+		_check(colors_ok,
+			"椅背名牌按**各家的棋子色**上色（座位 0 = 我 = peer %d → 实得 %s，期望与 `p.color` 同源）"
+				% [int(seat_peers[0]) if seat_peers.size() > 0 else -1, str(got_colors)])
+
 	var bars: Array = g.corner_bars
 	_check(bars.size() == 1, "四角条**只剩「我」这一条**（实得 %d）" % bars.size())
 	_check((bars[0].root as Control).visible, "我这条可见")

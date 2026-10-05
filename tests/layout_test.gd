@@ -237,11 +237,14 @@ func _run() -> void:
 					continue
 				var hw: float = GameRoom.ROOM_W * 0.5
 				var hd: float = GameRoom.ROOM_D * 0.5
+				# **竖直下界是地板**（一期 Task 5 Step 0：地板从"桌面那一层"降到 `FLOOR_Y`）。
+				# 这里原写 −0.02 —— 那是地板在桌面那一层的年代；不跟着改的话，家具悬在地板上方
+				# 或陷进地板都照样绿。
 				_check(wb.position.x >= -hw and wb.end.x <= hw
 						and wb.position.z >= -hd and wb.end.z <= hd
-						and wb.position.y >= -0.02 and wb.end.y <= GameRoom.ROOM_CEIL_Y,
-					"%s 整体落在房间里（世界 AABB %s..%s，尺寸 %s；房间 |x| ≤ %.1f / |z| ≤ %.1f / y ≤ %.1f）"
-						% [n.name, wb.position, wb.end, wb.size, hw, hd, GameRoom.ROOM_CEIL_Y])
+						and wb.position.y >= GameRoom.FLOOR_Y - 0.05 and wb.end.y <= GameRoom.ROOM_CEIL_Y,
+					"%s 整体落在房间里（世界 AABB %s..%s，尺寸 %s；房间 |x| ≤ %.1f / |z| ≤ %.1f / y ∈ [%.2f, %.1f]）"
+						% [n.name, wb.position, wb.end, wb.size, hw, hd, GameRoom.FLOOR_Y, GameRoom.ROOM_CEIL_Y])
 			# 三件**两两不相交**（AABB 口径 —— 比几何口径严）。家具一放大，最先撞上的就是彼此；
 			# 摆位表动一个数就可能让两件叠在一起，而"左半侧 / 在桌子之外"两条都拦不住它。
 			var fnames: Array = boxes.keys()
@@ -252,6 +255,192 @@ func _run() -> void:
 					_check(not a_f.intersects(b_f),
 						"%s 与 %s 不相交（%s..%s / %s..%s）"
 							% [fnames[i_f], fnames[j_f], a_f.position, a_f.end, b_f.position, b_f.end])
+
+		# ---- 一期 Task 5 Step 0：地板落到真实桌高（2026-10-05 用户拍板）----
+		# 地板原先在**桌面那一层**（y = −0.02）⇒ 桌子读作"平铺在地板上的一块板"，按人体比例
+		# 摆出来的椅子 / 家具"站不对"。降到 `FLOOR_Y`（= 3.70 / 5 = 0.74 m，真实桌高）之后整套
+		# 比例才立得住。三条一起钉：① 地板就在 `FLOOR_Y`；② 四面墙跟着一起长（墙脚不许悬空）；
+		# ③ 家具与椅子**站在地板上**（这一条才是"地板改了、站立点没跟着改"的守卫）。
+		var floor_node: Node3D = room.get_node_or_null("Floor")
+		_check(GameRoom.FLOOR_Y < 0.0 and floor_node != null \
+				and absf(floor_node.position.y - GameRoom.FLOOR_Y) < 0.001,
+			"地板落在 FLOOR_Y=%.2f（实得 %.3f —— 桌面仍在 y=0，地板在它下面 0.74 m）"
+				% [GameRoom.FLOOR_Y, floor_node.position.y if floor_node != null else 999.0])
+		var walls_node: Node = room.get_node_or_null("Walls")
+		var wall_ok := walls_node != null and walls_node.get_child_count() == 4
+		var wall_log := ""
+		if walls_node != null:
+			var want_h: float = GameRoom.ROOM_CEIL_Y - GameRoom.FLOOR_Y
+			for ch in walls_node.get_children():
+				var wm := ch as MeshInstance3D
+				var wpm := wm.mesh as PlaneMesh if wm != null else null
+				if wpm == null:
+					wall_ok = false
+					continue
+				# 墙是绕 X 转 90° 立起来的 PlaneMesh ⇒ 它的 `size.y` 就是**世界高度**，
+				# 墙心 `position.y ± 半高` 即墙顶 / 墙脚。
+				var foot: float = wm.position.y - wpm.size.y * 0.5
+				var head: float = wm.position.y + wpm.size.y * 0.5
+				wall_log += "%s:[%.2f,%.2f] " % [ch.name, foot, head]
+				if absf(foot - GameRoom.FLOOR_Y) > 0.05 or absf(head - GameRoom.ROOM_CEIL_Y) > 0.05 \
+						or absf(wpm.size.y - want_h) > 0.05:
+					wall_ok = false
+		_check(wall_ok,
+			"四面墙跟着地板一起长（墙脚落在地板上、墙顶够到天花板，高 %.1f；实得 %s）"
+				% [GameRoom.ROOM_CEIL_Y - GameRoom.FLOOR_Y, wall_log])
+		# 桌子底座（`table_3d` 侧的新几何）：地板一降，只有"桌垫 + 一圈木纹"的桌子就是悬在屋里
+		# 的一块板 ⇒ 补一块从地板顶到木纹外框**底面**的裙板。三条：位置（不许与木纹共面、
+		# 也不许悬空）、尺寸（= 木纹外框那两维）、不投影（房间的纪律）。
+		var tbase: MeshInstance3D = t3.get_node_or_null("TableBase")
+		_check(tbase != null and tbase.mesh is BoxMesh, "桌子有底座（TableBase 是 BoxMesh）")
+		if tbase != null and tbase.mesh is BoxMesh:
+			var tbm := tbase.mesh as BoxMesh
+			var bb_bottom: float = tbase.position.y - tbm.size.y * 0.5
+			var bb_top: float = tbase.position.y + tbm.size.y * 0.5
+			_check(absf(bb_bottom - GameRoom.FLOOR_Y) < 0.001 and absf(bb_top + 0.012) < 0.001,
+				"底座从地板顶到木纹外框底面（y ∈ [%.3f, %.3f]；地板 %.2f / 木纹底面 -0.012）"
+					% [bb_bottom, bb_top, GameRoom.FLOOR_Y])
+			_check(absf(tbm.size.x - (t3.TABLE_SIZE.x + t3.WOOD_FRAME * 2.0)) < 0.001 \
+					and absf(tbm.size.z - (t3.TABLE_SIZE.y + t3.WOOD_FRAME * 2.0)) < 0.001,
+				"底座尺寸 = 木纹外框那两维（实得 %.2f × %.2f，期望 %.2f × %.2f）"
+					% [tbm.size.x, tbm.size.z, t3.TABLE_SIZE.x + t3.WOOD_FRAME * 2.0,
+						t3.TABLE_SIZE.y + t3.WOOD_FRAME * 2.0])
+			_check(tbase.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+				"底座不投影（全场唯一投影源仍是那盏吊灯）")
+
+		# ---- 一期 Task 5 Step 0：家具与椅子**站在地板上** ----
+		# 判据 = 各件**世界 AABB 的底面**贴合 `FLOOR_Y`（容差 0.05）。这条挡的是"地板降了、
+		# 站立点没跟着改"（家具 / 椅子悬在半空或陷进地板）—— 那是"看位置对不对"永远看不出来的错。
+		# 椅子也一并量：Task 5 的四把椅子必须自己站到新地板上（座位框摆在 `FLOOR_Y`）。
+		# 变红验证：把某一件的 y 抬 1.0 ⇒ 这一条必须红（见 task-5-report）。
+		var seat_root: Node = room.get_node_or_null("Seats")
+		var stand: Array = []
+		if furn != null:
+			stand.append_array(furn.get_children())
+		if seat_root != null:
+			stand.append_array(seat_root.get_children())
+		var lifted := 0
+		var sunk := 0
+		var unmeasured := 0
+		var stand_log := ""
+		var stand_boxes := {}
+		for n in stand:
+			var wb := AABB()
+			var got_mesh := false
+			for m in (n as Node).find_children("*", "GeometryInstance3D", true, false):
+				var g := m as MeshInstance3D
+				if g == null or g.mesh == null:
+					continue
+				var a: AABB = g.global_transform * g.mesh.get_aabb()
+				wb = a if not got_mesh else wb.merge(a)
+				got_mesh = true
+			if not got_mesh:
+				unmeasured += 1
+				continue
+			stand_boxes[n.name] = wb
+			var off: float = wb.position.y - GameRoom.FLOOR_Y
+			stand_log += "%s:%.3f " % [n.name, off]
+			if off > 0.05:
+				lifted += 1
+			elif off < -0.05:
+				sunk += 1
+		_check(stand.size() > 0 and unmeasured == 0,
+			"（前提）家具与椅子都量得到几何（%d 件、量不到 %d 件）" % [stand.size(), unmeasured])
+		_check(lifted == 0 and sunk == 0,
+			"家具与椅子都站在地板上（底面 == FLOOR_Y=%.2f 容差 0.05；悬空 %d / 陷入 %d；逐件偏差 %s）"
+				% [GameRoom.FLOOR_Y, lifted, sunk, stand_log])
+
+		# ---- 一期 Task 5：四把椅子 + 椅背名牌 + 座位锚点 ↔ peer 映射 ----
+		# **这一节是二期的接口**（spec §十：每把椅子定死「位置 + 朝向」、并挂一个名牌挂点，
+		# 二期"把人放上去"只改这一处）。这里量两件：
+		#   ① 四把椅子在，且座位序**收得下、原样保留**（"椅子顺序 == `game._seat_peers()`"那条
+		#      在 `hud_test` —— 本文件没有 game 实例、没有 `g`，喂进去的就只能是测试自己编的）；
+		#   ② 名牌按**各家的棋子色**上色（喂 `color` 0..3，就要看到 `PLAYER_COLORS[0..3]`）。
+		_check(seat_root != null and seat_root.get_child_count() == 4,
+			"围桌四把椅子（实得 %d）" % (0 if seat_root == null else seat_root.get_child_count()))
+		if seat_root != null and seat_root.get_child_count() == 4:
+			room.set_seats([
+				{"peer": 10, "color": 0, "name": "甲"},
+				{"peer": 11, "color": 1, "name": "乙"},
+				{"peer": 12, "color": 2, "name": "丙"},
+				{"peer": 13, "color": 3, "name": "丁"},
+			])
+			var mapped: Array = room.seat_peers()
+			_check(mapped.size() == 4, "四把椅子都映射到了 peer（实得 %d）" % mapped.size())
+			_check(mapped == [10, 11, 12, 13],
+				"`seat_peers()` 原样保留喂进来的顺序（实得 %s —— 顺序就是 peer 的映射，不许在这里重排）"
+					% str(mapped))
+			_check(GameRoom.NAMEPLATE_ANCHORS.size() == 4,
+				"名牌挂点四份（spec §十 的二期接口；实得 %d）" % GameRoom.NAMEPLATE_ANCHORS.size())
+			# 名牌色 = **各家的棋子色**（`GameData.PLAYER_COLORS[color]`）。**不是**按座位序号取色：
+			# 这一条喂的 color 恰好等于下标，所以它只钉"色随 color 走"那一半；下标 ≠ color 时
+			# 的取证在 hud_test（那边的 color 由 `st` 决定、与座位序无关）。
+			var plate_ok := true
+			var plate_mats: Array = []
+			var fed_colors := [0, 1, 2, 3]
+			for i in 4:
+				var seat_i := seat_root.get_child(i) as Node3D
+				var plate := seat_i.get_node_or_null("Nameplate/Plate") as MeshInstance3D
+				var pm: StandardMaterial3D = null
+				if plate != null:
+					pm = plate.material_override as StandardMaterial3D
+				plate_mats.append(pm)
+				var want_c: Color = GameData.PLAYER_COLORS[fed_colors[i]]
+				if pm == null or not pm.albedo_color.is_equal_approx(want_c):
+					plate_ok = false
+			_check(plate_ok, "椅背名牌按各家的棋子色上色（slot i ← 喂进来的 color i）")
+			# 四块名牌**各有一份材质**：共用一份的话四家会被刷成同一个色（房子那 4 级同款坑 ——
+			# 材质按等级共用是对的，按"座位"共用就错了）。
+			var shared := false
+			for i in 4:
+				for j in range(i + 1, 4):
+					if plate_mats[i] != null and plate_mats[i] == plate_mats[j]:
+						shared = true
+			_check(not shared, "四块名牌各有一份材质（共用一份 = 四家被刷成同一个色）")
+			# 名牌挂在**椅背顶上**：座位框内比椅子矮一点、且贴在 −z 那一侧（模型自己的背在 −z）
+			var np0 := (seat_root.get_child(0) as Node3D).get_node_or_null("Nameplate") as Node3D
+			_check(np0 != null and np0.position.y > 1.0 and np0.position.z < -0.5,
+				"名牌挂在椅背顶部（座位框内 y=%.2f / z=%.2f —— 背在 −z 侧）"
+					% [np0.position.y if np0 != null else 0.0, np0.position.z if np0 != null else 0.0])
+			# 座位锚点（**二期唯一入口**）：位置 + 朝向。四条边各一把，四把**都面朝桌心**。
+			# 朝向 = 座位框自己的 +z（模型朝 +z 长、背在 −z，实测顶点）⇒ 它应当指向桌心。
+			var anchor_ok := true
+			var anchor_log := ""
+			var pos := []
+			for i in 4:
+				var an: Transform3D = room.seat_anchor(i)
+				pos.append(an.origin)
+				anchor_log += "%d:(%.2f,%.2f,%.2f) " % [i, an.origin.x, an.origin.y, an.origin.z]
+				if absf(an.origin.y - GameRoom.FLOOR_Y) > 0.001:
+					anchor_ok = false
+				# 朝向 = 座位框自己的 +z（模型朝 +z 长、背在 −z，实测顶点）⇒ 它应当指向桌心
+				var to_center := Vector3(-an.origin.x, 0.0, -an.origin.z).normalized()
+				if (an.basis * Vector3(0.0, 0.0, 1.0)).normalized().dot(to_center) < 0.95:
+					anchor_ok = false
+			_check(anchor_ok,
+				"四个座位锚点都立在地板上、且**四把椅子都面朝桌心**（%s）" % anchor_log)
+			_check((pos[0] as Vector3).z > 0.0 and (pos[2] as Vector3).z < 0.0 \
+					and (pos[1] as Vector3).x > 0.0 and (pos[3] as Vector3).x < 0.0,
+				"一辺一把：slot0 近（+z，镜头这一侧＝「我」）/ slot1 右（+x）/ slot2 远（−z）/ slot3 左（−x）")
+			_check(absf((pos[0] as Vector3).x) < 0.001 and absf((pos[2] as Vector3).x) < 0.001 \
+					and absf((pos[1] as Vector3).z) < 0.001 and absf((pos[3] as Vector3).z) < 0.001,
+				"四把椅子都摆在各自那条边的中线上（不在角上）")
+			_check(absf((pos[0] as Vector3).z + (pos[2] as Vector3).z) < 0.001 \
+					and absf((pos[1] as Vector3).x + (pos[3] as Vector3).x) < 0.001,
+				"近/远、左/右两两对称（桌子摆正 ⇒ 椅子也摆正）")
+			# **椅子不许埋进桌子**：木桌（桌垫 + 一圈木纹）那两维之内不许有椅子的脚印。
+			# 摆位全由 `_table_size` 推导，Task 7 一改桌子进深，这条就是"椅子压到桌上"的守卫。
+			var wood_hw: float = t3.WOOD_FRAME + t3.TABLE_SIZE.x * 0.5
+			var wood_hd: float = t3.WOOD_FRAME + t3.TABLE_SIZE.y * 0.5
+			var inside := 0
+			for i in 4:
+				var bn: Node3D = seat_root.get_child(i)
+				var cb: AABB = stand_boxes.get(bn.name, AABB())
+				if cb.position.x < wood_hw and cb.end.x > -wood_hw \
+						and cb.position.z < wood_hd and cb.end.z > -wood_hd:
+					inside += 1
+			_check(inside == 0, "四把椅子都在木桌之外（埋进桌子里的是 %d 把；木桌半宽 %.2f / 半深 %.2f）"
+				% [inside, wood_hw, wood_hd])
 
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的

@@ -2474,6 +2474,25 @@ func _name_by_peer(peer: int) -> String:
 func _refresh_players() -> void:
 	# 桌面实体物件：每次状态广播都重新贴回桌垫坐标（见 _refresh_table_props 的注释）
 	_refresh_table_props()
+	# 椅子 ↔ peer 的座位顺序：**在这里喂，不在 `_ready`** —— `_ready` 那刻 `st` 还空着，
+	# `_seat_peers()` 会返回空数组、名牌永远出不来；而本函数每次状态广播都跑。
+	# 顺序就是 `_seat_peers()`（**与房间那边是同一份，不许各写一份**），
+	# 另外把**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`）与名字一起带过去：
+	# 名牌的颜色是"这家的棋子色"、**不是**按座位序号取的色（spec §六/§十），
+	# 只喂 peer 的话名牌就没色可上。
+	# 椅子本身一期不进玩法（`room.gd` 只摆位与长相）：这里喂的只是"哪把椅子是哪一家"。
+	if table3d != null:
+		var room := table3d.get_node_or_null("Room")
+		if room != null:
+			var seats: Array = []
+			for peer in _seat_peers():
+				var pl := _state_player(int(peer))
+				seats.append({
+					"peer": int(peer),
+					"color": int(pl.get("color", 0)),
+					"name": String(pl.get("name", "?")),
+				})
+			room.set_seats(seats)
 	_money_flies.clear()     # 本帧飞钞队列（批次 13 ⑥：记在钱循环里、播在身家条刷完之后）
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
