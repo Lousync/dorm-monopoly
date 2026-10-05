@@ -370,7 +370,7 @@ static func build_play_ui(g: Node) -> void:
 	iv.add_theme_constant_override("separation", 5)
 	im.add_child(iv)
 	# 标题行：标题占满，右侧一个关闭按钮。
-	# 此前这张卡没有任何关闭途径——只能靠展开左下角「规则说明」把它挤掉（见 game.gd:_set_rules_open）。
+	# 此前这张卡没有任何关闭途径——只能靠展开右上角「规则说明」把它挤掉（见 game.gd:_set_rules_open）。
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 6)
 	iv.add_child(head)
@@ -486,7 +486,8 @@ static func build_play_ui(g: Node) -> void:
 	# 已被居中的畸变横幅 / 战报气泡 / 选目标提示占满"，但用户明确要横排 ⇒ **按用户的来**；
 	# 碰撞风险改由下面两条兜：① `ROSTER_X=104` 起、② `game._refresh_roster` 里那道
 	# **屏幕中线软夹**（`left_limit = max(ROSTER_X + 120, size.x*0.5 - 20)`）——
-	# 三人份实测右缘 ≈ 470，离屏心 640 还差 170，居中元素够不到。
+	# 三人份实测：每格宽 **120**、条 x ∈ [104, **474**]（`hud_test` 的 `[实测] 名册行` 那几行），
+	# 离屏心 640 还差 **166**，居中元素够不到。
 	# `hud_test` 里"每一格在暂停右侧""整条在屏幕左半""不压畸变横幅"三条就是钉这件事。
 	g.roster_strip = HBoxContainer.new()
 	g.roster_strip.set_anchors_preset(Control.PRESET_TOP_LEFT)

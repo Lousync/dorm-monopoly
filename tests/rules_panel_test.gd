@@ -184,6 +184,16 @@ func _run() -> void:
 	_check(is_equal_approx(g.rules_panel.offset_right, -12.0) and g.rules_panel.offset_top > 46.0,
 		"规则面板锚在右上角（右 %s / 顶 %s）"
 			% [str(g.rules_panel.offset_right), str(g.rules_panel.offset_top)])
+	# **批次 13 辛 ②：给「战报」栏补一条同款钉**。此前它**一条断言都没有** —— 顶边还是 134
+	#（离按钮很远）时这一整套照样全绿，所以"收回按钮正下方"那条改动当时是**静默**的，
+	# 谁把它改回去都没人知道（复核 M2 点名的洞）。
+	# 判据与上面那条**对称**：既钉当前值 52，也**与两枚按钮的实效下沿比**（而不是只钉一个魔数）。
+	# 两枚按钮都在右上同一条 y 带上，取二者下沿的较大者当基准。
+	var btn_bottom: float = maxf((g.rules_btn as Control).get_global_rect().end.y,
+		(g.log_toggle as Control).get_global_rect().end.y)
+	_check(is_equal_approx(g.log_panel.offset_top, 52.0) and g.log_panel.offset_top > btn_bottom,
+		"战报栏顶边贴在两枚按钮之下（顶 %s / 按钮实效下沿 %.1f）"
+			% [str(g.log_panel.offset_top), btn_bottom])
 	# 互斥（用户 ① 明写"不能同时打开"）：展开战报 → 规则自动收起
 	_check(not g.rules_panel.visible, "（前置）此刻规则面板是收起的")
 	g._toggle_log()

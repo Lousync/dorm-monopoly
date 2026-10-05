@@ -132,7 +132,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   （0.6/1.2s 后）对局可能已经推进过、状态被 `_cancel_target` 收掉了。；
   `logopen` → 展开右上角**战报栏**（走真入口 `_toggle_log`），用来核对"展开的战报栏不压名册条"
   （批次 12 D；如 `xx_logopen_table_plain.png`）—— **批次 13 ② 起名册条搬到左上角，两者天然分居
-  左右、不再打架**，这张图现在只是照拍留档（战报栏顶边仍留在 134）；
+  左右、不再打架**；**批次 13 辛 ② 起战报栏顶边已收到 52**（贴在两枚按钮之下），这张图用来核那一条；
   `abshow` → 把房主的 `_ab_active` 写一条畸变再 `_broadcast_state()`，让**顶部居中的畸变横幅**
   亮起来核对落位与不重叠（批次 12 D；如 `xx_abshow_table_plain.png`）。
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。

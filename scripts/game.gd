@@ -144,7 +144,7 @@ var ab_cond_row: HBoxContainer  # 对局内设置面板：条件触发 chips（�
 var ab_title: Label           # 对局内设置面板：畸变小节标题（与只读行互斥显隐）
 var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
-# ---------------- 格详情卡 / 规则说明（左下角，见 rules_panel.gd） ----------------
+# ---------------- 格详情卡 / 规则说明（**右上角**，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
 var _info_tile := -1              # 格详情卡当前挂在哪一格（-1 = 没显示）
 var info_title: Label
@@ -158,8 +158,8 @@ var decision_text: Label
 var decision_bar: ProgressBar
 var decision_no: Button
 var decision_ok: Button
-var rules_btn: Button            # 收起态：左下角「📖 规则说明」按钮
-var rules_panel: PanelContainer  # 展开态：分页规则面板（原位向上展开）
+var rules_btn: Button            # 「📖 规则说明」**开关**（批次 12 D2 起在右上角、与「战报」并列；批次 13 辛 ① 起恒可见、再点收起）
+var rules_panel: PanelContainer  # 分页规则面板（批次 13 ① 起同在右上角、**自按钮下方展开**，不再"原位向上"）
 var rules_body: RichTextLabel
 var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
@@ -447,7 +447,8 @@ func _build_ui() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# 控件构建已搬到 TableHud（原先 500 行都在这里）；控件直接写回本类同名成员
 	TableHud.build_play_ui(self)
-	# 左下角「📖 规则说明」：收起是按钮、点开原位向上展开分页规则（文案见 RulesText）
+	# 右上角「📖 规则说明」（批次 12 D2 起的落点）：一枚开关按钮 + 其下方展开的分页规则面板
+	#（文案见 RulesText）
 	RulesPanel.build(self)
 	# 玩家道具弹窗（批次 9）**排到最末**：GUI 拾取按**树序**（不看 z_index，见
 	# `table_hud.build_play_ui` 末尾那段说明），而规则说明的按钮 / 面板是 `build_play_ui`
@@ -2329,7 +2330,15 @@ func _fill_peer_bar(bar: Dictionary, e: Dictionary, turn_peer: int, phase: Strin
 	if bar.chip == null or not is_instance_valid(bar.chip) or int(bar.chip_color) != col:
 		for c in (bar.chip_slot as Control).get_children():
 			c.queue_free()
-		bar.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(col, 0, 3)], 18 if is_self else 16)
+		# **尺寸取小片位自己的最小宽**（与下面名次徽章同一写法，批次 13 辛 复核 M1 修）：
+		# 小片位是个**普通 `Control`**、不是容器 —— 它不会给小片分配尺寸，小片按自己的
+		# `custom_minimum_size` 铺开。所以写死的 16 放进名册格那个 14 宽的位里会**出血 2 像素**、
+		# 挤进 4 像素的格间距（③ 把名册格瘦到 14 之后才暴露出来的）。
+		# 读位宽同时覆盖两种载体：四角身家条的位是 **18**、名册格是 **14** —— 不必再按 `is_self` 分叉
+		#（两处 `chip_slot.custom_minimum_size` 都在 `table_hud` 里显式写死，见 `_make_corner_bar`
+		# / `_make_roster_row`）。
+		var csz: int = int((bar.chip_slot as Control).custom_minimum_size.x)
+		bar.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(col, 0, 3)], csz)
 		(bar.chip_slot as Control).add_child(bar.chip)
 		bar.chip_color = col
 	# 名次徽章（批次 13 ② 起**两处都有**：我那条 24、名册格 20 —— 尺寸取徽章位自己的最小宽）：
@@ -2682,7 +2691,7 @@ func _show_info_panel(idx: int) -> void:
 	info_body.text = body
 	info_sb.border_color = Color(accent.r, accent.g, accent.b, 0.7)
 	info_panel.add_theme_stylebox_override("panel", info_sb)
-	# 规则说明展开时占着左下角，格详情卡让位（见 _set_rules_open）
+	# 规则说明展开时占着右上角（批次 13 ① 起面板也在右上），格详情卡让位（见 _set_rules_open）
 	_info_tile = idx
 	info_panel.visible = not rules_open
 	# 面板尺寸随「决策区」一起变（有决策时更高），所以位置要**先填完内容再摆**：
