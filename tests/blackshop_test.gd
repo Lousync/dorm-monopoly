@@ -165,13 +165,15 @@ func _test_shop_ui(g) -> void:
 		"shops": {10: {"slots": ["招财猫", "平均主义", ""]}}}
 	g.my_peer = 1
 	g._shop_btn_sig = ""
-	g._refresh_shop_buttons()
-	_check(g.shop_btns[0].visible and "招财猫" in String(g.shop_btns[0].text), "1 号货位按钮可见且带货名")
+	g._refresh_shop_ui()
+	_check(g.shop_btns[0].visible \
+		and String(g.shop_cards[0].holder.get_meta("item_id", "")) == "招财猫",
+		"1 号货位按钮可见且卡面摆出招财猫")
 	_check(g.shop_btns[2].visible == false, "空货位按钮隐藏")
 	_check(not g.shop_btns[0].disabled, "买得起时不置灰")
 	g.st.players[0].money = 100
 	g._shop_btn_sig = ""
-	g._refresh_shop_buttons()
+	g._refresh_shop_ui()
 	_check(g.shop_btns[0].disabled and g.shop_btns[1].disabled, "买不起的货位置灰")
 
 func _test_stock_unique(g) -> void:

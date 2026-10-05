@@ -31,17 +31,6 @@ func _mk_player(peer: int, nm: String) -> Dictionary:
 		"pos": 0, "alive": true, "skip": 0, "stamina": 3, "items": [], "item_used": false,
 		"cheat_roll": -1}
 
-## 重建座位：先停掉在途的金额滚动 tween（它们捕获了旧的标签节点，
-## 座位一重建就会写到已释放的控件上），再清掉 game 侧陈旧的行引用缓存。
-func _rebuild_seats(g, pls: Array) -> void:
-	for peer in g._player_rows:
-		var row: Dictionary = g._player_rows[peer]
-		var tw = row.get("tw")
-		if tw != null and (tw as Tween).is_valid():
-			tw.kill()
-	g.board.build_seats(pls, g.my_peer)
-	g._player_rows.clear()
-
 func _prop_idx(offset: int) -> int:
 	var n := 0
 	for i in GameData.TILES.size():
@@ -89,7 +78,7 @@ func _run() -> void:
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	# 场景/脚本编译失败时成员是 null，后续断言里的表达式会先报错、根本走不到
 	# _check，于是整轮「全过」——必须在这里显式拦下（见 fix/v0.0.2）
-	if g.board == null or g.item_btn_box == null or g.shop_btns.is_empty():
+	if g.board == null or g.corner_bars.is_empty() or g.shop_layer == null:
 		printerr("  FAIL - 对局场景未正确加载（脚本编译失败？）")
 		print("REGRESSION TEST: SCENE LOAD FAILED")
 		quit(1)
@@ -103,13 +92,14 @@ func _run() -> void:
 	_test_roster_marks_disconnected_bots(g, _net)
 	_test_card_sound_once(g)
 	_test_item_card_cooling_flag()
-	_test_rotate_next_empty(g)
+	_test_view_rotation_removed(g)
+	_test_tab_space_no_longer_rotates(g)
 	_test_turn_ring_first_render(g)
 	_test_ui_widgets_applied(g)
 	_test_dev_panel(g)
 	_test_hot_chain(g)
 	_test_shop_refresh_full_shelf(g)
-	_test_camera_state(g)
+	_test_camera_window_resize(g)
 	await _test_roll_button_off_home_view(g)
 	await _test_targeting(g)
 
@@ -166,7 +156,7 @@ func _test_round_counter(g) -> void:
 	_check(g.round_no == 1, "0 号位破产后三人一圈仍记一轮（实得 %d）" % g.round_no)
 
 func _test_client_item_bar(g) -> void:
-	print("== 牌垫道具（点选→使用 三态） ==")
+	print("== 我的道具阶段 → 右下角动作按钮「结束回合」（玩法侧 selected_slot） ==")
 	var pls := [
 		{"peer": 2, "name": "我", "color": 1, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false,
@@ -177,19 +167,25 @@ func _test_client_item_bar(g) -> void:
 	g.hp = []          # 客户端没有房主的 hp（hp 只在 _host_setup 里填充）
 	g.my_peer = 2
 	g.st = {"phase": "playing", "turn": 2, "await": "item", "await_peer": 2, "players": pls}
-	g.board.set_self_peer(2)
-	_rebuild_seats(g, pls)            # 建座位（边 0 = 自己），牌垫按钮随之生成
-	g._refresh_item_buttons(true, "item")
-	_check(g.board._phase_use != null, "牌垫上有「使用道具」按钮")
-	_check(String(g.board._phase_use.text) == "跳过" and not g.board._phase_use.disabled,
-		"未选卡时该按钮为「跳过」（可点）")
-	# 点牌垫上的「交换生」（槽 1）→ 选中（绿光）
+	# 座位卡已随批次 5 Task 2 退场；牌垫上的「使用道具」三态按钮又随批次 7 退场。
+	# 道具阶段的可观察量改到**右下角动作按钮**（道具阶段恒为「结束回合」，见
+	# `_refresh_action_button`）；选中态仍看玩法侧单一来源 `selected_slot`。
+	g._refresh_actions()
+	_check(g.action_btn != null and g.action_btn.visible \
+			and String(g.action_btn.text) == "结束回合",
+		"我的道具阶段：右下角动作按钮是「结束回合」且可见")
+	# 选中「交换生」（槽 1）—— 走**玩法侧唯一入口** `_on_item_slot_clicked`（桌上手牌点击最终也落到它）。
+	# 证据取 `g.selected_slot`（玩法侧单一来源）：座位卡牌位已随批次 3 Task 6 拆除后，
+	# `board.item_selected` 不再有任何可见效果（`set_item_selected` 遍历的是恒空的 slots），
+	# 拿它当证据的话「选择坏了」也会通过。选中的**可见**反馈在桌上那张手牌自己身上（抬起 + 提亮）。
 	g._on_item_slot_clicked(2, 1)
-	_check(int(g.board.item_selected.get("peer", -1)) == 2 \
-		and int(g.board.item_selected.get("slot", -1)) == 1,
-		"点牌垫道具卡后选中该槽（绿光）")
-	_check(not g.board._phase_use.disabled and String(g.board._phase_use.text).contains("交换生"),
-		"选中后按钮变可用并显示道具名（形态二）")
+	_check(g.selected_slot == 1, "选中「交换生」→ 玩法侧 selected_slot = 1（实得 %d）" % g.selected_slot)
+	# 批次 7 的 R2：那条"非道具阶段 → 收掉选中态 / 未完成的选目标态"的清理从
+	# `_refresh_item_buttons` 搬进了 `_refresh_action_button`。这里钉住它没被弄丢：
+	# 切到掷轮窗口（不再是道具阶段）→ 选中态必须被收掉。
+	g.st = {"phase": "playing", "turn": 2, "await": "roll", "await_peer": 2, "players": pls}
+	g._refresh_actions()
+	_check(g.selected_slot == -1, "非道具阶段 → 选中态被收掉（实得 %d）" % g.selected_slot)
 
 func _test_shop_buttons(g) -> void:
 	print("== 小卖部购买按钮 ==")
@@ -204,9 +200,26 @@ func _test_shop_buttons(g) -> void:
 		"tiles": _fresh_tiles(),
 	}
 	g._process(0.0)
-	_check(g.shop_bar.visible, "轮到自己逛小卖部时操作条显示")
+	_check(g.shop_layer.visible, "轮到自己逛小卖部时全屏界面显示")
 	_check(g.shop_btns.size() == 3 and g.shop_btns[0].visible, "有货的货架显示「买」按钮")
 	_check(g.shop_btns.size() == 3 and not g.shop_btns[1].visible, "空货架不显示「买」按钮")
+	# 全屏层层级（终审 I2）：z_index 要压过 board 内元素（15/20/30/60），且显示时置顶
+	_check(g.shop_layer.z_index > 60, "小卖部全屏层 z_index 高于 board 内元素")
+	_check(g.shop_layer.get_index() == g.get_child_count() - 1, "小卖部全屏层显示时置顶")
+	_check(g.shop_money_l != null and g.shop_money_l.text.contains("9,000"),
+		"面板显示自己的现金（买按钮置灰时看得出理由）")
+	# 倒计时（终审 I1）：与座位卡共用同一份 _op_*，不是另起一套计时
+	g._op_kind = "shop"
+	g._op_left = 12.0
+	g._op_total = 20.0
+	g._process(0.0)
+	_check(g.shop_timer_row.visible and g.shop_timer_left.text == "12 秒",
+		"小卖部面板显示倒计时（与座位卡同一数据源）")
+	g._op_kind = ""
+	g._op_left = 0.0
+	g._op_total = 0.0
+	g._process(0.0)
+	_check(not g.shop_timer_row.visible, "窗口关闭后面板倒计时收起")
 
 func _test_authority_guards(g) -> void:
 	print("== 客户端→房主 RPC 的发送者校验 ==")
@@ -245,17 +258,41 @@ func _test_item_card_cooling_flag() -> void:
 	counter.free()   # 这两张卡没进场景树，不自己释放会留 leak 警告
 	cooling.free()
 
-func _test_rotate_next_empty(g) -> void:
-	print("== 座位表为空时按 Tab 不应除零 ==")
-	_check(g.board._next_edge([], 0) == -1, "空座位表返回 -1（不除零）")
-	_check(g.board._next_edge([0, 1, 2], 0) == 1, "切到下一个座位")
-	_check(g.board._next_edge([0, 1, 2], 2) == 0, "末尾回环到第一个")
-	_check(g.board._next_edge([0, 1, 2], 9) == 0, "当前不在表内则取第一个")
+func _test_view_rotation_removed(g) -> void:
+	print("== 转视角已删除（入口不存在） ==")
+	for m in ["rotate_to_seat", "rotate_to_edge", "rotate_home", "go_home_follow",
+			"rotate_next", "at_home_view"]:
+		_check(not g.board.has_method(m), "board.%s 已删除" % m)
+
+func _test_tab_space_no_longer_rotates(g) -> void:
+	print("== Tab / 空格 不再切视角 ==")
+	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
+	g.board._process(0.0)
+	g.board._zoom = 1.2
+	var rot_target_before: float = g.board._rot_target
+	for code in [KEY_TAB, KEY_SPACE]:
+		var ev := InputEventKey.new()
+		ev.keycode = code
+		ev.pressed = true
+		g._unhandled_input(ev)
+		_check(g.board._rot_target == rot_target_before,
+			"按 %s 后镜头旋转目标未变（实得 %.3f / 期望 %.3f）" % [
+				OS.get_keycode_string(int(code)), g.board._rot_target, rot_target_before])
+	# Esc 分支必须还在（别把 _unhandled_input 整段删了）：真的走一遍取消选目标
+	g._tgt_stage = "peer"
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	g._unhandled_input(esc)
+	_check(g._tgt_stage == "", "Esc 仍能取消选目标（Esc 分支未因删视角误删）")
 
 func _test_turn_ring_first_render(g) -> void:
-	print("== 首个行动玩家的脉冲光环应亮起 ==")
-	var pls := [_mk_player(1, "我"), _mk_player(2, "乙")]
-	_rebuild_seats(g, pls)
+	print("== 首个行动玩家的脉冲光环应亮起（批次 11 Task 1 起光环是 3D 的） ==")
+	# 原先这条读 `g.board._ring`（2D Panel）。棋子与光环搬进 3D 之后，单一来源是
+	# `table_props.set_tokens` / `set_ring`（由 `game._refresh_tokens` 在每次广播时推），
+	# 所以这里走**真入口**：喂状态 → 广播路径的刷新函数，再读桌面上那个 3D 环节点。
+	# （钉的仍是 fix/v0.0.2 那个病：光环必须在**棋子建好之后**才置位，否则会被记成"已设置"
+	#  而永远不亮 —— 顺序错时 `set_ring` 找不到那枚棋子、环直接不显示。）
 	g.st = {
 		"phase": "playing", "turn": 1, "round": 1, "max_rounds": 30,
 		"players": [
@@ -266,28 +303,53 @@ func _test_turn_ring_first_render(g) -> void:
 		],
 		"tiles": _fresh_tiles(),
 	}
-	g.board.render(g.st)
-	_check(g.board._ring.visible, "首次渲染后光环亮起（实得 %s）" % str(g.board._ring.visible))
-	g.board.render(g.st)
-	_check(g.board._ring.visible, "再次渲染后光环仍亮")
+	g._refresh_table_props()
+	var tp = g.table3d.table_props
+	var ring: Node3D = tp.get_node_or_null("Ring") as Node3D
+	_check(ring != null and ring.visible,
+		"首次刷新后光环亮起（环在？%s / 实得 %s）" % [str(ring != null), str(ring != null and ring.visible)])
+	# 环心落在 peer 1 那枚棋子上（光环是"套在行动者脚下"的，位置错就是套错人）
+	var tp_pos: Vector3 = tp.token_world_pos(1)
+	var ring_back: Vector2 = g.table3d.world_to_canvas_px(ring.global_position)
+	var tok_back: Vector2 = g.table3d.world_to_canvas_px(tp_pos)
+	_check(ring_back.distance_to(tok_back) < 8.0,
+		"环心落在 peer 1 的棋子上（环 %s / 棋子 %s 画布像素）" % [ring_back, tok_back])
+	g._refresh_table_props()
+	_check(ring.visible, "再次刷新后光环仍亮")
 
 func _test_ui_widgets_applied(g) -> void:
 	print("== HUD 控件回填（TableHud → game 同名成员）==")
 	# _build_ui 现在靠 set(k, w[k]) 回填，名字对不上是「静默失败」——
 	# 控件为 null 也不会报错，只会界面缺一块。这里逐个钉住。
-	var names := ["board", "mat_bar", "action_bar", "roll_btn", "item_btn_box",
-		"shop_bar", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
+	var names := ["board",
+		"shop_layer", "shop_btns", "shop_refresh_btn", "black_bar", "log_panel",
 		"log_text", "log_head", "log_toggle", "info_panel", "info_title",
-		"info_body", "info_sb", "status_label", "chat_edit",
-		"opt_btn", "ph1_pill", "ph2_pill", "ph1_lab", "ph2_lab",
-		"ph_arrow_l", "black_btns", "black_hint",
+		"info_body", "info_sb", "chat_edit",
+		"opt_btn", "black_btns", "black_hint",
 		"menu_dim", "menu_wraps", "rules_btn", "rules_panel", "rules_body", "rules_tabs",
-		"dock_plate", "roster_box", "roster_rows"]
+		# 批次 5 Task 3：身家条取代了右侧名册栏（roster_box / roster_rows 已从 game 上删净）
+		# 批次 12 D：四角条只剩「我」那一条，他人的信息与"选目标落点"搬到**顶部名册条**
+		#（`roster_strip` / `roster_strip_rows`）—— 那两个名字是新的，与上面已删的旧名册栏无关。
+		# **批次 13 ② 又把它搬到左上角「暂停」旁；辛 ③ 起是那边一行里的一格**；两个控件名一字未变。
+		"corner_bars", "roster_strip", "roster_strip_rows", "ab_wrap"]
 	var missing: Array = []
 	for n in names:
 		if g.get(n) == null:
 			missing.append(n)
 	_check(missing.is_empty(), "全部 %d 个控件已回填（缺失：%s）" % [names.size(), str(missing)])
+	# 反向契约（批次 3 Task 6）：底栏那 12 个名字必须**从表里刻意去掉** —— 它们已被删除，
+	# 留在表里就是一条恒假的红条。这里把「确实删掉了」也钉住：谁要是把它们加回来，
+	# 等于坞又长出来了，这条会先红。
+	var removed := ["mat_bar", "action_bar", "dock_plate", "roll_btn", "use_phase_btn", "item_btn_box",
+		"status_label", "ph1_lab", "ph2_lab", "ph1_pill", "ph2_pill", "ph_arrow_l",
+		# 批次 5 Task 3：右侧名册栏被四角身家条取代 —— 这两个名字必须**从 game 上删净**，
+		# 谁把它们加回来就等于名册栏又长出来了（四角条与它挂的是同一份东西，重复）。
+		"roster_box", "roster_rows"]
+	var back: Array = []
+	for n in removed:
+		if g.get(n) != null:
+			back.append(n)
+	_check(back.is_empty(), "底部操作坞 + 右栏名册的成员均已删净（残留：%s）" % str(back))
 
 func _test_dev_panel(g) -> void:
 	print("== 开发者面板（已搬到 dev_tools.gd）==")
@@ -414,36 +476,22 @@ func _test_room_info_port() -> void:
 	_check(int(info.get("port", 0)) == 8123, "解析出房主端口")
 	_check(NetAddr.parse_room_info("bad").is_empty(), "坏报文返回空")
 
-func _test_camera_state(g) -> void:
-	print("== 镜头状态：回自己视角 / 窗口缩放 ==")
+func _test_camera_window_resize(g) -> void:
+	print("== 镜头状态：窗口缩放不重置镜头 ==")
 	var pls := [_mk_player(1, "我"), _mk_player(2, "乙"), _mk_player(3, "丙")]
-	_rebuild_seats(g, pls)
 	g.board._process(0.0)             # 首次布局：fit_overview
 	_check(g.board.size.x > 10.0, "棋盘控件已布局（w=%.0f）" % g.board.size.x)
-	# 默认全景倍率下 _clamp_center 会退化成「恒等于桌面中心」，座座位目标无从区分
 	g.board._zoom = 1.2
-
-	# A) 回自己视角必须更新镜头目标，否则会沿用别人座位的旧目标，
-	#    与跟随镜头互相拉扯、_rotating 永不归位
-	g.board.rotate_to_edge(0, true)
-	var home_target: Vector2 = g.board._center_target
-	g.board.rotate_to_edge(1, true)
-	_check(g.board._center_target != home_target, "转到别人座位后镜头目标随之改变")
-	g.board.go_home_follow(1)
-	_check(g.board._center_target == home_target, "回自己视角后镜头目标回到自己座位")
-	for i in 180:
-		g.board._process(1.0 / 60.0)
-	_check(not g.board.is_rotating(), "回自己视角后镜头动画能收敛归位")
-
-	# B) 窗口尺寸变化不该把视角拽回全景并关掉跟随（对局中途改窗口/缩放）
-	g.board.rotate_to_edge(2, true)
+	g.board.focus_grid(27, 2.0, true) # 模拟对局中途镜头停在某格（2.0 是「全景的倍数」，见 board_view 顶部常量）
+	var center_before: Vector2 = g.board._center
 	g.board.emit_signal("resized")
 	g.board._process(0.016)
-	_check(absf(wrapf(g.board._rot, -PI, PI)) > 0.5,
-		"窗口尺寸变化后视角仍在别人座位（实得 %.2f rad）" % g.board._rot)
+	_check(g.board._center == center_before,
+		"窗口尺寸变化后镜头注视点不被拽回（实得 %s / 期望 %s）" % [g.board._center, center_before])
+	_check(absf(g.board._rot) < 0.001, "镜头旋转恒为 0（实得 %.4f rad）" % g.board._rot)
 
 func _test_roll_button_off_home_view(g) -> void:
-	print("== 阶段按钮在牌垫上（世界坐标，随视角；本人掷轮时可点） ==")
+	print("== 右下角动作按钮（批次 7；本人掷轮时是「转动转盘」） ==")
 	var pls := [
 		{"peer": 1, "name": "我", "color": 0, "bot": false, "alive": true, "money": 1000,
 			"pos": 0, "skip": 0, "stamina": 3, "item_used": false, "items": []},
@@ -457,21 +505,24 @@ func _test_roll_button_off_home_view(g) -> void:
 		"round": 1, "max_rounds": 30, "players": pls, "tiles": _fresh_tiles(),
 		"shops": {}, "shop_open": -1, "shop_peer": 0, "black_peer": 0,
 	}
-	_rebuild_seats(g, pls)            # 建立座位（边 0 = 自己）
-	g.board.rotate_to_edge(0, true)   # 前面的镜头用例可能把视角留在别人座位
-	g._refresh_actions()              # 阶段按钮的状态由状态决定
+	g._refresh_actions()              # 动作按钮的状态由状态决定
 	await process_frame
 	await process_frame               # 等容器布局算出真实尺寸
 	g._process(0.0)
-	_check(g.board._phase_spin != null and g.board._phase_spin.is_visible_in_tree(),
-		"牌垫上有「转转盘」按钮")
-	_check(not g.board._phase_spin.disabled, "轮到我掷轮时「转转盘」可点")
-	_check(g.mat_bar.is_visible_in_tree(), "状态条仍显示")
-	# 牌垫按钮是世界坐标：转到别人视角后仍存在（随桌世界旋转/可能转出画面，但对象在）
-	g.board.rotate_to_edge(1, true)
-	_check(not g.board.at_home_view(), "已转离自己视角")
-	g._process(0.0)
-	_check(g.board._phase_spin != null, "转离视角后牌垫按钮对象仍在（随桌世界）")
+	_check(g.action_btn != null and g.action_btn.visible \
+			and String(g.action_btn.text) == "转动转盘",
+		"轮到我掷轮：右下角按钮是「转动转盘」且可见")
+	_check(g.get("mat_bar") == null, "底栏成员已删净（不会留成一块不可见的空壳）")
+	# 批次 5 Task 2 的牌垫阶段按钮层，批次 7 已整体退场 —— 反向契约：谁加回来，这条先红。
+	_check(g.board.get_node_or_null("PhaseButtons") == null, "牌垫阶段按钮层已拆净（不留空壳）")
+	# 座位卡那一套 API 必须**真的没了**（不是留着空壳）：谁把它加回来，这条先红。
+	var seat_api: Array = ["build_seats", "seat_count", "seat", "set_op_timer", "set_self_peer",
+		"update_seat_stats", "_make_seat", "_seat_bar"]
+	var back: Array = []
+	for m in seat_api:
+		if g.board.has_method(m):
+			back.append(m)
+	_check(back.is_empty(), "座位卡的成员函数已删净（残留：%s）" % str(back))
 
 ## 指向性道具：点棋盘选玩家 / 两段式手选地块（本轮返工）
 func _test_targeting(g) -> void:

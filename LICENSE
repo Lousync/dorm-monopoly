@@ -1,6 +1,35 @@
-# 素材来源与授权（Assets & Licenses）
+MIT License
 
-本项目引用的开源素材全部为可自由商用的授权，在此致谢并声明：
+Copyright (c) 2026 宿舍大富翁 贡献者 (Dorm Monopoly contributors)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+第三方素材与授权（Third-Party Assets & Licenses）
+================================================================================
+
+上面的 MIT 授权覆盖本项目**自有的代码与程序化绘制的界面**（按钮、卡片、背景、
+转盘、骰面、音效等）。下列开源素材归各自原作者所有，按**各自授权**使用：
+
+> **分发本项目或其衍生作品时，请一并保留本节内容。**
+> Twemoji 的 CC-BY 4.0 要求署名；CC0 部分按良好习惯同样保留。
+> `assets/cards/` 下的 Atlas 牌背另附原始授权文本 `LICENSE_atlas_deck.txt`。
 
 ## Kenney — Board Game Pack
 - 路径：`assets/pieces/`
@@ -32,5 +61,3 @@
   （作者 Dmitry Fomin；图案源自 19 世纪法式 Atlas 牌，已入公有领域）
 - 用途：机会 / 命运牌堆的**卡背图案**（矢量 360×540，缩放到任意尺寸都不糊）；
   机会用「绿 + 暗红」、命运用「蓝 + 棕」，两套配色一眼区分
-
-> 若你分发本项目或其衍生作品，请保留本文件内容（CC-BY 要求署名；CC0 部分为良好习惯）。
