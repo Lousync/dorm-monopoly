@@ -330,6 +330,7 @@ func _test_ui_widgets_applied(g) -> void:
 		# 批次 5 Task 3：身家条取代了右侧名册栏（roster_box / roster_rows 已从 game 上删净）
 		# 批次 12 D：四角条只剩「我」那一条，他人的信息与"选目标落点"搬到**顶部名册条**
 		#（`roster_strip` / `roster_strip_rows`）—— 那两个名字是新的，与上面已删的旧名册栏无关。
+		# **批次 13 ② 又把它搬到左上角「暂停」旁并瘦身成竖排一格**；两个控件名一字未变。
 		"corner_bars", "roster_strip", "roster_strip_rows", "ab_wrap"]
 	var missing: Array = []
 	for n in names:

@@ -191,7 +191,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 - **房主权威**：玩法逻辑只在房主（`scripts/game.gd` 的 host 侧）计算；客户端只发 `c_*` 请求 + 渲染，绝不直接改 `hp/htiles`。
 - **RPC 命名**：`s_*` = 房主→全员（`authority`,`call_local`）；`c_*` = 客户端→房主（`any_peer`）。私密信息走 `rpc_id`。全表见 `doc/development/联机协议.md`。
 - **状态同步**：任何「全员可见」的状态必须进 `_broadcast_state`（曾漏发 `shop_peer` 导致小卖部界面永不显示）。
-- **哨兵值**：`GameData.NO_OWNER = -100`，不要用 -1（机器人 peer 从 -1 开始编号）。
+- **哨兵值**：`GameData.NO_OWNER = -100`（地产无主）、`GameData.NO_PEER = -9999`（无玩家 /
+  没命中），不要用 -1（机器人 peer 从 -1 开始编号 —— 批次 13 ④ 那次「调休」哨兵撞车就是踩了它）。
 - **动画**：持续动画手写 `_process` 相位，Tween 仅用于一次性过渡。
 - **素材优先开源**：新增美术 / 音效素材**一律优先选开源且许可兼容的**（CC0 / CC-BY / MIT / OFL 等），
   并在根目录 `LICENSE` 的**第三方素材登记**里逐个写明**来源与授权**（原 `assets/CREDITS.md` 已并入那里）；

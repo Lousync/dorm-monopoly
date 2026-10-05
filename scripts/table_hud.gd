@@ -630,7 +630,7 @@ const ROSTER_Y := 10.0
 ##     算出右边缘（那一份是容器给的权威值，不必自己重算一遍）。
 const ROSTER_ROW_SIZE := Vector2(0.0, 64.0)
 ## 名册条里格与格的间距（屏幕像素）。右边缘不靠手算加它 —— 直接取
-## `roster_strip.get_combined_minimum_size().x`（HBox 已经把这几个间距算进去了）。
+## `roster_strip.get_combined_minimum_size().x`（`VBoxContainer` 已经把这几个间距算进去了）。
 const ROSTER_SEP := 6.0
 ## 「我」那条身家条上「能量」行的高度（屏幕像素）。行**常驻占位**，内容恒有（读数 + 小格），
 ## 所以它不是"按需显隐"那一类 —— 写死是为了让 `CORNER_BAR_SIZE` 有一个可核算的加数。
@@ -843,8 +843,12 @@ static func _make_roster_row(g: Node, parent: Control) -> Dictionary:
 	chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	chip_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(chip_slot)
-	# 昵称一律 `clip_text`：格宽由内容驱动，但**名字不许把格撑开**
-	#（撑开了名册条的右边缘就会与 `game._refresh_roster` 算出来的对不上、并可能压到畸变横幅）。
+	# 昵称一律 `clip_text` + **固定 60px 最小宽**：格宽由内容驱动，但**名字不许把格撑开**
+	#（昵称再长也只在 60px 里裁掉 ⇒ 格宽、进而整条名册条的宽度都与昵称无关）。
+	# 【下面这条旧理由已过期，留此备查】原话是"撑开了名册条的右边缘就会与
+	# `game._refresh_roster` 算出来的对不上、并可能压到畸变横幅"—— `_refresh_roster` 今天
+	# **直接取条自身的 `get_combined_minimum_size()`** 推右边缘、再软夹一道屏幕中线（见 §②），
+	# 条怎么宽它都跟得上，所以"算出来的对不上"不再成立；这条裁剪保的是"格宽可预期"。
 	var name_l := UIKit.label("", 13, UIKit.TEXT)
 	name_l.clip_text = true
 	name_l.custom_minimum_size = Vector2(60, 0)
