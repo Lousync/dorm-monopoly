@@ -205,6 +205,14 @@ const TABLE_SIZE := Vector2(TABLE_W, TABLE_D)
 ## 两件都超出批次 A 的范围（手牌归批次 B 的 ⑨）。**别只改这一个数就交差**。
 const WOOD_FRAME := 0.7
 
+## 木桌（第二个平面）的**半宽 / 半深**。`_build_table()` 里那句
+## `TABLE_SIZE + Vector2(WOOD_FRAME, WOOD_FRAME) * 2.0` 就是它们的两倍 —— **两处必须同源**
+## （一期 Task 7 Step 0 提取：取景判据要按**木桌四角**量，就得有个可引用的名字）。
+##   宽 4.0 + 0.7 = **4.7**、深 2.7795 + 0.7 = **3.4795**。
+## ⚠ **别抄旧注释里的 ±3.513** —— 那是批次 10（`TABLE_D = 5.626`）时代的过期值。
+const WOOD_HALF_W := TABLE_W * 0.5 + WOOD_FRAME
+const WOOD_HALF_D := TABLE_D * 0.5 + WOOD_FRAME
+
 # ---------------- 批次 6：台灯（唯一主光源） ----------------
 #
 # **批次 13 ⑨（用户原话「删除桌面旁的其他 3D 物体」）：房间剪影整段删除。**
@@ -550,7 +558,9 @@ func _build_table() -> void:
 	#（SubViewport 是 transparent_bg，桌垫外沿那些 alpha=0 的像素会直接露出这层木纹）。
 	wood_mesh = MeshInstance3D.new()
 	var wpm := PlaneMesh.new()
-	wpm.size = TABLE_SIZE + Vector2(WOOD_FRAME, WOOD_FRAME) * 2.0
+	# 尺寸走 `WOOD_HALF_W/D` 那两个常量（= 同一式的两倍）—— 取景判据按木桌四角量，
+	# 两处必须同源，别再把这句算回内联式。
+	wpm.size = Vector2(WOOD_HALF_W, WOOD_HALF_D) * 2.0
 	wood_mesh.mesh = wpm
 	wood_mesh.position = Vector3(0.0, -0.012, 0.0)   # 略低于桌垫：共面的两片会闪
 	var wmat := StandardMaterial3D.new()
@@ -571,14 +581,12 @@ func _build_table() -> void:
 	# 三条约束：
 	#   * **别动木纹外框本身的位置**（`wood_mesh.position.y = -0.012`）—— Task 7 的取景判据量的
 	#     就是它；底座顶面顶到它的**底面**（-0.012），两层不共面。
-	#   * **尺寸 = 木纹外框那两维**（`TABLE_W * 0.5 + WOOD_FRAME` / `TABLE_D * 0.5 + WOOD_FRAME`）。
-	#     Task 7 Step 0 会把它们提成 `WOOD_HALF_W` / `WOOD_HALF_D`，届时这两行改成那两个常量。
+	#   * **尺寸 = 木纹外框那两维**（`WOOD_HALF_W` / `WOOD_HALF_D`，Step 0 已提取）。
 	#   * **一律 `cast_shadow = OFF`** —— 房间的纪律，全场唯一投影源仍是那盏吊灯。
 	var base_mesh := MeshInstance3D.new()
 	base_mesh.name = "TableBase"
 	var bm := BoxMesh.new()
-	bm.size = Vector3((TABLE_W * 0.5 + WOOD_FRAME) * 2.0, -0.012 - GameRoom.FLOOR_Y,
-		(TABLE_D * 0.5 + WOOD_FRAME) * 2.0)
+	bm.size = Vector3(WOOD_HALF_W * 2.0, -0.012 - GameRoom.FLOOR_Y, WOOD_HALF_D * 2.0)
 	base_mesh.mesh = bm
 	base_mesh.position = Vector3(0.0, (GameRoom.FLOOR_Y - 0.012) * 0.5, 0.0)
 	var bmat := StandardMaterial3D.new()
@@ -742,12 +750,10 @@ func _build_viewport() -> void:
 	# ⇒ 这里**不能**当成必然拿到节点用（下一行没有别的话要接它，是故意的）。
 	# 桌面尺寸一起传进去：四把椅子要围着桌子摆，房间得知道"桌子到哪儿为止"（**只收这个数**，
 	# 房间仍然不反向依赖桌子 —— 与 `LAMP_LIGHT_POS` 同一条规矩）。
-	# **传的是连木纹外框一起的半个桌面**（`WOOD_HALF_W` / `WOOD_HALF_D` 那两项；Task 7 Step 0
-	# 会把它们提成常量，届时这里换成那两个名字，行为一字不变）：椅子是贴着**整张桌子**的外沿
-	# 摆的、不是贴着桌垫摆的，而木纹的宽度是桌子的实现 ⇒ 由桌子这边算好递过去，
+	# **传的是连木纹外框一起的半个桌面**（`WOOD_HALF_W` / `WOOD_HALF_D` 那两个常量）：椅子是贴着
+	# **整张桌子**的外沿摆的、不是贴着桌垫摆的，而木纹的宽度是桌子的实现 ⇒ 由桌子这边算好递过去，
 	# `room.gd` 里就不必再写一遍那 0.7（一期 Task 5 Fix round 1）。
-	var room := GameRoom.build(self, LAMP_LIGHT_POS,
-		Vector2(TABLE_SIZE.x * 0.5 + WOOD_FRAME, TABLE_SIZE.y * 0.5 + WOOD_FRAME))
+	var room := GameRoom.build(self, LAMP_LIGHT_POS, Vector2(WOOD_HALF_W, WOOD_HALF_D))
 
 # ---------------- 屏幕层暗角（设计稿 §三 / §6.4） ----------------
 
