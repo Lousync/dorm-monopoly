@@ -711,6 +711,13 @@ func _run() -> void:
 		# 阈值 `FILL_ON_TABLE_MAX` 的取值口径见它的声明处（先实测、再定档）。
 		var fill_max := 0.0
 		var fill_non_omni := ""
+		# 「实得」那一栏报的是**补光自己的类名**（`OmniLight3D` / `DirectionalLight3D` …）。
+		# 【一期 Task 9 Step 0 修】原先这里直接插 `fill_non_omni` —— 而那个变量**只在
+		# "抓到非 omni"时才被赋值**、断言通过时它是空串 ⇒ 消息永远印成 `实得「」`，
+		# 一条**通过**的断言反而把"实得什么"留白（断言本身是对的，坏的只是消息）。
+		# 现在改成把每一盏非吊灯的**类名**都记下来（非 omni 的另外点名）—— 通过时印
+		# `OmniLight3D`、不通过时印 `DirectionalLight3D（非 omni）`，两头都读得懂。
+		var fill_kinds := ""
 		for n in lights:
 			if n == lamp_l:
 				continue
@@ -719,12 +726,14 @@ func _run() -> void:
 			var nl := n as OmniLight3D
 			if nl == null:
 				fill_non_omni = String((n as Node).name)
+				fill_kinds += "%s（非 omni） " % (n as Node).get_class()
 				continue
+			fill_kinds += "%s " % (n as Node).get_class()
 			for p in samples:
 				fill_max = maxf(fill_max, _mat_sample_irradiance(nl, p, 0.0))
 		_check(fill_non_omni == "",
 			"补光是 OmniLight3D（照度代理式只认 omni；实得「%s」—— 换平行光就没人量得动它了）"
-				% fill_non_omni)
+				% fill_kinds.strip_edges())
 		_check(fill_max <= FILL_ON_TABLE_MAX,
 			"补光对桌面的照度贡献 ≤ %.2f（实得 %.4f，灯共 %d 盏 —— 超了就是把批次 13 ⑧ 的"
 				% [FILL_ON_TABLE_MAX, fill_max, lights.size()]
