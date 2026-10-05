@@ -188,6 +188,33 @@ func _run() -> void:
 		var walls: Node = room.get_node_or_null("Walls")
 		_check(walls != null and walls.get_child_count() == 4, "房间有四面墙")
 
+		# ---- 一期 Task 4：家具摆位（书桌 / 书架 / 收纳箱）+ 光域断言 ----
+		# 家具**必须落在左半侧（x < 0）**：吊灯的光在 x ≈ -4.13（`table_3d.LAMP_LIGHT_POS`），
+		# 摆在远墙正中 / 右侧就掉出光域，退化成一块暗剪影 —— 等于白做（见设计 §四）。
+		# 另钉一条简报没写、但**必须有**的：**家具不许压在桌子足迹里**。
+		# 木桌远边在 z = -(TABLE_D/2 + WOOD_FRAME) ≈ -3.4795。**家具的 z 是从 `ROOM_D` 推导的**
+		# （Task 7 会重取取景、可能改 `ROOM_D`）—— 少了这条，`ROOM_D` 一收小家具就会静默叠到
+		# 桌子上（它跟着远墙一起往近端跑），而不是有人来重议一次摆位。
+		var furn: Node = room.get_node_or_null("Furniture")
+		_check(furn != null and furn.get_child_count() >= 3, "房间里至少摆了三件家具")
+		if furn == null:
+			_check(false, "Furniture 节点缺了，家具那几条断言整段跳过")
+		else:
+			var lamp_x: float = t3.LAMP_LIGHT_POS.x
+			var wood_far: float = -(t3.TABLE_SIZE.y * 0.5 + t3.WOOD_FRAME)   # ≈ -3.4795
+			for n in furn.get_children():
+				var fp: Vector3 = (n as Node3D).global_position
+				_check(fp.x < 0.0,
+					"家具落在左半侧（光域内）：%s x=%.2f < 0（吊灯 x=%.2f）" % [n.name, fp.x, lamp_x])
+				_check(fp.z <= -3.6,
+					"家具都在木桌远边之外：%s z=%.2f ≤ -3.6（木桌远边 z=%.4f —— 家具跟着远墙走，这条挡 ROOM_D 收小）"
+						% [n.name, fp.z, wood_far])
+			# 计划 Interfaces 承诺过的 `FURNITURE_ANCHORS`：今天没有下游消费，但它是"摆在哪"的唯一
+			# 记录（摆位表在 `room.gd` 里是常量，读它就等于把坐标再抄一遍）。钉它与摆出来的家具同源。
+			_check(GameRoom.FURNITURE_ANCHORS.size() == furn.get_child_count(),
+				"FURNITURE_ANCHORS 与摆出来的家具逐条对得上（%d / %d 件）"
+					% [GameRoom.FURNITURE_ANCHORS.size(), furn.get_child_count()])
+
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
 	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：

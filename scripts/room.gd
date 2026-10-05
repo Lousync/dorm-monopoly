@@ -61,6 +61,25 @@ func _lit_mat(base: Color, tex_path: String) -> StandardMaterial3D:
 			m.uv1_scale = Vector3(ROOM_W / 3.0, ROOM_D / 3.0, 1.0)   # 每 3 世界单位一轮
 	return m
 
+## 家具清单：`[模型文件名, 世界位置, 绕 Y 的朝向角]`。
+## **位置全在左半侧（x < 0）** —— 落在吊灯的光域里（见下面那条断言的理由）。
+## 模型文件名出自 Task 1 落地的 Kenney Furniture Kit（`assets/models/*.glb`，CC0）。
+##
+## **远墙那两件的 z 由 `ROOM_D` 推导、不写死**：Task 7 要重取 3D 端取景、可能改 `ROOM_D`
+## —— 写死 `z = -6.4` 的话，`ROOM_D` 一改要么把家具埋进墙里、要么把它摞到桌子上。
+## `-ROOM_D * 0.5 + 0.6` = "贴着远墙、离墙 0.6"（18 → -8.4，正是当前那面墙的位置）。
+## 收纳箱再往近端挪 1.2（+1.8）并转 20°，**别排成一条直线**。
+const FURNITURE := [
+	["desk.glb",               Vector3(-6.2, 0.0, -ROOM_D * 0.5 + 0.6),  0.0],  # 书桌（远墙偏左）
+	["bookcaseOpen.glb",       Vector3(-9.0, 0.0, -ROOM_D * 0.5 + 0.6),  0.0],  # 书架
+	["cardboardBoxClosed.glb", Vector3(-3.6, 0.0, -ROOM_D * 0.5 + 1.8), 20.0],  # 收纳箱
+]
+
+## 摆出来的家具落点（世界坐标，与 `FURNITURE` 逐条同序）。
+## **由 `_build_furniture()` 落定时填**（不把坐标抄第二遍 —— 单一来源仍是上面那张表）。
+## 计划 Interfaces 承诺过这个名字；今天没有下游消费，它记录的是"家具摆在哪"。
+static var FURNITURE_ANCHORS: Array[Vector3] = []
+
 func _build_shell() -> void:
 	_make_materials()
 	# 地板**略低于桌面**（计划原文写的是 y = 0.0，这里改成 -0.02 —— **一处经实测的修正**）。
@@ -84,6 +103,35 @@ func _build_shell() -> void:
 	_plane("WallS", Vector3(0, h * 0.5,  ROOM_D * 0.5), Vector2(ROOM_W, h), Vector3(-90, 0, 0),   _wall_mat, walls)
 	_plane("WallW", Vector3(-ROOM_W * 0.5, h * 0.5, 0), Vector2(ROOM_D, h), Vector3(90, 90, 0),   _wall_mat, walls)
 	_plane("WallE", Vector3( ROOM_W * 0.5, h * 0.5, 0), Vector2(ROOM_D, h), Vector3(90, -90, 0),  _wall_mat, walls)
+	_build_furniture()
+
+## 家具摆位。**外壳的一部分**（`build()` 只认外壳那一层，这里不再往外挂别的入口）。
+## 缺模型时 `load()` 给 null ⇒ `push_warning` 跳过，而测试里"至少三件家具"那条会红
+## —— **这是有意的**（缺模型本来就该拦住，见 progress.md 的 Ruling D）。
+func _build_furniture() -> void:
+	var fur := Node3D.new()
+	fur.name = "Furniture"
+	add_child(fur)
+	FURNITURE_ANCHORS.clear()
+	for row in FURNITURE:
+		var path: String = "res://assets/models/%s" % row[0]
+		var packed: PackedScene = load(path)
+		if packed == null:
+			push_warning("房间家具缺模型：%s（跳过）" % path)
+			continue
+		var mi := packed.instantiate() as Node3D
+		fur.add_child(mi)
+		mi.position = row[1]
+		mi.rotation_degrees = Vector3(0.0, row[2], 0.0)
+		# **记局部 `position`，不读 `global_position`**：`build()` 是 `table_3d._init()` 里调的，
+		# 那时 `TableView3D` 自己还没进树 ⇒ 整棵子树 `is_inside_tree() == false`，读全局变换会
+		# 打一串 `Condition "!is_inside_tree()" is true` 的 ERROR。房间自己恒在原点、无旋转，
+		# 局部 == 世界，`FURNITURE_ANCHORS` 记的就是世界落点（`layout_test` 那条断言量的也是它）。
+		FURNITURE_ANCHORS.append(mi.position)
+		# **模型自带的几何实例要逐个关投影** —— instantiate 出来的节点不继承父级的 shadow 设置，
+		# 这是本项目最容易漏关阴影的地方（`layout_test` 那条"房间物件一律不投影"就是为了兜住它）。
+		for n in mi.find_children("*", "GeometryInstance3D", true, false):
+			(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 ## `UIKit` **走运行时 `load`**，不静态写类名：`ui_kit.gd` 里的按钮音效引用了 autoload `Fx`，
 ## 静态引用会把整条依赖链拽进 `--script` 入口的那一次编译（那时 autoload 还没注册）
