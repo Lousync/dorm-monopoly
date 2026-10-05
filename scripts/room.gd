@@ -17,6 +17,16 @@ const ROOM_W := 22.0          # 房间宽（x）
 const ROOM_D := 18.0          # 房间深（z）
 const ROOM_CEIL_Y := 13.0     # 天花板高
 
+## 家具模型的**统一缩放**。Kenney 那批 `.glb` 是**米制**的（实测 `desk.glb` 0.734 宽、
+## `chairDesk.glb` 0.479 宽），而本项目的世界单位是"桌宽 8"那一档 —— 1:1 摆进去的话
+## 家具只有桌子的 1/11 宽，像桌上的火柴盒（一期 Task 4 实测过）。
+##
+## **1 米 ≈ 5 世界单位**：8 宽的桌子 ≈ 1.6 m、13 高的天花板 ≈ 2.6 m，是一间说得通的屋子；
+## 椅子 0.479 × 5 = **2.4 宽**，对着 8 宽的桌子，四把围一圈还宽裕 —— **这一条才是定档的
+## 锚点**（桌子与椅子的大小关系就是按它定的）。
+## ⚠ **Task 5 的四把椅子必须用同一个常量** —— 它和桌子的大小关系是这一条定下来的。
+const FURNITURE_SCALE := 5.0
+
 ## `lamp_light_pos` = `table_3d.LAMP_LIGHT_POS`（吊灯的光在世界的哪一点）。
 ## **由调用方传进来**，不让 `room.gd` 去 import `table_3d` 的常量 —— 房间不该反向依赖桌子。
 static func build(parent: Node3D, lamp_light_pos: Vector3) -> GameRoom:
@@ -61,18 +71,24 @@ func _lit_mat(base: Color, tex_path: String) -> StandardMaterial3D:
 			m.uv1_scale = Vector3(ROOM_W / 3.0, ROOM_D / 3.0, 1.0)   # 每 3 世界单位一轮
 	return m
 
-## 家具清单：`[模型文件名, 世界位置, 绕 Y 的朝向角]`。
+## 家具清单：`[模型文件名, 世界位置（**站立点的世界坐标**）, 绕 Y 的朝向角]`。
 ## **位置全在左半侧（x < 0）** —— 落在吊灯的光域里（见下面那条断言的理由）。
 ## 模型文件名出自 Task 1 落地的 Kenney Furniture Kit（`assets/models/*.glb`，CC0）。
 ##
-## **远墙那两件的 z 由 `ROOM_D` 推导、不写死**：Task 7 要重取 3D 端取景、可能改 `ROOM_D`
-## —— 写死 `z = -6.4` 的话，`ROOM_D` 一改要么把家具埋进墙里、要么把它摞到桌子上。
-## `-ROOM_D * 0.5 + 0.6` = "贴着远墙、离墙 0.6"（18 → -8.4，正是当前那面墙的位置）。
-## 收纳箱再往近端挪 1.2（+1.8）并转 20°，**别排成一条直线**。
+## **世界位置一律由 `ROOM_W` / `ROOM_D` 推导、不写死**：Task 7 要重取 3D 端取景、可能改
+## `ROOM_D` —— 写死的坐标要么把家具埋进墙里、要么把它摞到桌子上。做法是**每件都贴着墙角摆**：
+## x 从西墙量、z 从远墙量（`-ROOM_D * 0.5 + 进深`），墙一挪家具跟着挪。
+##
+## **模型是朝 -z 长的**（站立点在它的**前沿**、背板朝远墙缩进去），所以"离墙多远"那一项
+## 用的是各件**实测**的进深（`.glb` 的 AABB：书架 1.25 / 书桌 1.9 / 收纳箱 1.06，均已 ×5）。
+## 三件的 AABB 两两不相交（实测），且都在木桌远边（z = -3.4797）之外。
 const FURNITURE := [
-	["desk.glb",               Vector3(-6.2, 0.0, -ROOM_D * 0.5 + 0.6),  0.0],  # 书桌（远墙偏左）
-	["bookcaseOpen.glb",       Vector3(-9.0, 0.0, -ROOM_D * 0.5 + 0.6),  0.0],  # 书架
-	["cardboardBoxClosed.glb", Vector3(-3.6, 0.0, -ROOM_D * 0.5 + 1.8), 20.0],  # 收纳箱
+	# 书架：贴西墙（最靠里的一件）
+	["bookcaseOpen.glb",       Vector3(-ROOM_W * 0.5 + 0.3, 0.0, -ROOM_D * 0.5 + 1.4),  0.0],
+	# 书桌：贴远墙、在书架右边（背板与书架齐平，都离远墙 0.15）
+	["desk.glb",               Vector3(-ROOM_W * 0.5 + 2.6, 0.0, -ROOM_D * 0.5 + 2.05), 0.0],
+	# 收纳箱：挪到书架**前面**、转 20°（别排成一条直线 —— 转过的 AABB 仍与那两件不相交）
+	["cardboardBoxClosed.glb", Vector3(-ROOM_W * 0.5 + 0.6, 0.0, -ROOM_D * 0.5 + 3.0), 20.0],
 ]
 
 ## 摆出来的家具落点（世界坐标，与 `FURNITURE` 逐条同序）。
@@ -121,6 +137,10 @@ func _build_furniture() -> void:
 			continue
 		var mi := packed.instantiate() as Node3D
 		fur.add_child(mi)
+		# **缩放只改变外形，不改"站哪儿"**：节点的 `position` 活在**父节点**那一系里，与它自己的
+		# `scale` 无关 ⇒ 上面那张表里的坐标仍是**世界站立点**（`layout_test` 量的也是 global_position）。
+		# 模型的基点本来就在脚底（实测 AABB 的 min.y = 0），绕着原点放大不会陷进地板。
+		mi.scale = Vector3.ONE * FURNITURE_SCALE
 		mi.position = row[1]
 		mi.rotation_degrees = Vector3(0.0, row[2], 0.0)
 		# **记局部 `position`，不读 `global_position`**：`build()` 是 `table_3d._init()` 里调的，

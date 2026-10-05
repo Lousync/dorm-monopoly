@@ -214,6 +214,44 @@ func _run() -> void:
 			_check(GameRoom.FURNITURE_ANCHORS.size() == furn.get_child_count(),
 				"FURNITURE_ANCHORS 与摆出来的家具逐条对得上（%d / %d 件）"
 					% [GameRoom.FURNITURE_ANCHORS.size(), furn.get_child_count()])
+			# **每件家具的世界 AABB 必须整个落在房间里** —— 这条才拦得住"整体缩放定错档"：
+			# 定小了（1:1 的米制模型）与定大了（50×）在"位置对不对"上**完全看不出来**，
+			# 只有量尺寸才现形。尺寸取自**节点自己的 mesh**（逐个 GeometryInstance3D 的 AABB
+			# 过自己的世界变换再并起来）—— **不读 `GameRoom.FURNITURE_SCALE`**：读常量等于把
+			# 实现重述一遍，缩放改成什么值都照样过，正是本文件反复警告的那类永真断言。
+			var boxes := {}
+			for n in furn.get_children():
+				var wb := AABB()
+				var got_mesh := false
+				for m in n.find_children("*", "GeometryInstance3D", true, false):
+					var g := m as MeshInstance3D
+					if g == null or g.mesh == null:
+						continue
+					var a: AABB = g.global_transform * g.mesh.get_aabb()
+					wb = a if not got_mesh else wb.merge(a)
+					got_mesh = true
+				boxes[n.name] = wb
+				# 前提：真量到了几何。空盒（一个几何实例都没有）会让下面那条**恒真**。
+				_check(got_mesh, "%s 有可量的几何实例（否则它的 AABB 是空盒、下面那条恒真）" % n.name)
+				if not got_mesh:
+					continue
+				var hw: float = GameRoom.ROOM_W * 0.5
+				var hd: float = GameRoom.ROOM_D * 0.5
+				_check(wb.position.x >= -hw and wb.end.x <= hw
+						and wb.position.z >= -hd and wb.end.z <= hd
+						and wb.position.y >= -0.02 and wb.end.y <= GameRoom.ROOM_CEIL_Y,
+					"%s 整体落在房间里（世界 AABB %s..%s，尺寸 %s；房间 |x| ≤ %.1f / |z| ≤ %.1f / y ≤ %.1f）"
+						% [n.name, wb.position, wb.end, wb.size, hw, hd, GameRoom.ROOM_CEIL_Y])
+			# 三件**两两不相交**（AABB 口径 —— 比几何口径严）。家具一放大，最先撞上的就是彼此；
+			# 摆位表动一个数就可能让两件叠在一起，而"左半侧 / 在桌子之外"两条都拦不住它。
+			var fnames: Array = boxes.keys()
+			for i_f in fnames.size():
+				for j_f in range(i_f + 1, fnames.size()):
+					var a_f: AABB = boxes[fnames[i_f]]
+					var b_f: AABB = boxes[fnames[j_f]]
+					_check(not a_f.intersects(b_f),
+						"%s 与 %s 不相交（%s..%s / %s..%s）"
+							% [fnames[i_f], fnames[j_f], a_f.position, a_f.end, b_f.position, b_f.end])
 
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
