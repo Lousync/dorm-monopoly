@@ -21,6 +21,11 @@ extends Node3D
 ## ③ **随取景淡出并停播**（`set_fade`）—— "读棋盘"那几档（推近端 / 2D 端）把动画与绘制一起停掉，
 ## 二期不拖慢主玩法档。三条都**只读表现层**：行动者读 `st.turn`，取景读 `view_t` / `dolly`。
 ##
+## **二期 Task 4：四个玩法事件各有一动**（`react()`）—— 出牌 / 付钱 / 被抢地 / 破产，
+## **四条动画名全部是普查实测存在的**（见 `REACT_ANIMS`）；破产那一条**停在 `die` 的末帧**
+## （= 躺下 / 趴着）并且**记住**，spec §5.4 定的"破产的人留在座位上趴着"就是它（见 `_dead_peers`）。
+## 事件同样**只读表现层**（`game.gd` 从已同步的状态读边沿）—— 一处 `@rpc` 都没新增。
+##
 ## ⚠ **静态依赖纪律**：`tests/layout_test.gd` 静态引用 `GameRoom` ⇒ `room.gd` 的整条静态依赖链
 ## （含本文件）会在 `--script` 启动时、**autoload 注册之前**被编译。所以本文件**不许静态引用
 ## autoload 链上的任何东西**（`UIKit` → `Fx` / `Net`）—— 要就照 `room.gd._ui_kit_tex()` 那样
@@ -574,6 +579,10 @@ func _host() -> Node:
 	return null
 
 ## 把 `_fade_t` 落到节点上：透明度 + 可见性 + 播放状态。
+##
+## **已经趴下的那一家（`_dead_peers`）单独一支**：见 `_pose_die` / `REACT_DIE` 那段 ——
+## 他是**停在 `die` 末帧**的，既不能跟着"回来就 `play(idle)`"（那是**复活**），
+## 也不能因为 `stop()` 把姿态丢掉（从淡出回来时要重新摆回末帧）。
 func _apply_fade() -> void:
 	var a := clampf((FADE_GONE_T - _fade_t) / (FADE_GONE_T - FADE_SOLID_T), 0.0, 1.0)
 	var gone := a <= 0.001
@@ -589,6 +598,10 @@ func _apply_fade() -> void:
 		if gone:
 			if ap.is_playing():
 				ap.stop()
+		elif char_dead(i):
+			# 趴着的那一家：`stop()`（淡出档）与 `set_chars` 重建都会**把姿态丢掉** ⇒ 每次都重新
+			# 摆回末帧。**不能写成"回来就 `play(idle)`"** —— 那正是"复活"。
+			_pose_die(ap, w)
 		elif not ap.is_playing():
 			ap.play(IDLE_ANIM)
 
@@ -601,3 +614,217 @@ static func _alpha(root: Node, a: float) -> void:
 		var gi := n as GeometryInstance3D
 		if gi != null and not is_equal_approx(gi.transparency, tr):
 			gi.transparency = tr
+
+# ---------------- 二期 Task 4：四个玩法事件的反应（出牌 / 付钱 / 被抢地 / 破产） ----------------
+#
+# **四个事件 → 四条动画，名字全部是普查实测存在的**（`doc/development/chars-导入与动画普查.md`
+# §三 的 27 条清单 + §5.4 的建议表）。**写错名字 / 编一条不存在的 ⇒ `chars_test` 立刻红**
+#（它按**字面名字**断言，不读本文件这张表 —— 读表等于把实现重述一遍，改个名永远绿）。
+#
+# **事件从哪来**：全部由 `game.gd` 从**已同步的状态**里读**边沿**，再调 `react()` ——
+#   * 出牌 = 那一家本回合的 `item_used` 由假变真（`_use_item` 里置、`_item_turn_start` 里清）；
+#   * 付钱 = 金钱差分 < 0（就是既有**飞钞**那一拍，`_money_flies`）；
+#   * 被抢地 = `st.tiles[i].owner` 从某个**还活着**的玩家变成别人（易主：强拆令 / 交换课表 / 抄家…）；
+#   * 破产 = `alive` 由真变假。
+# ⇒ **一处 `@rpc` 都没新增、状态机一行没改**（spec §5.5 那条纪律）。本文件仍然只**认识 peer**，
+# 不读 `st`、不认玩法（它连"什么叫出牌"都不知道 —— 那是 `game.gd` 的活）。
+#
+# **幅度 = 含蓄**（用户 2026-10-06 定案，spec §九 开放问题 5）：这四条都是 0.17~0.67 s 的小动作，
+# **不许用 `speed_scale` 放大**（那个旋钮是"当前行动者"的表达，由 `set_actor` 独占）——
+# 本作视觉调性克制，四家同时动起来会变马戏团。`chars_test` 有一条钉着"react 不动 `speed_scale`"。
+
+## 事件 → 动画（**只放实测存在的名字**，逐条依据见普查 §5.4）：
+##   * `play` **出牌**（出道具）= **`interact-right`**：0.6667 s，幅度与时长都够、**首尾闭合**；
+##   * `pay` **付钱** = **`holding-left`**：0.1667 s，与既有**飞钞**演出同一拍。
+##     ⚠ **绝不能用 `pick-up`**（0.3333 s）—— 它是这个包里**唯二"首尾不闭合"**的两条之一，
+##     结束在**弯腰**姿态：想停末帧得手动回位，想循环得另接（普查 §三 实测细节 2）；
+##   * `rob` **被抢地**（名下地产易主）= **`emote-no`**：0.6667 s。**包里没有"后仰 / 拍桌"**
+##     这类细分动作 ⇒ 用**摇头**表达否认可读（普查 §5.4 建议表）；
+##   * `die` **破产** = **`die`**：0.3333 s。⚠ 它是**不闭合**的那条（末帧不是静止姿）⇒ 要
+##     `seek(末帧) + pause()` **定住**，并且要**记住**（见 `_dead_peers`）。
+##     ⚠⚠ **它的"倒地"那一条在坐着的人身上不能用**（本任务实测，见 `_pose_die`）：
+##     那条轨把整个人**绕脚底**转 −90°，站着的人是"倒在地上"，坐着的人是"**落到地板以下、
+##     房间之外**"＝**人不见了**（而 spec §九④ 明确否掉"消失"）。⇒ 摘掉那一条 + 手摆收势。
+const REACT_ANIMS := {
+	"play": "interact-right",
+	"pay": "holding-left",
+	"rob": "emote-no",
+	"die": "die",
+}
+
+## `die` 这一条的键（它与其他三条的处理不同：**停末帧 + 记进 `_dead_peers`**）。
+const REACT_DIE := "die"
+
+## **破产收势的三个角度**（度，见 `_pose_die` / `_slump`）：腰往前折 / 上身侧倒 / 再低头。
+##
+## **为什么要有它们**：`die` 自己的末帧是"整个人绕脚底倒地"（实测落到地板以下、房间之外
+## ⇒ 看上去就是人不见了），而"留在座位上"这个已定案的表现，这个包里**没有任何一条动画**
+## 给得出（普查 §5.4：没有后仰 / 拍桌 / 低头这类细分动作）。⇒ **手摆**，同 `LEG_SQUASH` /
+## `HEAD_SHRINK` 那两条一样，摆完由 `chars_test` 钉住（头在桌面上方、不与桌子实体体积相交、
+## 人仍在座位锚点的 xz 上、没掉到地板以下）—— **不是随手挑的数，是照着这几条判据收敛出来的**。
+##
+## **收敛过程（实测，逐档读数见 task-4-report）**：
+## ① 桌子是**从地板到桌面的一整块实体**（底座 AABB y∈[−3.70, −0.01]、z∈[−3.48, 3.48]），
+##    而人就坐在它前面 1.15 世界（23 cm）处 ⇒ **腰往前折过 15° 就把躯干插进桌子**
+##    （实测：20° 起躯干 ∩ 桌子 −0.10；25° 起连头也进去）；
+## ② 但**往前折少了看不出"倒"** ⇒ "倒下去"这一下主要由**侧倒**给：绕 Z 转不改变 z，
+##    人一直在桌沿之外 ⇒ 侧倒不受那条限制（实测：腰 15°+侧 30° 就已经让**头**插进去了，
+##    因为前折把头顶到了桌沿上方；**侧倒单独可以很大**）；
+## ③ 于是取 **腰 5° + 侧 45° + 低头 12°**：实测头落在 **y = 0.22**（桌面上方，看得见）、
+##    全部分件与桌子实体体积**最近净空 +0.205**、最低分件 y = −3.56（地板 −3.70 之上）、
+##    人仍在座位锚点的 xz 上（偏差 0.0000）。
+## **它是"倒"不是"趴"** —— 几何上"趴到桌上"做不到（桌子是实体，趴上去就埋进去了），
+## 这一条如实记在 task-4-report 的 Concerns 里，等控制者裁决。
+const DIE_SLUMP_DEG := 5.0    # 腰往前折（顶在"不插进桌子"的上限附近）
+const DIE_ROLL_DEG := 45.0    # 上身侧倒（破产那一下"倒下去"的主要来源）
+const DIE_HEAD_DEG := 12.0    # 头再低一点
+
+## 已经**趴下**的那几家（peer -> true）。破产是一次性、但**永久**的表现：
+## `die` 停末帧之后这个人就一直趴着 —— 而 `_apply_fade`（从淡出档回来）与 `set_chars`（重建）
+## 都会把新人摆成**待机** ⇒ 不记住就会**复活**（spec §5.4 要的是"留在座位上趴着"）。
+##
+## 记的是 **peer 而不是椅子号**：座位序会随 `_seat_peers()` 轮转（`set_chars` 重建），
+## 而"这家破产了"与坐哪把椅子无关（同 `CHAR_MODELS_BY_COLOR` 那条"按人定、不按椅子定"）。
+var _dead_peers := {}
+
+## 播某个玩家的反应动画（`kind` ∈ `REACT_ANIMS` 的键）。
+##
+## **读不到就什么都不做**（找不到这个 peer / 这条动画时只 `push_warning` 一条）：
+## 事件是从**已同步的状态**读来的，允许"人还没摆上椅子"这种时序（广播可能早一帧）。
+##
+## ⚠ **不碰 `speed_scale`** —— 那是"当前行动者"的表达（`set_actor`），幅度含蓄、不放大。
+func react(peer: int, kind: String) -> void:
+	var i := _slot_of_peer(peer)
+	if i < 0:
+		return
+	var ap := char_player(i)
+	if ap == null:
+		return
+	# 已经趴下的那家不再做别的动作：破产是**终局**表现，不能被后来的付钱 / 摇头顶掉。
+	if kind != REACT_DIE and _dead_peers.has(peer):
+		return
+	var anim := String(REACT_ANIMS.get(kind, ""))
+	if anim == "" or ap.get_animation(anim) == null:
+		push_warning("角色没有 `%s` 这条动画（事件 `%s` 播不出来）" % [anim, kind])
+		return
+	if kind == REACT_DIE:
+		_dead_peers[peer] = true
+		_pose_die(ap, _chars[i] as Node3D)
+		return
+	# 三条**一次性小动作**：播完**自己走回待机** —— 不回来的话人僵在末帧、再也不呼吸
+	#（`idle` 被 `play()` 顶掉之后不会自己回来）。一次性连接 `CONNECT_ONE_SHOT` 就够：
+	# 这个包里除 `walk`/`sprint` 之外的动画都是 `LOOP_NONE` ⇒ 播完**必发** `animation_finished`
+	#（`idle` 那份的循环标记是本实例自己改成 `LOOP_LINEAR` 的，见 `_loop_idle`）。
+	# ⚠ **信号带一个参数**（`animation_finished(anim_name)`）⇒ 回调的签名必须**先接住它**
+	#（少写一个参数是一条 SCRIPT ERROR，而表现只是"动作播完人僵住" —— 出图 / 断言都看得见）。
+	#
+	# ⚠ **接之前先断同名的那一个**：同一个人连着两次反应（同一帧里又出牌又付钱、或一条还在
+	# 播就又被叫了一次）时，`connect` 会报 `already connected to given callable` ——
+	# **那是一条 ERROR，且第二次的连接不生效**（本项目对 ERROR 零容忍；`chars_test` 里
+	# "连着两次 react"那一档当场把它抓出来了）。断开再连，永远只有一条待发的回位。
+	ap.play(anim)
+	var cb := _react_finished.bind(ap, peer)
+	if ap.animation_finished.is_connected(cb):
+		ap.animation_finished.disconnect(cb)
+	ap.animation_finished.connect(cb, CONNECT_ONE_SHOT)
+
+## 一次性动作播完 → 回到待机（除非这一家已经趴下了，见 `_dead_peers`）。
+## 第一个参数是信号自带的动画名（用不到，接住它是为了签名对得上）。
+func _react_finished(_anim: StringName, ap: AnimationPlayer, peer: int) -> void:
+	if ap == null or not is_instance_valid(ap) or _dead_peers.has(peer):
+		return
+	ap.play(IDLE_ANIM)
+
+## 把某人的播放器**停在 `die` 的末帧**（= 躺下 / 趴着）—— 但**先把"整体倒地"那一条摘掉**、
+## 再补一个**座位上的收势**。两条都是实测逼出来的（见下）。
+##
+## ⚠ **光 `pause()` 没用**：`play()` 之后紧接着 `pause()` 停在的是**第 0 帧**（还是坐姿），
+## ⇒ 必须 `seek(时长, true)` 先走到末帧（第二个参数 `true` = 立刻把姿态落到分件节点上）。
+##
+## ⚠⚠ **为什么必须摘掉 `root` 的旋转轨（本任务实测，是本简报里唯一站不住的一条）**：
+## `die` 的末帧把**整个 `root` 绕"脚"转 −90°**（普查 §三 的层级里 `root` 的原点就在脚底），
+## 对**站着**的人那是"倒在地上"；可我们的人是**坐着**的、脚下就是地板，实测末帧：
+## `root` 局部 −90°、头落在 **y = −4.12**（地板 −3.70 **以下** 0.42）、躯干躺在
+## **z ∈ [−12.5, −5.2]**（椅子后面 1.5 m，**远墙在 z = −9 ⇒ 有一截穿墙**）。
+## ⇒ 表现是**人不见了**（出图实证：对面那把椅子空了）—— 而 spec §九④ 明确否掉的正是"消失"：
+## 「消失等于'这家没了'，趴着才是'他输光了'」。**简报那条"die 的末帧正是趴着"只对站着的人生效。**
+##
+## **做法**：`die` 复制一份、**只摘掉 `root` 的旋转轨**（`_die_without_fall`，手法同 `_loop_idle`），
+## 保留它自己的其余内容（手臂 180°＝举双手、头、`root` 的微量位移），再手摆一个
+## **座位上的收势**（`_slump`：前折 + 侧倒 + 低头）—— 与 `HEAD_SHRINK` / `LEG_SQUASH`
+## 同一条思路（这个包没有"弯腰"这条动画，普查 §5.4：**包里没有后仰 / 拍桌 / 低头这类细分动作**）。
+## **实测这一摆**：头仍在桌面上方、各分件与桌子实体体积留有余量（最近 +0.205）、
+## 人仍在座位锚点的 xz 上、最低分件在地板之上（四条都由 `chars_test` 钉着），
+## 出图看得见"**人歪倒在座位上**"（出图前后对比：不摘那一条轨时对面那把椅子是**空的**）。
+##
+## **Godot 4.6 实测的口径（`chars_test` 钉着）**：`play()+seek(末帧)+pause()` 之后 --
+## `assigned_animation == "die"`（**名字留得住**，`current_animation` 会变成 `""`）、
+## `is_playing() == false`、`current_animation_position == 时长`。
+## ⇒ **量 die 的名字要读 `assigned_animation`**：`current_animation` 在"暂停 / 播完停下"
+## 这两种状态下都会被清成 `""`，拿它核名字必假红（第一版就是这么红的）。
+func _pose_die(ap: AnimationPlayer, w: Node3D) -> void:
+	var a := ap.get_animation(REACT_DIE)
+	if a == null:
+		return
+	_die_without_fall(ap)
+	ap.play(REACT_DIE)
+	ap.seek(a.length, true)
+	ap.pause()
+	_slump(w)
+
+## **座位上的收势**（手摆，见 `_pose_die`）：腰往前折 `DIE_SLUMP_DEG` + 上身侧倒 `DIE_ROLL_DEG`
+## + 头再低 `DIE_HEAD_DEG`。
+## 腿不在这一支里（`root` → `leg-*` 与 `torso` 是**并列**的两支，普查 §三）⇒ 腿照旧坐着、不穿桌子。
+func _slump(w: Node3D) -> void:
+	if w == null or not is_instance_valid(w):
+		return
+	var torso := w.find_child("torso", true, false) as Node3D
+	if torso != null:
+		torso.rotation.x = deg_to_rad(DIE_SLUMP_DEG)
+		torso.rotation.z = deg_to_rad(DIE_ROLL_DEG)
+	var head := w.find_child("head", true, false) as Node3D
+	if head != null:
+		head.rotation.x = deg_to_rad(DIE_HEAD_DEG)
+
+## `die` 的**去掉"整体倒地"那一条**的副本（装回本实例的库里，同名覆盖 —— 同 `_loop_idle` 的手法）。
+## 摘掉的是 `root` 的**旋转**轨（那条把整个人绕脚底转 −90°，见 `_pose_die` 那段实测）；
+## 其余一条不动（`root` 的位移、`torso` / `arm-*` / `head` / `leg-*` 全部保留）。
+##
+## **为什么是"复制一份再换回去"**：`instantiate()` 出来的动画资源与 `PackedScene` 共用同一份
+## ⇒ 就地删轨会污染缓存（同 `_loop_idle` / `_shade` 那条理由）。
+static func _die_without_fall(ap: AnimationPlayer) -> bool:
+	var src := ap.get_animation(REACT_DIE)
+	if src == null:
+		return false
+	var idx := -1
+	for i in src.get_track_count():
+		if src.track_get_type(i) != Animation.TYPE_ROTATION_3D:
+			continue
+		# 轨道路径形如 `character-k/root:rotation` ⇒ 先切掉属性那一段再取末节节点名。
+		if String(src.track_get_path(i)).get_slice(":", 0).get_file() == "root":
+			idx = i
+			break
+	if idx < 0:
+		return false
+	var a := src.duplicate() as Animation
+	a.remove_track(idx)
+	for lib_name in ap.get_animation_library_list():
+		var lib := ap.get_animation_library(lib_name)
+		if lib != null and lib.has_animation(REACT_DIE):
+			lib.add_animation(REACT_DIE, a)   # 同名覆盖：本实例从此用"不倒"的那一份
+			return true
+	src.remove_track(idx)   # 退路（同 `_loop_idle`：问不到库时就地改，宁可脏一份也别不生效）
+	return true
+
+## 这个 peer 坐在第几把椅子上（`-1` = 他不在座上 / 还没有角色层）。
+func _slot_of_peer(peer: int) -> int:
+	for i in _char_peers.size():
+		if int(_char_peers[i]) == peer:
+			return i
+	return -1
+
+## 第 `slot` 把椅子上那家**是不是已经破产趴下**（`react(peer, "die")` 之后一直为真）。
+## 测试用它核"趴下这件事被记住了" —— 不记住的话，一次淡出往返（或一次重建）就把他**复活**了。
+## `_apply_fade` 也用它（趴着的那家单独一支，见那里）。
+func char_dead(slot: int) -> bool:
+	return slot >= 0 and slot < _char_peers.size() and _dead_peers.has(int(_char_peers[slot]))

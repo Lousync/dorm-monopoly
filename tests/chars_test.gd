@@ -41,6 +41,39 @@ const MY_SLOT := 0
 ## **不是**本文件的实现常量 —— 它是房间那边的既有事实，这里拿它当坐姿的外尺。
 const SEAT_H := 2.25
 
+## 破产姿态的**实测读数**（判据同一把尺子量两次：刚破产时 / 淡出往返之后）。返回：
+##   * `top` / `low`：全部分件的世界 AABB 的最高点 / 最低点（"人还在座位上、看得见"靠它）；
+##   * `head_y`：头分件的世界 y（**在桌面上方** = 从相机看没被桌子挡掉）；
+##   * `hits` / `worst`：逐分件与**桌子实体体积**（底座 ∪ 桌面那一层）的相交件数 / 最近净空
+##     —— 与 Task 1 立的判据 ③ **同一口径**（合并 AABB 不算数，那 5 mm 是浮在桌上的头）。
+func _death_pose(w: Node3D, t3: Node) -> Dictionary:
+	var out := {"top": -INF, "low": INF, "head_y": -INF, "hits": 0, "worst": INF}
+	if w == null:
+		return out
+	var tbase := t3.get_node_or_null("TableBase") as MeshInstance3D
+	var tmat: MeshInstance3D = t3.get("table_mesh")
+	if tbase == null or tbase.mesh == null or tmat == null or tmat.mesh == null:
+		return out
+	var tb: AABB = tbase.global_transform * tbase.mesh.get_aabb()
+	var tma: AABB = tmat.global_transform * tmat.mesh.get_aabb()
+	var slab := AABB(Vector3(tma.position.x, tb.end.y, tma.position.z),
+		Vector3(tma.size.x, tma.position.y - tb.end.y, tma.size.z))
+	var head := w.find_child("head", true, false) as Node3D
+	if head != null:
+		out.head_y = head.global_position.y
+	for n in w.find_children("*", "GeometryInstance3D", true, false):
+		var g := n as MeshInstance3D
+		if g == null or g.mesh == null:
+			continue
+		var a: AABB = g.global_transform * g.mesh.get_aabb()
+		out.top = maxf(out.top, a.end.y)
+		out.low = minf(out.low, a.position.y)
+		var gp: float = maxf(_aabb_gap(a, tb), _aabb_gap(a, slab))
+		out.worst = minf(out.worst, gp)
+		if gp <= 0.0:
+			out.hits = int(out.hits) + 1
+	return out
+
 ## **角色的"被照亮的 albedo"相对桌面那一笔的比值上限**（Task 1 的 J1，`CHAR_LIT_RATIO_MAX`）。
 ##
 ## **为什么是 1.0**：本档要的就是那句大白话 —— **角色不许亮过桌面**。
@@ -770,6 +803,163 @@ func _run() -> void:
 		sp3.append(chars.char_speed(i))
 	_check(sp3.all(func(x): return x <= GameChars.IDLE_SPEED + 0.001),
 		"没有行动者时**三个人都回到基准速**（实得 %s）" % str(sp3))
+
+	# ================= 二期 Task 4：四个玩法事件的反应 =================
+	#
+	# **断言按动画名的字面值核**（**不读** `GameChars.REACT_ANIMS` —— 读那张表等于把实现重述一遍，
+	# 改个名字永远绿）：名字写错 / 编一条不存在的都该红。四条名字全部是普查**实测存在**的
+	#（普查 §三 的 27 条清单 + §5.4 建议表）：
+	#   出牌 `interact-right` / 付钱 `holding-left` / 被抢地 `emote-no` / 破产 `die`。
+	# 此时座位序仍是 `_seats()`：slot1=peer3（色3）/ slot2=peer4（色0）/ slot3=peer5（色2）。
+	print("== 二期 Task 4：四个事件的反应（四个名字全部实测）==")
+
+	# (a) 出牌 → `interact-right`（0.6667 s，幅度与时长都够、首尾闭合）
+	chars.react(3, "play")
+	await process_frame
+	var ra1: AnimationPlayer = chars.char_player(1)
+	_check(ra1 != null and ra1.current_animation == "interact-right",
+		"**出牌 → `interact-right`**（实得 \"%s\" —— 名字写错 / 换一条不存在的，这条立刻红）"
+			% (ra1.current_animation if ra1 != null else "<没有播放器>"))
+
+	# (b) 付钱 → `holding-left`（0.1667 s，与既有**飞钞**演出同一拍）
+	chars.react(4, "pay")
+	await process_frame
+	var ra2: AnimationPlayer = chars.char_player(2)
+	_check(ra2 != null and ra2.current_animation == "holding-left",
+		"**付钱 → `holding-left`**（实得 \"%s\" —— 与飞钞同拍；⚠ 换成 `pick-up` 会红："
+			% (ra2.current_animation if ra2 != null else "<没有播放器>")
+			+ "那一条**不闭合**、结束在弯腰姿态，是包里唯二不闭合的两条之一）")
+
+	# (c) 被抢地 → `emote-no`（0.6667 s。**包里没有"后仰 / 拍桌"** ⇒ 摇头是可读的"不"）
+	chars.react(5, "rob")
+	await process_frame
+	var ra3: AnimationPlayer = chars.char_player(3)
+	_check(ra3 != null and ra3.current_animation == "emote-no",
+		"**被抢地 → `emote-no`**（实得 \"%s\"）"
+			% (ra3.current_animation if ra3 != null else "<没有播放器>"))
+
+	# (c2) **三条小动作的姿态也不许插进桌子**（判据 ③ 的口径，逐件量）—— 它们动的都是手臂 / 头
+	#      （躯干与腿不动），理论上够不到桌沿；但"理论上"不算数，量一次（人已经坐在桌前 23 cm 处）。
+	var hit_log := ""
+	var hit_slots: Array = []
+	for i in CHAR_SLOTS:
+		var dpi: Dictionary = _death_pose(t[i], t3)
+		hit_log += "slot%d 相交%d 件(净空%+.3f) | " % [i, int(dpi.hits), float(dpi.worst)]
+		if int(dpi.hits) > 0 or float(dpi.low) < GameRoom.FLOOR_Y - 0.001:
+			hit_slots.append(i)
+	print("  [实测] 反应姿态：%s" % hit_log)
+	_check(hit_slots.is_empty(),
+		"出牌 / 付钱 / 被抢地**三条动作也不与桌子实体体积相交、不掉到地板以下**（越界座位 %s）"
+			% str(hit_slots))
+
+	# (d) **幅度含蓄**：反应**不许动 `speed_scale`**（那是「当前行动者」的表达，`set_actor` 独占）。
+	#     "放大一点看得清"正是要拦住的那一手 —— 本作调性克制，四家同时动要变马戏团。
+	chars.set_actor(3)                       # 行动者 = slot1（peer 3）：速度 1.4
+	var ra_sp: float = chars.char_speed(1)
+	chars.react(3, "play")
+	_check(is_equal_approx(chars.char_speed(1), ra_sp) and is_equal_approx(ra_sp, GameChars.ACTOR_SPEED),
+		"**反应不动 `speed_scale`**（幅度含蓄 —— 行动者档 %.2f，实得 %.2f → %.2f；"
+			% [GameChars.ACTOR_SPEED, ra_sp, chars.char_speed(1)]
+			+ "「顺手放大一点」这条立刻红）")
+
+	# (e) 三条一次性小动作**播完自己走回待机** —— 不回来的话人僵在末帧、再也不呼吸
+	#    （0.6667 s，speed 1.4 ⇒ ≈0.48 s；等 1.2 s 足够，且不是"看一眼就算"）
+	await create_timer(1.2).timeout
+	var rae: AnimationPlayer = chars.char_player(1)
+	_check(rae != null and rae.current_animation == GameChars.IDLE_ANIM and rae.is_playing(),
+		"一次性动作播完**自己走回待机**（实得 \"%s\"/在播 %s —— 不回来人僵在末帧、再也不呼吸）"
+			% [(rae.current_animation if rae != null else "<没有播放器>"),
+				("是" if (rae != null and rae.is_playing()) else "否")])
+	chars.set_actor(GameData.NO_PEER)
+
+	# (f) 破产 → `die` + **停在末帧**。
+	#     ⚠ **名字要读 `assigned_animation`**：实测 Godot 4.6 里 `current_animation` 在
+	#     "暂停 / 播完停下"两种状态下都会被清成 `""`（`assigned_animation` 留得住）——
+	#     拿 `current_animation` 核这条**必然假红**（第一版就是这么红的，探针量出来的）。
+	#     两条一起核：① 名字对；② **真的停在末帧**（位置 ≈ 时长、已不在播）—— 只核名字的话，
+	#     `play()` 之后直接 `pause()`（停在第 0 帧、还是坐姿）照样绿。
+	var ra_top0: float = _subtree_world_aabb(t[2]).end.y    # 待机时的最高点（下面 f3 的参照）
+	chars.react(4, "die")
+	await process_frame
+	var ra4: AnimationPlayer = chars.char_player(2)
+	var ra4_a: Animation = null
+	if ra4 != null:
+		ra4_a = ra4.get_animation("die")
+	var ra4_len: float = ra4_a.length if ra4_a != null else -1.0
+	var ra4_pos: float = ra4.current_animation_position if ra4 != null else -1.0
+	_check(ra4 != null and ra4.assigned_animation == "die" and ra4_a != null \
+			and absf(ra4_pos - ra4_len) <= 0.001 and not ra4.is_playing(),
+		"**破产 → `die`，并停在末帧**（实得 assigned=\"%s\" 在播 %s 位置 %.4f / 时长 %.4f —— "
+			% [(ra4.assigned_animation if ra4 != null else "<没有播放器>"),
+				("是" if (ra4 != null and ra4.is_playing()) else "否"), ra4_pos, ra4_len]
+			+ "⚠ `play()` 之后直接 `pause()` 停在的是**第 0 帧**，必须先 `seek(时长)`）")
+
+	# (f2) **破产的人留在座位上、看得见、不穿模** —— spec §九④ 定案的那一条
+	#（"留在座位上"，明确否掉"消失：消失等于这家没了"）。
+	# ⚠ **这一条正是简报那条"`die` 的末帧正是趴着"不成立的地方**（实测）：`die` 的末帧把
+	# **整个人绕脚底转 −90°**（站着的人 = 倒在地上），可我们的人是**坐着**的 ⇒ 末帧实测：
+	# 头落到 **y = −4.12**（地板 −3.70 以下）、躯干躺到 **z ∈ [−12.5, −5.2]**（椅子后面 1.5 m，
+	# **远墙在 z = −9**）⇒ 出图看就是**对面那把椅子空了**。`chars.gd` 因此摘掉了那一条轨、
+	# 改用手摆的**座位收势**（`_slump`，角度顶在"不与桌子实体体积相交"的几何上限附近）。
+	# 这三条钉的就是"摘对了吗"：人还在锚点上 / 头在桌面上方 / 没有分件落地板以下或插进桌子。
+	# **变红口子**：把 `_pose_die` 里那句 `_die_without_fall(ap)` 去掉（退回整体倒地），这三条一起红。
+	var dp: Dictionary = _death_pose(t[2], t3)
+	var an2: Transform3D = room.seat_anchor(2)
+	var off: Vector2 = Vector2(t[2].global_position.x - an2.origin.x,
+		t[2].global_position.z - an2.origin.z)
+	_check(off.length() <= 0.001,
+		"破产那家**还在自己那把座位上**（世界 xz 与 `seat_anchor(2)` 的偏差 %.4f —— "
+			% off.length() + "倒地那一条会把整个人搬到椅子后面 1.5 m 去，这条立刻红）")
+	_check(float(dp.head_y) > 0.0,
+		"破产那家的头**在桌面上方（看得见）**（头 y=%.3f vs 桌面 y=0.000 —— 退回整体倒地时它是 −4.12）"
+			% float(dp.head_y))
+	_check(float(dp.low) >= GameRoom.FLOOR_Y - 0.001,
+		"破产那家**没有落到地板以下**（最低分件 y=%.3f vs 地板 %.2f）" % [float(dp.low), GameRoom.FLOOR_Y])
+	_check(int(dp.hits) == 0,
+		"破产那家**不插进桌子的实体体积**（逐件、与判据 ③ 同一口径：相交 %d 件，最近净空 %+.3f 世界）"
+			% [int(dp.hits), float(dp.worst)])
+	# (f3) **`die` 自己的内容真的落在身上**：这条动画的收势是"举双手"（实测世界最高点由**手臂**
+	#      撑着），与待机（最高点是头）不同 ⇒ 最高点必须抬起来。只核名字的话，
+	#      "play 了 die 但一条轨都没生效"照样绿。
+	_check(float(dp.top) > ra_top0 + 0.5,
+		"**`die` 自己的动作真的落在身上**（世界最高点：待机 %.3f → 破产 %.3f，抬了 %.3f 世界 = %.0f cm"
+			% [ra_top0, float(dp.top), float(dp.top) - ra_top0, (float(dp.top) - ra_top0) * 200.0]
+			+ " —— `die` 里手臂转 180°（举双手），那是它自己的内容，不是我们摆的）")
+	_check(chars.char_dead(2),
+		"破产**被记住了**（`char_dead` —— 不记住的话，一次淡出往返 / 一次重建就把他**复活**了）")
+
+	# 停住的那一帧**不许再往前跑**（真等一小段真实时间再量一次）：只比"位置==时长"的话，
+	# 一条**没 pause、自己播完停在末帧**的实现也是绿 —— 这条把"停"这件事本身钉住。
+	await create_timer(0.3).timeout
+	var ra4_pos2: float = ra4.current_animation_position if ra4 != null else -1.0
+	_check(ra4 != null and is_equal_approx(ra4_pos2, ra4_pos),
+		"破产那家**定在末帧不动**（0.3 s 之后位置 %.4f，与刚播完时 %.4f 相同）" % [ra4_pos2, ra4_pos])
+
+	# (g) **淡出往返之后仍然是"留在座位上"的那一副**（这是最容易漏的那一半：
+	#     `_apply_fade` 从淡出档回来时会 `play(idle)`、`set_chars` 重建也会把人摆成待机）
+	chars.set_fade(1.0)
+	chars.set_fade(0.0)
+	await process_frame
+	var rag: AnimationPlayer = chars.char_player(2)
+	var rag_pos: float = rag.current_animation_position if rag != null else -1.0
+	var dpg: Dictionary = _death_pose(t[2], t3)
+	_check(chars.char_dead(2) and rag != null and rag.assigned_animation == "die" \
+			and absf(rag_pos - ra4_len) <= 0.001,
+		"破产那家**一次淡出往返之后仍停在 die 末帧**（实得 assigned=\"%s\" 位置 %.4f / 时长 %.4f）"
+			% [(rag.assigned_animation if rag != null else "<没有播放器>"), rag_pos, ra4_len])
+	_check(float(dpg.top) > ra_top0 + 0.5 and int(dpg.hits) == 0 and float(dpg.low) >= GameRoom.FLOOR_Y - 0.001,
+		"淡出往返之后**姿态也摆回来了**（最高点 %.3f vs 待机的 %.3f / 相交 %d 件 / 最低 %.3f —— "
+			% [float(dpg.top), ra_top0, int(dpg.hits), float(dpg.low)]
+			+ "只记住「名字」不够：`stop()` 会把姿态一起丢掉）")
+
+	# (h) 已经破产的那家**不再做别的动作**（破产是终局表现，不能被后来的付钱 / 摇头顶掉）
+	chars.react(4, "pay")
+	await process_frame
+	var rah: AnimationPlayer = chars.char_player(2)
+	var rah_pos: float = rah.current_animation_position if rah != null else -1.0
+	_check(rah != null and rah.assigned_animation == "die" and absf(rah_pos - ra4_len) <= 0.001,
+		"已经破产的那家**不再做别的动作**（实得 assigned=\"%s\" 位置 %.4f —— 破产是终局表现）"
+			% [(rah.assigned_animation if rah != null else "<没有播放器>"), rah_pos])
 
 	# 供报告的原始读数。⚠ 节点在 ⑩ ⑪ 里**重建过**（那两条本来就要换一批实例）⇒ 这里重新取一遍，
 	# 别用早先那批引用（旧引用已经 `queue_free` 了，读它会报 `previously freed`）。

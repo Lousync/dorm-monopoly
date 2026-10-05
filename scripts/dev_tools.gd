@@ -761,6 +761,39 @@ func take_shot(path: String) -> void:
 			g._broadcast_state()
 			await get_tree().create_timer(0.35).timeout
 			get_tree().paused = true   # 冻住：自动对局下一拍会把 _shop_peer 改掉
+	if path.contains("react") and g.multiplayer.is_server():
+		# 摆拍（二期 Task 4）：四个玩法事件各拍一张。走**真入口** `chars.react(peer, kind)`
+		#（与 gameplay 触发的是同一个函数、同一条链），出图只看**它把哪条动画摆到了身上**。
+		#   * 名字（四选一）：`react_play` / `react_pay` / `react_rob` / `react_die`；
+		#   * 建议配 `dollyfar` + `table` + `plain`：看屋子那一档、对面那把椅子完整在画内
+		#    （默认档下对面角色的头会被画面上缘切掉，见 Ruling G2）；
+		#   * 用法：`--autotest=host --rounds=3 --shot=shots/t4_react_die_dollyfar_table_plain.png`
+		#
+		# **为什么三条要"定格在中段"**：三帧连拍落在 0.6 / 1.2 / 1.8 s，而这四条里除 `die` 之外
+		# 都只有 0.17~0.67 s（自动对局还有 3 倍速）⇒ 不定格就只能拍到"已经演完、人回到待机"。
+		# 定格的是**一帧真实的中间姿态**（`seek(长度 × 0.45)`），不是另摆的假姿势。
+		# **`die` 那一条不定格** —— 它本来就停在末帧（趴着），那正是要拍的证据（spec §5.4 定案）。
+		var kind := ""
+		for k in ["play", "pay", "rob", "die"]:
+			if path.contains("react_" + k):
+				kind = k
+		var rm: Node = g.table3d.get_node_or_null("Room") if g.table3d != null else null
+		var chars_r: Node = rm.get_node_or_null("Chars") if rm != null else null
+		if chars_r != null and kind != "":
+			var peers_r: Array = chars_r.char_peers()
+			# 用 **slot 2（对面那把椅子）**：它是正对镜头的那一个（一期 Ruling G2 验收的那把）。
+			var slot_r := 2 if peers_r.size() > 2 else 1
+			var peer_r: int = int(peers_r[slot_r]) if peers_r.size() > slot_r else GameData.NO_PEER
+			print("SHOTREACT kind=%s slot=%d peer=%d" % [kind, slot_r, peer_r])
+			chars_r.react(peer_r, kind)
+			if kind != "die":
+				var ap_r: AnimationPlayer = chars_r.char_player(slot_r)
+				var a_r: Animation = null
+				if ap_r != null and ap_r.current_animation != "":
+					a_r = ap_r.get_animation(ap_r.current_animation)
+				if a_r != null:
+					ap_r.seek(a_r.length * 0.45, true)
+					ap_r.pause()
 	# 文件名带 deckout：抽卡「抽出」只有 `DeckReveal.OUT` = 0.34s，常规三帧的第一帧（0.6s）
 	# 已经落在翻面之后 —— 拍不到"卡刚亮出来的那一刻"。这里按两个时间点各补一张（**不等 0.6s**）：
 	#   0.06s（卡片刚起）与 0.16s（快到位）。批次 8 起演出在屏幕层、相机不参与 ⇒ 不再需要

@@ -282,6 +282,18 @@ var _money_flies: Array = []
 ## 测试观测点（批次 13 ⑥）：peer -> **当帧**飞钞终点（`_spawn_money_fly` 里写）。
 ## 用途：钉住"终点用的是 `_refresh_corner_bars` 之后的绑定"，不是上一次广播的旧绑定。
 var _money_fly_goal := {}
+
+# ---------------- 二期 Task 4：四个事件反应的**边沿缓存**（只读表现层，见 `_react_chars`） ----------------
+#
+# 这三份都**只读**：从已同步的 `st` 里读"当前值"，与上一次那一份比出**边沿**（"刚刚出局 /
+# 刚刚易主 / 这一回合刚出过牌"），再把事件转给角色层。**不改任何玩法状态、不发任何 RPC。**
+# **为什么必须有它们**：`st` 只给当前值，而这三个事件的定义就是"变了的那一下"——
+# 上一次那份只能自己留着（同 `_money_shown` 那条既有做法）。付钱不需要：它就在钱循环里，
+# 差分当场就有（见 `_refresh_players` 里那两行）。
+var _react_seen := false     # 还没拿到过"上一次那一份"（第一次广播只记、不发 —— 否则开局全员"破产"）
+var _react_alive := {}       # peer -> 上一次广播时还活着吗（真→假 = 破产）
+var _react_used := {}        # peer -> 上一次广播时这一回合的牌出过没有（假→真 = 出牌）
+var _react_owners: Array = []  # 上一份 `st.tiles` 的 owner（逐格；变 = 易主）
 var _chat_shown := 0
 var _prompt_tw: Tween
 var _prompt_bar: ProgressBar
@@ -2471,6 +2483,64 @@ func _name_by_peer(peer: int) -> String:
 			return String(p.name)
 	return "?"
 
+## 角色层（`Room/Chars`，二期）。`CHARS_ENABLED = false` 时它**根本不存在**（二期的保命开关）
+## ⇒ 一律 `get_node_or_null`；走动态调用（`game.gd` 不把 `chars.gd` 写成静态依赖，
+## 同 `_refresh_players` 里那处既有写法）。
+func _chars_node() -> Node:
+	if table3d == null:
+		return null
+	var room := table3d.get_node_or_null("Room")
+	return room.get_node_or_null("Chars") if room != null else null
+
+## 把一条反应转给角色层（`react` 的 kind 表在 `chars.gd.REACT_ANIMS`）。角色层不在就什么都不做。
+func _char_react(peer: int, kind: String) -> void:
+	var chars := _chars_node()
+	if chars != null:
+		chars.react(peer, kind)
+
+## 二期 Task 4：从**已同步的状态**里读出**边沿**事件、转给角色层（见那三份缓存）。
+##
+## **只读表现层**：判据是 `item_used`（出牌）/ `alive`（破产）/ `st.tiles[i].owner`（被抢地）——
+## 都是客户端也算得出来的量。**一处 `@rpc` 没加、状态机一行没改**（spec §5.5 那条纪律）。
+##
+## **付钱不在这个函数里**：它与既有**飞钞**同一拍，直接用钱循环里已经算好的差分
+##（`_refresh_players` 里 `if diff < 0: _char_react(peer, "pay")` 那两行）。
+##
+## 判据的边界（都是**故意的**，不是漏）：
+##   * 第一次广播（`_react_seen` 为假）**只记不发** —— 否则开场人人"刚破产、刚被抢地"；
+##   * 出局那一家**同一帧**还会被收走名下地产（`htiles[..].owner = NO_OWNER`）⇒ "被抢地"那条
+##     按**新状态里还活着**过滤，免得刚趴下的人又被摇一次头；
+##   * 易主的**上一手主人**才是"被抢地"的那一位（新主人是抢的人，不摇头）。
+func _react_chars() -> void:
+	var chars := _chars_node()
+	if chars == null:
+		return                      # 角色层不在（CHARS_ENABLED=false）：整段不跑
+	var players: Array = st.get("players", [])
+	var tiles_arr: Array = st.get("tiles", [])
+	# ① 破产 / 出牌：逐家比"上一次那一份"
+	for p in players:
+		var peer := int(p.get("peer", GameData.NO_PEER))
+		var alive := bool(p.get("alive", true))
+		var used := bool(p.get("item_used", false))
+		if _react_seen:
+			if bool(_react_alive.get(peer, alive)) and not alive:
+				chars.react(peer, "die")        # 出局：留在座位上（停末帧）
+			elif alive and used and not bool(_react_used.get(peer, used)):
+				chars.react(peer, "play")       # 出牌：这一回合的牌刚出过
+		_react_alive[peer] = alive
+		_react_used[peer] = used
+	# ② 被抢地：逐格比 owner（对不上尺寸的那一次只记不比）
+	if _react_seen and _react_owners.size() == tiles_arr.size():
+		for i in tiles_arr.size():
+			var was := int(_react_owners[i])
+			var now := int((tiles_arr[i] as Dictionary).get("owner", GameData.NO_OWNER))
+			if was != now and was != GameData.NO_OWNER and bool(_react_alive.get(was, true)):
+				chars.react(was, "rob")
+	_react_owners = []
+	for t in tiles_arr:
+		_react_owners.append(int((t as Dictionary).get("owner", GameData.NO_OWNER)))
+	_react_seen = true
+
 func _refresh_players() -> void:
 	# 桌面实体物件：每次状态广播都重新贴回桌垫坐标（见 _refresh_table_props 的注释）
 	_refresh_table_props()
@@ -2554,6 +2624,11 @@ func _refresh_players() -> void:
 			# **飞钞要等一帧再播**（批次 13 ⑥ 修的真 bug，见下面 `_money_flies` 那段注释）：
 			# 这里只记差分，播放在 `_refresh_corner_bars` 之后。
 			_money_flies.append({"peer": peer, "diff": diff})
+			# 二期 Task 4：**付钱**的反应 —— 与飞钞**同一拍**（`diff < 0` = 这一家掏了钱；
+			# 进账不动，见 spec §5.4 的"资金减少"那一行）。这里不需要边沿缓存：
+			# 判据就是上面这行刚算出来的差分（同上一条：只在 `alive` 时才播）。
+			if diff < 0:
+				_char_react(peer, "pay")
 
 	# 身家排名（名次徽章的依据）
 	var order: Array = worth_map.keys()
@@ -2584,6 +2659,9 @@ func _refresh_players() -> void:
 	for f in _money_flies:
 		_spawn_money_fly(int(f.peer), int(f.diff))
 	_money_flies.clear()
+	# 二期 Task 4：**出牌 / 被抢地 / 破产**三条边沿事件 → 角色层的反应（付钱那条在上面钱循环里，
+	# 与飞钞同一拍）。读的全是已同步的状态，玩法一行没碰（见 `_react_chars`）。
+	_react_chars()
 	# 玩家道具弹窗（批次 9）：打开期间随广播重填（数值实时）；那个人离场或整局结束即关掉
 	#（弹一个已经不存在的人的弹窗没有意义）。
 	if player_popup != null and player_popup.is_open():
