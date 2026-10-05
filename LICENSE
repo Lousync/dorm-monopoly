@@ -50,6 +50,22 @@ SOFTWARE.
   包内另有 **FBX / OBJ / DAE / STL 各 140 件**同源模型与 **702 张** 2D 侧视 / 等距 PNG，
   本项目**均未采用**。
 
+## Kenney — Blocky Characters
+- 路径：`assets/models/chars/`
+- 授权：**CC0 1.0（公有领域）**，可自由商用、修改、分发，无需署名
+  （以包内 `License.txt` 为准：Blocky Characters (2.0) — Creative Commons Zero, CC0。
+  **注意**：这个包是纯 Kenney，**没有** QAL —— Quaternius 那套「CC0 对 QAL、按更严的 QAL
+  登记」的规则**不适用于它**）
+- 来源：https://kenney.nl/assets/blocky-characters
+  （本次实际下载直链：https://kenney.nl/media/pages/assets/blocky-characters/8369c0cf30-1749547469/kenney_blocky-characters_20.zip）
+- 用途：3D 房间二期的**四个座位上的角色**（18 个可选：`character-a.glb` … `character-r.glb`）。
+  格式：包内 **glTF 二进制（`.glb`）**，Godot 4 原生导入（**Godot 4 不能导 FBX**；包内另有
+  FBX / OBJ 各 18 份，本项目**均未采用**）。
+  ⚠ **该批模型不是自包含**：贴图按**相对 URI** 外链（`Textures/texture-a.png` … `-r.png`，共 18 张）
+  ⇒ 两者必须**保持相对位置一起分发**（与上面「Furniture Kit」那句"无外部贴图依赖"相反）。
+  普查结论（导入通路 / 27 条动画 / 坐姿 / 比例）见
+  `doc/development/chars-导入与动画普查.md`。
+
 ## Twemoji
 - 路径：`assets/icons/`
 - 授权：**CC-BY 4.0**。版权所有 Twitter, Inc 及贡献者。仅需保留本署名说明即可商用
