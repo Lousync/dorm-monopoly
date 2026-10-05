@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型：道具指向（拖动卡飞出 + 箭头）+ 引导（#24）</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #dfe3ee; user-select: none; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	#stage { width: 1280px; height: 800px; flex: none; position: relative; overflow: hidden;
+		background: linear-gradient(160deg, #1a1d2b 0%, #10121c 60%, #0b0d15 100%); }
+
+	#top { height: 46px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+		border-bottom: 1px solid #232838; position: relative; z-index: 5; }
+	#top h1 { font-size: 17px; color: #f5b342; letter-spacing: 1px; }
+	#top .tag { font-size: 11px; color: #8b93ad; border: 1px solid #333a52; border-radius: 10px; padding: 2px 9px; }
+	#top .sp { flex: 1; }
+	#top .hbtn { font-size: 12px; color: #cfe0ff; background: #1d2131; border: 1px solid #333a52;
+		border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+	#top .hbtn.on { background: #2c5c3a; border-color: #6bc78c; color: #cfe8d4; }
+
+	#playline { position: absolute; left: 0; right: 0; top: 512px; border-top: 1px dashed rgba(245,179,66,.4);
+		display: none; z-index: 2; }
+	#playline.on { display: block; }
+	#playline span { position: absolute; right: 24px; top: -18px; font-size: 11px; color: #f5b342; }
+
+	#table { position: absolute; left: 250px; top: 100px; right: 250px; bottom: 210px;
+		border-radius: 18px; background: rgba(255,255,255,.03); border: 1px solid #232838; }
+	.seat { position: absolute; width: 150px; height: 42px; border-radius: 9px; z-index: 3;
+		background: rgba(255,255,255,.05); border: 1px solid #333a52; display: flex; align-items: center;
+		justify-content: center; font-size: 12px; color: #9aa3ba; transition: box-shadow .1s, border-color .1s; }
+	.seat.self { border-color: #5c9aeb; color: #cfe0ff; }
+	#seat0 { left: 50%; bottom: 12px; transform: translateX(-50%); }
+	#seat1 { left: 12px; top: 50%; transform: translateY(-50%); }
+	#seat2 { left: 50%; top: 12px; transform: translateX(-50%); }
+	#seat3 { right: 12px; top: 50%; transform: translateY(-50%); }
+
+	#grid { position: absolute; left: 250px; top: 205px; right: 250px; bottom: 155px; z-index: 1;
+		display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(4, 1fr); gap: 7px; }
+	.tile { border-radius: 6px; background: #171a29; border: 1px solid #2c3046;
+		display: flex; align-items: center; justify-content: center; font-size: 11px; color: #6b7288;
+		transition: box-shadow .1s, border-color .1s; }
+	.tile[data-owner="1"] { border-color: #5c9aeb; color: #9fc0f0; }
+	.tile[data-owner="2"] { border-color: #6bc78c; color: #a8e0bd; }
+	.tile[data-owner="3"] { border-color: #eb8f5c; color: #f0c3a6; }
+
+	.target { box-shadow: 0 0 0 2px #f5b342, 0 0 16px rgba(245,179,66,.45); border-color: #f5b342 !important;
+		color: #ffd88a !important; animation: pulse 1s infinite; }
+	.target.hover { box-shadow: 0 0 0 3px #ffd257, 0 0 30px rgba(255,210,87,.8); }
+	@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+
+	#guide { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: 6;
+		display: flex; align-items: center; gap: 10px; background: rgba(10,12,20,.92);
+		border: 1px solid #f5b342; border-radius: 12px; padding: 9px 16px; max-width: 920px;
+		box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+	#guide .step { font-size: 11px; color: #8b93ad; border: 1px solid #333a52; border-radius: 8px; padding: 1px 8px; }
+	#guide .step.on { background: #f5b342; color: #1a1206; border-color: #f5b342; }
+	#guide .msg { font-size: 14px; color: #ffd88a; }
+
+	#hand { position: absolute; left: 0; right: 0; bottom: 100px; display: flex; gap: 14px;
+		justify-content: center; align-items: flex-end; z-index: 4; }
+	.card { position: relative; width: 108px; height: 150px; border-radius: 10px; cursor: grab;
+		background: #12141f; padding: 10px 8px; transition: transform .12s, box-shadow .12s, opacity .15s; }
+	.card:hover { transform: translateY(-6px); }
+	.card.flying { position: fixed; z-index: 30; cursor: grabbing; transition: none;
+		box-shadow: 0 16px 34px rgba(0,0,0,.65); }
+	.card.flying.armed { opacity: .32; }          /* 越过打出线：卡淡出，仿佛“变成”箭头 */
+	.card .qbar { position: absolute; left: 0; top: 0; right: 0; height: 5px; border-radius: 10px 10px 0 0; }
+	.card .icon { font-size: 34px; text-align: center; margin-top: 12px; }
+	.card .nm { font-size: 13px; text-align: center; margin-top: 8px; }
+	.card .cost { position: absolute; left: 8px; top: 8px; font-size: 10px; color: #f5d342; }
+	.card .need { position: absolute; right: 6px; top: 7px; font-size: 9px; color: #c9a6ff; }
+	.q-白 { border: 2px solid #ececec; } .q-白 .qbar { background: #ececec; }
+	.q-蓝 { border: 2px solid #5c9aeb; } .q-蓝 .qbar { background: #5c9aeb; }
+	.q-紫 { border: 2px solid #a878eb; } .q-紫 .qbar { background: #a878eb; }
+
+	#status { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); font-size: 12px; color: #8b93ad; }
+	#log { position: absolute; left: 20px; bottom: 18px; width: 330px; font-size: 11px; color: #6b7288; line-height: 1.7; z-index: 4; }
+
+	#aim { position: absolute; left: 0; top: 0; width: 1280px; height: 800px;
+		pointer-events: none; z-index: 40; display: none; }
+	#aim.on { display: block; }
+	#aimShaft { fill: #6bc78c; fill-opacity: .9; filter: drop-shadow(0 0 8px rgba(107,199,140,.6)); }
+	#aimHead  { fill: #6bc78c; filter: drop-shadow(0 0 8px rgba(107,199,140,.6)); }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+	<div id="top">
+		<h1>道具指向：拖动卡飞出 + 箭头</h1>
+		<span class="tag">#24 引导 + 指向</span>
+		<span class="sp"></span>
+		<button class="hbtn on" id="modeBtn" onclick="toggleMode()">交互：按住卡拖到目标松手</button>
+		<span class="tag" style="border-color:#7a3fb0;color:#c9a6ff">Esc 取消</span>
+	</div>
+
+	<div id="playline"><span>↑ 打出线：拖过这条线才打出</span></div>
+	<div id="table">
+		<div class="seat self" id="seat0">我</div>
+		<div class="seat" id="seat1" data-peer="1">乙</div>
+		<div class="seat" id="seat2" data-peer="2">丙</div>
+		<div class="seat" id="seat3" data-peer="3">丁</div>
+	</div>
+	<div id="grid"></div>
+
+	<div id="guide">
+		<span class="step on" id="s1">① 按住卡</span>
+		<span class="step" id="s2">② 拖过打出线</span>
+		<span class="step" id="s3">③ 指向目标松手</span>
+		<span class="msg" id="msg">按住一张道具卡，往上拖</span>
+	</div>
+
+	<div id="hand"></div>
+	<div id="status">本回合道具：已用 0 / 1 次</div>
+	<div id="log"></div>
+	<svg id="aim" viewBox="0 0 1280 800" preserveAspectRatio="none"><path id="aimShaft"></path><polygon id="aimHead"></polygon></svg>
+</div></div>
+
+<script>
+	const grid = document.getElementById("grid");
+	for (let i = 0; i < 24; i++){
+		const d = document.createElement("div");
+		d.className = "tile"; d.dataset.idx = i;
+		const owner = (i % 5 === 1) ? (1 + (i % 3)) : 0;
+		d.dataset.owner = owner; d.textContent = owner ? ("地" + i) : "地";
+		grid.appendChild(d);
+	}
+
+	const ITEMS = [
+		{id:"兼职中介", q:"白", cost:2, need:"",       icon:"💼"},
+		{id:"跑腿券",   q:"白", cost:1, need:"player", icon:"🏃"},
+		{id:"快递直达", q:"紫", cost:4, need:"tile",   icon:"🚀"},
+		{id:"强拆令",   q:"紫", cost:5, need:"prop2",  icon:"🔧"},
+	];
+	const PLAY_LINE = 512;
+	const stage = document.getElementById("stage");
+	const aim = document.getElementById("aim"), shaft = document.getElementById("aimShaft"), head = document.getElementById("aimHead");
+	const playline = document.getElementById("playline");
+
+	let mode = "drag";          // drag | click
+	let phase = "idle";         // idle / aiming / aim2
+	let held = null;            // {card, item, hx, hy, w, h}
+	let armed = false;
+	let hovered = null;
+
+	function log(t){ const l=document.getElementById("log"); l.innerHTML = "· " + t + "<br>" + l.innerHTML; }
+	function setSteps(a){ ["s1","s2","s3"].forEach((id,i)=>document.getElementById(id).classList.toggle("on", i===a)); }
+	function msg(t){ document.getElementById("msg").textContent = t; }
+	function rectC(el){ const r=el.getBoundingClientRect(), s=stage.getBoundingClientRect();
+		return { cx:r.left-s.left+r.width/2, cy:r.top-s.top+r.height/2 }; }
+	function ptIn(x,y,el){ const r=el.getBoundingClientRect(), s=stage.getBoundingClientRect();
+		const lx=r.left-s.left, ly=r.top-s.top; return x>=lx&&x<=lx+r.width&&y>=ly&&y<=ly+r.height; }
+	function needMsg(it){
+		if(it.need==="player") return "把箭头指向一名对手 → 松手打出";
+		if(it.need==="tile")   return "把箭头指向棋盘一格 → 松手打出";
+		if(it.need==="prop2")  return "指向一名对手松手 → 再点他的一块地";
+		return "松手即可打出";
+	}
+
+	const hand = document.getElementById("hand");
+	ITEMS.forEach((it)=>{
+		const d=document.createElement("div"); d.className="card q-"+it.q;
+		const nt = it.need==="player"?"需选玩家":(it.need==="tile"?"需选地块":(it.need==="prop2"?"选玩家→选地":""));
+		d.innerHTML=`<div class="qbar"></div><span class="cost">⚡${it.cost}</span>
+			<span class="need">${nt}</span><div class="icon">${it.icon}</div><div class="nm">${it.id}</div>`;
+		d.addEventListener("mousedown", (e)=>onDown(e, d, it));
+		d.addEventListener("click", (e)=>onClickCard(e, d, it));
+		hand.appendChild(d);
+	});
+
+	// ---------- 按下：卡飞出手牌 ----------
+	function onDown(e, card, item){
+		if (mode!=="drag" || e.button!==0 || phase!=="idle") return;
+		e.preventDefault();
+		const r = card.getBoundingClientRect(), s = stage.getBoundingClientRect();
+		held = { card, item, hx: r.left - s.left + r.width/2, hy: r.top - s.top + r.height/2, w: r.width, h: r.height };
+		card.classList.add("flying");
+		card.style.width = held.w+"px"; card.style.height = held.h+"px";
+		phase = "aiming"; armed = false;
+		playline.classList.add("on");
+		setSteps(0);
+		msg(needMsg(item));
+		moveCard(e);
+		drawArrow();                    // 一按下就出箭头，立即有反馈
+	}
+	function moveCard(e){
+		if(!held) return;
+		// 卡偏到光标右下，别把箭头尖盖住
+		held.card.style.left = (e.clientX + 16) + "px";
+		held.card.style.top  = (e.clientY + 16) + "px";
+	}
+
+	// ---------- 点选模式（可选） ----------
+	function onClickCard(e, card, item){
+		if (mode!=="click" || phase!=="idle") return;
+		const r = card.getBoundingClientRect(), s = stage.getBoundingClientRect();
+		held = { card, item, hx: r.left-s.left+r.width/2, hy: r.top-s.top+r.height/2, w:r.width, h:r.height };
+		card.classList.add("flying");          // 原地抬起（fixed，不跟随鼠标）
+		card.style.width = held.w+"px"; card.style.height = held.h+"px";
+		card.style.left = r.left + "px"; card.style.top = (r.top - 24) + "px";
+		phase = "aiming"; armed = false;
+		playline.classList.add("on"); setSteps(0); msg(needMsg(item)); drawArrow();
+	}
+
+	// ---------- 移动：箭头跟随 + 过线高亮目标 ----------
+	stage.addEventListener("mousemove", (e)=>{
+		const s = stage.getBoundingClientRect();
+		const x = e.clientX-s.left, y = e.clientY-s.top;
+		if (phase==="aiming"){
+			if (mode==="drag") moveCard(e);
+			const now = y < PLAY_LINE;
+			if (now !== armed){
+				armed = now;
+				if (held) held.card.classList.toggle("armed", armed);
+				if (armed) armTargets(held.item); else clearTargets();
+				msg(armed ? needMsg(held.item) : "拖过上方虚线（打出线）…");
+			}
+		}
+		if (phase==="aiming" || phase==="aim2"){
+			const hit = hitTarget(x,y);
+			updateHover(hit);
+			drawArrow(hit, x, y);
+		}
+	});
+
+	// ---------- 松手：落目标打出 / 否则收回 ----------
+	stage.addEventListener("mouseup", (e)=>{
+		if (mode!=="drag" || phase!=="aiming") return;
+		const s = stage.getBoundingClientRect();
+		pick(e.clientX-s.left, e.clientY-s.top);
+	});
+	stage.addEventListener("click", (e)=>{
+		if (mode!=="click" || (phase!=="aiming" && phase!=="aim2")) return;
+		const s = stage.getBoundingClientRect();
+		pick(e.clientX-s.left, e.clientY-s.top);
+	});
+
+	function pick(x, y){
+		const it = held.item;
+		if (phase==="aiming" && !armed && it.need!==""){ returnToHand("没过打出线：收回"); return; }
+		const hit = hitTarget(x,y);
+		if (it.need==="" ){ play(held.card, it.id + " 直接生效"); return; }
+		if (!hit){ returnToHand("没指向目标：收回"); return; }
+		if (it.need==="prop2" && phase==="aiming"){
+			const peer = hit.dataset.peer;
+			clearTargets();
+			const props = [...document.querySelectorAll('.tile[data-owner="'+peer+'"]')];
+			if (props.length===0){ returnToHand("该玩家名下没有地：收回"); return; }
+			props.forEach(t=>t.classList.add("target"));
+			phase="aim2"; armed=true;
+			msg("已选 "+hit.textContent+" → 指向他名下的一块地并点击（Esc 取消）");
+			return;
+		}
+		play(held.card, "对 " + hit.textContent + " 使用【" + it.id + "】");
+	}
+
+	function armTargets(it){
+		clearTargets();
+		let els=[];
+		if (it.need==="player"||it.need==="prop2") els=[...document.querySelectorAll(".seat:not(.self)")];
+		else if (it.need==="tile") els=[...document.querySelectorAll(".tile")];
+		els.forEach(t=>t.classList.add("target"));
+	}
+	function clearTargets(){ document.querySelectorAll(".target").forEach(t=>t.classList.remove("target","hover")); hovered=null; }
+	function hitTarget(x,y){ for(const t of document.querySelectorAll(".target")){ if(ptIn(x,y,t)) return t; } return null; }
+	function updateHover(hit){ document.querySelectorAll(".target.hover").forEach(t=>t.classList.remove("hover")); if(hit) hit.classList.add("hover"); hovered=hit; }
+
+	function play(card, text){
+		card.remove(); reset(); setSteps(2); msg("已打出：" + text);
+		document.getElementById("status").textContent = "本回合道具：已用 1 / 1 次";
+		log(text);
+	}
+	function returnToHand(text){
+		if (held){ const c=held.card; c.classList.remove("flying","armed"); c.style.cssText=""; }
+		reset(); setSteps(0); msg(text);
+	}
+	function reset(){
+		held=null; phase="idle"; armed=false;
+		aim.classList.remove("on"); playline.classList.remove("on"); clearTargets();
+	}
+
+	// ---------- 杀戮尖塔式箭头：三次贝塞尔 + 渐宽箭杆 + 大箭头 ----------
+	function bez(p0,p1,p2,p3,t){ const u=1-t;
+		return { x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
+		         y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y }; }
+	function drawArrow(hit, mx, my){
+		if (!held) return;
+		if (mx===undefined){ const s=stage.getBoundingClientRect(); mx=held.hx; my=held.hy; }
+		let tx = mx, ty = my;
+		if (hit){ const c = rectC(hit); tx=c.cx; ty=c.cy; }
+		drawArrowFrom(held.hx, held.hy, tx, ty);
+	}
+	function drawArrowFrom(sx, sy, tx, ty){
+		const p0={x:sx,y:sy}, p3={x:tx,y:ty};
+		const p1={x: sx + (tx-sx)*0.25, y: sy - 150};
+		const p2={x: sx + (tx-sx)*0.75, y: ty - 90};
+		const N=26, wT=2.5, wH=13.0, L=[], R=[];
+		for(let i=0;i<=N;i++){
+			const t=i/N, pt=bez(p0,p1,p2,p3,t), pt2=bez(p0,p1,p2,p3,Math.min(t+0.01,1));
+			const dx=pt2.x-pt.x, dy=pt2.y-pt.y, len=Math.hypot(dx,dy)||1;
+			const nx=-dy/len, ny=dx/len, w=wT+(wH-wT)*Math.pow(t,0.85);
+			L.push([pt.x+nx*w, pt.y+ny*w]); R.push([pt.x-nx*w, pt.y-ny*w]);
+		}
+		let d="M "+L.map(p=>p[0]+","+p[1]).join(" L ");
+		d += " L " + R.reverse().map(p=>p[0]+","+p[1]).join(" L ") + " Z";
+		shaft.setAttribute("d", d);
+		const a=bez(p0,p1,p2,p3,0.985), b=bez(p0,p1,p2,p3,1.0);
+		const ang=Math.atan2(b.y-a.y,b.x-a.x), HL=30, HW=17;
+		const h1=[tx-HL*Math.cos(ang)+HW*Math.sin(ang), ty-HL*Math.sin(ang)-HW*Math.cos(ang)];
+		const h2=[tx-HL*Math.cos(ang)-HW*Math.sin(ang), ty-HL*Math.sin(ang)+HW*Math.cos(ang)];
+		head.setAttribute("points", `${tx},${ty} ${h1[0]},${h1[1]} ${h2[0]},${h2[1]}`);
+		aim.classList.add("on");
+	}
+
+	function toggleMode(){
+		mode = (mode==="drag") ? "click" : "drag";
+		const b=document.getElementById("modeBtn");
+		b.textContent = mode==="drag" ? "交互：按住卡拖到目标松手" : "交互：点选卡 → 指目标";
+		returnToHand("已切换交互模式");
+	}
+
+	document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && phase!=="idle") returnToHand("已取消"); });
+	stage.addEventListener("contextmenu", (e)=>{ if(phase!=="idle"){ e.preventDefault(); returnToHand("已取消"); } });
+
+	// 打开即演示一支示例箭头（按住卡拖动后会实时跟随鼠标）
+	window.addEventListener("load", ()=>{
+		try{
+			const card = hand.children[1];                              // 跑腿券（需选玩家）
+			const c = rectC(card), sc = rectC(document.getElementById("seat1"));
+			drawArrowFrom(c.cx, c.cy, sc.cx, sc.cy);
+			document.getElementById("seat1").classList.add("target");
+			msg("示例箭头（按住「跑腿券」拖动 → 箭头跟随鼠标；指向对手松手打出）");
+		}catch(_){}
+	});
+</script>
+</body>
+</html>

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型：道具卡面角标 + 点击放大（#22 / #23）</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #dfe3ee; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	#stage { width: 1280px; height: 800px; flex: none; position: relative; overflow: hidden;
+		background: linear-gradient(160deg, #1a1d2b 0%, #10121c 60%, #0b0d15 100%); }
+
+	#top { height: 46px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+		border-bottom: 1px solid #232838; }
+	#top h1 { font-size: 17px; color: #f5b342; letter-spacing: 1px; }
+	#top .tag { font-size: 11px; color: #8b93ad; border: 1px solid #333a52; border-radius: 10px; padding: 2px 9px; }
+	#top .sp { flex: 1; }
+	.hbtn { font-size: 12px; color: #cfe0ff; background: #1d2131; border: 1px solid #333a52;
+		border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+	.hbtn:hover { border-color: #f5b342; color: #ffd88a; }
+	.hbtn.on { background: #2c5c3a; border-color: #6bc78c; color: #cfe8d4; }
+
+	#hand { position: absolute; left: 0; right: 0; bottom: 40px; display: flex; gap: 16px;
+		justify-content: center; align-items: flex-end; }
+	#tip { position: absolute; left: 0; right: 0; top: 60px; text-align: center;
+		font-size: 13px; color: #8b93ad; }
+
+	/* ---------- 卡 ---------- */
+	.card { position: relative; width: 132px; height: 184px; border-radius: 12px; cursor: pointer;
+		background: #12141f; padding: 12px 10px 10px; transition: transform .12s ease, box-shadow .12s ease;
+		display: flex; flex-direction: column; }
+	.card:hover { transform: translateY(-8px); }
+	.card .qbar { position: absolute; left: 0; top: 0; right: 0; height: 5px; border-radius: 12px 12px 0 0; }
+	.card .icon { font-size: 40px; text-align: center; margin-top: 10px; }
+	.card .nm { font-size: 15px; text-align: center; margin-top: 10px; color: #f2f4fb; }
+	.card .sub { font-size: 10px; text-align: center; margin-top: auto; color: #8b93ad; }
+	.card .cost { position: absolute; left: 9px; top: 9px; font-size: 11px; color: #f5d342; }
+	.card .cost.passive { color: #8b93ad; }
+	/* 角标：右上角 */
+	.card .badge { position: absolute; right: 7px; top: 8px; font-size: 10px; border-radius: 7px;
+		padding: 1px 6px; line-height: 16px; font-weight: 600; }
+	.badge.once { background: #7a3fb0; color: #f0e6ff; }          /* 一次性 */
+	.badge.cool { background: rgba(10,12,20,.85); border: 1px solid #6ea8ff; color: #cfe0ff; }
+	.badge.pass { background: rgba(10,12,20,.85); border: 1px solid #4a5268; color: #9aa3ba; }
+	.badge.count { background: #b8863a; color: #1a1206; }
+	.hourglass { font-size: 11px; margin-right: 2px; }
+
+	/* 品质描边 */
+	.q-白 { border: 2px solid #ececec; }  .q-白 .qbar { background: #ececec; }
+	.q-绿 { border: 2px solid #6bc78c; }  .q-绿 .qbar { background: #6bc78c; }
+	.q-蓝 { border: 2px solid #5c9aeb; }  .q-蓝 .qbar { background: #5c9aeb; }
+	.q-紫 { border: 2px solid #a878eb; }  .q-紫 .qbar { background: #a878eb; }
+	.q-橙 { border: 2px solid #f59e3f; }  .q-橙 .qbar { background: #f59e3f; }
+
+	#legend { position: absolute; left: 20px; top: 60px; width: 250px; font-size: 12px;
+		color: #9aa3ba; line-height: 1.9; background: rgba(10,12,20,.55); border: 1px solid #232838;
+		border-radius: 10px; padding: 12px 14px; }
+	#legend b { color: #f5b342; }
+	#legend .k { display: inline-block; min-width: 74px; color: #cfe0ff; }
+
+	/* ---------- 放大弹窗（#23） ---------- */
+	#modal { position: absolute; inset: 0; background: rgba(4,5,10,.74); display: none;
+		align-items: center; justify-content: center; }
+	#modal.on { display: flex; }
+	.bigcard { position: relative; width: 300px; height: 440px; border-radius: 18px; background: #12141f;
+		padding: 26px 24px; display: flex; flex-direction: column; }
+	.bigcard .qbar { position: absolute; left: 0; top: 0; right: 0; height: 8px; border-radius: 18px 18px 0 0; }
+	.bigcard .icon { font-size: 84px; text-align: center; margin-top: 22px; }
+	.bigcard .nm { font-size: 24px; text-align: center; margin-top: 16px; }
+	.bigcard .desc { font-size: 15px; text-align: center; margin-top: 18px; color: #cdd3e4; line-height: 1.6; }
+	.bigcard .foot { margin-top: auto; text-align: center; font-size: 12px; color: #8b93ad; }
+	.bigcard .cost { position: absolute; left: 20px; top: 18px; font-size: 16px; color: #f5d342; }
+	.bigcard .badge { position: absolute; right: 16px; top: 16px; font-size: 12px; }
+	#modal .hint { position: absolute; bottom: 70px; width: 100%; text-align: center; color: #8b93ad; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+	<div id="top">
+		<h1>道具卡面角标 + 点击放大</h1>
+		<span class="tag">#22 角标</span><span class="tag">#23 点击放大</span>
+		<span class="sp"></span>
+		<button class="hbtn" id="toggleBadge">角标：显示</button>
+		<span class="tag" style="border-color:#7a3fb0;color:#c9a6ff">原型可交互</span>
+	</div>
+
+	<div id="legend">
+		<div><b>右上角角标（本原型方案）</b></div>
+		<div><span class="k">一次性</span>紫底「一次性」</div>
+		<div><span class="k">冷却中</span>⏳ + 剩余回合数</div>
+		<div><span class="k">计数型</span>金底数字（黑卡次数 / 香皂回合）</div>
+		<div><span class="k">被动</span>灰底「被动」（可省略）</div>
+		<div style="margin-top:8px"></div>
+		<div style="color:#6b7288;font-size:11px">左上角 = ⚡消耗（被动显「被动」）</div>
+		<div style="color:#6b7288;font-size:11px">点击任意卡 → 放大查看（#23）</div>
+	</div>
+
+	<div id="tip">点一张道具卡看放大效果</div>
+
+	<div id="hand"></div>
+
+	<div id="modal">
+		<div class="bigcard" id="bigcard"></div>
+		<div class="hint">点卡外任意处 / Esc 关闭</div>
+	</div>
+</div></div>
+
+<script>
+	// id, 品质, 消耗(-1=被动), 角标类型, 角标文本, 图标, 描述
+	const ITEMS = [
+		{id:"作弊器", q:"紫", cost:3, badge:"once",  btxt:"一次性", icon:"🎲", desc:"下一次转盘的点数由你决定；用后自动丢弃回池。"},
+		{id:"强拆令", q:"紫", cost:5, badge:"once",  btxt:"一次性", icon:"🔧", desc:"指定一名玩家的一块地皮变为无主；用后自动丢弃回池。"},
+		{id:"交换生", q:"蓝", cost:3, badge:"cool",  btxt:"⏳3",      icon:"🔄", desc:"与一名指定玩家随机交换一件道具。"},
+		{id:"体测",   q:"蓝", cost:3, badge:"cool",  btxt:"⏳3",      icon:"🏃", desc:"指定一名玩家体力 -2。"},
+		{id:"黑卡",   q:"橙", cost:4, badge:"count", btxt:"×3",       icon:"💳", desc:"接下来 3 次购买免费。"},
+		{id:"空想者的香皂", q:"橙", cost:-1, badge:"count", btxt:"10", icon:"🧼", desc:"免疫所有负面效果。10 回合后融化。"},
+		{id:"招财猫", q:"白", cost:-1, badge:"pass",  btxt:"被动",     icon:"🐱", desc:"你的每块地皮租金收入 +400。"},
+	];
+	let badgeOn = true;
+
+	function cardHTML(it, big=false){
+		const cls = big ? "bigcard" : "card";
+		const costTxt = it.cost < 0 ? "被动" : "⚡" + it.cost;
+		const badge = badgeOn ? `<span class="badge ${it.badge}">${it.badge==='cool'?'<span class="hourglass">⏳</span>':''}${it.btxt.replace('⏳','')}</span>` : "";
+		if(big){
+			return `<div class="qbar"></div>
+				<span class="cost">${costTxt}</span>${badge}
+				<div class="icon">${it.icon}</div>
+				<div class="nm">${it.id}</div>
+				<div class="desc">${it.desc}</div>
+				<div class="foot">品质：${it.q} · 点击外部关闭</div>`;
+		}
+		return `<div class="qbar"></div>
+			<span class="cost ${it.cost<0?'passive':''}">${costTxt}</span>${badge}
+			<div class="icon">${it.icon}</div>
+			<div class="nm">${it.id}</div>
+			<div class="sub">${it.q}</div>`;
+	}
+
+	const hand = document.getElementById("hand");
+	ITEMS.forEach((it, i) => {
+		const d = document.createElement("div");
+		d.className = "card q-" + it.q;
+		d.innerHTML = cardHTML(it);
+		d.onclick = () => openBig(it);
+		hand.appendChild(d);
+	});
+
+	function openBig(it){
+		const bc = document.getElementById("bigcard");
+		bc.className = "bigcard q-" + it.q;
+		bc.innerHTML = cardHTML(it, true);
+		document.getElementById("modal").classList.add("on");
+	}
+	document.getElementById("modal").onclick = () => document.getElementById("modal").classList.remove("on");
+	document.addEventListener("keydown", e => { if(e.key==="Escape") document.getElementById("modal").classList.remove("on"); });
+
+	document.getElementById("toggleBadge").onclick = function(){
+		badgeOn = !badgeOn;
+		this.textContent = "角标：" + (badgeOn ? "显示" : "隐藏");
+		this.classList.toggle("on", !badgeOn);
+		// 重绘手牌
+		hand.innerHTML = "";
+		ITEMS.forEach((it) => {
+			const d = document.createElement("div");
+			d.className = "card q-" + it.q;
+			d.innerHTML = cardHTML(it);
+			d.onclick = () => openBig(it);
+			hand.appendChild(d);
+		});
+	};
+</script>
+</body>
+</html>

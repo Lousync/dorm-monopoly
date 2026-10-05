@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型：小卖部可关闭 / 重开（#25）</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body { height: 100%; background: #0d0f17; overflow: hidden;
+		font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #dfe3ee; }
+	#wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+	#stage { width: 1280px; height: 800px; flex: none; position: relative; overflow: hidden;
+		background: linear-gradient(160deg, #1a1d2b 0%, #10121c 60%, #0b0d15 100%); }
+
+	#top { height: 46px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+		border-bottom: 1px solid #232838; }
+	#top h1 { font-size: 17px; color: #f5b342; letter-spacing: 1px; }
+	#top .tag { font-size: 11px; color: #8b93ad; border: 1px solid #333a52; border-radius: 10px; padding: 2px 9px; }
+	#top .sp { flex: 1; }
+
+	/* 假棋盘（关闭小卖部后能看到） */
+	#board { position: absolute; inset: 46px 0 0 0; padding: 40px; display: grid;
+		grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(5, 1fr); gap: 8px; }
+	.tile { border-radius: 6px; background: #171a29; border: 1px solid #2c3046;
+		display: flex; align-items: center; justify-content: center; font-size: 11px; color: #6b7288; }
+	.tile.shop { border-color: #6bc78c; color: #a8e0bd; }
+	.tile.me { border-color: #f5b342; color: #ffd88a; }
+
+	/* 小卖部全屏层 */
+	#shop { position: absolute; inset: 0; background: rgba(4,5,10,.82);
+		display: flex; align-items: center; justify-content: center; }
+	#shop.hidden { display: none; }
+	#panel { position: relative; width: 720px; border-radius: 16px; background: #12141f;
+		border: 1px solid #3a2f18; padding: 20px 22px 22px; }
+	#panel h2 { font-size: 20px; color: #f5b342; }
+	#panel .sub { font-size: 12px; color: #8b93ad; margin-top: 4px; }
+	#xclose { position: absolute; right: 14px; top: 14px; width: 32px; height: 32px; border-radius: 8px;
+		background: #1d2131; border: 1px solid #333a52; color: #cfe0ff; font-size: 16px; cursor: pointer; }
+	#xclose:hover { border-color: #f5b342; color: #ffd88a; }
+	#slots { display: flex; gap: 14px; margin-top: 16px; }
+	.slot { flex: 1; height: 190px; border-radius: 12px; background: #0f111b; border: 2px solid #333a52;
+		padding: 12px; display: flex; flex-direction: column; align-items: center; }
+	.slot .icon { font-size: 44px; margin-top: 18px; }
+	.slot .nm { font-size: 15px; margin-top: 12px; }
+	.slot .price { font-size: 12px; color: #f5b342; margin-top: 6px; }
+	.slot .buy { margin-top: auto; width: 100%; height: 34px; border-radius: 8px; cursor: pointer;
+		background: #2c5c3a; border: 1px solid #6bc78c; color: #cfe8d4; }
+	.q-白 { border-color: #ececec; } .q-绿 { border-color: #6bc78c; } .q-紫 { border-color: #a878eb; }
+	#foot { display: flex; gap: 12px; margin-top: 18px; }
+	#refresh { height: 42px; border-radius: 10px; cursor: pointer; flex: 1;
+		background: #1d2131; border: 1px solid #333a52; color: #cfe0ff; }
+	#refresh:hover { border-color: #f5b342; color: #ffd88a; }
+	#leave { height: 42px; border-radius: 10px; cursor: pointer; flex: 1;
+		background: #3a2020; border: 1px solid #ef7b74; color: #f0b3ae; }
+	#panel .note { font-size: 11px; color: #6b7288; margin-top: 12px; line-height: 1.7; }
+
+	/* 关闭后的“回到小卖部”入口 */
+	#reopen { position: absolute; right: 28px; bottom: 28px; height: 52px; padding: 0 20px; border-radius: 12px;
+		display: none; align-items: center; gap: 8px; cursor: pointer; font-size: 15px;
+		background: #1f3a2a; border: 1px solid #6bc78c; color: #cfe8d4; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+	#reopen.on { display: flex; }
+	#reopen .dot { width: 8px; height: 8px; border-radius: 50%; background: #6bc78c; }
+
+	#log { position: absolute; left: 20px; bottom: 20px; width: 360px; font-size: 11px; color: #6b7288; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="stage">
+	<div id="top">
+		<h1>小卖部：可关闭 / 重开</h1><span class="tag">#25 关闭 ≠ 离开</span>
+		<span class="sp"></span><span class="tag" style="border-color:#7a3fb0;color:#c9a6ff">原型可交互</span>
+	</div>
+
+	<div id="board"></div>
+
+	<div id="reopen" onclick="reopen()"><span class="dot"></span>🛒 小卖部（购物中）· 点此继续</div>
+	<div id="log"></div>
+
+	<div id="shop">
+		<div id="panel">
+			<button id="xclose" title="关闭看棋盘（不结束逛店）" onclick="closeShop()">✕</button>
+			<h2>🛒 小卖部</h2>
+			<div class="sub">三栏货架 · 落地即可逛 · 刷新整架重掷</div>
+			<div id="slots"></div>
+			<div id="foot">
+				<button id="refresh" onclick="refresh()">刷新货架（¥500）</button>
+				<button id="leave" onclick="leave()">离开小卖部</button>
+			</div>
+			<div class="note">
+				<b style="color:#f5b342">✕ 关闭</b>：收起界面去看棋盘，逛店**未结束**，可点右下角「小卖部（购物中）」再回来买。<br>
+				<b style="color:#ef7b74">离开小卖部</b>：真正结束本次逛店（入口消失）。
+			</div>
+		</div>
+	</div>
+</div></div>
+
+<script>
+	function log(t){ const l=document.getElementById("log"); l.innerHTML="· "+t+"<br>"+l.innerHTML; }
+
+	// 假棋盘
+	const b=document.getElementById("board");
+	const names=["起点","地","地","机会","地","小卖部","命运","地","地","地","宿委会","地","机会","地","地","小卖部","地","地","赌场","地","地","小卖部","地","地","失物","地","地","小卖部","命运","地","地","地","机会","地","地","地","地","地","地","地"];
+	for(let i=0;i<40;i++){ const d=document.createElement("div"); d.className="tile"+(names[i]==="小卖部"?" shop":"")+(i===3?" me":"");
+		d.textContent=names[i]; b.appendChild(d); }
+
+	let slots=["招财猫","平均主义","黑卡"];
+	let slots2=["交换生","饭卡","许愿池"];
+	let cur=slots;
+	function render(){
+		const box=document.getElementById("slots"); box.innerHTML="";
+		const qs={"招财猫":"白","黑卡":"橙","交换生":"蓝","饭卡":"白","许愿池":"白"};
+		cur.forEach((n,i)=>{
+			const q=qs[n]||"白";
+			const d=document.createElement("div"); d.className="slot q-"+q;
+			d.innerHTML=`<div class="icon">🎁</div><div class="nm">${n}</div><div class="price">¥600</div>
+				<button class="buy" onclick="buy(${i})">买</button>`;
+			box.appendChild(d);
+		});
+	}
+	function buy(i){ log("买下【"+cur[i]+"】（该栏清空）"); cur[i]="（空）"; render(); }
+	function refresh(){ cur=slots2; render(); log("刷新：整架重掷（三格全换）"); }
+
+	function closeShop(){ document.getElementById("shop").classList.add("hidden"); document.getElementById("reopen").classList.add("on"); log("关闭小卖部 → 看棋盘（逛店未结束）"); }
+	function reopen(){ document.getElementById("shop").classList.remove("hidden"); document.getElementById("reopen").classList.remove("on"); log("回到小卖部，继续买"); }
+	function leave(){ document.getElementById("shop").classList.add("hidden"); document.getElementById("reopen").classList.remove("on"); log("离开小卖部 → 本次逛店结束（入口消失）"); }
+
+	render();
+</script>
+</body>
+</html>
