@@ -1828,6 +1828,70 @@ func _run() -> void:
 	await process_frame                              # `close()` 是 `queue_free`，本帧末才真删
 	_check(g.player_popup._body.get_child_count() == 0, "关闭后背包区（含卡）整体清掉")
 
+	# ---- 批次 13 ⑤ 修复：槽位数读的是**背包上限**（`_bag_cap`），不是体力上限（`_stamina_cap`）----
+	# **上面那几段是假绿的温床**：那个 fixture 既没「置物架」也没「充电宝」⇒ 两个上限**都是 5**，
+	# "槽位数读哪个键"根本分不出来（曾经就是拿**体力上限**去画的，上面几条照样全绿）。
+	# 判据必须让两个上限**真的分叉**：给目标**同时**发「置物架」（`_bag_cap` 5 → **7**）与
+	# 「充电宝」（`_stamina_cap` 5 → **6**），于是"槽位 7 / 能量小格 6"**只有各读各的键才同时成立**：
+	#   * 把槽位数换回 `_stamina_cap` ⇒ 槽位变 6、空槽少一个、读数变「背包 2 / 6 格」（三处红）；
+	#   * 把「能量」那排换成 `bag_cap` ⇒ 小格变 7（红）。
+	# **持有件数必须少于两个上限**（这里只发 2 件）：`_fill` 里那句兜底
+	# `maxi(items.size(), 1)` 会在"件数 ≥ 上限"时把错的槽位数**顶成件数**、把这条断言整个盖住
+	#（实测：发 7 件、把槽位数换回 `_stamina_cap`，整套 hud_test 照样 ALL PASS）—— 所以这里发 2 件。
+	var s_rack: Dictionary = _state(3, false)
+	for p in s_rack.players:
+		if int(p.peer) == 1:
+			p.stamina = 4
+			p.items = [
+				{"id": "置物架", "cd": 0},   # 背包上限 5 → 7
+				{"id": "充电宝", "cd": 0},   # 体力上限 5 → 6
+			]
+	g.s_state(s_rack)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	_check(g.player_popup.item_count == 2, "（前置）置物架 + 充电宝那一份 = 2 件（实得 %d）"
+		% g.player_popup.item_count)
+	var flow_rack: Node = g.player_popup.find_child("BagFlow", true, false)
+	_check(flow_rack != null, "（前置）这一份的背包区已建")
+	# 三元兜底：`find_child` 落空时别直接解引用 —— 脚本错误会**打断协程**、整个 SceneTree 挂死。
+	var cells_rack: Array = (flow_rack as Control).get_children() if flow_rack != null else []
+	_check(cells_rack.size() == 7,
+		"带「置物架」⇒ 画出 **7** 个槽位（背包上限 `_bag_cap` = 7；拿体力上限只画 6，实得 %d）"
+			% cells_rack.size())
+	var empty_rack: int = 0
+	for cell in cells_rack:
+		if not slot_has_card.call(cell):
+			empty_rack += 1
+	_check(empty_rack == 5,
+		"2 件 ⇒ 5 个空槽（7 - 2；拿体力上限会只剩 4，实得 %d）" % empty_rack)
+	var labels_rack := _popup_labels(g.player_popup)
+	_check(labels_rack.has("背包 2 / 7 格"),
+		"背包读数用的是**背包上限**（「背包 2 / 7 格」；若误用体力上限会写「背包 2 / 6 格」，实测标签：%s）"
+			% str(labels_rack))
+	# 对照：同一次填充里「能量」那排仍按**体力上限** 6 走 —— 两个键各司其职、不许互相顶替。
+	var energy_row: Node = null
+	for n in g.player_popup._body.get_children():
+		if n is HBoxContainer and (n as HBoxContainer).get_child_count() > 0 \
+				and (n as HBoxContainer).get_child(0) is Label \
+				and String(((n as HBoxContainer).get_child(0) as Label).text).begins_with("能量"):
+			energy_row = n
+	_check(energy_row != null, "（前置）找到「能量」那一行")
+	var pips_rack := 0
+	if energy_row != null:
+		for c in (energy_row as HBoxContainer).get_children():
+			if c is Panel:
+				pips_rack += 1
+	_check(pips_rack == 6,
+		"带「充电宝」⇒ 能量小格仍按**体力上限** 6 走（实得 %d；拿背包上限会得到 7）" % pips_rack)
+	# 7 格是"两行、开始滚"的那一档（见 `player_popup.BAG_MAX_H` 的说明）—— 面板仍得留在屏幕里。
+	_check(g.player_popup._panel.size.y <= g.size.y - 40.0,
+		"7 个槽位（两行、开始滚）时面板仍在屏幕内（高 %.0f / 屏幕 %.0f）"
+			% [g.player_popup._panel.size.y, g.size.y])
+	g.player_popup.close()
+	await process_frame
+
 	print("== 选目标：高亮跟着搬到名册条、点它 = 选中（批次 9 落点在四角条，批次 12 D 搬名册条）==")
 	# 立牌随批次 9 退场 ⇒ "此刻可选中的对手"这份高亮改画在**屏幕层的条**上（2px 金边 + 底色提亮，
 	# 与行动者的 1px 金边分得开）；**批次 12 D 起"别人"那一格是名册条的一格**（四角条只剩"我"那条，

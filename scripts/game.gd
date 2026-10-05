@@ -4342,6 +4342,12 @@ func _on_corner_bar_clicked(peer: int) -> void:
 
 ## 开某玩家的道具弹窗（数据在这里**一处**组装；单一来源仍是已同步的 st / _state_*）。
 ## 取不到这个人（peer 不存在 / 已离场）就什么都不做 —— 不发请求、不崩。
+##
+## **两个上限是两件事，各有各的键、别合并**（批次 13 ⑤ 修复）：
+##   * `"cap"` = **体力上限**（`_stamina_cap`：基础 5、带「充电宝」6）—— 画的是「能量」那排小格；
+##   * `"bag_cap"` = **背包上限**（`_bag_cap`：基础 5、带「置物架」**7**）—— 决定背包区画几个槽位。
+## 曾经两处都读 `"cap"`（= 体力上限）⇒ 带「充电宝」的人看到 6 个槽位（规则上限是 5）、
+## 带「置物架」的人只看到 5 个槽位（本该 7），正是用户 ⑤ 要"一眼看出还能装几张"的反面。
 func _open_player_popup(peer: int) -> void:
 	if player_popup == null:
 		return
@@ -4351,7 +4357,8 @@ func _open_player_popup(peer: int) -> void:
 	player_popup.open(peer, {
 		"name": String(p.get("name", "?")), "worth": _state_worth(peer),
 		"money": int(p.get("money", 0)), "stamina": int(p.get("stamina", 0)),
-		"cap": _stamina_cap(p), "alive": bool(p.get("alive", true)),
+		"cap": _stamina_cap(p), "bag_cap": _bag_cap(p),
+		"alive": bool(p.get("alive", true)),
 		"color_idx": int(p.get("color", 0)), "rank": _rank_of(peer),
 		"items": p.get("items", []),
 	})

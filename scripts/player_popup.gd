@@ -60,7 +60,10 @@ func _init() -> void:
 	visible = false
 
 ## 打开某玩家的弹窗。`data` 形如：
-## {name, worth, money, stamina, cap, alive, color_idx, items: [{id, cd, charges}]}
+## {name, worth, money, stamina, cap, bag_cap, alive, color_idx, items: [{id, cd, charges}]}
+## **`cap` 与 `bag_cap` 是两件事、别互相顶替**：前者是**体力上限**（画「能量」那排小格），
+## 后者是**背包上限**（决定画几个槽位）。两者会分叉（「充电宝」只抬体力、「置物架」只抬背包），
+## 所以各占一个键；混用会让"还能装几张"读错 —— 批次 13 ⑤ 修过一次，见 `_fill` 里那两段注释。
 func open(peer: int, data: Dictionary) -> void:
 	_open_peer = peer
 	_build()
@@ -159,6 +162,7 @@ func _fill(data: Dictionary) -> void:
 	# 能量（体力）：读数 + 一排点亮/熄灭的小格。
 	# 两个色值取自**已随批次 7 退场的桌上体力件**（亮金 / 熄灭），不引用 `TableProps.PIP_*`
 	#（那两件已删，引用会直接编译不过）。
+	# `cap` = **体力上限**（不是背包上限）：小格数 = 上限、亮格数 = 当前值。别拿 `bag_cap` 顶它。
 	var cap := maxi(int(data.get("cap", 0)), 0)
 	var cur := clampi(int(data.get("stamina", 0)), 0, maxi(cap, 0))
 	stamina_text = str(cur)
@@ -183,8 +187,10 @@ func _fill(data: Dictionary) -> void:
 	# 弹窗本来就是 Control 树 ⇒ 直接挂真节点即可，**与商店货架同一份画法**，没有任何烘焙。
 	var items: Array = data.get("items", [])
 	item_count = items.size()
-	# 槽位数 = 规则上限 `_bag_cap`（基础 5、带「置物架」7）；数据缺失时退回件数，至少 1 格。
-	var slots: int = maxi(int(data.get("cap", 0)), maxi(items.size(), 1))
+	# 槽位数 = **背包上限**（基础 5、带「置物架」7）；数据缺失时退回件数，至少 1 格。
+	# **必须读 `bag_cap`、不是 `cap`**：`cap` 是**体力上限**（5，带「充电宝」6）——
+	# 拿它当槽位数会同时错两头（充电宝多画一格、置物架少画两格），见 `game._open_player_popup` 那段。
+	var slots: int = maxi(int(data.get("bag_cap", 0)), maxi(items.size(), 1))
 	# 面板宽度按**槽位数与窗口宽度**收窄（窄窗口里 5 列放不下就换行），别硬撑出屏。
 	var per_row: int = _slots_per_row(slots)
 	var panel_w := float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * 8.0 + PANEL_PAD * 2.0
