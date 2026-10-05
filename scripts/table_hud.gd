@@ -354,7 +354,9 @@ static func build_play_ui(g: Node) -> void:
 
 	# 左下角：格子详情卡（点击棋盘格子弹出）。
 	# 原先这块是常驻的「操作提示」文本；现改为默认隐藏，操作提示与完整规则
-	# 收进左下角的「📖 规则说明」面板（见 rules_panel.gd / rules_text.gd）。
+	# 收进「📖 规则说明」面板（见 rules_panel.gd / rules_text.gd）——**面板在右上角、不在左下角**：
+	# 按钮随批次 12 D2 从屏幕底部搬到右上角与「战报」并列，面板本体在批次 13 ① 跟着搬过去
+	# （右缘 −12 / 顶 52）；这一句原写「左下角」是搬之前的事实，2026-10-05 改准。
 	g.info_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12, Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	# 不再钉在左下角：悬浮在被点格子的正上方，位置由 game._place_info_panel 逐帧摆
 	g.info_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)

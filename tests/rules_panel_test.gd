@@ -1,5 +1,6 @@
 extends SceneTree
-## 左下角「📖 规则说明」回归（fix/v0.1.0）
+## 「📖 规则说明」回归（fix/v0.1.0；**面板当时在左下角 —— 批次 13 ① 已搬到右上角**，
+## 「左下角」只作这条用例写下时的落点留痕，别照它找面板）
 ##   -- 原「操作提示」已收进规则面板；面板必须真的能展开 / 收起 / 换页
 ## 走真实 GUI 输入链路（Viewport.push_input），钉的正是「按钮点了没反应」这类问题。
 ## godot --headless --path . --script tests/rules_panel_test.gd
