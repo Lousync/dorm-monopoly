@@ -529,12 +529,13 @@ func _tech_phase() -> void:
 		var names := _tech_sample(_tech_tier)
 		var token := _tech_ask(p, names)
 		var sec := GameSettings.turn_seconds(_settings.timeout_tier, "prompt")
+		var timed: bool = sec > 0.0   # 不限时（挡位 none）= 不自动随机，等玩家选
 		var deadline := Time.get_ticks_msec() + int(maxf(sec, 5.0) * 1000.0)
 		while running and _tech_pick.get("token", -1) != token:
 			if bool(p.bot):
 				_tech_pick = {"token": token, "name": String(names[randi_range(0, names.size() - 1)])}
 				break
-			if Time.get_ticks_msec() >= deadline:
+			if timed and Time.get_ticks_msec() >= deadline:
 				_tech_pick = {"token": token, "name": String(names[randi_range(0, names.size() - 1)])}
 				_log("%s 选科技超时，随机拍了一张" % p.name, "#8a90a5")
 				break
@@ -693,15 +694,18 @@ func _show_tech_offer(token: int, tier: String, names: Array) -> void:
 	cc_ok.add_child(ok)
 	v.add_child(row)
 	v.add_child(cc_ok)
-	# 倒计时条（与弹问倒计时同一 Tween 口径）：走完自关，等房主超时随机的公告
+	# 倒计时条：与「回合操作限时」挡位同源（15/30/60 秒；不限时则不倒计时、不自动关）
 	var tier_src := _settings.timeout_tier if multiplayer.is_server() \
 			else String(st.get("timeout_tier", GameSettings.TIER_CURRENT))
-	var total := maxf(GameSettings.turn_seconds(String(tier_src), "prompt"), 5.0)
+	var total := GameSettings.turn_seconds(String(tier_src), "prompt")
 	var bar := UIKit.progress(UIKit.GOOD)
 	v.add_child(bar)
-	var tw_bar := _tech_offer_layer.create_tween()
-	tw_bar.tween_property(bar, "value", 0.0, total)
-	tw_bar.tween_callback(_close_tech_offer)
+	if total > 0.0:
+		var tw_bar := _tech_offer_layer.create_tween()
+		tw_bar.tween_property(bar, "value", 0.0, maxf(total, 5.0))
+		tw_bar.tween_callback(_close_tech_offer)
+	else:
+		bar.visible = false   # 不限时：不倒计时，等玩家自己点「确定」
 	_tech_refresh_cards(_tech_cards, -1)
 
 ## 程序化选中一张科技卡（点卡与摆拍/测试共用同一条链）：刷选中态 + 点亮「确定」+ 选中小弹跳
@@ -897,7 +901,7 @@ func _play_turn(p: Dictionary) -> void:
 
 		if _note_roll_hot(p, roll):
 			_log("%s 连续三次转到 10 点以上，兴奋过度被查寝带走！" % p.name, "#c9a6ff")
-			s_card.rpc("%s 连续三次 10+，被查寝带走！" % p.name, "jail")
+			s_card.rpc("%s 连续三次 10+，被查寝带走！（下一回合跳过）" % p.name, "jail")
 			_send_to_jail(p)
 			_broadcast_state()
 			await _wait(1.0)
@@ -1282,8 +1286,8 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 				_log("【赌场熟客】%s 凭熟脸拿 %s 出场费" % [p.name, GameData.fmt_money(1000)], "#74d188")
 			await casino.run(p)
 		"go_jail":
-			_log("%s 撞上查寝！被押送到宿委会" % p.name, "#c9a6ff")
-			s_card.rpc("【查寝！】%s 被押送到宿委会" % p.name, "jail")
+			_log("%s 撞上查寝！被押送到宿委会（下一回合跳过）" % p.name, "#c9a6ff")
+			s_card.rpc("【查寝！】%s 被押送到宿委会（下一回合跳过）" % p.name, "jail")
 			_send_to_jail(p)
 		"jail":
 			_log("%s 来宿委会探监，一切安好" % p.name)
@@ -1423,7 +1427,7 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 		if _immune_debuff(p):
 			_log("%s 的【空想者的香皂】挡下了查寝" % p.name, "#8fb7f2")
 		else:
-			_log("%s 被查寝抄了近道，直接送宿委会" % p.name, "#c9a6ff")
+			_log("%s 被查寝抄了近道，直接送宿委会（下一回合跳过）" % p.name, "#c9a6ff")
 			_send_to_jail(p)
 	if card.has("move_steps"):
 		if int(card.move_steps) < 0 and (_immune_debuff(p) or _has_item(p, "雨伞")):
@@ -3521,10 +3525,11 @@ func _stock_one() -> String:
 		return ""
 	return pool[randi_range(0, pool.size() - 1)]
 
-func _stock_shop(idx: int) -> void:
+func _stock_shop(idx: int, full := false) -> void:
 	var arr: Array = shops[idx].slots
 	for i in arr.size():
-		if String(arr[i]) == "":
+		# full = 整架重掷（进店 / 花刷新价）：三个货位全部换新，而非只补空位
+		if full or String(arr[i]) == "":
 			arr[i] = _stock_one()
 
 func _item_turn_start(p: Dictionary) -> void:
@@ -3695,6 +3700,14 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1) -> void:
 	if _has_tech(p, "勤工俭学"):
 		p.money = int(p.money) + 100   # 勤工俭学：每用一件主动道具 +¥100
 	_consume_cost_pen(p)
+	# 一次性道具（type=consumable，紫档主动等）：用后自动丢弃回池。
+	# 橙档焚毁件（蛋蛋节 / 亡牌飞行员coco）已在上面按 items_consumed 永久离池，这里不重复。
+	if String(d.type) == "consumable" \
+			and String(it.id) != "蛋蛋节" and String(it.id) != "亡牌飞行员coco":
+		var ci: int = items.find(it)
+		if ci >= 0:
+			items.remove_at(ci)
+		_log("%s 的【%s】用后回池" % [p.name, String(it.id)], "#8a90a5")
 	if int(p.item_used_n) >= limit:
 		p.item_used = true
 		if limit == 2:
@@ -3772,7 +3785,7 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1)
 			p.money = int(p.money) + 300
 			_log("%s 用【饭卡】刷出 ¥300" % p.name, "#74d188")
 		"许愿池":
-			var v := randi_range(-6, 6) * 100
+			var v := randi_range(-4, 8) * 100
 			p.money = maxi(0, int(p.money) + v)
 			_log("%s 往【许愿池】投币：%+d" % [p.name, v], "#74d188" if v >= 0 else "#ef7b74")
 		"共享单车":
@@ -3998,7 +4011,8 @@ func _run_shop(p: Dictionary, idx: int) -> void:
 	var epoch := _shop_epoch
 	if not shops.has(idx):
 		shops[idx] = {"slots": ["", "", ""]}
-	_stock_shop(idx)
+	# 每次进店整架重掷：掷 0 再次进店 / 买空后再来，看到的都是新货架（不再沿用上次那几件）
+	_stock_shop(idx, true)
 	_broadcast_state()
 	if _is_sleeping(p):
 		_shop_leave(int(p.peer))  # 休眠=商店自动离开
@@ -4082,12 +4096,11 @@ func _shop_refresh(peer: int) -> void:
 	var cost := _refresh_price()
 	if p.is_empty() or int(p.money) < cost:
 		return
-	# _stock_shop 只补空位：三格都满时刷新什么也不会发生，却照收钱还推高全场刷新价
-	#（此前玩家会「花钱买了个寂寞」，见 fix/v0.0.2）
+	# 刷新 = 整架重掷（三个货位全部换新）。极少数重掷出完全相同的一套时才算「没变」，不收费。
 	var before := str(shops[_shop_tile].slots)
-	_stock_shop(_shop_tile)
+	_stock_shop(_shop_tile, true)
 	if str(shops[_shop_tile].slots) == before:
-		_log("货架满满当当，刷新也不会有新货（没花钱）", "#8a90a5")
+		_log("刷新出了同一套货（没花钱）", "#8a90a5")
 		return
 	p.money = int(p.money) - cost
 	refresh_count += 1

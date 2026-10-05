@@ -70,11 +70,15 @@ func _run() -> void:
 	for i in GameData.TILES.size():
 		tiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	g.htiles = tiles
-	g.shops = {idx: {"slots": ["招财猫", "平均主义", ""]}}
+	g.shops = {idx: {"slots": ["", "", ""]}}
 	g.running = true
 
 	# 会话进行中做检查 + 购买 + 离店（信号在 await 期间触发）
 	create_timer(0.4).timeout.connect(func() -> void:
+		# 进店会「整架重掷」（#13：每次进店都给新货架）⇒ 单测要验「买第 1 格」，
+		# 这里把货架固定成已知内容再广播，而不是指望进店时预置的货还在。
+		g.shops[idx].slots = ["招财猫", "平均主义", ""]
+		g._broadcast_state()
 		g._process(0.016)
 		print("  [debug] st.shop_peer=%s st.shop_open=%s layer.visible=%s" % [
 			str(g.st.get("shop_peer")), str(g.st.get("shop_open")), str(g.shop_layer.visible)])

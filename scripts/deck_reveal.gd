@@ -289,6 +289,7 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	var body := UIKit.label(text, 18, UIKit.TEXT)
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)   # 锁换行宽度（内宽 − 4）
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(body)

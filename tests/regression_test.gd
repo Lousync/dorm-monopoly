@@ -383,7 +383,7 @@ func _test_hot_chain(g) -> void:
 	_check(g._note_roll_hot(p, 10), "中断后重新累计（第 3 次再抓）")
 
 func _test_shop_refresh_full_shelf(g) -> void:
-	print("== 小卖部刷新：货架没变化就不收钱 ==")
+	print("== 小卖部刷新：整架重掷（三格全换）并照价扣钱 ==")
 	var tile := _shop_tile()
 	var p := _mk_player(1, "甲")
 	p.money = 9000
@@ -393,9 +393,14 @@ func _test_shop_refresh_full_shelf(g) -> void:
 	g._shop_peer = 1
 	g._shop_tile = tile
 	g.refresh_count = 0
+	var cost: int = g._refresh_price()
 	g._shop_refresh(1)
-	_check(int(p.money) == 9000, "满货架刷新不扣钱（实得 %s）" % str(p.money))
-	_check(g.refresh_count == 0, "满货架刷新不推高全场刷新价")
+	# 整架重掷：三格全换、照价扣钱、推高全场刷新价（#12）
+	_check(int(p.money) == 9000 - cost, "整架刷新照价扣钱（9000 → %s）" % str(p.money))
+	_check(g.refresh_count == 1, "整架刷新推高全场刷新价")
+	var slots: Array = g.shops[tile].slots
+	_check(slots.size() == 3 and String(slots[0]) != "" and String(slots[1]) != "" and String(slots[2]) != "",
+		"刷新后三格仍满（整架重掷而非只补空位）")
 
 func _test_roster_marks_disconnected_bots(g, net) -> void:
 	print("== 开局名册：淡出期间掉线的玩家应转机器人 ==")
