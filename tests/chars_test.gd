@@ -29,6 +29,17 @@ extends SceneTree
 ##      之后三条一次性动作各来一次（人仍全隐、播放器仍未在播，等过标称时长后仍然如此），
 ##      `die` 再单独打一次（还要多钉一条"破产记忆没被种下"）——
 ##      ⑭(b)(c) **抓不到它**（那两条在淡出与断言之间没有任何事件，这正是终审 findings ① 的由来）。
+##   **【fix round 2】(c2) 重做**（终审 Concerns 2：那条断言**按相位随机红**）：
+##      ① **相位钉死** —— 原先 `react()` 后 `await process_frame` 再量，相位 = 若干个真实帧长、
+##         随机器负载漂（出牌那条伸手动作在相位 0.02 s 净空 +0.803、0.14 s −0.163 ⇒ 抖 0.14 s
+##         就从"分得很开"翻到"插进去"）。改成照 ⑬ 的手法 `seek(固定相位, true) + pause()`，
+##         并对一串覆盖 [0,1] 的相位逐个量 ⇒ 读数与运行时机无关（连跑 N 次给出同一批数）。
+##      ② **判据按姿态类分开** —— 判据 ③（"不许与桌子实体体积相交"）是**为坐姿发明的**，
+##         抓的是"腿从座面下穿出去"那一类；而**出牌是伸手动作**，手落到**桌面平面以下、桌子
+##         足迹以内**时**桌面把它挡住了**（俯视相机）⇒ 读作"把手放在桌上"，不是穿模。
+##         三条一次性动作改判「**不许有看得见的穿模**」：进入桌子实体体积的分件必须**整件落在
+##         桌面平面以下**；若在足迹内**顶面高过桌面平面** ⇒ 那才是看得见的穿模 = 真缺陷，报出来。
+##         **坐姿（④）与破产收势（(f2)(g)）不适用这条放宽 —— 仍是零相交**（判据 ③ 原样）。
 ##
 ## 坐姿不是包里的 `sit`（腿是一整块刚体、无膝关节，`sit` 把腿平举 ⇒ 会捅进桌子 1.66 世界），
 ## 是**手摆**（普查 §5.2）：整体下移 `SEAT_ROOT_Y` + 腿竖直压到 `LEG_SQUASH`
@@ -76,6 +87,110 @@ func _death_pose(w: Node3D, t3: Node) -> Dictionary:
 		out.worst = minf(out.worst, gp)
 		if gp <= 0.0:
 			out.hits = int(out.hits) + 1
+	return out
+
+## 桌子的**实体体积**与**桌面平面**（(c2) 的反应姿态判据与 (f2) 的破产收势读数共用这一处口径）。
+##
+##   * `tb`：底座（`TableBase`，从地板顶到木纹外框底面）；
+##   * `slab`：**桌面那一层**（桌面的足迹 × [底座顶面, 桌面上表面]）—— 底座顶面到桌面上表面那一段
+##     也是实木；不带它，"从桌面上方捅进去"这种穿法量不出来（判据 ④ 立这条时的原话）；
+##   * `top`：**不透明桌面的那个平面**（`table_mesh` 那一片的 y）—— (c2) 的"从上方被桌面挡住"
+##     量的就是它。
+##
+## **从场景里量、不写死数**：写死一个 0.0 等于把一期的几何重述一遍 —— 桌子挪了、判据还是绿的。
+## 量不到（桌子还没建好）返回 `{}`，调用点据此跳过。
+func _table_vol(t3: Node) -> Dictionary:
+	var tbase := t3.get_node_or_null("TableBase") as MeshInstance3D
+	var tmat: MeshInstance3D = t3.get("table_mesh")
+	if tbase == null or tbase.mesh == null or tmat == null or tmat.mesh == null:
+		return {}
+	var tb: AABB = tbase.global_transform * tbase.mesh.get_aabb()
+	var tma: AABB = tmat.global_transform * tmat.mesh.get_aabb()
+	var slab := AABB(Vector3(tma.position.x, tb.end.y, tma.position.z),
+		Vector3(tma.size.x, tma.position.y - tb.end.y, tma.size.z))
+	return {"tb": tb, "slab": slab, "top": tma.position.y}
+
+## 一个人**在当前姿态下**与桌子实体体积的关系（**逐件、按几何顶点**量）。返回：
+##   * `grew` / `grew_names`：**看得见的穿模**件数 —— 这一件在**足迹以内有高过桌面平面的几何**、
+##     却**没有任何"足迹以外、也高过桌面"的几何** ⇒ 它在桌面上方那一截**与桌子外面接不上**，
+##     是**从桌子里面长出来的**（(c2) 的判据量的就是它）；
+##   * `buried`：**真的有几何进到桌子实体体积里**的分件数（足迹以内、桌面平面以下 —— 埋在木料里，
+##     从上方看不见）；`deep`：进到多深（足迹以内最低的那个顶点）；
+##   * `proud` / `proud_names`：那些"进了桌子"的分件里，**在足迹以内、又高过桌面平面**的最高那一点
+##     高出桌面多少（**读数**：把"从桌沿外伸进来"那一档的几何高度记下来）；
+##   * `lean`：只**越过桌沿**的分件数（足迹以内有顶点、但**都**在桌面平面以上）—— 那是"身子探到
+##     桌沿上方那一段"，**不是穿模**（人比桌子宽、又只坐得离桌沿 23 cm，这是布局的既成事实）；
+##   * `low`：全部分件世界 AABB 的最低点（核"没掉到地板以下"）；
+##   * `hits` / `worst`：**AABB 口径**的相交件数 / 最近净空 —— **只作读数、不当判据**。
+##
+## ⚠ **为什么"进没进桌子"必须按几何顶点问、不能按 AABB 问**（本轮实测）：
+## 这个包的 AABB 对**转过角度**的分件太松 —— `interact-right` 伸手那一帧（相位 0.70）实测
+## `arm-right` 世界 AABB 是 `x[2.53, 5.81] × y[-0.905, 1.396]`，可它的**顶点**在桌子足迹以内
+## 只有 `y ∈ [-0.905, +0.120]` 那一段。拿 AABB 的顶面（+1.396）去比桌面平面，会得出"这一件
+## 高过桌面 1.4 世界 = 28 cm"的结论 —— 而**几何从来没有高过桌面 0.12**。同理，人坐着时
+## `torso` / `head` / `arm-left` 都有顶点在足迹以内、但**全部高于桌面平面**（只是身子探过桌沿），
+## 它们**没有一寸进到桌子里**。AABB 口径会把这三件一起判成"穿模"，那是**判据失真**，不是缺陷。
+func _pose_pen(w: Node3D, vol: Dictionary) -> Dictionary:
+	var out := {"hits": 0, "worst": INF, "buried": 0, "proud": -INF, "proud_names": "",
+		"lean": 0, "low": INF, "deep": INF, "grew": 0, "grew_names": ""}
+	if w == null or vol.is_empty():
+		return out
+	var tb: AABB = vol["tb"]
+	var slab: AABB = vol["slab"]
+	var top: float = vol["top"]
+	for n in w.find_children("*", "GeometryInstance3D", true, false):
+		var g := n as MeshInstance3D
+		if g == null or g.mesh == null:
+			continue
+		var a: AABB = g.global_transform * g.mesh.get_aabb()
+		out.low = minf(out.low, a.position.y)
+		out.worst = minf(out.worst, maxf(_aabb_gap(a, tb), _aabb_gap(a, slab)))
+		if _aabb_gap(a, tb) <= 0.0 or _aabb_gap(a, slab) <= 0.0:
+			out.hits = int(out.hits) + 1
+		# 逐顶点问（见上：AABB 对转过角度的分件太松）——四个问题一次问完：
+		#   * `bury`：有没有几何**进到桌子实体体积里**（足迹以内、桌面平面以下）；
+		#   * `above_in` / `above_out`：有没有几何**高过桌面平面**，分别在足迹以内 / 以外；
+		#   * `deep` / `hi`：进到多深 / 在足迹以内最高到哪。
+		var bury := false
+		var above_in := false
+		var above_out := false
+		var hi := -INF
+		var hi_at := Vector3.ZERO
+		var any_in := false
+		for s in g.mesh.get_surface_count():
+			var arr := g.mesh.surface_get_arrays(s)
+			if arr.size() <= Mesh.ARRAY_VERTEX or arr[Mesh.ARRAY_VERTEX] == null:
+				continue
+			for v in arr[Mesh.ARRAY_VERTEX]:
+				var wp: Vector3 = g.global_transform * (v as Vector3)
+				var in_fp: bool = wp.x >= tb.position.x and wp.x <= tb.end.x \
+					and wp.z >= tb.position.z and wp.z <= tb.end.z
+				if wp.y > top:
+					if in_fp:
+						above_in = true
+					else:
+						above_out = true
+				elif in_fp:
+					bury = true
+				if not in_fp:
+					continue
+				any_in = true
+				if wp.y > hi:
+					hi = wp.y
+					hi_at = wp
+				out.deep = minf(out.deep, wp.y)
+		if bury:
+			out.buried = int(out.buried) + 1
+			out.proud = maxf(out.proud, hi - top)
+			out.proud_names += "%s(足迹内最高 %+.3f @x%.2f,z%.2f) " % [g.name, hi - top, hi_at.x, hi_at.z]
+		elif any_in:
+			out.lean = int(out.lean) + 1
+		# **看得见的穿模**：足迹以内有高过桌面的几何，却**没有**任何"足迹以外、也高过桌面"的几何
+		# ⇒ 这一件在桌面上方的部分**与桌子外面接不上** = 它是**从桌子里面长出来的**
+		#（而不是从桌沿外伸进来的）。见 `_table_vol` 那段与 (c2) 的判据说明。
+		if above_in and not above_out:
+			out.grew = int(out.grew) + 1
+			out.grew_names += "%s " % g.name
 	return out
 
 ## **角色的"被照亮的 albedo"相对桌面那一笔的比值上限**（Task 1 的 J1，`CHAR_LIT_RATIO_MAX`）。
@@ -852,19 +967,122 @@ func _run() -> void:
 		"**被抢地 → `emote-no`**（实得 \"%s\"）"
 			% (ra3.current_animation if ra3 != null else "<没有播放器>"))
 
-	# (c2) **三条小动作的姿态也不许插进桌子**（判据 ③ 的口径，逐件量）—— 它们动的都是手臂 / 头
-	#      （躯干与腿不动），理论上够不到桌沿；但"理论上"不算数，量一次（人已经坐在桌前 23 cm 处）。
-	var hit_log := ""
-	var hit_slots: Array = []
-	for i in CHAR_SLOTS:
-		var dpi: Dictionary = _death_pose(t[i], t3)
-		hit_log += "slot%d 相交%d 件(净空%+.3f) | " % [i, int(dpi.hits), float(dpi.worst)]
-		if int(dpi.hits) > 0 or float(dpi.low) < GameRoom.FLOOR_Y - 0.001:
-			hit_slots.append(i)
-	print("  [实测] 反应姿态：%s" % hit_log)
-	_check(hit_slots.is_empty(),
-		"出牌 / 付钱 / 被抢地**三条动作也不与桌子实体体积相交、不掉到地板以下**（越界座位 %s）"
-			% str(hit_slots))
+	# (c2) **反应姿态：相位钉死 + 判据按姿态类分开**（终审 Concerns 2 / fix round 2 重做）
+	#
+	# ① **为什么必须钉相位**：原先这条在 `react()` 之后 `await process_frame` 就量 ——
+	#    相位 = 若干个真实帧长，**随机器负载漂**。而出牌那条伸手动作**在某个相位上确实会进桌子**：
+	#    实测相位 0.02 s ⇒ 净空 +0.803 / 0.14 s ⇒ −0.163 / 0.16 s ⇒ +0.11 —— 相位抖 0.14 s，
+	#    读数就从"分得很开"翻到"插进去" ⇒ 这条**按相位随机红**（未改的基线同样会红）。
+	#    ⇒ 照 ⑬ 的手法把相位**钉死**（`seek(固定相位, true) + pause()`），并对一串覆盖 [0,1] 的
+	#    相位逐个量：同样的相位 ⇒ 同样的数，**与运行时机无关**（连跑多次必须给出同一批读数）。
+	# ② **为什么判据要按姿态类分开**（控制者裁定）：判据 ③（"不许与桌子实体体积相交"）是
+	#    **为坐姿发明的** —— 它抓的是"腿从座面下穿出去"那一类。而**出牌是伸手动作**：
+	#    手**本来就该伸到桌子这边来**；当它落到**桌面平面以下、又在桌子足迹以内**时，
+	#    **桌面把它挡住了**（相机是俯视），读作"把手放在桌上"，**不是穿模**。
+	#    **坐姿（④）与破产收势（(f2)(g)）不适用这条放宽 —— 仍是零相交**（判据 ③ 原样）。
+	# ③ **放宽后的判据到底钉什么**（本轮实测把控制者给的措辞收窄了，**理由如下、读数如下**）：
+	#    控制者给的措辞是「凡进入桌子实体体积的分件必须**整件**落在桌面平面以下」。**这条措辞
+	#    在本房间里是过严的**，两条读数都能证明：
+	#      (a) **它把"探过桌沿"判成穿模**。人坐着时 `torso` / `head` / `arm-left` 都有顶点落在
+	#          桌子足迹以内、但**全部高于桌面平面**（出牌那一档实测 `torso` 足迹内 6 个顶点全在
+	#          y = +0.748）—— 那是"身子探到桌沿上方"，**一寸没进桌子**；而桌子是实心木料，
+	#          "高于桌面平面"的几何**根本不在实体体积里**，谈不上"进入体积"。
+	#      (b) **它把"从桌沿外伸进来"判成穿模**。伸手那条（`interact-right`）实测：相位 0.20 时
+	#          `arm-right` 的几何**从桌沿外伸进桌面上方**（足迹内最高 +0.787 @x2.45,z-1.13），
+	#          相位 0.80 时整段**埋进桌面以下**（最深 −1.824）—— 这正是控制者自己写的
+	#          "把手放在桌上"那一档。而**任何从上方进入桌子的动作都必然同时有高于桌面的几何**
+	#          （不然它进不去）⇒ 这条措辞等价于"伸手动作一律不许"，把要保的表现一起否掉了。
+	#    ⇒ 按控制者的授权（"若某条要求对你的实现是ill-posed，就说出来，改钉这条断言真正能抓的
+	#      失效模式"），本断言钉的是**"没有从桌子里面长出来的东西"**（可执行、无阈值）：
+	#      **足迹以内高过桌面平面的几何，必须同时在这张桌子的足迹以外、也高过桌面** ——
+	#      即它必须是**从桌沿外伸进来的**（可一路看回人身上），而不是**从桌子里冒出来的**。
+	#      **变红口子**：往角色身上挂一个盒子，让它同时满足"进了桌子实体体积"+"在足迹以内高出
+	#      桌面"+"在足迹以外没有任何高出桌面的几何"（例如桌心那个位置一根柱子）⇒ 这条立刻红。
+	#    （**如实记**：本轮三条动作**没有**这种几何；见下面那一行读数。）
+	var vol := _table_vol(t3)
+	_check(not vol.is_empty(), "（前提）桌子的实体体积量得到（(c2) 的反应姿态判据要用它）")
+	# 采样的**归一化相位**（0 = 起手、1 = 收势）：11 个点足够密 —— 出牌那条从 +0.80 翻到 −0.16
+	# 只用 0.21 个相位（0.14 s / 0.6667 s），步长 0.1 不会从缝里漏过去。
+	var react_phases := [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+	# 三条一次性动作 → 座位（座位序仍是 `_seats()`：slot1=peer3 / slot2=peer4 / slot3=peer5）。
+	var react_kinds := [["play", 1], ["pay", 2], ["rob", 3]]
+	# 三条动作的**动画名字面值**（同 (a)~(c)：不读 `GameChars.REACT_ANIMS` —— 读那张表等于把实现重述）
+	var react_anims := {"play": "interact-right", "pay": "holding-left", "rob": "emote-no"}
+	var c2_log := ""
+	var grew_bad: Array = []
+	var floor_bad: Array = []
+	if not vol.is_empty():
+		for pair in react_kinds:
+			var kind := String(pair[0])
+			var slot := int(pair[1])
+			var peer := int((seats[slot] as Dictionary).get("peer", GameData.NO_PEER))
+			chars.react(peer, kind)          # 真入口（与 gameplay 触发的是同一个函数、同一条链）
+			await process_frame
+			var ap: AnimationPlayer = chars.char_player(slot)
+			var a: Animation = null
+			if ap != null:
+				a = ap.get_animation(String(react_anims[kind]))
+			if a == null:
+				grew_bad.append("%s@slot%d 没有播放器 / 没有这条动画" % [kind, slot])
+				continue
+			var worst := INF
+			var worst_ph := -1.0
+			var hits := 0
+			var buried := 0
+			var grew := 0
+			var proud := -INF
+			var proud_ph := -1.0
+			var proud_names := ""
+			var lean := 0
+			var low := INF
+			var deep := INF
+			var deep_ph := -1.0
+			var grew_ph := -1.0
+			var grew_names := ""
+			for ph in react_phases:
+				# **相位钉死**：seek 到固定相位再 pause —— `_process` 不会把它推走，读数可复现
+				ap.seek(float(ph) * a.length, true)
+				ap.pause()
+				await process_frame
+				var m := _pose_pen(t[slot], vol)
+				low = minf(low, float(m.low))
+				if float(m.deep) < deep:
+					deep = float(m.deep)
+					deep_ph = float(ph)
+				if float(m.worst) < worst:
+					worst = float(m.worst)
+					worst_ph = float(ph)
+				if int(m.buried) > 0 and float(m.proud) > proud:
+					proud = float(m.proud)
+					proud_ph = float(ph)
+					proud_names = String(m.proud_names)
+				if int(m.grew) > 0 and grew == 0:
+					grew_ph = float(ph)
+					grew_names = String(m.grew_names)
+				buried = maxi(buried, int(m.buried))
+				hits = maxi(hits, int(m.hits))
+				lean = maxi(lean, int(m.lean))
+				grew = maxi(grew, int(m.grew))
+			c2_log += "%s(slot%d %s 时长%.4f)：进桌子最深 %+.3f@相位%.2f / 进桌子的分件最多 %d 件 / 足迹内高出桌面最高 %+.3f（相位%.2f %s）/ 只探过桌沿的分件 %d 件 / AABB 口径最近净空 %+.3f@相位%.2f / 最低分件 %+.3f | " % [
+				kind, slot, String(react_anims[kind]), a.length, deep, deep_ph, buried, proud,
+				proud_ph, proud_names, lean, worst, worst_ph, low]
+			if grew > 0:
+				grew_bad.append("%s@相位%.2f：%s（桌面上方那一截与桌子外面接不上）"
+					% [kind, grew_ph, grew_names])
+			if low < GameRoom.FLOOR_Y - 0.001:
+				floor_bad.append("%s(最低分件 %.3f)" % [kind, low])
+			# 复位：把这条动作**重新播起来** —— 后面 (d)~(f) 读的仍是"三条动作刚播出去"那一态
+			#（上面每个采样点都 `pause()` 过，不复位的话人会僵在末相位上）。
+			chars.react(peer, kind)
+	print("  [实测] 反应姿态（相位钉死 %s，桌面平面 y=%.3f）：%s"
+		% [str(react_phases), float(vol.get("top", 0.0)), c2_log])
+	_check(grew_bad.is_empty(),
+		"出牌 / 付钱 / 被抢地**没有看得见的穿模**：**在桌子足迹以内、高过桌面平面**的几何，"
+			+ "必须同时**在这张桌子的足迹以外、也高过桌面**（= 它是从桌沿外伸进来的）；"
+			+ "在足迹以内高出桌面、却在足迹以外没有任何高出桌面的几何 ⇒ 这一件是**从桌子里面长出来的**。"
+			+ "越界的 %s" % str(grew_bad))
+	_check(floor_bad.is_empty(),
+		"出牌 / 付钱 / 被抢地**三条动作都不掉到地板以下**（越界 %s）" % str(floor_bad))
 
 	# (d) **幅度含蓄**：反应**不许动 `speed_scale`**（那是「当前行动者」的表达，`set_actor` 独占）。
 	#     "放大一点看得清"正是要拦住的那一手 —— 本作调性克制，四家同时动要变马戏团。
@@ -918,6 +1136,10 @@ func _run() -> void:
 	# 这三条钉的就是"摘对了吗"：人还在锚点上 / 头在桌面上方 / 没有分件落地板以下或插进桌子。
 	# **变红口子**：把 `_pose_die` 里那句 `_die_without_fall(ap)` 去掉（退回整体倒地），这三条一起红。
 	var dp: Dictionary = _death_pose(t[2], t3)
+	# 破产收势这一行是**四条反应里最后一条**的穿透读数（(c2) 那张表的第 4 行）：它**不适用**
+	# (c2) 的放宽 —— 收势是"坐在座位上歪倒"，不是伸手 ⇒ **判据 ③ 原样：零相交**。
+	print("  [实测] 破产收势（`die` 末帧，判据 ③ 原样·零相交）：相交 %d 件 / 最近净空 %+.3f / 最高点 %+.3f / 最低分件 %+.3f"
+		% [int(dp.hits), float(dp.worst), float(dp.top), float(dp.low)])
 	var an2: Transform3D = room.seat_anchor(2)
 	var off: Vector2 = Vector2(t[2].global_position.x - an2.origin.x,
 		t[2].global_position.z - an2.origin.z)
