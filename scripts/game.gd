@@ -3656,7 +3656,15 @@ func _run_shop(p: Dictionary, idx: int) -> void:
 	if _is_sleeping(p):
 		_shop_leave(int(p.peer))  # 休眠=商店自动离开
 	elif bool(p.bot):
-		_bot_shop(p, idx)
+		# 批次 13 T6：机器人访客不像真人——真人会停在店里等操作，机器人却在 `_bot_shop` 里
+		# 一路同步买完就走，于是「进店」那份快照会被同一帧里「店已关」的那份盖掉，
+		# 任何一端的 `_process` 都来不及把 `shop_layer` 显出来 ⇒ 机器人进店对所有人不可见。
+		# 先给一个看得见的节拍，再让它动手。
+		await _wait(1.5)
+		# 节拍期间会话可能已被换掉（超时/换人）或整局已停：照 `_arm_shop_timeout` 的同一套判据守卫，
+		# 免得替一个已经不在店里的 peer 买东西。
+		if running and _shop_peer == int(p.peer) and _shop_epoch == epoch:
+			_bot_shop(p, idx)
 	else:
 		_arm_shop_timeout(epoch, int(p.peer))
 	while running and _shop_peer == int(p.peer) and _shop_epoch == epoch:

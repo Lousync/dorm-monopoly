@@ -25,6 +25,27 @@ func _mk_player(peer: int, nm: String, money := 5000) -> Dictionary:
 		"pos": 0, "alive": true, "skip": 0, "sleep": 0, "stamina": 3, "items": [],
 		"item_used": false, "cheat_roll": -1}
 
+## 批次 13 T6 观察者：机器人进店期间，有没有过「同一帧里 shop_open >= 0 且小卖部界面可见」。
+## 结果用成员变量回传（`await` 里观察到的东西带不回来）；每拍**手推一帧 `_process`**
+##（与 hud_test 同一手法），否则判定会依赖"引擎这一帧刚好跑到哪"，等于没测。
+## 判据不能只看 `shop_layer.visible`：上一段用例可能留下一个"可见"的残留值，
+## 必须与"快照里确实开了店、且开的就是这个 peer"同拍成立才算数。
+var _saw_shop_beat := false
+
+func _watch_shop(g, peer: int) -> void:
+	var entered := false
+	var budget := 200          # ≈4 秒上限：判据写错时不至于把整个测试挂死
+	while budget > 0:
+		budget -= 1
+		g._process(0.0)
+		if int(g.st.get("shop_open", -1)) >= 0 and int(g.st.get("shop_peer", 0)) == peer:
+			entered = true
+			if g.shop_layer.visible:
+				_saw_shop_beat = true
+		if entered and g._shop_peer == 0:
+			return
+		await create_timer(0.02).timeout
+
 func _run() -> void:
 	seed(1)
 	var peer := ENetMultiplayerPeer.new()
@@ -71,6 +92,26 @@ func _run() -> void:
 	_check(p.money == 4400, "购买后扣款（5000→4400）")
 	_check(p.items.size() == 1 and String(p.items[0].id) == "招财猫", "道具入包")
 	_check(g._shop_peer == 0, "离开后会话结束")
+
+	# ---- ③ 机器人进店也看得见（批次 13 T6）----
+	# 机器人在 _bot_shop 里同步买完就走：没有节拍时，「进店」的快照会被同一帧里
+	# 「店已关」的快照盖掉，任何一端的 _process 都来不及把界面显出来（用户 ③）。
+	print("== 机器人进店也看得见 ==")
+	var botp := _mk_player(2, "机器人乙", 5000)
+	botp.bot = true
+	g.hp = [p, botp]
+	g.shops = {idx: {"slots": ["招财猫", "", ""]}}
+	g.running = true
+	g._process(0.0)                       # 先把上一段的可见性推到当前快照（shop_open = -1）
+	_check(not g.shop_layer.visible, "（前置）开跑前小卖部是收起的")
+	_saw_shop_beat = false
+	_watch_shop(g, 2)                     # 先起观察者；它等会话真的开始才开始计分
+	await g._run_shop(botp, idx)
+	await create_timer(0.1).timeout       # 留一拍给观察者自行退出
+	g._process(0.0)                       # 判定前再手推一帧，不靠帧率
+	_check(_saw_shop_beat, "机器人进店过程中，有至少一帧「shop_open >= 0 且小卖部界面可见」")
+	_check(g._shop_peer == 0, "机器人离店后会话结束（_shop_peer == 0）")
+	_check(not g.shop_layer.visible, "机器人离店后界面重新收起")
 
 	if fails == 0:
 		print("SHOP TEST: ALL PASS")
