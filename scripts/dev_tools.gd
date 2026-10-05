@@ -825,16 +825,28 @@ func take_shot(path: String) -> void:
 		await get_tree().create_timer(0.6).timeout
 		# react 摆拍：**出图前重放一次定格**（树没暂停、自动对局一直在跑，见上面 `shot_react_ap`
 		# 那段）。`seek(x, true)` 立刻把姿态落到分件上 ⇒ 紧接着的 `frame_post_draw` 拍到的就是它。
-		if shot_react_ap != null and is_instance_valid(shot_react_ap):
-			shot_react_ap.seek(shot_react_at, true)
-			shot_react_ap.pause()
+		#
+		# ⚠ **`shot_react_ap` 中途失效时必须出声**（终审 N-2）：它是外层块记下的**那个播放器实例**，
+		# 而自动对局里的重广播会让 `set_chars()` 把角色整套重建（旧实例 `queue_free`）⇒ 从那一帧
+		# 起它就不是有效实例了 ⇒ 定格重放**失效**、拍到的是重建后那个人的当前动画。原先这里
+		# `and is_instance_valid(...)` 一假就**静默跳过**，只看到"出图不对"却查不出为什么。
+		if shot_react_ap != null:
+			if is_instance_valid(shot_react_ap):
+				shot_react_ap.seek(shot_react_at, true)
+				shot_react_ap.pause()
+			else:
+				print("SHOTREACT frame%d 定格重放失效：播放器实例已被重建（自动对局的重广播会 "
+					% i + "`set_chars()` 整套重建角色）⇒ 这一帧不是定格的姿态")
 		await RenderingServer.frame_post_draw
 		var p := path if i == 0 else path.replace(".png", "_%d.png" % i)
 		get_viewport().get_texture().get_image().save_png(p)
 		print("SHOT SAVED ", p)
 		# 出图那一刻**真的**是哪条动画（不是请求的那条）—— 只打这一行就能看出"拍错了"。
-		if shot_react_ap != null and is_instance_valid(shot_react_ap):
-			print("SHOTREACT frame%d assigned=%s" % [i, String(shot_react_ap.assigned_animation)])
+		# 播放器失效时**照打**（N-2：这一行原先会整个消失，等于"最后一条诊断也哑了"）。
+		if shot_react_ap != null:
+			print("SHOTREACT frame%d assigned=%s" % [i,
+				(String(shot_react_ap.assigned_animation) if is_instance_valid(shot_react_ap)
+					else "<播放器已失效（被重建）>")])
 	get_tree().quit(0)
 
 func _dev_player_edit(edit: Callable) -> void:
