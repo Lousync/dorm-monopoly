@@ -1,6 +1,6 @@
 class_name GameRoom
 extends Node3D
-## 3D 房间（一期）：天花板 / 地板 / 四面墙 / 家具 / 四把椅子与名牌 / 吊灯可见几何 / 补光。
+## 3D 房间（一期）：天花板 / 地板 / 四面墙 / 家具 / 四把椅子与名牌 / 地毯 / 补光。
 ##
 ## **只摆位与长相，不碰玩法** —— 与 `table_props.gd` 同一条纪律。
 ## **房间不是对称的**（一期 Task 7 起）：**远半侧**（`z ∈ [-ROOM_D/2, 桌心]`）是玩家看得见的那间屋子，
@@ -9,6 +9,7 @@ extends Node3D
 ## 详见 `ROOM_NEAR_EXTRA` 那段。
 ## **一律不投影**：那盏吊灯是全场唯一投影源（见 `table_3d.LAMP_LIGHT_POS`），
 ## 房间多一个投影物件就多一张阴影图，性能与氛围两头不讨好。
+## **补光也不投影**：它是"只有一处投影源"那条契约的另一半（见 `FILL_LIGHT_POS` 那段）。
 ##
 ## 总开关 `ROOM_ENABLED`：置 false 就整层不建，回到"只有桌子"的样子。
 ## 这是本期的保命开关 —— 房间出任何问题都可以先关掉它，不影响对局。
@@ -113,6 +114,37 @@ var _table_half := Vector2(4.7, 3.4795)
 var _wall_mat: StandardMaterial3D
 var _floor_mat: StandardMaterial3D
 var _ceil_mat: StandardMaterial3D
+## 家具 / 椅子 / 地毯的材质（**一期 Task 8 Step 0**）。`.glb` 自带的纯平色由
+## `material_override` 整片换掉（见 `_paint` 与 `FURN_ALBEDO`）。
+var _furn_mat: StandardMaterial3D
+
+## ---- 家具与椅子的材质（一期 Task 8 Step 0）----
+##
+## **病因（Task 7 出图实证）**：Kenney 那批 `.glb` 是**零贴图的纯平色**（Task 1 已证），
+## 椅子 / 书桌 / 书架的 `baseColorFactor` 是 `0.896, 0.602, 0.393`（一层奶白偏橘）——
+## 而屋子是**暗木地板 + 灰墙**、桌面那圈木纹还**带贴图**。⇒ 家具成了画面里
+## **最亮、最没质感**的东西，读作"没上材质的占位块"，把画面挤满。
+##
+## **做法**：换成与 `_floor_mat` **同族**的暗木调（同一张 `wood_floor.jpg`），
+## `roughness = 0.88` / `metallic = 0`（`_lit_mat` 里那两条，与地板 / 墙同一档）。
+##
+## **判据（可执行，`layout_test` 钉着）**：**家具的"被照亮的 albedo"必须比桌面暗** ——
+## 同一把照度代理式算出来：`albedo 亮度 × 照度(家具形心) ≤ FURN_LIT_RATIO_MAX × albedo 亮度 × 照度(桌面最暗角)`。
+## 取值 `0.34, 0.27, 0.21`（亮度 **0.281**，对照：换之前的奶白 `0.896/0.602/0.393` 亮度 **0.649**、
+## 木纹外框 `0.62/0.55/0.46` 亮度 **0.558**）⇒ 实测比值 **0.644**；
+## **把材质换回奶白那一档，这一条立刻红**（实测 1.49 — 见 task-8-report 的变红验证表）。
+##
+## **为什么不是更暗**（一度取过 `0.26/0.20/0.16`，实测比值 0.482）：出图比对过两档，
+## 更暗那档在**远端**那张图里家具快与地板糊成一片、读不出是件家具。`0.34/0.27/0.21`
+## 仍是**暗木调**（亮度只有木桌的一半）、仍稳稳压在家具"不许是最亮的东西"那条线之下，
+## 但书桌 / 书架 / 椅背的**形**看得出来了 —— "像样"卡的是这条。
+const FURN_ALBEDO := Color(0.34, 0.27, 0.21)
+## 墙面（`_wall_mat`）。**一期 Task 8 Step 0：0.42/0.40/0.38 → 0.30/0.285/0.27**。
+## 原值在"家具也是奶白"的年代不显眼；家具压暗之后它就是画面里最亮的一面平色板 ——
+## 而**房间在暗环境里，墙一亮就假**（设计 §五 那条）。压到与家具同族的中性暗灰就够，
+## **不再加贴图**：墙上有补光打出的明暗（见 `FILL_LIGHT_POS`），一块压暗的平色板读得出层高，
+## 而加一份"极轻的贴图"在 22 × 19.7 的墙面上只会变成噪点。
+const WALL_ALBEDO := Color(0.30, 0.285, 0.27)
 
 func _make_materials() -> void:
 	_floor_mat = _lit_mat(Color(0.30, 0.26, 0.22), "res://assets/textures/wood_floor.jpg")
@@ -120,8 +152,14 @@ func _make_materials() -> void:
 	# **地板自己的尺寸**算，否则地板一长、木条被拉长 1.28×（`_lit_mat` 里那份是按
 	# `ROOM_W`/`ROOM_D` 写的，那里服务的是墙 / 天花板 —— 它们不带贴图，无所谓）。
 	_floor_mat.uv1_scale = Vector3(ROOM_W / 3.0, (ROOM_D + ROOM_NEAR_EXTRA) / 3.0, 1.0)
-	_wall_mat  = _lit_mat(Color(0.42, 0.40, 0.38), "")   # 白灰墙
+	_wall_mat  = _lit_mat(WALL_ALBEDO, "")
 	_ceil_mat  = _lit_mat(Color(0.34, 0.33, 0.33), "")
+	# 家具 / 椅子：同一张木纹贴图，但**不按房间尺寸重复** —— `_lit_mat` 给的是
+	# `ROOM_W/3 × ROOM_D/3`（每 3 世界单位一轮），那是给整面墙 / 整块地板定的；
+	# 家具是 `_model_aabb` 撑到 8 个单位的小件，按同一个密度贴上去木纹会细成噪点。
+	# 这里取 **1.0**（= 模型自己的 UV 铺一张贴图），与"一件家具一层木纹"的观感一致。
+	_furn_mat = _lit_mat(FURN_ALBEDO, "res://assets/textures/wood_floor.jpg")
+	_furn_mat.uv1_scale = Vector3.ONE
 
 ## 受光的粗糙材质。**不许用 UNSHADED** —— 那会让房间对吊灯与环境光毫无反应、
 ## 变成一块死平的贴图（与 `table_3d._build_table()` 里桌垫那段注释同一个道理）。
@@ -219,6 +257,63 @@ const NAMEPLATE_FONT_PS := 0.0022
 ## 局部即世界；`build()` 期不许读全局量，见 `_build_furniture` 那段）。
 static var NAMEPLATE_ANCHORS: Array[Vector3] = []
 
+# ---------------- 地毯（一期 Task 8 Step 0 追加） ----------------
+
+## 地毯模型（Task 1 落地的 25 件之一，CC0）。
+## **它不挂在 `Room/Furniture` 下**（见 `_build_rug`）：那张表是"靠墙摆的家具"，
+## 而 `layout_test` 有三条断言按它逐件量 —— 家具必须在**左半侧**、必须在**木桌远边之外**、
+## 三件两两不相交。一块**居中的地毯**三条全违（它就在桌子正下方、x 从 −4.8 到 +4.8）。
+## ⇒ 单开一个 `Room/Rug` 节点，谁也不挡。
+const RUG_MODEL := "rugRectangle.glb"
+
+## 地毯比**木桌外沿**（连木纹，= `_table_half`）多出来的那一点（世界单位）。
+## **上界由椅子订出来，不是审美**：椅子前沿离木桌外沿 `SEAT_INSET`(0.15) ⇒ 地毯再往外
+## 就伸到椅子脚底下、"坐到地毯上"了（brief 明令不要）。取 **0.10**（= `SEAT_INSET` 的三分之二），
+## 四周各留 0.05 的净空。
+## 注意它**只能是一条窄边**：桌子底座（`table_3d.TableBase`）本身就填满了木桌那两维，
+## 地毯在桌子底下那部分是看不见的，真正露出来的是这一圈 0.10 —— 这正是"把桌子锚在地上"要的。
+const RUG_MARGIN := 0.10
+
+## 地毯压暗系数（乘在模型自带的 `albedo_color` 上，见 `_dim_subtree`）。
+## 模型自带的 `carpet` 是 `0.943, 0.367, 0.343`（一块饱和的砖红）—— 那是 Kenney 展示用的
+## 配色，直接铺进来会是屋子里**最跳的一块色**，与"暗木 + 灰墙"的调性打架。
+## 乘 0.45 ⇒ 面色 `0.42, 0.17, 0.15`、边色 `0.27, 0.13, 0.13`：仍看得出是块**暖色**的地毯
+##（与木色同族、不是灰的），但比地板暗，不抢家具 / 桌面。
+const RUG_DIM := 0.45
+
+# ---------------- 补光（一期 Task 8 Step 3） ----------------
+
+## 一盏**不投影**的弱补光：屋子（墙 / 家具）要有方向感与明暗，而**桌面照度基本不变**。
+##
+## **为什么是 `OmniLight3D` 而不是 `DirectionalLight3D`**：本项目的照度验收尺子是
+## `layout_test._mat_sample_irradiance`，它的公式是**按 omni 衰减写的**（射程形状 +
+## 距离衰减 + 桌面法线朝上的 N·L）。换平行光，那把尺子量不了它 —— "补光不碰桌面"
+## 就只能靠肉眼，正是设计 §五「尺子只能用一把」要避免的事。
+##
+## **位置**（由 `ROOM_W` / `ROOM_D` 推导，不写死）：房间**近侧偏右**。
+## 吊灯在远侧偏左（`table_3d.LAMP_LIGHT_POS` 的 x ≈ −4.13）、家具也全在左半侧
+## ⇒ 补光从**对角**补过来，墙面上才有第二道方向（同侧补 = 只是把吊灯调亮一点）。
+##
+## **高度 0.5 是这里唯一的巧劲**（桌面在 y = 0）：桌面法线朝上，灯只比它高**一点点**
+## ⇒ 桌面吃到的 `N·L = (y灯 − 0) / d` 小到几乎为零，而**竖直的墙**吃到的 N·L 由水平那一维
+## 撑着、几乎不受高度影响 ⇒ 光主要落在墙上、桌面上只剩一点点。
+## **实测（照度代理式）**：桌面采样点最大贡献 **0.0494**，只有吊灯直射那一份（0.79~1.12）的 **6%**
+##（见 `layout_test.FILL_ON_TABLE_MAX` 的注释）。
+## ⚠ **那把尺子量不到墙**：它的 N·L 是按**桌面法线 +Y** 写的，而墙是竖直面 —— 墙那一半只能
+## 靠出图核对（`shots/t8b_dollyfar_table_plain.png` 对 `shots/t7b_dollyfar_table_plain.png`：
+## 远墙从"顶上一条暗带"变成看得见的墙面、且左右有明暗）。
+## **抬高它才是错的那一手**（1.5 → 桌面贡献立刻翻三倍）：补光一高就变成"第二盏吊灯"，
+## 桌面被两盏灯一起打 —— 而桌面那亮度是用户签过字的（批次 13 ⑧）。
+const FILL_LIGHT_POS := Vector3(ROOM_W * 0.36, 0.5, ROOM_D * 0.28)
+## 补光的能量与射程。**衰减指数取 0**（与吊灯同一档）：补光要的是"整间屋子均匀抬一层"，
+## 不是又一个光池。能量 0.45 = 逐次出图调到"墙看得出明暗、但不抢桌面"的那一档。
+const FILL_ENERGY := 0.45
+const FILL_RANGE := 30.0
+## 补光的颜色：**偏冷的一档白**（吊灯是暖橙）。同色补光只是把吊灯调亮一点，
+## 冷暖一对才有"两处光源"的方向感 —— 也就是"窗外透进来的一点天光"。
+## 只偏一点点：偏狠了会与桌面那层暖色叠成灰（设计 §六 对"窗是冷色"那条警告）。
+const FILL_COLOR := Color(0.80, 0.84, 0.92)
+
 func _build_shell() -> void:
 	_make_materials()
 	# 地板在 **`FLOOR_Y`**（真实桌高）。
@@ -249,6 +344,54 @@ func _build_shell() -> void:
 	_plane("WallE", Vector3( ROOM_W * 0.5, wy, mid_z), Vector2(span_z, h), Vector3(90, -90, 0), _wall_mat, walls)
 	_build_furniture()
 	_build_chairs()
+	_build_rug()
+	_build_fill_light()
+
+## 桌下那块地毯（一期 Task 8 Step 0）。**"把桌子锚在地上"最省的一手，且不挡棋盘**
+##（它整个躺在 `FLOOR_Y` 上、比桌面低 3.7，从取景轨道上任何位置都看不进桌垫）。
+##
+## 摆位一律由 `_table_half`（连木纹外框的半个桌面）与 `RUG_MARGIN` 推导，**不写死尺寸**：
+## 桌子一改（Task 7 那类改动），地毯跟着走。
+## **挂在自己的 `Room/Rug` 下**，理由见 `RUG_MODEL` 那段（`Furniture` 那三条断言会红）。
+func _build_rug() -> void:
+	var packed: PackedScene = load("res://assets/models/%s" % RUG_MODEL)
+	if packed == null:
+		push_warning("房间缺地毯模型：%s（跳过）" % RUG_MODEL)
+		return
+	var root := Node3D.new()
+	root.name = "Rug"
+	add_child(root)
+	var mi := packed.instantiate() as Node3D
+	root.add_child(mi)
+	# 量一次模型的 AABB：① 它的原点在**角上**（实测 `pos (0, 0, -0.92)`）不是中心，
+	# 不居中摆就会整块偏到桌子外面去；② 尺寸要**按目标大小反算缩放**，不能照抄
+	# `FURNITURE_SCALE` —— 这块模型 ×10 之后是 `15.7 × 9.2`，**比整间屋子还大**。
+	var ab := _model_aabb(packed)
+	var c := ab.get_center()
+	var want := (_table_half + Vector2(RUG_MARGIN, RUG_MARGIN)) * 2.0
+	# y 仍按 `FURNITURE_SCALE`（厚度 0.10 —— 一块薄地毯，不是一张纸片）
+	var sy: float = FURNITURE_SCALE
+	var sx: float = want.x / ab.size.x
+	var sz: float = want.y / ab.size.z
+	mi.scale = Vector3(sx, sy, sz)
+	# 底面留在 `FLOOR_Y`（模型的基点本来就在脚底，实测 AABB 的 min.y = 0）
+	mi.position = Vector3(-c.x * sx, FLOOR_Y, -c.z * sz)
+	_no_shadow(mi)
+	_dim_subtree(mi, RUG_DIM)
+
+## 那盏不投影的补光（一期 Task 8 Step 3，见 `FILL_LIGHT_POS`）。
+## **`shadow_enabled = false` 是硬要求**：全场只许有一处投影源（吊灯），
+## 第二张阴影图 = 性能与氛围两头不讨好（`layout_test` 那条"只有一处投影源"钉着它）。
+func _build_fill_light() -> void:
+	var fill := OmniLight3D.new()
+	fill.name = "FillLight"
+	fill.position = FILL_LIGHT_POS
+	fill.light_color = FILL_COLOR
+	fill.light_energy = FILL_ENERGY
+	fill.omni_range = FILL_RANGE
+	fill.omni_attenuation = 0.0
+	fill.shadow_enabled = false
+	add_child(fill)
 
 ## 家具摆位。**外壳的一部分**（`build()` 只认外壳那一层，这里不再往外挂别的入口）。
 ## 缺模型时 `load()` 给 null ⇒ `push_warning` 跳过，而测试里"至少三件家具"那条会红
@@ -280,12 +423,51 @@ func _build_furniture() -> void:
 		# **模型自带的几何实例要逐个关投影** —— instantiate 出来的节点不继承父级的 shadow 设置，
 		# 这是本项目最容易漏关阴影的地方（`layout_test` 那条"房间物件一律不投影"就是为了兜住它）。
 		_no_shadow(mi)
+		# **换掉 `.glb` 自带的纯平奶白**（一期 Task 8 Step 0，见 `FURN_ALBEDO`）。
+		_paint(mi, _furn_mat)
 
 ## 一棵子树里的几何实例**逐个关投影**（房间的纪律：全场唯一投影源是那盏吊灯）。
 ## 为什么要走一遍而不是继承：`instantiate()` 出来的节点不继承父级的 shadow 设置。
 static func _no_shadow(root: Node) -> void:
 	for n in root.find_children("*", "GeometryInstance3D", true, false):
 		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+## 一棵子树里的几何实例**逐个换材质**（一期 Task 8 Step 0）。
+## 与 `_no_shadow` 同一条理由：`material_override` **不过继** —— 挂在父 `Node3D` 上不会往
+## 子节点传，`.glb` 的几何挂在各自的 `MeshInstance3D` 上（还常常是嵌套的）⇒ 必须逐个走一遍。
+## 这不是"改不动原材质"的权宜：Kenney 的模型本来就是**用 `material_override` 换色**的用法
+##（它自带的那份纯平色只是默认值）。
+static func _paint(root: Node, mat: Material) -> void:
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		(n as GeometryInstance3D).material_override = mat
+
+## 一棵子树里的几何实例**按系数压暗自己的材质**（地毯用，见 `RUG_DIM`）。
+##
+## 为什么不照家具那样一刀 `_paint()` 成单色：**地毯有两份材质**（`carpet` 面色 + `carpetDarker`
+## 边色，模型自带），一刀切成单色就把"面 / 边"的分工抹平了 —— 而那条深色边正是让它读作
+## "一块地毯"而不是"地上一个色块"的东西。
+##
+## ⚠ **必须用 `set_surface_override_material(面号, …)` 而不是 `material_override`**：
+## `material_override` 是**一个材质盖住所有面**（实测：地毯两个面被盖成同一个色），
+## 按面覆盖才保得住模型自带的分工。
+## 复制一份再改：`instantiate()` 出来的材质与 `PackedScene` **共用同一份资源**，
+## 直接改会污染缓存里的那份（同一场景第二次实例化就带着上一次的改动）。
+static func _dim_subtree(root: Node, factor: float) -> void:
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var gi := n as GeometryInstance3D
+		if gi is not MeshInstance3D:
+			continue
+		var mesh := (gi as MeshInstance3D).mesh
+		if mesh == null:
+			continue
+		for s in mesh.get_surface_count():
+			var src := gi.get_active_material(s) as BaseMaterial3D
+			if src == null:
+				continue
+			var m := src.duplicate() as BaseMaterial3D
+			m.albedo_color = Color(m.albedo_color.r * factor, m.albedo_color.g * factor,
+				m.albedo_color.b * factor, m.albedo_color.a)
+			gi.set_surface_override_material(s, m)
 
 # ---------------- 四把椅子（一期 Task 5） ----------------
 
@@ -343,6 +525,8 @@ func _build_chairs() -> void:
 		# 这正是 `layout_test` 那条"站在地板上"量的东西）。
 		mi.position = Vector3(-c.x * FURNITURE_SCALE, 0.0, -c.z * FURNITURE_SCALE)
 		_no_shadow(mi)
+		# 椅子与家具**同一份材质**（一期 Task 8 Step 0）：屋里出现两种木色会读成"随手凑的"。
+		_paint(mi, _furn_mat)
 		_make_nameplate(seat, ab, half_z)
 
 ## 椅背名牌：一块薄牌 + 一行名字，挂在**椅背**上（座位框的 −z 侧 —— 模型自己的背在 −z）。

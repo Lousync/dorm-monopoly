@@ -4,6 +4,42 @@ extends SceneTree
 
 var fails := 0
 
+# ---------------- 阈值常量（一期 Task 8 新增；与光照 / 材质那几条断言同源） ----------------
+#
+# **写法照批次 13 ⑦⑧ 那条**（"1.4 是设计给的界；本档实测 1.27"）：先实测、再定档，
+# 实测过程与实测值写在这里 —— 光写一个数、不写它是怎么来的，下一个人只能猜。
+
+## 补光对**桌面采样点**的照度贡献上限（照度代理式口径，`_mat_sample_irradiance`）。
+##
+## 这是 Task 8 的**新增断言**用到的阈值，设计稿 §十二 待核 #4 只写了"照度代理式实测后定"，
+## 没写数 —— 所以这里是**实测定的档**：
+##   * 补光 = `room.gd.FILL_LIGHT_POS`（`22×0.36, 0.5, 18×0.28`）、能量 0.45、射程 30、指数 0；
+##   * 桌面采样点 = 桌垫四角 + 中心（与上面"桌面均匀"那条**同一组点**、**同一把尺子**）；
+##   * **本档实测 fill_max = 0.0494**（最亮那一点是近右侧那个桌角 —— 补光在近侧偏右）。
+## 取 **0.08**（≈ 实测的 1.6 倍，留一点余量给"补光颜色 / 色温微调"这类不改变落点的改动）。
+##
+## **它防的是什么**：补光一旦被调强 / 调高，桌面会被**第二盏灯**一起打 ——
+## 而桌面那亮度是用户签过字的（批次 13 ⑧「桌面各位置亮度一致」）。
+## 对照：把 `FILL_ENERGY` 从 0.45 提到 1.0 ⇒ 实测 0.110 > 0.08 **立刻红**（见 task-8-report 的
+## 变红验证表）。**别拿它当"补光总能量上限"读**：它量的是**落在桌面上**的那一份，
+## 补光挪远 / 压低都能在"总能量更大"的同时把这一份压小（这正是 `FILL_LIGHT_POS.y = 0.5` 干的事）。
+const FILL_ON_TABLE_MAX := 0.08
+
+## 家具的"被照亮的 albedo"相对**桌面最暗那个采样点**的比值上限。
+##
+## 判据的由来（Task 8 Step 0）：家具必须是屋里**不再是画面里最亮的东西**。
+## **同一把照度代理式**（设计 §五）：`albedo 亮度 × 照度(家具形心)` 对
+## `木桌 albedo 亮度 × 照度(桌面最暗那个角)` —— 拿桌面的**最暗**处去比，是**故意从严**。
+##   * 换材质**之前**（Kenney 自带的纯平奶白 `0.896, 0.602, 0.393`，albedo 亮度 **0.649**）：
+##     实测比值 **1.49** ⇒ 家具确实比被照亮的桌面更亮（这就是出图上那些"发亮的积木"）；
+##   * 换成暗木调（`room.gd.FURN_ALBEDO`，albedo 亮度 **0.281**；木桌 albedo 亮度 0.558）之后：
+##     实测 **0.644**（最亮那一件是左近那把椅子，0.372 —— 它离灯最近）。
+## 取 **0.85**（比实测松 1.3 倍，比"换回奶白"那一档紧 1.8 倍 —— 两头都留了余量，
+## 而它**真会红**：把 `FURN_ALBEDO` 改回 `Color(0.896, 0.602, 0.393)`，这条立刻红）。
+## **别再把它收紧回 0.70**：一度取过 0.70（当时家具更暗、实测 0.482），但更暗那档在出图上
+## 家具与地板糊成一片 —— 放宽到这里是为了给"看得清是件家具"留位置（见 `FURN_ALBEDO` 那段）。
+const FURN_LIT_RATIO_MAX := 0.85
+
 func _initialize() -> void:
 	create_timer(0.1).timeout.connect(_run)
 
@@ -75,6 +111,40 @@ func _mat_sample_irradiance(light: OmniLight3D, p: Vector3, ambient: float) -> f
 	var decay: float = pow(maxf(d, 0.0001), -light.omni_attenuation)
 	var cos_i: float = clampf((light.global_position.y - p.y) / d, 0.0, 1.0)  # N·L（N = 桌面法线 +Y）
 	return light.light_energy * shape * decay * cos_i + ambient
+
+## 一棵子树里**所有几何实例的材质 albedo 亮度中最亮的那个**（一件材质都找不到给 -1）。
+##
+## 为什么从材质上读、不读 `GameRoom.FURN_ALBEDO`：读常量等于把实现重述一遍 ——
+## 材质改成什么颜色都照样过，那正是本文件反复警告的"永真断言"。
+## **`material_override` 优先**（`room.gd._paint()` 就是往那儿刷的）；没有就退回面 0 的实际材质。
+func _subtree_albedo_lum(root: Node) -> float:
+	var mx := -1.0
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var g := n as MeshInstance3D
+		if g == null:
+			continue
+		var m := g.material_override as StandardMaterial3D
+		if m == null and g.mesh != null and g.mesh.get_surface_count() > 0:
+			m = g.get_active_material(0) as StandardMaterial3D
+		if m == null:
+			continue
+		mx = maxf(mx, m.albedo_color.get_luminance())
+	return mx
+
+## 一棵子树里所有几何实例的世界 AABB 的并集（一件都量不到给空 AABB）。
+## 口径与"家具整体落在房间里"那几条**同一条**（逐个 `GeometryInstance3D` 的 AABB 过自己的
+## 世界变换再并起来），不另立一套。
+func _subtree_world_aabb(root: Node) -> AABB:
+	var out := AABB()
+	var got := false
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var g := n as MeshInstance3D
+		if g == null or g.mesh == null:
+			continue
+		var a: AABB = g.global_transform * g.mesh.get_aabb()
+		out = a if not got else out.merge(a)
+		got = true
+	return out
 
 ## 【批次 12 A1 删除】原先这里有个 `_shade_screen_bbox(t3, shade)`：把灯罩当成"底口半径 × 罩高"
 ## 的盒子投影到屏幕，用来判"台灯还看得见吗"。灯罩已随 A1 整体删除（`Lamp` 节点不存在了），
@@ -470,6 +540,40 @@ func _run() -> void:
 			_check(inside == 0, "四把椅子都在木桌之外（埋进桌子里的是 %d 把；木桌半宽 %.2f / 半深 %.2f）"
 				% [inside, wood_hw, wood_hd])
 
+			# ---- 一期 Task 8 Step 0：桌下那块地毯 ----
+			# 四条一起钉（brief Step 0 第 3 条要求"铺在桌子底下、盖住桌子足迹、**不压到椅子的座位区**"）：
+			#   ① 它**不挂在 `Room/Furniture` 下** —— 那是"靠墙家具"那张表，三条断言按它逐件量
+			#      （左半侧 / 木桌远边之外 / 两两不相交），居中的地毯三条全违。谁把它挪回去，这几条先红；
+			#   ② 躺在 `FLOOR_Y` 上、且是**一块薄片**（不是一堵墙）；
+			#   ③ **盖住木桌那两维**（`WOOD_HALF_W/D`）—— 少了它，地毯缩到桌子底下就"看不见"了
+			#      （而"把桌子锚在地上"正是要它露出来那一圈）；
+			#   ④ **一寸都不许压到椅子** —— 用**量的**椅子 AABB（`stand_boxes`，同上一段那四块），
+			#      不读 `SEAT_INSET`：读常量等于把摆位实现重述一遍（摆位一改就静默失效）。
+			# **变红验证**：把 `room.RUG_MARGIN` 从 0.10 提到 0.30 ⇒ ④ 立刻红（地毯伸进椅子脚印）。
+			var rug: Node3D = room.get_node_or_null("Rug") as Node3D
+			var rb: AABB = _subtree_world_aabb(rug) if rug != null else AABB()
+			_check(rug != null and rug.get_parent() == room,
+				"地毯挂在 `Room/Rug` 下（不在 `Furniture` 里 —— 那张表是「靠墙家具」，居中的地毯会违三条断言）")
+			_check(rug != null and absf(rb.position.y - GameRoom.FLOOR_Y) < 0.01 and rb.size.y < 0.5,
+				"地毯铺在 FLOOR_Y=%.2f 上、且是一块薄片（底面 y=%.3f / 厚 %.3f）"
+					% [GameRoom.FLOOR_Y, rb.position.y, rb.size.y])
+			_check(rb.position.x <= -t3.WOOD_HALF_W and rb.end.x >= t3.WOOD_HALF_W \
+					and rb.position.z <= -t3.WOOD_HALF_D and rb.end.z >= t3.WOOD_HALF_D,
+				"地毯盖住木桌那两维（地毯 x ∈ [%.2f, %.2f] / z ∈ [%.2f, %.2f] ⊇ 木桌半宽 %.2f / 半深 %.2f）"
+					% [rb.position.x, rb.end.x, rb.position.z, rb.end.z,
+						t3.WOOD_HALF_W, t3.WOOD_HALF_D])
+			var rug_hit := 0
+			var rug_log := ""
+			if seat_root != null:
+				for i_r in 4:
+					var bn_r: Node3D = seat_root.get_child(i_r)
+					var cb_r: AABB = stand_boxes.get(bn_r.name, AABB())
+					if cb_r.size != Vector3.ZERO and rb.intersects(cb_r):
+						rug_hit += 1
+						rug_log += "%s " % bn_r.name
+			_check(rug_hit == 0,
+				"地毯不压到任何一把椅子（压到 %d 把：%s —— 地毯大一圈就「坐到地毯上」了）" % [rug_hit, rug_log])
+
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
 	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：
@@ -507,12 +611,21 @@ func _run() -> void:
 	if lamp_l == null:
 		_check(false, "光源缺了，下面那组断言整段跳过")
 	else:
-		# 全场唯一的 Light3D：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
+		# 全场唯一的光源：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
 		var lights: Array = []
 		for n in t3.find_children("*", "Light3D", true, false):
 			lights.append(n)
-		_check(lights.size() == 1 and lights[0] == lamp_l,
-			"全场只有台灯这一盏灯（实得 %d 盏）" % lights.size())
+		# 【一期 Task 8】从"只有一盏灯"改成"**只有一处投影源**" —— 房间需要补光（`Room/FillLight`，
+		# 见 `room.gd.FILL_LIGHT_POS`），但**投影必须仍然唯一**：第二张阴影图 = 性能与氛围
+		# 两头不讨好（那盏吊灯仍是手牌 / 牌堆 / 转盘 / 棋子 / 房子所有影子的唯一来源）。
+		# ⚠ **这不是放宽**：原来那条"只有一盏灯"守的就有一半是这件事，而"灯共几盏"这一半
+		# 没有变松 —— 它被下面那条"补光不碰桌面"接住了（多出来的灯必须证明自己没碰桌面）。
+		var casters: Array = []
+		for n in lights:
+			if (n as Light3D).shadow_enabled:
+				casters.append(n)
+		_check(casters.size() == 1 and casters[0] == lamp_l,
+			"全场只有一处投影源（实得 %d 处；灯共 %d 盏）" % [casters.size(), lights.size()])
 		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 牌堆才投得出影子）")
 		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
 		var lp: Vector3 = lamp_l.global_position
@@ -575,6 +688,12 @@ func _run() -> void:
 		_check(i_max / i_min <= 1.4,
 			"桌面各位置亮度一致（最高 %.3f / 最低 %.3f = %.2f ≤ 1.4，含环境光 %.3f —— 用户 ⑧）"
 				% [i_max, i_min, i_max / i_min, amb_irr])
+		# 【一期 Task 8 注】本条的求和**只有吊灯 + 环境光两项**（`lamp_l` 的直射 + 与位置无关的
+		# 环境光那一份）——**没有把房间那盏补光算进来**。补光是本批新加的，本条是用户签过字的
+		# 契约、语义不动；**补光落在桌面上的那一小份由下面那条"补光对桌面的照度贡献 ≤
+		# `FILL_ON_TABLE_MAX`"单独封顶**（实测 0.0494，只有吊灯直射那份 0.79~1.12 的 6%）。
+		# 两条合起来才等于"桌面亮度不许被偷改"：**改补光时别只看这一条**
+		#（把 `FILL_ENERGY` 提到 1.0 ⇒ 本条仍绿 1.27、下面那条红 —— 实跑验证过）。
 		# ② **灯仍是主角、且够亮**（把 ① 里与位置无关的环境光那一份摘掉，单看直射）。
 		#    少了这条，"环境光抬到 0.75 + 灯只给一点点"也能把 ① 糊过去（而那不是"一盏灯照亮桌面"）。
 		#    本档实测 **0.85 ~ 1.12**：下界 0.5 挡"能量塌掉 / 射程被收小 / 光被挪远"，
@@ -583,6 +702,86 @@ func _run() -> void:
 			"灯的直射照度在采用档位附近（最低 %.3f ≥ 0.5、最高 %.3f ≤ 1.8 —— 能量 %.2f / 射程 %.1f / 指数 %.2f）"
 				% [i_light_min, i_light_max, lamp_l.light_energy, lamp_l.omni_range,
 					lamp_l.omni_attenuation])
+
+		# ---- 一期 Task 8 新增 ①：**补光不许改掉桌面** ----
+		# 房间那一盏补光（`Room/FillLight`，不投影）是为了给墙 / 家具方向感与明暗；它**不许**
+		# 顺手把批次 13 ⑧ 那条"桌面各位置亮度一致"改掉（那是用户签过字的）。用**同一把照度代理式**
+		# 量它落在桌面采样点上的那一点贡献（设计 §五「尺子只能用一把」—— 这里**不许**改成
+		# "屏幕取像素"，那会变成第二把尺子）。
+		# 阈值 `FILL_ON_TABLE_MAX` 的取值口径见它的声明处（先实测、再定档）。
+		var fill_max := 0.0
+		var fill_non_omni := ""
+		for n in lights:
+			if n == lamp_l:
+				continue
+			# 照度代理式是按 **omni** 写的（射程形状 + 距离衰减 + 桌面法线朝上的 N·L）——
+			# 补光换成平行光，这把尺子就量不了它，"不碰桌面"只剩肉眼（那正是要避免的）。
+			var nl := n as OmniLight3D
+			if nl == null:
+				fill_non_omni = String((n as Node).name)
+				continue
+			for p in samples:
+				fill_max = maxf(fill_max, _mat_sample_irradiance(nl, p, 0.0))
+		_check(fill_non_omni == "",
+			"补光是 OmniLight3D（照度代理式只认 omni；实得「%s」—— 换平行光就没人量得动它了）"
+				% fill_non_omni)
+		_check(fill_max <= FILL_ON_TABLE_MAX,
+			"补光对桌面的照度贡献 ≤ %.2f（实得 %.4f，灯共 %d 盏 —— 超了就是把批次 13 ⑧ 的"
+				% [FILL_ON_TABLE_MAX, fill_max, lights.size()]
+				+ "「桌面均匀」偷偷改掉了）")
+
+		# ---- 一期 Task 8 新增 ②：**家具不再是画面里最亮的东西** ----
+		# 病（Task 7 出图实证）：Kenney 那批 `.glb` 是**零贴图的纯平奶白**，而屋子是暗木 + 灰墙、
+		# 桌面那圈木纹还**带贴图** ⇒ 家具成了画面里最亮、最没质感的东西，读作"没上材质的占位块"。
+		# 判据 = **"被照亮的 albedo"**：每件家具的 albedo 亮度 × 它自己那点照度，必须比
+		# **桌面最暗那个采样点**的同一笔更暗 —— 也就是"家具连桌面最暗的那一角都比不过"，
+		# 这正是"不再是画面里最亮的东西"的保守写法（拿桌面的**最暗**处去比，是故意从严）。
+		# albedo **从材质上读**（不读 `GameRoom.FURN_ALBEDO`：读常量等于把实现重述一遍，
+		# 材质改成什么色都照样过 —— 本文件反复警告的那类永真断言）。
+		var fur_lit := 0.0
+		var fur_lum := -1.0
+		var fur_n := 0
+		var fur_log := ""
+		var fur_roots: Array = []
+		if room != null:
+			var furn8: Node = room.get_node_or_null("Furniture")
+			if furn8 != null:
+				fur_roots.append_array(furn8.get_children())
+			var seats8: Node = room.get_node_or_null("Seats")
+			if seats8 != null:
+				for s in seats8.get_children():
+					for ch in (s as Node).get_children():
+						if ch.name != "Nameplate":      # 名牌是另一码事（棋子色，故意的亮）
+							fur_roots.append(ch)
+		var wood_lum := 0.0
+		var wm8 := t3.wood_mesh.material_override as StandardMaterial3D
+		if wm8 != null:
+			wood_lum = wm8.albedo_color.get_luminance()
+		for n in fur_roots:
+			var lum := _subtree_albedo_lum(n)
+			if lum < 0.0:
+				continue
+			fur_n += 1
+			fur_lum = maxf(fur_lum, lum)
+			# 采样点 = 这一件**世界 AABB 的形心**（形心随家具怎么摆怎么变，不另立一套坐标）
+			var wb8 := _subtree_world_aabb(n)
+			if wb8.size == Vector3.ZERO:
+				continue
+			var lit8: float = lum * _mat_sample_irradiance(lamp_l, wb8.get_center(), amb_irr)
+			fur_log += "%s:%.3f " % [n.name, lit8]
+			fur_lit = maxf(fur_lit, lit8)
+		# 桌面那一笔 = **最暗的那个采样点**（同一把代理式、同一组采样点）
+		var tab_lit := INF
+		for p in samples:
+			tab_lit = minf(tab_lit, wood_lum * _mat_sample_irradiance(lamp_l, p, amb_irr))
+		_check(fur_n >= 7 and wood_lum > 0.0,
+			"（前提）家具与椅子都量得到材质与尺寸（%d 件；木桌 albedo 亮度 %.3f）" % [fur_n, wood_lum])
+		var lit_ratio: float = fur_lit / maxf(tab_lit, 0.0001)
+		_check(lit_ratio <= FURN_LIT_RATIO_MAX,
+			"家具不再是画面里最亮的东西：最亮的家具 albedo × 照度 %.4f ≤ %.2f × 桌面最暗那个角 %.4f"
+				% [fur_lit, FURN_LIT_RATIO_MAX, tab_lit]
+				+ "（实得比值 %.3f，家具 albedo 亮度 %.3f ≤ 木桌 %.3f；逐件 %s）"
+				% [lit_ratio, fur_lum, wood_lum, fur_log])
 		# 光**不许压在棋盘上**：它的平面落点要在**桌垫窗口之外**
 		#（窗口 = 棋盘 + 一圈留白；压在窗口里就成了"棋盘上方的灯"）。
 		# **批次 12 A1**：原先这里查的是"灯杆 / 灯罩 / 光源三个都不在窗口内"（实物已删），
