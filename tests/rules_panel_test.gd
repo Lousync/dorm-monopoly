@@ -90,14 +90,19 @@ func _run() -> void:
 		"基础操作页的滚轮说明改写为「视角推移」（不再教已删除的「滚轮缩放」）")
 	_check(not basic_page.contains("滚轮缩放"),
 		"基础操作页不再出现已被取代的「滚轮缩放」")
-	# 选目标的入口：座位卡随批次 5 退场（入口一度是桌上的立牌）、立牌随批次 9 退场，
-	# 现在入口是**屏幕四角的对手身家条**。
+	# 选目标的入口：座位卡随批次 5 退场（入口一度是桌上的立牌）、立牌随批次 9 退场、
+	# 四角条随批次 12 D 退场；**批次 13 ② 起名册条搬到了左上角「暂停」旁**，
+	# 于是入口是**左上角名册条里对手那一格**。
 	# 正向钉新措辞 + **反向**钉住旧措辞不回来（只删断言等于放行），与上面「滚轮缩放」同款。
+	# **反向那条必须钉"右上角名册条"整串**：只钉「名册条」正断言对新旧文案都成立
+	#（新旧都含这三个字），等于没钉住搬位 —— 玩家会照着右上角找一个已经不在那儿的东西。
 	var all_text := ""
 	for p in pages:
 		all_text += String(p.body)
-	_check(basic_page.contains("名册条") and basic_page.contains("选中"),
-		"基础操作页把选目标的入口说成「点右上角名册条里对手那一行」（批次 12 D 落点从四角条搬到名册条）")
+	_check(basic_page.contains("左上角") and basic_page.contains("名册条") and basic_page.contains("选中"),
+		"基础操作页把选目标的入口说成「点左上角名册条里对手那一格」（批次 13 ② 名册条从右上搬到左上）")
+	_check(not all_text.contains("右上角名册条") and not all_text.contains("点右上角"),
+		"全部页都不再说「右上角名册条 / 点右上角」（批次 13 ② 那两处已搬走）")
 	# 反向契约：四角条只剩"我"那一条之后，"点屏幕四角的对手身家条"这句话就是**教错东西**
 	_check(not basic_page.contains("点屏幕四角的"),
 		"基础操作页不再教「点屏幕四角的对手身家条」（他人的四角条已删）")
@@ -137,7 +142,7 @@ func _run() -> void:
 	_check(g.rules_body.text.contains("转轮盘"), "换到的是「回合与行动」页")
 	_check(g.rules_tab == "turn", "当前页 key 已更新")
 
-	print("== 展开时会压住左下角，格详情卡让位 ==")
+	print("== 展开时格详情卡仍让位（面板搬到右上角后这条不变） ==")
 	g._on_tile_clicked(0)
 	await create_timer(0.2).timeout
 	_check(not g.info_panel.visible, "规则展开时格详情卡不弹出（避免互相压住）")
@@ -154,6 +159,26 @@ func _run() -> void:
 	g._on_tile_clicked(0)
 	await create_timer(0.2).timeout
 	_check(g.info_panel.visible, "收起后格详情卡恢复可弹出")
+
+	print("== 批次 13 ①：面板在右上角、与战报栏互斥 ==")
+	# 位置：右边缘贴 −12（与展开的「战报」栏同一条线）、顶边落在那两枚按钮的实效下沿 46 之下
+	_check(is_equal_approx(g.rules_panel.offset_right, -12.0) and g.rules_panel.offset_top > 46.0,
+		"规则面板锚在右上角（右 %s / 顶 %s）"
+			% [str(g.rules_panel.offset_right), str(g.rules_panel.offset_top)])
+	# 互斥（用户 ① 明写"不能同时打开"）：展开战报 → 规则自动收起
+	_check(not g.rules_panel.visible, "（前置）此刻规则面板是收起的")
+	g._toggle_log()
+	await create_timer(0.1).timeout
+	_check(g.log_panel.visible and not g.rules_panel.visible and g.rules_btn.visible,
+		"展开战报栏 → 规则面板自动收起")
+	# 反向：展开规则 → 战报自动收起
+	g._set_rules_open(true)
+	await create_timer(0.1).timeout
+	_check(g.rules_panel.visible and not g.log_panel.visible,
+		"展开规则面板 → 战报栏自动收起")
+	g._set_rules_open(false)
+	await create_timer(0.1).timeout
+	_check(not g.rules_panel.visible and not g.log_panel.visible, "两边都收起（互斥后仍可各自关闭）")
 
 	g.free()
 	if fails == 0:

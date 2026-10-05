@@ -170,9 +170,11 @@ func _run() -> void:
 		await process_frame
 	await create_timer(0.4).timeout
 
-	print("== 「我」的身家条（左下角）+ 顶部名册条（批次 12 D1 / 设计 §⑩）==")
-	# ⑩ 改结构：他人的**四角**身家条全删，只剩「我」这一条（左下角）；其余人改由**顶部名册条**
-	# 承担（徽记 + 名字 + 身家，一人一行）。名册条同时**接手选目标的落点**与**行动者的倒计时**
+	print("== 「我」的身家条（左下角）+ 名册条（批次 13 ② 起在左上角「暂停」旁）==")
+	# ⑩ 改结构：他人的**四角**身家条全删，只剩「我」这一条（左下角）；其余人改由**名册条**
+	# 承担。**批次 13 ② 又把它从右上角「战报」下方搬到左上角「暂停」旁、并改竖排**（用户 ②：
+	# "改在左上角暂停按钮旁，只显示排名、小人、昵称即可"），所以下面钉的是**左列**的落位。
+	# 名册条同时**接手选目标的落点**与**行动者的倒计时**
 	#（批次 9 起"选目标 = 点对手的身家条"；只删不搬的话选目标就没有落点了）。
 	# UIKit 一律**运行时 load**：静态写 `UIKit.X` 会把 ui_kit.gd 拽进本脚本的静态依赖链，
 	# 而它引用了 autoload `Fx` —— 在 `--script` 入口下此时 autoload 还没注册，
@@ -189,13 +191,14 @@ func _run() -> void:
 	# 现在改挂在名册条上（同一份 standing，见下）。
 	_check(int(bars[0].peer) == 2, "我这条挂的是我（乙，实得 %d）" % int(bars[0].peer))
 	# 反向契约：旧右侧名册栏必须从 game 上**删净**（同时留着就是重复：都挂"名次+名字+身家"）。
-	# 注意 `roster_strip_rows`（批次 12 D 新加的**顶部**名册条的行）**不是**旧的 `roster_rows`，
+	# 注意 `roster_strip_rows`（批次 12 D 新加的**名册条**的格数组；**批次 13 ② 起条在左上角、
+	# 竖排**，所以这里装的其实是"格"、名字沿用批次 12 的旧名）**不是**旧的 `roster_rows`，
 	# 两者名字像、东西完全不同 —— 这条钉的是旧的。
 	_check(g.get("roster_box") == null and g.get("roster_rows") == null,
 		"旧右侧名册栏已从 game 上删净（roster_box / roster_rows）")
 
-	# ---- 顶部名册条：其余三人，一人一行（按身家倒序）----
-	_check(g.roster_strip != null, "顶部名册条已建")
+	# ---- 名册条：其余三人，一格一位（**批次 13 ② 起是左上角「暂停」旁的一列**，按身家倒序）----
+	_check(g.roster_strip != null, "名册条已建（批次 13 ② 起落点在左上角）")
 	_check(g.roster_strip.get_parent() == g.hud_layer,
 		"名册条挂在**屏幕层容器**上（不随摄像机旋转）")
 	# 「常驻、不在可折叠的战报栏里」（⑩ 明写）：名册条与 log_panel 互不为祖先。
@@ -206,7 +209,7 @@ func _run() -> void:
 	var row_peers: Array = []
 	for r in rows:
 		row_peers.append(int(r.peer))
-	_check(rows.size() == 3, "其余三人一行一位（实得 %d 行）" % rows.size())
+	_check(rows.size() == 3, "其余三人一格一位（实得 %d 格）" % rows.size())
 	_check(row_peers == [1, 3, 4], "名册条列出其余三人、按身家倒序（实得 %s）" % str(row_peers))
 	# 名次徽章上的数字就是身家名次。身家 = 现金 + 地产；甲 12000 + 一号楼地价(3800) = 15800，
 	# 于是 乙(20000) > 甲(15800) > 丙(8000) > 丁(100)。
@@ -230,18 +233,20 @@ func _run() -> void:
 		return v
 	_check(String(bars[0].worth_l.text) == GameData.fmt_money(worth_of.call(2, 20000)),
 		"我这条的身家 = 现金 + 地产（实得「%s」）" % String(bars[0].worth_l.text))
-	_check(String(_bar_of(g, 1).worth_l.text) == GameData.fmt_money(worth_of.call(1, 12000)),
-		"名册条里甲的身家 = 12000 + 他名下那块地（实得「%s」）" % String(_bar_of(g, 1).worth_l.text))
+	# **批次 13 ② 起名册格只画「名次徽章 + 小人 + 昵称」**：身家那一行删了 ——
+	# 别人什么身家看棋盘归属色条与玩家详情弹窗（点一格就开）。用户 ② 的原话就是"只显示排名、小人、昵称即可"。
+	_check(_bar_of(g, 1).get("worth_l") == null and _bar_of(g, 1).get("money_l") == null,
+		"名册格没有身家 / 现金行（批次 13 ② 瘦身）")
+	_check(_bar_of(g, 1).get("badge_slot") != null,
+		"名册格有名次徽章位（批次 13 ② 新加 —— 名次就画在这里，两处都有徽章位了）")
+	_check(rank_of.call(_bar_of(g, 1)) == 2,
+		"名册格里甲的名次徽章 = 2（实得 %d）" % rank_of.call(_bar_of(g, 1)))
 	_check(String(bars[0].name_l.text).contains("乙") and String(bars[0].name_l.text).contains("（我）"),
 		"自己那条标「（我）」（实得「%s」）" % String(bars[0].name_l.text))
 	_check(not String(_bar_of(g, 1).name_l.text).contains("（我）"),
-		"名册条不标「我」（自己不在名册条里）")
-	_check(String(_bar_of(g, 4).name_l.text).contains("破产"), "名册条里破产那家标「破产」（实得「%s」）"
+		"名册格不标「我」（自己不在名册条里）")
+	_check(String(_bar_of(g, 4).name_l.text).contains("破产"), "名册格里破产那家标「破产」（实得「%s」）"
 		% String(_bar_of(g, 4).name_l.text))
-	_check(String(_bar_of(g, 4).worth_l.text) == "已出局", "破产那家身家列显示「已出局」")
-	# 名册行按设计 §⑩2 只画「徽记 + 名字 + 身家」：没有徽章位、也没有现金行（那是「我」那条的）。
-	_check(_bar_of(g, 1).get("badge_slot") == null, "名册行没有名次徽章位（§⑩2：徽记 + 名字 + 身家）")
-	_check(_bar_of(g, 1).get("money_l") == null, "名册行没有现金行（身家之外的读数只在自己那条上）")
 	# 轮到谁行动：那一条的名字变金（"该你了"提示，与倒计时行同一件事）
 	_check((bars[0].name_l as Label).get_theme_color("font_color") == UK.ACCENT,
 		"行动者（我）那条名字变金")
@@ -279,6 +284,25 @@ func _run() -> void:
 		"能量读数跟着 st 走（实得「%s」）" % String(bars[0].energy_l.text))
 	_check((bars[0].pips as Array).size() == 6, "「充电宝」把上限提到 6 ⇒ 小格数跟着变（实得 %d）"
 		% (bars[0].pips as Array).size())
+	g.s_state(_state(2, false))
+	await process_frame
+	# ---- 批次 13 ⑥ 回归：飞钞终点必须用**当帧**的行绑定（不是上一次广播的旧绑定）----
+	# 判据：喂一份"某位金额暴涨 ⇒ 名次也变了"的状态 ⇒ 名册整条重排。旧实现把飞钞播在
+	# `_refresh_corner_bars` **之前** ⇒ 终点取到的是**旧行位**的中心；修法挪到刷完之后 ⇒
+	# 终点 = 该 peer **当帧**那一行的中心。（`_money_fly_goal` 是 `_spawn_money_fly` 写的观测点。）
+	var s_fly: Dictionary = _state(2, false)
+	for p in s_fly.players:
+		if int(p.peer) == 3:
+			p.money = 30000     # 丙 8000 → 30000：名次从第 3 蹿到第 1，名册整条重排
+	g.s_state(s_fly)
+	await process_frame
+	var want_fly = g._corner_bar_screen_center(3)
+	_check(want_fly != null, "（前置）名次重排后丙仍在名册条里、那一行可见")
+	_check(g._money_fly_goal.has(3) and want_fly != null
+			and (g._money_fly_goal[3] as Vector2).is_equal_approx(want_fly as Vector2),
+		"飞钞终点 = 该 peer 当帧那一行的中心（实得 %s / 期望 %s）"
+			% [str(g._money_fly_goal.get(3)), str(want_fly)])
+	_check(int(_bar_of(g, 3).get("peer", 0)) == 3, "名册重排后按 peer 仍找得到丙那一行")
 	g.s_state(_state(2, false))
 	await process_frame
 	# 写死的条尺寸必须装得下内容：内容更大会把面板撑大（并把它朝上顶，与别人挤在一起）。
@@ -334,12 +358,27 @@ func _run() -> void:
 			if (all_rects[i] as Rect2).intersects(all_rects[j] as Rect2):
 				quad_cross += 1
 	_check(quad_cross == 0, "身家条与名册行两两不相交（相交 %d 对）" % quad_cross)
-	# 名册条钉在右上（用户 ⑩ 的原话：「放到战报置顶」）：行的中心都在屏幕右半
-	var right_ok := true
+	# **批次 13 ②：名册条钉在左上角「暂停」按钮右侧、竖排**（⑩ 时代它在右上「战报」之下）。
+	# 竖排 ⇒ 只要求"每一格都在按钮右侧、整条在屏幕左半"（居中的横幅 / 战报气泡够不到这条窄列）。
+	var left_ok := true
+	var opt_r: Rect2 = (g.opt_btn as Control).get_global_rect()
 	for r in rows:
-		if ((r as Dictionary).root as Control).get_global_rect().get_center().x < g.size.x * 0.5:
-			right_ok = false
-	_check(right_ok, "名册条钉在右上（「战报」那一区）")
+		var rr2: Rect2 = ((r as Dictionary).root as Control).get_global_rect()
+		if rr2.position.x < opt_r.end.x:
+			left_ok = false
+	_check(left_ok, "名册条每一格都在「暂停」按钮右侧（实得暂停右缘 %.0f）" % opt_r.end.x)
+	var strip_r: Rect2 = (g.roster_strip as Control).get_global_rect()
+	_check(strip_r.position.y <= opt_r.end.y and strip_r.end.y >= opt_r.position.y,
+		"名册条与「暂停」同一条 y 带（实得条 %.0f..%.0f / 暂停 %.0f..%.0f）"
+			% [strip_r.position.y, strip_r.end.y, opt_r.position.y, opt_r.end.y])
+	_check(strip_r.end.x <= g.size.x * 0.5,
+		"名册条整条在屏幕左半（右缘 %.0f ≤ 中线 %.0f）" % [strip_r.end.x, g.size.x * 0.5])
+	# 「我」那条身家条的底边与右下角「转动转盘」按钮的底边平齐（用户 ② 明写）
+	_check(is_equal_approx((bars[0].root as Control).get_global_rect().end.y,
+			(g.action_btn as Control).get_global_rect().end.y),
+		"自身身家条底边与「转动转盘」按钮底边平齐（实得 %.0f / %.0f）"
+			% [(bars[0].root as Control).get_global_rect().end.y,
+				(g.action_btn as Control).get_global_rect().end.y])
 	g.table3d.snap_view(0.0)
 	await process_frame
 
@@ -884,7 +923,7 @@ func _run() -> void:
 	g._process(0.0)
 	await process_frame
 	var cb2: Dictionary = _bar_of(g, 2)        # 乙 = 行动者（= 我那条）
-	var cb1: Dictionary = _bar_of(g, 1)        # 甲 = 非行动者（= 名册条一行）
+	var cb1: Dictionary = _bar_of(g, 1)        # 甲 = 非行动者（= 名册条那一格，批次 13 ② 竖排）
 	_check(not cb2.is_empty() and (cb2.timer_kind as Label).visible,
 		"行动者的那一条上出现倒计时（环节名可见）")
 	_check(String((cb2.timer_kind as Label).text) == "掷轮",
@@ -1733,6 +1772,29 @@ func _run() -> void:
 			and (sc_bag as ScrollContainer).horizontal_scroll_mode \
 			== ScrollContainer.SCROLL_MODE_DISABLED,
 		"背包区只滚纵向（横向关掉，子节点才按容器宽度换行）")
+	# ---- 批次 13 ⑤：按规则上限画**固定槽位数**（已拥有 = 卡，未拥有 = 空槽占位框）----
+	# 断言的强可观察量：槽位总数 == `_bag_cap`（基础 5），且空槽也真的画出来了 ——
+	# 用户 ⑤ 要的就是"看得出最多只能同时拥有 5 张"。
+	var PP = load("res://scripts/player_popup.gd")
+	_check((PP.ITEM_CARD_SIZE as Vector2).is_equal_approx(IC_POP.SIZE_LARGE),
+		"弹窗卡面用大档 `ItemCard.SIZE_LARGE`（描述字号 12px；旧档 168 高只有 7px，用户报看不清）")
+	# 注意：一个槽位是 `_item_row` 返回的 **VBox（卡 + 名字 + 标签）**、不是裸的 ItemCard，
+	# 所以"这一格有没有卡"要往子树里找 —— 别拿 `get_script() == IC_POP` 直接判格根。
+	var slot_has_card := func(cell: Node) -> bool:
+		if cell.get_script() == IC_POP:
+			return true
+		for n in cell.find_children("*", "", true, false):
+			if n.get_script() == IC_POP:
+				return true
+		return false
+	var slot_cells: Array = (flow_bag as Control).get_children()
+	_check(slot_cells.size() == 5,
+		"背包区画出 5 个槽位（基础上限 5，实得 %d）" % slot_cells.size())
+	var empty_l: int = 0
+	for cell in slot_cells:
+		if not slot_has_card.call(cell):
+			empty_l += 1
+	_check(empty_l == 0, "满包（5/5）时没有空槽（实得 %d）" % empty_l)
 	# 面板没有被 5 件道具顶出屏幕（滚动的意义就在这条）
 	_check(g.player_popup._panel.size.y <= g.size.y - 40.0,
 		"5 件道具时面板仍在屏幕内（高 %.0f / 屏幕 %.0f）"
@@ -1754,15 +1816,24 @@ func _run() -> void:
 		"一件道具时背包区**不用滚**（内容高 %.0f ≤ 容器高 %.0f）—— 卡下面那行名字也算进了高度"
 			% [(flow1 as Control).size.y if flow1 != null else -1.0,
 				(sc1 as Control).size.y if sc1 != null else -1.0])
+	# 批次 13 ⑤：一件道具 ⇒ 1 张卡 + **4 个空槽**（槽位总数仍是上限 5）。
+	var cells1: Array = (flow1 as Control).get_children()
+	var empties1: int = 0
+	for cell in cells1:
+		if not slot_has_card.call(cell):
+			empties1 += 1
+	_check(cells1.size() == 5 and empties1 == 4,
+		"1 件道具时画出 1 张卡 + 4 个空槽（实得 %d 格 / %d 空槽）" % [cells1.size(), empties1])
 	g.player_popup.close()
 	await process_frame                              # `close()` 是 `queue_free`，本帧末才真删
 	_check(g.player_popup._body.get_child_count() == 0, "关闭后背包区（含卡）整体清掉")
 
 	print("== 选目标：高亮跟着搬到名册条、点它 = 选中（批次 9 落点在四角条，批次 12 D 搬名册条）==")
 	# 立牌随批次 9 退场 ⇒ "此刻可选中的对手"这份高亮改画在**屏幕层的条**上（2px 金边 + 底色提亮，
-	# 与行动者的 1px 金边分得开）；**批次 12 D 起"别人"那一条是名册条的一行**（四角条只剩"我"那条，
-	# 而目标从来不含自己）—— 高亮的判据（`_hl_peers`）一个字没改，换的只是贴到哪一棵控件上。
-	# 这里既钉"哪几行亮着"，也钉"点亮的那行点下去真的选中"。
+	# 与行动者的 1px 金边分得开）；**批次 12 D 起"别人"那一格是名册条的一格**（四角条只剩"我"那条，
+	# 而目标从来不含自己）—— **批次 13 ② 起那一格在左上角「暂停」旁一列里**：判据（`_hl_peers`）
+	# 一个字没改，换的只是贴到哪一棵控件、哪一处落点上。
+	# 这里既钉"哪几格亮着"，也钉"点亮的那格点下去真的选中"。
 	# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出"有的亮、有的不亮"。
 	g.my_peer = 2
 	var s_tg: Dictionary = _state(2, false)

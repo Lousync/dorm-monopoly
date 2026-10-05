@@ -505,8 +505,9 @@ func take_shot(path: String) -> void:
 	if path.contains("rules"):
 		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
 	if path.contains("logopen"):
-		# 摆拍（批次 12 D）：展开右上角**战报栏**，用来核对"展开的战报栏不压名册条"
-		#（⑩ 明写名册条与它不许打架，`table_hud` 把战报栏的顶边让到了名册条下沿之下）。
+		# 摆拍（批次 12 D）：展开右上角**战报栏**，用来核对"展开的战报栏不压名册条"。
+		# **批次 13 ② 起名册条搬到了左上角 ⇒ 两者已天然分居左右、不会打架**；这条图仍照拍
+		# （战报栏的顶边还留在 134，见 `table_hud` 那段"约束已作废、值暂留"的说明）。
 		# 走**真入口** `_toggle_log`（与玩家点「战报 ▾」同一条路），不直改 `log_panel.visible`。
 		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_logopen_table_plain.png`
 		g._toggle_log()
@@ -627,8 +628,9 @@ func take_shot(path: String) -> void:
 		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
 		g.casino.s_casino_roll.rpc({g.my_peer: 5})
 	if path.contains("target") and g.multiplayer.is_server() and not g.htiles.is_empty():
-		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**名册行**亮着、其余不亮"
-		#（落点史：桌上立牌 → 屏幕四角条（批次 9）→ 顶部名册条（批次 12 D）；高亮由 `_refresh_corner_highlight`
+		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**名册格**亮着、其余不亮"
+		#（落点史：桌上立牌 → 屏幕四角条（批次 9）→ 名册条右上（批次 12 D）→ **名册条左上角、
+		# 「暂停」旁一列（批次 13 ②）**；高亮由 `_refresh_corner_highlight`
 		# 在批次 9 Task 3 接上，出图名 `xx_target_plain.png`）。
 		# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出
 		# "有的亮、有的不亮"，正是这条反馈要展示的对比（跑腿券那种"谁都能选"的拍不出对比）。

@@ -226,8 +226,20 @@ func _run() -> void:
 	_check(bool(g._ab_no_roll) and int(g._ab_extra_peer) == 1, "调休：本回合停转 + 自己下回合补班")
 	g._ab_no_roll = false
 	g._aberration_window(p1)
-	_check(bool(p1.get("ab_extra_roll", false)) and int(g._ab_extra_peer) == -1,
+	_check(bool(p1.get("ab_extra_roll", false)) and int(g._ab_extra_peer) == GameData.NO_PEER,
 		"调休：下一个自己的回合消费补班标记")
+	# ---- 批次 13 ④ 回归：哨兵撞车（真 bug，已修）----
+	# 旧实现 `_ab_extra_peer := -1` 与**第一台机器人**的 peer id（机器人从 −1 起编号）撞车 ⇒
+	# 那台机器人**每回合**白拿一次双掷，且与畸变开关无关（`_aberration_window` 的比对在
+	# 频率闸门之前）。两条判据：① 哨兵本身不许是 −1；② 畸变关闭时 peer=−1 的玩家拿不到补班。
+	_check(int(g._ab_extra_peer) != -1,
+		"调休补班哨兵不是 −1（机器人 peer 从 −1 起编号，撞车会让第一台机器人每回合白拿双掷）")
+	var bot := _mk_player(-1, "机器人A")
+	bot.bot = true
+	# **有意不预设 `_ab_extra_peer`**：就是要看"干净状态"下 peer=−1 的人会不会被误判为待补班。
+	g._aberration_window(bot)
+	_check(not bool(bot.get("ab_extra_roll", false)),
+		"畸变关闭时 peer=−1 的机器人不白拿双掷（哨兵撞车回归）")
 
 	print("== 快照字段 ==")
 	_ab(g, "通胀", 2)

@@ -22,20 +22,27 @@ extends Control
 ## 若询问被压暗底盖住且点不到，那条链就断了 ⇒ 静默超时放弃。弹问（60）是**运行时懒建**的
 ## （`_show_prompt` 里才 append 到 `game`）⇒ 树序天然更晚、被优先拾取，模态仍成立。
 
-## 屏幕上弹窗面板的最大宽度（内容超出时内部滚动/换行；今天最多 7 件，够用）。
-const PANEL_W := 460.0
-## 面板内边距（`_build` 的 `UIKit.margins`）—— 背包区可用宽度 = PANEL_W - 2×它。
+## 屏幕上弹窗面板的最大宽度（屏幕像素）。**批次 13 ⑤ 放大**：卡面换成大档
+##（`ItemCard.SIZE_LARGE` 220×300）之后，一行摆满 5 个槽位 = 5×220 + 4×8 = 1132，
+## 加两侧内边距 = **1168**（1280 宽的窗口两侧各余 56）。
+## 窗口更窄时 `_fill` 会按可用宽度**收窄**（槽位自动换行，见 `_slots_per_row`）——
+## 所以这不是"写死就不管窗口"的那种宽度。
+const PANEL_W := 1168.0
+## 面板内边距（`_build` 的 `UIKit.margins` 是 18/18/16/16）—— 这里取水平那对，
+## 用来把"面板内可用宽度"从面板宽里减出来。
 const PANEL_PAD := 18.0
-## 背包里每件道具**一整张卡**（批次 12 B2）。用 `ItemCard` 按比例排版 ⇒ 给什么尺寸都成立；
-## 取 120×168（= 商店那张 150×210 的 0.8 倍，**同一比例 0.714**）—— 一行放得下 3 张
-##（3×120 + 2×8 = 376 ≤ 424），再多一行就得滚动。
-const ITEM_CARD_SIZE := Vector2(120.0, 168.0)
+## 背包里每件道具**一整张卡**（批次 12 B2；**批次 13 ⑤ 换大档**）。用 `ItemCard` 按比例排版
+## ⇒ 给什么尺寸都成立。描述字号 = `size.y × 0.042`：旧档 168 ⇒ **7px**（用户报"看不清"），
+## 大档 300 ⇒ **12px**、名称 21px。
+const ITEM_CARD_SIZE := ItemCard.SIZE_LARGE
+## 背包槽位一行最多几个（规则上限 5 格正好一行放满；带「置物架」7 格时换第二行）。
+const MAX_SLOT_COLS := 5
 ## 每件道具那一块在卡**之外**还要占的高度：名字一行 + 标签一行 + 两条分隔（`_item_row` 的 VBox）。
 ## **算高度时必须加上它**：只按卡高算的话 `ScrollContainer` 会矮一截，名字 / 标签那一行被裁掉
-##（出图逮到：弹窗里只看得见卡、卡下面那行名字没了）。
-const ITEM_BLOCK_EXTRA := 44.0
+##（出图逮到：弹窗里只看得见卡、卡下面那行名字没了）。批次 13 ⑤ 随字号一起从 44 提到 48。
+const ITEM_BLOCK_EXTRA := 48.0
 ## 背包区最大高度：超过就滚动（`ScrollContainer`），免得大背包把面板顶出屏幕。
-## 一行（168+44+6 = 218）放得下；两行（444）就超了、开始滚。
+## 大档卡一行（300+48+6 = 354）放得下；两行（710）就超了、开始滚 —— 带「置物架」的 7 格是这一档。
 const BAG_MAX_H := 430.0
 
 var _dim: ColorRect
@@ -124,7 +131,7 @@ func _fill(data: Dictionary) -> void:
 	chip_slot.add_child(UIKit.chip(
 		GameData.PLAYER_COLORS[clampi(int(data.get("color_idx", 0)), 0, 3)], 18))
 	head.add_child(chip_slot)
-	var nm := UIKit.label(String(data.get("name", "?")), 18, UIKit.TEXT)
+	var nm := UIKit.label(String(data.get("name", "?")), 22, UIKit.TEXT)
 	nm.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(nm)
 	var rank := int(data.get("rank", 0))
@@ -145,10 +152,10 @@ func _fill(data: Dictionary) -> void:
 	head.add_child(x)
 	# 身家（大字）+ 现金（小字）
 	_body.add_child(UIKit.label("已出局" if not alive else GameData.fmt_money(int(data.get("worth", 0))),
-		20, UIKit.ACCENT if alive else UIKit.TEXT_DIM))
+		26, UIKit.ACCENT if alive else UIKit.TEXT_DIM))
 	if alive:
 		_body.add_child(UIKit.label("现金 %s" % GameData.fmt_money(int(data.get("money", 0))),
-			12, UIKit.TEXT_DIM))
+			14, UIKit.TEXT_DIM))
 	# 能量（体力）：读数 + 一排点亮/熄灭的小格。
 	# 两个色值取自**已随批次 7 退场的桌上体力件**（亮金 / 熄灭），不引用 `TableProps.PIP_*`
 	#（那两件已删，引用会直接编译不过）。
@@ -159,25 +166,30 @@ func _fill(data: Dictionary) -> void:
 	e_row.add_theme_constant_override("separation", 6)
 	e_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body.add_child(e_row)
-	e_row.add_child(UIKit.label("能量 %s" % stamina_text, 13, UIKit.TEXT))
+	e_row.add_child(UIKit.label("能量 %s" % stamina_text, 15, UIKit.TEXT))
 	for i in cap:
 		var pip := Panel.new()
-		pip.custom_minimum_size = Vector2(14, 14)
+		pip.custom_minimum_size = Vector2(16, 16)
 		pip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pip.add_theme_stylebox_override("panel", UIKit.stylebox(
 			Color(0.95, 0.78, 0.35) if i < cur else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 		e_row.add_child(pip)
-	# 卡牌列表（批次 12 B2：一行一件的"小图标 + 名字"改成**一整张 `ItemCard`**）：
+	# 卡牌列表（批次 12 B2：一行一件的"小图标 + 名字"改成**一整张 `ItemCard`**；
+	# **批次 13 ⑤：按规则上限画固定槽位** —— 已拥有的是整张卡，未拥有的是虚线感占位框，
+	# 让玩家一眼看出"最多只能同时拥有 5 张"）。
 	# 换行排布（`FlowContainer`）+ 超高滚动（`ScrollContainer`）—— 大背包不会把面板顶出屏幕。
 	# 弹窗本来就是 Control 树 ⇒ 直接挂真节点即可，**与商店货架同一份画法**，没有任何烘焙。
 	var items: Array = data.get("items", [])
 	item_count = items.size()
-	_body.add_child(UIKit.label("背包 %d 件" % item_count, 13, UIKit.TEXT_DIM))
-	if items.is_empty():
-		_body.add_child(UIKit.label("背包是空的", 13, UIKit.TEXT_DIM))
-		return
+	# 槽位数 = 规则上限 `_bag_cap`（基础 5、带「置物架」7）；数据缺失时退回件数，至少 1 格。
+	var slots: int = maxi(int(data.get("cap", 0)), maxi(items.size(), 1))
+	# 面板宽度按**槽位数与窗口宽度**收窄（窄窗口里 5 列放不下就换行），别硬撑出屏。
+	var per_row: int = _slots_per_row(slots)
+	var panel_w := float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * 8.0 + PANEL_PAD * 2.0
+	_panel.custom_minimum_size = Vector2(panel_w, 0)
+	_body.add_child(UIKit.label("背包 %d / %d 格" % [item_count, slots], 14, UIKit.TEXT_DIM))
 	var sc := ScrollContainer.new()
 	sc.name = "BagScroll"
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED   # 关横向 ⇒ 子节点按容器宽度换行
@@ -185,7 +197,7 @@ func _fill(data: Dictionary) -> void:
 	sc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# 高度取"装得下的自然高度"与上限的较小者（`_bag_needed_h`）—— 行数少时不留一大片空白，
 	# 行数多时封顶、由 `ScrollContainer` 接管。
-	sc.custom_minimum_size = Vector2(PANEL_W - PANEL_PAD * 2.0, _bag_needed_h(items.size()))
+	sc.custom_minimum_size = Vector2(panel_w - PANEL_PAD * 2.0, _bag_needed_h(slots, per_row))
 	_body.add_child(sc)
 	var flow := FlowContainer.new()
 	flow.name = "BagFlow"
@@ -194,15 +206,45 @@ func _fill(data: Dictionary) -> void:
 	flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	flow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sc.add_child(flow)
-	for it in items:
-		flow.add_child(_item_row(it as Dictionary))
+	for i in slots:
+		if i < items.size():
+			flow.add_child(_item_row(items[i] as Dictionary))
+		else:
+			flow.add_child(_empty_slot())
 
-## 背包区需要多高（= 按**整块**尺寸与面板内宽算出的行数，封顶 `BAG_MAX_H`）。
-## 一行放几张由**面板内宽**推出来（不写死 3）：卡宽 120 + 间距 8 ⇒ 内宽 424 时正好 3 张。
-func _bag_needed_h(count: int) -> float:
-	var avail := PANEL_W - PANEL_PAD * 2.0
-	var per_row: int = maxi(int((avail + 8.0) / (ITEM_CARD_SIZE.x + 8.0)), 1)
-	var rows: int = maxi(ceili(float(count) / float(per_row)), 1)
+## 一行放得下几个槽位：按**可用宽度**推（不写死 5），窗口窄时自动换行。
+## 可用宽度 = 视口宽 − 两侧各 40 的余量 − 面板内边距。1280 宽、内边距 36 ⇒ n = 5。
+func _slots_per_row(slots: int) -> int:
+	# 首帧 `size` 可能还是 0（布局未跑）⇒ 退回视口宽度，免得误判成"窄窗口"、只摆 1 列。
+	var vw: float = size.x
+	if vw <= 1.0:
+		vw = get_viewport_rect().size.x
+	var avail: float = maxf(vw, 1.0) - 80.0 - PANEL_PAD * 2.0
+	var n: int = int((avail + 8.0) / (ITEM_CARD_SIZE.x + 8.0))
+	return clampi(n, 1, maxi(1, mini(slots, MAX_SLOT_COLS)))
+
+## 空槽：与整张卡同尺寸的占位框。Compatibility 下没有虚线画笔，用**细边框 + 极低对比底**
+## 代替 —— 与"有卡"一眼分得开即可（用户 ⑤ 要的是"看得出最多只能同时拥有 5 张"）。
+func _empty_slot() -> Control:
+	var box := Panel.new()
+	box.custom_minimum_size = ITEM_CARD_SIZE
+	box.size = ITEM_CARD_SIZE
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_stylebox_override("panel", UIKit.stylebox(
+		Color(1, 1, 1, 0.03), 12,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.32), 1))
+	var l := UIKit.label("空槽", 14, UIKit.TEXT_DIM)
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(l)
+	return box
+
+## 背包区需要多高（= 按**槽位数**与每行格数算出的行数，封顶 `BAG_MAX_H`）。
+## `per_row` 由 `_slots_per_row` 按可用宽度给出（窄窗口里会换行 ⇒ 行数变多）。
+func _bag_needed_h(slots: int, per_row: int) -> float:
+	var rows: int = maxi(ceili(float(slots) / float(maxi(per_row, 1))), 1)
 	return minf(float(rows) * (ITEM_CARD_SIZE.y + ITEM_BLOCK_EXTRA) + float(rows - 1) * 8.0 + 6.0,
 		BAG_MAX_H)
 
@@ -215,7 +257,7 @@ func _item_row(it: Dictionary) -> Control:
 	box.add_theme_constant_override("separation", 2)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(ItemCard.make(iid, ITEM_CARD_SIZE, {}))
-	var name_l := UIKit.label(iid, 13, UIKit.TEXT)
+	var name_l := UIKit.label(iid, 15, UIKit.TEXT)
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_l.custom_minimum_size = Vector2(ITEM_CARD_SIZE.x, 0)
 	name_l.clip_text = true
@@ -229,7 +271,7 @@ func _item_row(it: Dictionary) -> Control:
 	if not bool(d.get("implemented", false)):
 		tags.append("未实装")
 	if not tags.is_empty():
-		var t := UIKit.label("（%s）" % " · ".join(tags), 11, UIKit.TEXT_DIM)
+		var t := UIKit.label("（%s）" % " · ".join(tags), 12, UIKit.TEXT_DIM)
 		t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		t.custom_minimum_size = Vector2(ITEM_CARD_SIZE.x, 0)
 		t.clip_text = true

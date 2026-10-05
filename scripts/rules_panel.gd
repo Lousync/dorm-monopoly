@@ -17,8 +17,9 @@ static func build(g: Node) -> void:
 
 ## 收起态：**右上角**一枚按钮（批次 12 D2 / 设计 §⑩4：从左上角搬到右上、与「战报」并列）。
 ## 位置是照着「战报」按钮（`table_hud` 里 -106..-12 / 12..40）排的：同一条 y、再往左让开 12 像素。
-## 展开的面板**仍在左下角**（384×422 那么大，放右上会盖住战报栏与名册条）——
-## 所以这枚按钮的作用更像是"翻到规则那一页"，面板从屏幕另一侧升起来。
+## **批次 13 ① 起展开的面板也在右上**（贴在按钮之下）——按钮与面板终于落在同一侧，
+## 不再"点右上、面板从左下冒出来"。与「战报」栏**互斥**（见 `game._set_rules_open` /
+## `_toggle_log`）：两者占同一块地方，同时开会叠。
 static func _build_button(g: Node) -> void:
 	g.rules_btn = UIKit.with_icon(UIKit.button("规则说明", 13), "rules", 17)
 	g.rules_btn.tooltip_text = "查看操作提示与完整游戏规则"
@@ -30,19 +31,21 @@ static func _build_button(g: Node) -> void:
 	g.rules_btn.pressed.connect(func() -> void: g._set_rules_open(true))
 	g.add_child(g.rules_btn)
 
-## 展开态：面板 + 分页标签 + 滚动正文
+## 展开态：面板 + 分页标签 + 滚动正文。**批次 13 ①：从左下角搬到右上角** ——
+## 右边缘 **−12**（与展开的「战报」栏同一条线）、顶边 **52**（在「规则说明 / 战报」两枚按钮
+## 的实效下沿 46 之下，让开 6 像素）。用户 ① 原话「弹窗改成右上角，和按钮位置相匹配」。
 static func _build_panel(g: Node) -> void:
 	g.rules_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85), 1, 8)
-	g.rules_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	g.rules_panel.offset_left = 14
-	g.rules_panel.offset_right = 14 + PANEL_W
-	g.rules_panel.offset_top = -12 - PANEL_H
-	g.rules_panel.offset_bottom = -12
+	g.rules_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	g.rules_panel.offset_left = -12 - PANEL_W
+	g.rules_panel.offset_right = -12
+	g.rules_panel.offset_top = 52
+	g.rules_panel.offset_bottom = 52 + PANEL_H
 	g.rules_panel.visible = false
 	g.add_child(g.rules_panel)
-	# 自左下角向上「长出来」，所以缩放的支点放在左下角
-	g.rules_panel.pivot_offset = Vector2(0.0, PANEL_H)
+	# 自右上角向下「长出来」，所以缩放的支点放在右上角
+	g.rules_panel.pivot_offset = Vector2(PANEL_W, 0.0)
 
 	var m := UIKit.margins(12, 12, 10, 10)
 	g.rules_panel.add_child(m)

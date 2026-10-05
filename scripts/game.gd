@@ -128,7 +128,13 @@ var _ab_active: Array = []   # 生效中的持续型：[{id, left}]，left = 剩
 var _ab_queue: Array = []    # 条件型顺延队列（id × ≤2，超出丢弃）
 var _ab_fired := {}          # 条件型一次性标记（id -> true，触发判定时即写）
 var _ab_no_roll := false     # 调休：本回合不能掷轮（一次性，进掷轮循环即消费）
-var _ab_extra_peer := -1     # 调休：该 peer 自己的下一回合连掷两次
+## 调休：该 peer 自己的下一回合连掷两次。**哨兵必须是 `NO_PEER`、不能是 −1** ——
+## 机器人 peer 从 **−1** 起编号（`net._free_bot_id`），拿 −1 当"没人待补班"会让**第一台机器人
+## 每回合**白拿一次双掷（且与畸变开关无关、不扣 `_ab_no_roll` ⇒ 纯加成）。
+## 这是批次 13 ④ 修掉的真 bug；`AGENTS.md` §四「哨兵别用 −1」早有此约定（同类先例：
+## `_set_ring(-1)`、`_shop_peer != 0`）。**判据**：合法调休会同时打 `【畸变】调休 —— …`
+## 与 `【调休】补班时间…` 两条日志，哨兵撞车只有后者。
+var _ab_extra_peer: int = GameData.NO_PEER
 var ab_label: PanelContainer  # 「生效中」横幅（hud 层顶部居中，快照驱动，见 table_hud 里那段）
 var ab_label_l: Label         # 生效中横幅的内层文本
 var ab_wrap: Control          # 横幅的居中容器（TOP_WIDE + CenterContainer，见 table_hud 里那段）
@@ -159,18 +165,28 @@ var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
 var rules_tab := ""
 ## **「我」那条身家条**（屏幕左下角）。批次 5 起是"四条一起建"，**批次 12 D 起只剩这一条**：
-## 他人的信息改由下面的顶部名册条承担（`roster_strip` / `roster_strip_rows`），选目标高亮与
+## 他人的信息改由下面的名册条承担（`roster_strip` / `roster_strip_rows`，**批次 13 ② 起在左上角**），选目标高亮与
 ## 行动者倒计时也跟着搬了过去 —— 但**判据一字未改**（`_hl_peers` / `_op_owner`），
 ## 只是"贴到哪一块控件上"多了一处落点（`_hl_bars()` 把两者合成同一条循环）。
 ## 它取代的是更早的右侧名册栏（`roster_box` / `roster_rows` 已删，理由见 table_hud.gd 里那段）。
-## **注意别与这里的 `roster_strip_rows` 混为一谈**：那个是批次 12 D 新加的**顶部**名册条的行，
+## **注意别与这里的 `roster_strip_rows` 混为一谈**：那个是批次 12 D 新加的**名册条**的格
+##（批次 13 ② 起在**左上角**「暂停」旁），
 ## 与已删除的右侧名册栏不是同一样东西（`regression_test` 的反向契约仍钉着旧的 `roster_rows` 必须不存在）。
 var corner_bars: Array = []
-## 顶部名册条（批次 12 D1）：「他人」一条一行（徽记 + 名字 + 身家 + 行动者那行的倒计时）。
+## 名册条（批次 12 D1 建；**批次 13 ② 从右上角搬到左上角「暂停」旁并改竖排**）：
+## 「他人」一格一位（名次徽章 + 棋子色小片 + 昵称 + 那一格的倒计时）。
 ## 由 `TableHud.build_play_ui` 建、`_refresh_roster` 刷；**常驻**（不在可折叠的战报栏里）。
-## 每一行的字典形态与 `corner_bars` 里那条**同形**（`table_hud._make_roster_row`），
+## 每一格的字典形态与 `corner_bars` 里那条**同形**（`table_hud._make_roster_row`），
 ## 于是高亮 / 倒计时两处刷新函数可以直接把它们并进同一条循环（见 `_hl_bars`）。
-var roster_strip: HBoxContainer
+##
+## **类型必须是 `VBoxContainer`**：批次 13 ② 起条改竖排 —— 屏幕顶部那整条横带被**居中**的东西
+## 占着（畸变横幅 y ≈ 6..48、战报气泡 y ≥ 52、选目标提示条 y 52..100），横排必然相撞；
+## 竖排只占 x ≈ 104..250 这一条窄列（详细理由与代价见 `table_hud.build_play_ui` 那一段）。
+## 这里原先写的是 `HBoxContainer`，`build_play_ui` 赋值时直接
+## `Invalid assignment … with value of type 'VBoxContainer'` **把整个界面构建打断在那一行**
+##（后面 `RulesPanel.build` / 移动弹窗全没跑，测试里表现为"条全空 + 卡住"）——
+## 改容器种类时**这一处必须一起改**，别只改 `table_hud`。
+var roster_strip: VBoxContainer
 var roster_strip_rows: Array = []
 ## 最近一次广播算出的身家表（peer -> `_refresh_players` 里那份 entry，带 rank / worth / money）。
 ## **名次徽章的唯一来源**：原先 `_rank_of` 是回头去 `corner_bars` 里翻，四角条只剩一条之后
@@ -247,6 +263,13 @@ var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/
 ## peer -> 上一次显示的金额（收支播报的判据）。座位卡与它上面那块滚动数字的
 ## 控件已随批次 5 Task 2 退场，这份状态搬到对局层自己身上（语义与 row.shown 一字未改）。
 var _money_shown := {}
+## 本帧待播的飞钞（批次 13 ⑥）：`_refresh_players` 的钱循环只**记**差分，等
+## `_refresh_corner_bars` 把 peer→条/行的绑定刷成当帧的、再统一播（否则终点算早一帧）。
+## 每帧在 `_refresh_players` 开头清空 —— 别让它跨帧累积。
+var _money_flies: Array = []
+## 测试观测点（批次 13 ⑥）：peer -> **当帧**飞钞终点（`_spawn_money_fly` 里写）。
+## 用途：钉住"终点用的是 `_refresh_corner_bars` 之后的绑定"，不是上一次广播的旧绑定。
+var _money_fly_goal := {}
 var _chat_shown := 0
 var _prompt_tw: Tween
 var _prompt_bar: ProgressBar
@@ -691,11 +714,11 @@ func _bot_roll_later() -> void:
 func _aberration_window(p: Dictionary) -> void:
 	p.ab_extra_roll = false   # 上回合残留的调休补班标记清掉（查寝等提前退回合的场合）
 	_ab_tick()
-	if _ab_extra_peer == int(p.peer):
+	if _ab_extra_peer != GameData.NO_PEER and _ab_extra_peer == int(p.peer):
 		if _is_sleeping(p):
 			pass   # 休眠回合用不了调休，留到下一个自己的回合
 		else:
-			_ab_extra_peer = -1
+			_ab_extra_peer = GameData.NO_PEER
 			p.ab_extra_roll = true
 			_log("【调休】补班时间：%s 本回合可以连转两次！" % p.name, "#f0a0c0")
 	var pick := _ab_pick(_ab_candidates(p))
@@ -1299,7 +1322,7 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 		_on_roll_pressed()
 		return true
 	# 3) 选目标：改点**屏幕层的名册行**，见 `_on_corner_bar_clicked`（批次 9 落点在四角条，
-	#    批次 12 D 起他人那一条在顶部名册条上）——
+	#    批次 12 D 起他人那一条在名册条上；**批次 13 ② 起那条在左上角「暂停」旁**）——
 	#    原先的"点桌上立牌"那一支随立牌一起删掉了（立牌命中链已不存在）。
 	return false
 
@@ -2149,6 +2172,7 @@ func _name_by_peer(peer: int) -> String:
 func _refresh_players() -> void:
 	# 桌面实体物件：每次状态广播都重新贴回桌垫坐标（见 _refresh_table_props 的注释）
 	_refresh_table_props()
+	_money_flies.clear()     # 本帧飞钞队列（批次 13 ⑥：记在钱循环里、播在身家条刷完之后）
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
 	for p in st.get("players", []):
@@ -2187,7 +2211,9 @@ func _refresh_players() -> void:
 			var pos := _token_screen_pos(peer, int(p.pos)) + Vector2(0, fy)
 			Fx.float_text(self, pos, ("+" if diff > 0 else "") + GameData.fmt_money(diff), col, 19)
 			Fx.play("cash" if diff > 0 else "pay", -5.0)
-			_spawn_money_fly(peer, diff)
+			# **飞钞要等一帧再播**（批次 13 ⑥ 修的真 bug，见下面 `_money_flies` 那段注释）：
+			# 这里只记差分，播放在 `_refresh_corner_bars` 之后。
+			_money_flies.append({"peer": peer, "diff": diff})
 
 	# 身家排名（名次徽章的依据）
 	var order: Array = worth_map.keys()
@@ -2209,6 +2235,15 @@ func _refresh_players() -> void:
 	#（`_push_peer_highlight` 不伴随状态变化）会在那里被早退掉；而且广播会重排角位 ——
 	# 只贴"变化的那一次"会漏。所以每次广播末尾都按 `_hl_peers` 重放一遍。
 	_refresh_corner_highlight()
+	# **飞钞最后播**（批次 13 ⑥ 修的真 bug）：`_spawn_money_fly` 的终点取
+	# `_corner_bar_screen_center(peer)`，而那个查询读的是每条 bar 的 `peer` 绑定与可见性 ——
+	# 那些**只有当帧的 `_refresh_corner_bars` / `_refresh_roster` 跑完才成立**。原先在钱循环里
+	# 就地播（上面那段）⇒ 读的是**上一次广播**的绑定；名册按身家排序，于是"金额变了、名次也变了"
+	# 的那一帧，钞票会飞向一行、下一帧那行换了人（或正要被藏起来）。
+	# 飘字与音效锚在**棋子**上、与名册无关，留在上面原位不动。
+	for f in _money_flies:
+		_spawn_money_fly(int(f.peer), int(f.diff))
+	_money_flies.clear()
 	# 玩家道具弹窗（批次 9）：打开期间随广播重填（数值实时）；那个人离场或整局结束即关掉
 	#（弹一个已经不存在的人的弹窗没有意义）。
 	if player_popup != null and player_popup.is_open():
@@ -2218,10 +2253,10 @@ func _refresh_players() -> void:
 		else:
 			_open_player_popup(op)
 
-## 「我」那条身家条 + 顶部名册条 —— **一处刷完**（批次 12 D1 起）。
+## 「我」那条身家条 + 名册条 —— **一处刷完**（批次 12 D1 起；**批次 13 ② 起名册条在左上角**）。
 ##
 ## **为什么合成一处**：两者挂的是同一份 `standing`（身家 / 名次 / 现金 / 是否出局）、同一个
-## 行动者高亮、同一条倒计时，只是载体不同（左下角一条 vs 右上角一行人）。分两个函数各刷一遍，
+## 行动者高亮、同一条倒计时，只是载体不同（左下角我这一条 vs 名册条里的一格）。分两个函数各刷一遍，
 ## 就等于把"哪一位的身家是什么"算两次、还可能刷出不一致 —— 所以入口仍是这一个。
 ##
 ## **「我」那条**（`corner_bars[0]`）挂 `_seat_peers()[0]`：自己打头 ⇒ 就是"我"；
@@ -2296,13 +2331,15 @@ func _fill_peer_bar(bar: Dictionary, e: Dictionary, turn_peer: int, phase: Strin
 		bar.chip = UIKit.chip(GameData.PLAYER_COLORS[clampi(col, 0, 3)], 18 if is_self else 16)
 		(bar.chip_slot as Control).add_child(bar.chip)
 		bar.chip_color = col
-	# 名次徽章（只有「我」那条有徽章位）：1 金 / 2 银 / 3 铜 / 其余石板灰（真变了才重建）
+	# 名次徽章（批次 13 ② 起**两处都有**：我那条 24、名册格 20 —— 尺寸取徽章位自己的最小宽）：
+	# 1 金 / 2 银 / 3 铜 / 其余石板灰（真变了才重建）
 	var rank := int(e.get("rank", 0))
 	bar["rank"] = rank
 	if bar.get("badge_slot") != null and int(bar.badge_rank) != rank:
 		for c in (bar.badge_slot as Control).get_children():
 			c.queue_free()
-		bar.badge = UIKit.rank_badge(rank, 24)
+		var bsz: int = int((bar.badge_slot as Control).custom_minimum_size.x)
+		bar.badge = UIKit.rank_badge(rank, maxi(bsz, 16))
 		(bar.badge_slot as Control).add_child(bar.badge)
 		bar.badge_rank = rank
 	# 名字（「我」那条标「我」、破产标「破产」）；轮到谁行动谁的名字变金
@@ -2316,11 +2353,14 @@ func _fill_peer_bar(bar: Dictionary, e: Dictionary, turn_peer: int, phase: Strin
 	name_l.text = "%s%s" % [String(e.get("name", "?")), tags]
 	name_l.add_theme_color_override("font_color",
 		UIKit.TEXT_DIM if not alive else (UIKit.ACCENT if active else UIKit.TEXT))
-	# 身家（名次的依据）；破产与座位卡同款提示：不报数字
-	var worth_l: Label = bar.worth_l
-	worth_l.text = "已出局" if not alive else GameData.fmt_money(int(e.worth))
-	worth_l.add_theme_color_override("font_color",
-		UIKit.TEXT_DIM if not alive else UIKit.ACCENT)
+	# 身家（名次的依据）；破产与座位卡同款提示：不报数字。
+	# **批次 13 ② 起名册条那一格没有这一行**（瘦身成"名次 + 小人 + 昵称"）⇒ 按 `bar.get` 守卫，
+	# 与下面 `money_l` 同一写法。名次徽章两处都有（`badge_slot` 各自建）。
+	if bar.get("worth_l") != null:
+		var worth_l: Label = bar.worth_l
+		worth_l.text = "已出局" if not alive else GameData.fmt_money(int(e.worth))
+		worth_l.add_theme_color_override("font_color",
+			UIKit.TEXT_DIM if not alive else UIKit.ACCENT)
 	# 现金（B，只有「我」那条有这一行）：身家是「现金 + 地产」，决定买卖 / 付租的是这一行。
 	# 破产那家没有现金可言，留空（**不隐藏控件** —— 藏了会把这一条的内容高度改掉）。
 	if bar.get("money_l") != null:
@@ -2366,11 +2406,13 @@ func _refresh_my_energy(bar: Dictionary, peer: int) -> void:
 			Color(0.95, 0.78, 0.35) if lit else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 
-## 顶部名册条（批次 12 D1）：其余玩家一人一行，按 `standing` 的顺序（身家倒序）。
+## 名册条（批次 12 D1 建；**批次 13 ② 搬左上角「暂停」旁、改竖排**）：其余玩家一格一位，
+## 按 `standing` 的顺序（身家倒序 = 名次）自上而下排 —— 用户 ② 要的就是"排列顺序根据排名实时变化"，
+## 所以**这一份顺序一个字都不用改**，搬位顺手就拿到了实时排序。
 ##
-## 行数按需增删（人少了把多出来的行**藏起来**、不拆节点，同四角条那套）；
-## 条宽（左边缘）按**实际行数**算 —— 条锚在 `TOP_RIGHT`，所以左边缘 = 屏宽 + `offset_left`。
-## 行内容走 `_fill_peer_bar(..., is_self = false)`：与「我」那条同一个填法。
+## 格数按需增删（人少了把多出来的格**藏起来**、不拆节点，同四角条那套）；
+## 条宽/条高（右边缘 / 下边缘）取**容器自己算的那份**，左边缘固定在 `ROSTER_X`。
+## 格内容走 `_fill_peer_bar(..., is_self = false)`：与「我」那条同一个填法。
 func _refresh_roster(standing: Array, mine_peer: int, turn_peer: int, phase: String) -> void:
 	if roster_strip == null or not is_instance_valid(roster_strip):
 		return
@@ -2390,10 +2432,15 @@ func _refresh_roster(standing: Array, mine_peer: int, turn_peer: int, phase: Str
 			continue
 		root.visible = true
 		_fill_peer_bar(row, others[i], turn_peer, phase, false)
-	# 左边缘：条锚在 TOP_RIGHT ⇒ 左边缘 = 屏宽 + offset_left ⇒ offset_left = -(右边距 + 条宽)。
-	# **条宽取容器自己算的那份**（`get_combined_minimum_size()`：行是内容驱动的宽度，
-	# 自己按"行数 × 固定行宽"手算会与真实宽度对不上、把最右那行推出屏幕 —— 实测踩过）。
-	roster_strip.offset_left = -12.0 - roster_strip.get_combined_minimum_size().x
+	# 落位（**批次 13 ② 起条锚在 TOP_LEFT、竖排**）：左边缘固定在 `ROSTER_X`（暂停按钮右侧），
+	# 宽/高取**容器自己算的那份**（`get_combined_minimum_size()`：格是内容驱动的宽度，
+	# 自己按"格数 × 固定格宽"手算会与真实宽度对不上 —— 实测踩过）。
+	# **夹一道屏幕中线**：名册条整条只许待在左半，免得昵称一长就把右边缘推进居中的横幅 / 气泡里。
+	roster_strip.offset_left = TableHud.ROSTER_X
+	var strip_min: Vector2 = roster_strip.get_combined_minimum_size()
+	var left_limit: float = maxf(TableHud.ROSTER_X + 120.0, size.x * 0.5 - 20.0)
+	roster_strip.offset_right = minf(TableHud.ROSTER_X + strip_min.x, left_limit)
+	roster_strip.offset_bottom = TableHud.ROSTER_Y + strip_min.y
 
 ## 高亮 / 倒计时共用的**条 + 行**清单（批次 12 D1）：「我」那条 + 名册条的每一行。
 ## **别把它们分别遍历** —— "谁亮着"（`_hl_peers`）与"倒计时挂谁"（`_op_owner`）各只有一份判据，
@@ -2550,8 +2597,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			player_popup.close()
 
 func _toggle_log() -> void:
-	log_panel.visible = not log_panel.visible
-	log_toggle.text = "战报 ▴" if log_panel.visible else "战报 ▾"
+	_set_log_open(not log_panel.visible)
+
+## 展开/收起战报栏（批次 13 ① 从 `_toggle_log` 里抽出来，好让规则面板那边也能调）。
+## **与「规则说明」面板互斥**：两者自批次 13 ① 起同在右上角、占同一块地方 ——
+## 展开战报先收规则；`_set_rules_open` 那边对称地收战报。两边都只调对方那个"关"分支，
+## 不构成递归。
+func _set_log_open(on: bool) -> void:
+	if log_panel == null:
+		return
+	if on and rules_open:
+		_set_rules_open(false)
+	log_panel.visible = on
+	log_toggle.text = "战报 ▴" if on else "战报 ▾"
 
 func _at_auto_roll() -> void:
 	await get_tree().create_timer(0.4).timeout
@@ -4211,14 +4269,14 @@ func _selectable_props(peer: int) -> Array:
 ## 把「此刻可被选中的玩家」高亮**一次推给两处**：
 ##   * 画布（`board.set_select_peers` —— 座位卡的金框，座位卡随批次 5 Task 2 退场后它空转、接口保留）；
 ##   * **身家条 / 名册行**（`_refresh_corner_highlight`，批次 9 补的可见反馈；亮着 = 能点；
-##     批次 12 D 起他人那一条是顶部名册条的一行）。
+##     批次 12 D 起他人那一格是名册条的一格；**批次 13 ② 起那条在左上角**）。
 ##
 ## **判据只有一份**：可选玩家由调用方（`_begin_peer_target`）算出，本函数只做转发 ——
 ## 于是"哪几条亮着"与"点谁真的有反应"（`_on_corner_bar_clicked` → `_on_seat_clicked` 第一行）永远同源。
 ## 传空数组 = 全部熄灭；换阶段（peer → tile）与取消都走它。
 ##
 ## 批次 9：立牌退场，原先"推给立牌"那一路随之删掉；高亮改画在屏幕层的条上（批次 12 D 起
-## 他人那一条在顶部名册条上，见
+## 他人那一格在名册条上（**批次 13 ② 起在左上角「暂停」旁**），见
 ## `_refresh_corner_highlight`）。`_hl_peers` 是这份高亮的**单一来源**（广播末尾按它重放）。
 func _push_peer_highlight(peers: Array) -> void:
 	if board != null:
@@ -4244,10 +4302,11 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_stage = "peer"
 	_tgt_peer = -1
 	_tgt_tiles = []
-	# 入口是**屏幕右上角名册条里对手那一行**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
-	# → 顶部名册条（批次 12 D））—— 与规则说明（`rules_text.gd` 基础操作页）同源口径，
+	# 入口是**屏幕左上角名册条里对手那一格**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
+	# → 顶部名册条右上（批次 12 D）→ **名册条左上角、暂停按钮旁（批次 13 ②）**）——
+	# 与规则说明（`rules_text.gd` 基础操作页）同源口径，
 	# 别再说"立牌 / 玩家卡 / 四角条"（玩家会照着找一样已经不存在的东西）。
-	_show_target_hint("点右上角名册条里对手那一行选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
+	_show_target_hint("点左上角名册条里对手那一格选择目标" + ("（Esc/右键取消）" if not then_prop else "（再点他的一块地）"))
 	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）
@@ -4304,7 +4363,7 @@ func _rank_of(peer: int) -> int:
 	return int((_standing_by_peer.get(peer, {}) as Dictionary).get("rank", 0))
 
 ## 选玩家完成。批次 9 起入口是**屏幕层的条**（`_on_corner_bar_clicked` 转到这儿；批次 12 D 起
-## 他人那一条在顶部名册条上）；
+## 他人那一格在名册条上（**批次 13 ② 起在左上角「暂停」旁**））；
 ## 座位卡与立牌都已退场，这里只是后果函数。
 func _on_seat_clicked(peer: int) -> void:
 	if _tgt_stage == "peer" and peer != my_peer:
@@ -4419,10 +4478,11 @@ func _hud_intro() -> void:
 		if c != null and is_instance_valid(c):
 			Fx.animate_in(c, float(it[1]))
 
-# ================= 规则说明面板（左下角） =================
+# ================= 规则说明面板（右上角） =================
 
-## 展开/收起规则说明。展开时它占据左下角，格子详情卡让位（隐藏）——
-## 两者锚在同一块地方，同时显示会互相压住；收起后格详情卡照常弹出。
+## 展开/收起规则说明。**批次 13 ①**：面板与「战报」栏同在右上角 ⇒ 两者**互斥**
+##（展开规则先收战报，见下）；格子详情卡仍然让位（隐藏）——它悬浮在被点格子上方，
+## 右上角那几格仍会与面板重叠；收起后格详情卡照常弹出。
 func _set_rules_open(on: bool) -> void:
 	if rules_open == on:
 		return
@@ -4431,8 +4491,11 @@ func _set_rules_open(on: bool) -> void:
 	rules_panel.visible = on
 	if on:
 		info_panel.visible = false
-		# 自左下角向上「长出来」：缩放支点在左下角（构建时已设，这里兜底重算）
-		rules_panel.pivot_offset = Vector2(0.0, rules_panel.size.y)
+		# ① 与战报栏互斥：两者占右上同一块地方，同时开会叠。
+		if log_panel != null and log_panel.visible:
+			_set_log_open(false)
+		# 自右上角向下「长出来」：缩放支点在右上角（构建时已设，这里兜底重算）
+		rules_panel.pivot_offset = Vector2(rules_panel.size.x, 0.0)
 		rules_panel.modulate.a = 0.0
 		rules_panel.scale = Vector2(0.96, 0.96)
 		var tw := create_tween().set_parallel(true)
@@ -4476,6 +4539,9 @@ func _spawn_money_fly(peer: int, diff: int) -> void:
 	var sp = _corner_bar_screen_center(peer)
 	if sp != null:
 		card_at = sp as Vector2
+	# **测试观测点**（批次 13 ⑥）：记下这一位这一帧用的终点，供 `hud_test` 钉住"终点是当帧
+	# 那一行"（读的是 `_refresh_corner_bars` 刷完之后的绑定，不是上一次广播的）。
+	_money_fly_goal[peer] = card_at
 	for i in 4:
 		var bill := Panel.new()
 		bill.size = Vector2(22, 12)
@@ -4579,7 +4645,7 @@ func _refresh_op_timer(delta: float) -> void:
 ## 它在 3D / 2D 两端都常驻（比立牌稳），自己的回合在 3D 端也看得到还剩几秒
 ##（批次 4 时它在座位卡上，3D 端看得见）。
 ## **批次 12 D 起清单是 `_hl_bars()`**：行动者是我 ⇒ 落在左下角我自己那条；
-## 是别人 ⇒ 落在右上角名册条 TA 那一行。
+## 是别人 ⇒ 落在名册条 TA 那一格（**批次 13 ② 起在左上角「暂停」旁**）。
 ##
 ## **不另立计时**：数据就是 `_op_*` 这同一份（广播重置 + 本机逐帧扣 delta 的那个插值）。
 ## 暂停时 `_process` 不跑 ⇒ 这里也不会被调用 ⇒ 与房主窗口一起冻结，**同一条暂停语义**。
@@ -4654,12 +4720,13 @@ func _refresh_shop_timer(kind_text: String) -> void:
 			shop_timer_left.add_theme_color_override("font_color", UIKit.TEXT_DIM)
 
 ## 屏幕底部「贴底条」可用的横向带（左起 / 右止）。现在只剩黑市操作条在用（底栏已随
-## 批次 3 Task 6 拆除）；它只按屏幕居中，一旦左下角展开规则说明面板、或右上角战报栏
-## 展开，就会被压住，所以按两侧栏的实际几何夹位。
+## 批次 3 Task 6 拆除）；它只按屏幕居中，一旦右上角战报栏展开就会被压住，所以按它的实际几何夹位。
+##
+## **批次 13 ① 起不再为「规则说明」面板让位**：面板已从左下角搬到右上角、且与战报栏互斥 ⇒
+## 它不再占屏幕底部那条带（原先那句 `rules_panel.offset_right + 10` 在新锚点下恒为负、
+## 是个 no-op，留着会误导后来人，故删）。
 func _dock_band() -> Vector2:
 	var x0 := 14.0
-	if rules_panel != null and rules_panel.visible:
-		x0 = maxf(x0, rules_panel.offset_right + 10.0)
 	# 格详情卡已改成悬浮在格子上方，不再占左下角，所以不需要再为它让位
 	var x1 := size.x - 14.0
 	if log_panel != null and log_panel.visible:
