@@ -503,7 +503,7 @@ func take_shot(path: String) -> void:
 		await get_tree().create_timer(0.15).timeout
 		_on_tile_clicked(27)  # 顺便展示格子详情卡
 	if path.contains("rules"):
-		g._set_rules_open(true)  # 摆拍：展开左下角「规则说明」
+		g._set_rules_open(true)  # 摆拍：展开右上角「规则说明」（批次 13 ① 起面板从左下角搬来）
 	if path.contains("logopen"):
 		# 摆拍（批次 12 D）：展开右上角**战报栏**，用来核对"展开的战报栏不压名册条"。
 		# **批次 13 ② 起名册条搬到了左上角 ⇒ 两者已天然分居左右、不会打架**；这条图仍照拍
