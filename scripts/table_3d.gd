@@ -707,6 +707,13 @@ func _build_viewport() -> void:
 	#  搬到屏幕层的 `DeckReveal`、不再"从实体摞顶面抽出"，那条注入连同 `TableProps.deck_top_px`
 	#  一起删掉了。BoardView 与 TableProps 之间不再有这条依赖。）
 
+	# ---- 3D 房间（一期）：挂在容器自己名下（节点名 `Room`）----
+	# 挂在这里（3D 场景与桌垫都已就绪之后）而不是 `_init` 的最前面：房间不参与任何玩法，
+	# 只需"桌子已经在那儿"。它**只摆位与长相**，一行玩法都不碰。
+	# `ROOM_ENABLED=false` 时 `build()` 返回 null（本期的保命开关，退回到"只有桌子"的样子）
+	# ⇒ 这里**不能**当成必然拿到节点用（下一行没有别的话要接它，是故意的）。
+	var room := GameRoom.build(self, LAMP_LIGHT_POS)
+
 # ---------------- 屏幕层暗角（设计稿 §三 / §6.4） ----------------
 
 ## 屏幕层暗角：四周压暗，补 Compatibility 渲染器没有的 SSAO / 景深。

@@ -166,6 +166,23 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
+	# ---- 3D 房间（一期）：总开关 + 房间一律不投影 ----
+	# 契约：ROOM_ENABLED 为 true 时房间里必须有墙/地/天花板/家具；为 false 时
+	# 房间里一个节点都不许留（退回到"只有桌子"的样子）—— 这是本期唯一的保命开关。
+	# 写明 `: Node` 而不是 `:=`：`t3` 是 `load(...).new()`（Variant），动态调用的返回值推不出类型，
+	# `:=` 会直接 Parse Error（本文件里取 t3 的东西一律不靠推断，见 `var lamp_l = t3.get(...)`）。
+	var room: Node = t3.get_node_or_null("Room")
+	_check((room != null) == GameRoom.ROOM_ENABLED,
+		"ROOM_ENABLED=%s 时房间节点%s存在" % [GameRoom.ROOM_ENABLED, "" if room != null else "不"])
+	if room != null:
+		# 房间物件**一律不投影**：吊灯是唯一投影源，多一个投影物件 = 多一张阴影图。
+		var shadow_casters: Array = []
+		for n in room.find_children("*", "GeometryInstance3D", true, false):
+			if (n as GeometryInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				shadow_casters.append(n)
+		_check(shadow_casters.is_empty(),
+			"房间物件一律不投影（违规 %d 个）" % shadow_casters.size())
+
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
 	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：
