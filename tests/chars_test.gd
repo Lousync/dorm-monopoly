@@ -1,19 +1,23 @@
 extends SceneTree
-## 二期 Task 1：角色接入 + 手摆坐姿（**一个人坐对 —— slot 1**）
+## 二期 Task 2：**四个座位（3 个角色）+ 座位 ↔ peer 固化**
 ## godot --headless --path . --script tests/chars_test.gd
 ##
-## 判据四条（brief Step 1）+ 本轮 fix round 加的一条：
-##   ① `slot 1` 坐着一个人、`slot 0`（近侧 = 「我」，相机就在那儿）**一个人都没有**；
-##   ② **脚底落在 `FLOOR_Y`**（容差 ≤0.05 —— **手摆坐姿对不对的唯一硬判据**）；
-##   ③ 角色**不与桌子相交** —— **逐件**对桌子的**实体体积**（底座 ∪ 桌面那一层）量体积相交。
-##      【本轮重述】旧口径是"合并 AABB 与 `TableBase` 不相交"，实得净空 0.025 世界（5 mm）。
-##      那个数**没有意义**：离桌子最近的那一件是**浮在桌面上方 1.08~3.33 的头**，而合并盒把
-##      脚下的 y 一路并到头顶 ⇒ 那 5 mm 量的是"头的近侧边 vs 底座的远侧边"，两者在 y 上差
-##      1 米以上、根本不可能相交。**真要求是"人不许穿进桌子"** ⇒ 逐件按真实世界 AABB 量。
-##   ④ 角色材质**不是 `SHADING_MODE_UNSHADED`**、**贴图还在**（普查 §7.2：包自带
-##      `KHR_materials_unlit`，照抄 `room.gd` 的整片覆盖会**抹掉贴图**）；
-##   ⑤ **【本轮新增】角色不许是画面里最亮的东西**（Ruling E2 的 J1）：角色的有效 albedo
-##      （色调 ⊙ 贴图那一块的平均色）× 照度，不许高过桌面那一笔（同一把尺子）。
+## Task 1 立的判据一条不丢（①~⑤ 与"不投影"），**逐条按三个角色重述**（原来只有 slot 1 一个），
+## 另加本任务的两条：
+##   ① `slot 1/2/3` 各坐一个人、**`slot 0`（近侧 = 「我」，相机就在那儿）一个人都没有**；
+##   ② 每个人都站在**自己那把椅子**的锚点上（xz 与朝向都读一期 `seat_anchor(slot)`，不另算）；
+##   ③ **脚底落在 `FLOOR_Y`、髋落在座面**（手摆坐姿对不对的唯一硬判据）；
+##   ④ 角色**不与桌子相交** —— 逐件、对桌子的**实体体积**（底座 ∪ 桌面那一层）量体积相交；
+##   ⑤ 材质**不是 `SHADING_MODE_UNSHADED`**、**底色只被压暗过**、**贴图还是自己那张**；
+##   ⑥ **角色不许是画面里最亮的东西**（Ruling E2 的 J1）：三人的有效 albedo × 照度，
+##      最亮那个也不许高过桌面那一笔（同一把尺子）；
+##   ⑦ 三个人**两两不相交**（各在各自椅子上，互相不穿）；
+##   ⑧ 不投影（房间的纪律：全场唯一投影源是那盏吊灯）。
+##   **【本轮新增】** ⑨ **模型按棋子色选**（`CHAR_MODELS_BY_COLOR`）——喂进来的座位序里
+##      **"色号"与"座位号"处处不等** ⇒ 按椅子号取模型的话这条必红；
+##      ⑩ **同一个 peer 换椅子坐仍是同一张脸**（座位序轮转一格后逐家比对）；
+##      ⑪ **同样的座位序再来一次 = 同一批节点实例**（`set_chars` 的早退；
+##      去掉早退这条立刻红 —— 每次广播都把三个人整套重建）。
 ##
 ## 坐姿不是包里的 `sit`（腿是一整块刚体、无膝关节，`sit` 把腿平举 ⇒ 会捅进桌子 1.66 世界），
 ## 是**手摆**（普查 §5.2）：整体下移 `SEAT_ROOT_Y` + 腿竖直压到 `LEG_SQUASH`
@@ -22,20 +26,17 @@ extends SceneTree
 
 var fails := 0
 
-## 本任务只放**一个人**：1 号座位（右侧）。
-const CHAR_SLOT := 1
+## 本任务有人的三个座位（**0 号不算**：那是「我」）。
+const CHAR_SLOTS := [1, 2, 3]
 ## 「我」的座位：0 号 = 近侧 = 相机这一侧 ⇒ **不渲染**（spec §5.1）。
 const MY_SLOT := 0
 ## 一期椅子座面离地（`room.gd` 的比例表：座面 = `FLOOR_Y + 2.25` = 真实 0.45 m 座高）。
 ## **不是**本文件的实现常量 —— 它是房间那边的既有事实，这里拿它当坐姿的外尺。
 const SEAT_H := 2.25
 
-## **角色的"被照亮的 albedo"相对桌面那一笔的比值上限**（本轮 J1 新增，口径照
-## `layout_test.FURN_LIT_RATIO_MAX`：`albedo 亮度 × 照度`，两边同一把尺子）。
+## **角色的"被照亮的 albedo"相对桌面那一笔的比值上限**（Task 1 的 J1，`CHAR_LIT_RATIO_MAX`）。
 ##
-## **为什么是 1.0**：本档要的就是那句大白话 —— **角色不许亮过桌面**。实测 **0.83**（留 1.2 倍余量）；
-## **把 `CHAR_TINT` 改回 `Color(1,1,1)`（= 不压暗）立刻红**（实测 2.65）。
-##
+## **为什么是 1.0**：本档要的就是那句大白话 —— **角色不许亮过桌面**。
 ## ⚠ **与 phase 1 那条的唯一分歧，是故意的**：`layout_test` 拿**桌面最暗那个角**去比（从严），
 ## 可它两边**贴的是同一张木纹**（家具与木桌都用 `wood_floor.jpg`）⇒ 贴图在比值里**约掉了**，
 ## 它比的是"色调对色调"。角色**换了一张贴图**、约不掉 ⇒ 只能把贴图算进来；而一旦算进来，
@@ -66,6 +67,14 @@ func _subtree_world_aabb(root: Node) -> AABB:
 		out = a if not got else out.merge(a)
 		got = true
 	return out
+
+## 两个世界 AABB 之间的**净空**（>0 = 分开多远；<0 = 重叠多深）。按"分得最开的那一维"量
+## —— 与 `intersects()` 同一口径（只要有一维分得开就不相交），但能给一个可读的数。
+func _aabb_gap(a: AABB, b: AABB) -> float:
+	var g := -INF
+	for k in 3:
+		g = maxf(g, maxf(b.position[k] - a.end[k], a.position[k] - b.end[k]))
+	return g
 
 ## 一张贴图在**某个面真正贴上去的那一块**上的平均色（在该面的 UV 区域上打 8×8 网格取样）。
 ##
@@ -143,6 +152,25 @@ func _irradiance(light: OmniLight3D, p: Vector3, ambient: float) -> float:
 	var cos_i: float = clampf((light.global_position.y - p.y) / d, 0.0, 1.0)
 	return light.light_energy * shape * decay * cos_i + ambient
 
+## 喂进去的座位序（**故意让"色号"与"座位号"处处不等** —— 见断言 ⑨：
+## 按椅子号取模型的话，slot 1 会拿到 `model_for_color(1)` = g，与期望的 d 不同 ⇒ 必红）。
+func _seats() -> Array:
+	return [
+		{"peer": 2, "color": 1, "name": "乙"},   # slot 0 = 我（近侧，不渲染）
+		{"peer": 3, "color": 3, "name": "丙"},   # slot 1 右
+		{"peer": 4, "color": 0, "name": "丁"},   # slot 2 远（**居中、正对镜头**那把）
+		{"peer": 5, "color": 2, "name": "戊"},   # slot 3 左
+	]
+
+## 同一批人**换椅子坐**（把 1/2/3 号座位上的人轮转一格）：用来验"同一 peer 仍是同一张脸"。
+func _seats_rotated() -> Array:
+	return [
+		{"peer": 2, "color": 1, "name": "乙"},
+		{"peer": 5, "color": 2, "name": "戊"},
+		{"peer": 3, "color": 3, "name": "丙"},
+		{"peer": 4, "color": 0, "name": "丁"},
+	]
+
 func _run() -> void:
 	root.size = Vector2i(1280, 800)
 	# 用运行时 load() 取 TableView3D（同 layout_test / hud_test）：`--script` 入口的静态依赖链
@@ -152,11 +180,11 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 
-	print("== 二期 Task 1：角色层（一个人坐在 1 号座位）==")
+	print("== 二期 Task 2：角色层（三个座位 1/2/3，slot 0 仍为空）==")
 	var room: Node = t3.get_node_or_null("Room")
 	_check(room != null, "房间在（一期：ROOM_ENABLED 的那一层）")
 	var chars: Node = room.get_node_or_null("Chars") if room != null else null
-	# 契约：`CHARS_ENABLED` 为 true 时角色层在；置 false 时**一个节点都不留**（Step 5.1 的变红口子）。
+	# 契约：`CHARS_ENABLED` 为 true 时角色层在；置 false 时**一个节点都不留**（变红口子）。
 	_check(chars != null == GameChars.CHARS_ENABLED,
 		"CHARS_ENABLED=%s 时角色层%s存在" % [GameChars.CHARS_ENABLED, "" if chars != null else "不"])
 	if chars == null:
@@ -164,62 +192,97 @@ func _run() -> void:
 		print("CHARS TEST: %d FAILURES" % fails)
 		quit(1 if fails > 0 else 0)
 		return
+	# **先断言"还没喂座位序时一个角色都没有"**：摆人一律由 `set_chars()` 驱动（不在 `_ready`）——
+	# 这条同时钉住了"不在 `_ready` 里摆人"这件事（否则房间一生出来就有人、状态还没来）。
+	_check(chars.get_node_or_null("Char1") == null,
+		"**没喂座位序时一个角色都没有**（摆人由 `set_chars()` 驱动，不在 `_ready` —— `_ready` 那刻还没有状态）")
+	# 喂之前先记一下：`char_peers()` 在没喂过的时候应当是空的（没有半个座位的故事）。
+	_check(chars.char_peers().is_empty() and chars.char_model(1) == "",
+		"没喂过座位序时 `char_peers()` 为空、`char_model()` 为 \"\"（实得 %s / \"%s\"）"
+			% [str(chars.char_peers()), chars.char_model(1)])
 
-	var c1: Node3D = chars.get_node_or_null("Char%d" % CHAR_SLOT) as Node3D
-	var c0: Node3D = chars.get_node_or_null("Char%d" % MY_SLOT) as Node3D
-	# ①-前半：1 号座位上有人
-	_check(c1 != null, "slot %d（右侧那把椅子）坐着一个人" % CHAR_SLOT)
-	_check(c0 == null,
-		"slot %d（近侧 =「我」）**一个人都没有** —— 相机就在那儿（spec §5.1）" % MY_SLOT)
-	if c1 == null:
-		_check(false, "1 号座位上没人 ⇒ 坐姿那几条整段跳过")
+	# ---- 喂座位序（走 `game.gd:_refresh_players()` 喂的**同一个接口、同一份序**）----
+	var seats := _seats()
+	chars.set_chars(seats)
+	await process_frame
+
+	# ① 三个座位上有人、`slot 0` 没有人
+	var c: Array = []          # c[i] = 第 i 把椅子上的外套节点（null = 没人）
+	var missing: Array = []
+	for i in seats.size():
+		c.append(chars.get_node_or_null("Char%d" % i) as Node3D)
+		if i != MY_SLOT and c[i] == null:
+			missing.append(i)
+	_check(missing.is_empty() and c.size() == 4,
+		"`slot %s` 上各坐着一个人（缺 %s）" % [str(CHAR_SLOTS), str(missing)])
+	_check(c[MY_SLOT] == null,
+		"`slot %d`（近侧 =「我」）**一个人都没有** —— 相机就在那儿（spec §5.1）" % MY_SLOT)
+	if not missing.is_empty():
+		_check(false, "有座位空着 ⇒ 下面几条整段跳过")
 		print("CHARS TEST: %d FAILURES" % fails)
 		quit(1 if fails > 0 else 0)
 		return
 
-	# ---- 坐在**那把椅子**上（位置 + 朝向都读一期留的 `seat_anchor(slot)`）----
-	var an: Transform3D = room.seat_anchor(CHAR_SLOT)
-	var cp: Vector3 = c1.global_position
-	_check(absf(cp.x - an.origin.x) < 0.001 and absf(cp.z - an.origin.z) < 0.001,
-		"人就站在 slot %d 的座位锚点上（实得 xz=(%.3f, %.3f) / 锚点 (%.3f, %.3f) —— 座位坐标全部来自一期接口，不另算）"
-			% [CHAR_SLOT, cp.x, cp.z, an.origin.x, an.origin.z])
-	# 朝向：角色正面 = `+Z`（普查 §4.3 实测）⇒ 与椅子一样朝桌心，**不用补 180°**。
-	var to_center := Vector3(-an.origin.x, 0.0, -an.origin.z).normalized()
-	var facing: Vector3 = (c1.global_transform.basis * Vector3(0.0, 0.0, 1.0)).normalized()
-	_check(facing.dot(to_center) > 0.95,
-		"人面朝桌心（正面 %s · 指向桌心 %s = %.3f > 0.95 —— 正面 = `+Z`，与 `seat_anchor` 天然对齐）"
-			% [facing, to_center, facing.dot(to_center)])
+	# ② 每个人都站在**自己那把椅子**的锚点上（位置 + 朝向都读一期留的 `seat_anchor(slot)`）
+	var pos_bad: Array = []
+	var face_bad: Array = []
+	var pos_log := ""
+	for i in CHAR_SLOTS:
+		var an: Transform3D = room.seat_anchor(i)
+		var cp: Vector3 = c[i].global_position
+		var to_center := Vector3(-an.origin.x, 0.0, -an.origin.z).normalized()
+		var facing: Vector3 = (c[i].global_transform.basis * Vector3(0.0, 0.0, 1.0)).normalized()
+		var d: float = facing.dot(to_center)
+		if absf(cp.x - an.origin.x) >= 0.001 or absf(cp.z - an.origin.z) >= 0.001:
+			pos_bad.append(i)
+		if d <= 0.95:
+			face_bad.append(i)
+		pos_log += "slot%d 人(%.3f,%.3f)/锚点(%.3f,%.3f) 朝向点积%+.3f | " % [i, cp.x, cp.z, an.origin.x, an.origin.z, d]
+	print("  [实测] %s" % pos_log)
+	_check(pos_bad.is_empty(),
+		"三个人都站在**自己那把椅子**的座位锚点上（越位 %s —— 座位坐标全部来自一期接口 `seat_anchor(slot)`，不另算）"
+			% str(pos_bad))
+	_check(face_bad.is_empty(),
+		"三个人都面朝桌心（正面 = `+Z`，与 `seat_anchor` 天然对齐、不用补 180°；点积 <0.95 的座位 %s）"
+			% str(face_bad))
 
-	# ---- 手摆坐姿：脚底落地面、髋落座面（分件节点先核对在不在）----
-	var leg_l := c1.find_child("leg-left", true, false) as Node3D
-	var leg_r := c1.find_child("leg-right", true, false) as Node3D
-	_check(leg_l != null and leg_r != null,
-		"分件 `leg-left` / `leg-right` 在（手摆坐姿要压的就是它们；这个包没有 `Skeleton3D`）")
-	_check(c1.find_child("root", true, false) != null and c1.find_child("torso", true, false) != null,
-		"分件层级与普查 §三 一致（`root` / `torso` 都在）")
+	# ③ 手摆坐姿：脚底落地面、髋落座面（**三个人逐个量**）
+	var parts_bad: Array = []
+	var feet_bad: Array = []
+	var hip_bad: Array = []
+	var pose_log := ""
+	var ab: Array = []        # 每个人的世界 AABB
+	for i in CHAR_SLOTS:
+		var leg_l := c[i].find_child("leg-left", true, false) as Node3D
+		var leg_r := c[i].find_child("leg-right", true, false) as Node3D
+		if leg_l == null or leg_r == null or c[i].find_child("root", true, false) == null \
+				or c[i].find_child("torso", true, false) == null:
+			parts_bad.append(i)
+		var a := _subtree_world_aabb(c[i])
+		ab.append(a)
+		var feet: float = a.position.y
+		var hip: float = leg_l.global_position.y if leg_l != null else -9999.0
+		var seat_y: float = GameRoom.FLOOR_Y + SEAT_H
+		if absf(feet - GameRoom.FLOOR_Y) > 0.05:
+			feet_bad.append(i)
+		if leg_l == null or absf(hip - seat_y) > 0.05:
+			hip_bad.append(i)
+		pose_log += "slot%d 脚底%.4f(Δ%+.4f) 髋%.4f(Δ%+.4f) | " % [i, feet, feet - GameRoom.FLOOR_Y,
+			hip, hip - seat_y]
+	print("  [实测] %s（地板 %.4f / 座面 %.4f）" % [pose_log, GameRoom.FLOOR_Y, GameRoom.FLOOR_Y + SEAT_H])
+	_check(parts_bad.is_empty(),
+		"手摆坐姿要动的分件都在（`leg-left` / `leg-right` / `root` / `torso` —— 这个包没有 `Skeleton3D`；缺的座位 %s）"
+			% str(parts_bad))
+	_check(feet_bad.is_empty(),
+		"**三个人的脚底都落在 FLOOR_Y**（差 >0.05 的座位 %s）—— 手摆坐姿对不对的唯一硬判据" % str(feet_bad))
+	_check(hip_bad.is_empty(),
+		"**三个人的髋枢轴都落回座面**（= 腿分件节点原点，一期座面离地 %.2f；越界座位 %s）" % [SEAT_H, str(hip_bad)])
 
-	# ② **脚底落在 `FLOOR_Y`** —— 手摆坐姿对不对的唯一硬判据
-	var ab := _subtree_world_aabb(c1)
-	var got_geo: bool = ab.size != Vector3.ZERO
-	_check(got_geo, "（前提）角色量得到几何（世界 AABB %s..%s）" % [ab.position, ab.end])
-	var feet: float = ab.position.y
-	var feet_off: float = feet - GameRoom.FLOOR_Y
-	_check(got_geo and absf(feet_off) <= 0.05,
-		"**脚底落在 FLOOR_Y**（脚底 y=%.4f / 地板 %.4f ⇒ 差 %+.4f，容差 0.05 —— 手摆坐姿对不对的唯一硬判据）"
-			% [feet, GameRoom.FLOOR_Y, feet_off])
-	# 第二条外尺：**髋枢轴 = 腿分件的节点原点**，它应当落在座面上（普查 §5.2 的实测结论：
-	# 手摆之后 `hip = 0.800` 模型单位 × `CHARS_SCALE` = 2.25 = 一期座面高）。
-	var hip_y := leg_l.global_position.y if leg_l != null else -9999.0
-	var seat_y: float = GameRoom.FLOOR_Y + SEAT_H
-	_check(leg_l != null and absf(hip_y - seat_y) <= 0.05,
-		"髋枢轴落回**座面**（髋 y=%.4f / 座面 %.4f ⇒ 差 %+.4f，容差 0.05 —— 一期座面离地 %.2f）"
-			% [hip_y, seat_y, hip_y - seat_y, SEAT_H])
-
-	# ③ 角色**不与桌子相交** —— 逐件、对桌子的**实体体积**（本轮重述，见文件头 ③）。
+	# ④ 角色**不与桌子相交** —— 逐件、对桌子的**实体体积**（Task 1 重述过的口径，见文件头 ④）。
 	#    **为什么必须逐件**：合并 AABB 的头尾把"脚下的 y"与"头顶的 y"并成一个盒子，
-	#    于是"离桌子最近"变成"头（浮在桌面上方 1.08~3.33）的近侧边离底座多远" —— 那不是要求。
-	#    **为什么必须带桌面那一层**：底座顶面（y = −0.012）到桌面上表面（y = 0）那一段
-	#    也是实木；不带它，"从桌面上方捅进去"这种穿法量不出来。
+	#    于是"离桌子最近"变成"头（浮在桌面上方）的近侧边离底座多远" —— 那不是要求。
+	#    **为什么必须带桌面那一层**：底座顶面到桌面上表面那一段也是实木；不带它，
+	#    "从桌面上方捅进去"这种穿法量不出来。
 	var tbase := t3.get_node_or_null("TableBase") as MeshInstance3D
 	# 桌面那一片：走 `table_3d.table_mesh` 这个成员（它没起过节点名 ⇒ 不能按名字找；
 	# `layout_test` 量"桌面各位置亮度"用的也是它）。
@@ -235,77 +298,82 @@ func _run() -> void:
 		var hits := 0
 		var worst := INF
 		var p_log := ""
-		for n in c1.find_children("*", "GeometryInstance3D", true, false):
-			var g := n as MeshInstance3D
-			if g == null or g.mesh == null:
-				continue
-			var a: AABB = g.global_transform * g.mesh.get_aabb()
-			var bad: bool = a.intersects(tb) or a.intersects(slab)
-			if bad:
-				hits += 1
-			# 净空只在 x 上量（slot 1 在 +x 侧、人朝桌心 ⇒ 唯一可能靠近桌子的一维是 x）
-			worst = minf(worst, a.position.x - tb.end.x)
-			p_log += "%s:%+.3f%s " % [g.name, a.position.x - tb.end.x, "∩" if bad else ""]
-		print("  [实测] 逐件净空（x，正 = 在底座之外）：%s" % p_log)
-		_check(got_geo and hits == 0,
-			"**角色不与桌子相交**：逐件世界 AABB 与桌子实体体积（底座 x∈[%.3f, %.3f] y∈[%.3f, %.3f] + "
+		for i in CHAR_SLOTS:
+			for n in c[i].find_children("*", "GeometryInstance3D", true, false):
+				var g := n as MeshInstance3D
+				if g == null or g.mesh == null:
+					continue
+				var a: AABB = g.global_transform * g.mesh.get_aabb()
+				var bad: bool = a.intersects(tb) or a.intersects(slab)
+				if bad:
+					hits += 1
+				# 净空 = 与"底座 ∪ 桌面那一层"里更近那一块的分开距离（负 = 重叠）
+				worst = minf(worst, maxf(_aabb_gap(a, tb), _aabb_gap(a, slab)))
+				p_log += "slot%d/%s:%+.3f%s " % [i, g.name, maxf(_aabb_gap(a, tb), _aabb_gap(a, slab)),
+					"∩" if bad else ""]
+		print("  [实测] 逐件净空（与世界单位；正 = 分开、负 = 重叠）：%s" % p_log)
+		_check(hits == 0,
+			"**三个人都不与桌子相交**：逐件世界 AABB 与桌子实体体积（底座 x∈[%.3f, %.3f] y∈[%.3f, %.3f] + "
 				% [tb.position.x, tb.end.x, tb.position.y, tb.end.y]
-				+ "桌面那一层 y∈[%.3f, %.3f]）都不相交（相交 %d 件；最近那件在 x 上还差 %+.3f 世界 = 真实 %.1f mm）—— "
-				% [slab.position.y, slab.end.y, hits, worst, worst * 200.0]
-				+ "旧口径量的是合并 AABB 的 5 mm，那个数由浮在桌面上方的头贡献、不代表会不会穿模")
+				+ "桌面那一层 y∈[%.3f, %.3f]）都不相交（相交 %d 件；最近那件还差 %+.3f 世界 = 真实 %.1f mm）"
+				% [slab.position.y, slab.end.y, hits, worst, worst * 200.0])
 
-	# ④ 材质：**不是 UNSHADED**（会被房间的灯照亮）、**贴图还在**（普查 §7.2）
+	# ⑤ 三个人**两两不相交**（各自在自己椅子上 —— 相邻两把椅子的盒子不许碰）
+	var pair_bad: Array = []
+	var pair_log := ""
+	for x in CHAR_SLOTS.size():
+		for y in range(x + 1, CHAR_SLOTS.size()):
+			var i: int = CHAR_SLOTS[x]
+			var j: int = CHAR_SLOTS[y]
+			var gp := _aabb_gap(ab[x], ab[y])
+			if gp <= 0.0:
+				pair_bad.append("%d-%d" % [i, j])
+			pair_log += "%d-%d:%+.3f " % [i, j, gp]
+	print("  [实测] 两两净空：%s" % pair_log)
+	_check(pair_bad.is_empty(),
+		"三个人**两两不相交**（世界 AABB 分开着；相交的对 %s）—— 每人只占自己那把椅子" % str(pair_bad))
+
+	# ⑥ 材质：**不是 UNSHADED**（会被房间的灯照亮）、**底色只被压暗过**、**贴图还在**（普查 §7.2）
 	#    包自带 `KHR_materials_unlit` ⇒ Godot 导成 `SHADING_MODE_UNSHADED`。
-	#    ⚠ **两条各守一半，缺一就会被 `room.gd._paint()` 那一手骗过去**：
-	#       * 它盖上去的 `_furn_mat` **自己就是受光的** ⇒ 单看 `shading_mode` 照样绿；
-	#       * 它**自己也带贴图**（木地板的木纹）⇒ 单看"有没有贴图"也照样绿。
-	#    ⇒ 两条都必须比**"材质本体 / 贴图还是角色自己的那份"**，不是比自己有没有值。
+	#    ⚠ **逐面两条各守一半**：整片覆盖（`room.gd._paint()` 那一手）换上去的材质**自己就受光**、
+	#      也**自己带贴图**（木地板的木纹）⇒ 单看 `shading_mode` / "有没有贴图"照样绿。
+	#      ⇒ 必须比**"底色是不是自己那份压暗来的" + "贴图还是不是自己那张"**。
 	var surfaces := 0
-	var missing := 0
+	var missing_m := 0
 	var unshaded := 0
 	var textured := 0
 	var tex_own := 0
 	var foreign := 0
 	var mat_log := ""
-	for n in c1.find_children("*", "GeometryInstance3D", true, false):
-		var gi := n as MeshInstance3D
-		if gi == null or gi.mesh == null:
-			continue
-		for s in gi.mesh.get_surface_count():
-			surfaces += 1
-			var m := gi.get_active_material(s) as BaseMaterial3D
-			var own := gi.mesh.surface_get_material(s) as BaseMaterial3D
-			if m == null:
-				missing += 1
+	for i in CHAR_SLOTS:
+		for n in c[i].find_children("*", "GeometryInstance3D", true, false):
+			var gi := n as MeshInstance3D
+			if gi == null or gi.mesh == null:
 				continue
-			if m.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED:
-				unshaded += 1
-			if m.albedo_texture != null:
-				textured += 1
-			# **底色只许是"自己那份 × 一个压暗系数"**（本轮 fix round 改了这条的口径）。
-			#
-			# 原先这条比的是"`albedo_color` 与模型自带那份**逐字节相等**"，当年用它兜住
-			# `room.gd._paint()` 那一手整片覆盖。**本轮 J1 起角色的底色被**故意**乘上了
-			# `CHAR_TINT`（把角色收进房间的暗色调）⇒ 那条"相等"口径不再成立、会误报。
-			# "材质本体没被换掉"这半件事**由下面那条贴图断言守着**（房间那份家具材质自己也带贴图，
-			# 但**不是角色这一张** ⇒ `tex_own` 拦得住，这正是它当初加进来的理由）。
-			# 这条留下的是**新行为的可执行版**：底色必须是**压暗**（三维都 ≤ 自己那份），
-			# 且是"乘一个系数"而不是被换成别人的色。**把 `CHAR_TINT` 改成 >1（提亮）这条立刻红。**
-			if own != null and (m.albedo_color.r > own.albedo_color.r + 0.001
-					or m.albedo_color.g > own.albedo_color.g + 0.001
-					or m.albedo_color.b > own.albedo_color.b + 0.001):
-				foreign += 1
-			# **贴图还是角色自己那张**（不是"有贴图就行"）：房间那份家具材质**自己也带贴图**
-			# （木地板的木纹）⇒ 只查 `albedo_texture != null` 会被整片覆盖骗过去 ——
-			# 贴图确实还在，只不过角色被贴成了木地板（实测：tex 那一栏仍是"有"）。
-			if own != null and own.albedo_texture != null and m.albedo_texture == own.albedo_texture:
-				tex_own += 1
-			mat_log += "%s/s%d:shade%d,tex%s,自带贴图%s,albedo%s " % [gi.name, s, m.shading_mode,
-				"有" if m.albedo_texture != null else "无",
-				"有" if own != null and own.albedo_texture != null else "无", m.albedo_color]
-	print("  [实测] 角色材质：%s" % mat_log)
-	_check(surfaces > 0 and missing == 0,
-		"（前提）角色的每个面都有材质可量（%d 个面，取不到材质 %d 个）" % [surfaces, missing])
+			for s in gi.mesh.get_surface_count():
+				surfaces += 1
+				var m := gi.get_active_material(s) as BaseMaterial3D
+				var own := gi.mesh.surface_get_material(s) as BaseMaterial3D
+				if m == null:
+					missing_m += 1
+					continue
+				if m.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED:
+					unshaded += 1
+				if m.albedo_texture != null:
+					textured += 1
+				# 底色只许是"自己那份 × 一个压暗系数"：三维都 ≤ 自己那份（**改成 >1 立刻红**）
+				if own != null and (m.albedo_color.r > own.albedo_color.r + 0.001
+						or m.albedo_color.g > own.albedo_color.g + 0.001
+						or m.albedo_color.b > own.albedo_color.b + 0.001):
+					foreign += 1
+				# **贴图还是角色自己那张**（不是"有贴图就行"）
+				if own != null and own.albedo_texture != null and m.albedo_texture == own.albedo_texture:
+					tex_own += 1
+				mat_log += "s%d/%s:shade%d,tex%s,albedo%s " % [i, gi.name, m.shading_mode,
+					"有" if m.albedo_texture != null else "无", m.albedo_color]
+	print("  [实测] 角色材质（%d 个面）：%s" % [surfaces, mat_log])
+	_check(surfaces > 0 and missing_m == 0,
+		"（前提）三个角色的每个面都有材质可量（%d 个面，取不到材质 %d 个）" % [surfaces, missing_m])
 	_check(surfaces > 0 and unshaded == 0 and foreign == 0,
 		"角色材质**不是 UNSHADED**、且**底色只被压暗过**（%d 个面：UNSHADED %d / 底色不是压暗 %d —— "
 			% [surfaces, unshaded, foreign]
@@ -315,25 +383,25 @@ func _run() -> void:
 			% [tex_own, surfaces, textured, surfaces]
 			+ "照抄 room.gd 的整片覆盖会把脸 / 衣服换成房间的木地板，那样「有贴图」那一栏仍是有的、只有这条拦得住）")
 
-	# ⑤ **角色不许是画面里最亮的东西**（本轮 J1 的核心判据，Ruling E2）。
+	# ⑦ **角色不许是画面里最亮的东西**（Task 1 的 J1 判据；本任务起**取三人里最亮的那个**）
 	#
-	# 病（出图实证）：角色的贴图是 Kenney 展示用的高饱和亮色，有效 albedo 亮度 **0.58**，
-	# 而屋里木头外框 0.16、家具 0.08 ⇒ 角色是画面上唯一发亮的东西，读作"桌上摆了个玩偶"。
 	# 判据 = **同一把尺子**（同 `layout_test` 的照度代理式）× 同一把 albedo 尺子
-	#（色调 ⊙ 贴图那一块的平均色）：角色的那笔必须 ≤ `CHAR_LIT_RATIO_MAX` × 桌面那笔。
-	#
+	#（色调 ⊙ 贴图那一块的平均色）：三人里最亮的那笔必须 ≤ `CHAR_LIT_RATIO_MAX` × 桌面那笔。
 	# albedo **从材质上读**（不读 `GameChars.CHAR_TINT`）—— 读常量等于把实现重述一遍。
-	# 采样点：角色 = 自己世界 AABB 的形心（同 `layout_test` 量家具那一套）；桌面 = 桌垫四角 + 中心
-	#（同一组点、同一把尺子），取**最亮**那个 —— 理由见 `CHAR_LIT_RATIO_MAX` 那段。
 	var lamp: OmniLight3D = t3.get("lamp_light")
 	var wenv: WorldEnvironment = null
-	for c in t3.get_children():
-		if c is WorldEnvironment:
-			wenv = c
+	for ch in t3.get_children():
+		if ch is WorldEnvironment:
+			wenv = ch
 	var amb := 0.0
 	if wenv != null:
 		amb = wenv.environment.ambient_light_energy * wenv.environment.ambient_light_color.get_luminance()
-	var cl = _subtree_lit_albedo_lum(c1)
+	var cl: Array = []
+	var max_idx := 0
+	for x in CHAR_SLOTS.size():
+		cl.append(_subtree_lit_albedo_lum(c[CHAR_SLOTS[x]]))
+		if cl[x]["lum"] > cl[max_idx]["lum"]:
+			max_idx = x
 	var wm := (t3.wood_mesh as MeshInstance3D).material_override as StandardMaterial3D
 	var wavg = _surf_tex_avg(t3.wood_mesh, 0, wm)
 	var wood_lum := -1.0
@@ -347,42 +415,151 @@ func _run() -> void:
 		t3.table_mesh.global_transform * Vector3(t3.TABLE_SIZE.x * 0.5, 0.0, t3.TABLE_SIZE.y * 0.5),
 		Vector3(0.0, t3.table_mesh.global_position.y, 0.0),
 	]
-	print("  [实测] 角色有效 albedo（色调 ⊙ 贴图那一块的平均色，逐件）：%s⇒ 最亮 %.3f"
-		% [cl["log"], cl["lum"]])
-	print("  [实测] 木头外框有效 albedo 亮度 %.3f（色调 %s ⊙ 贴图那一块 %s）/ 环境光那一份 %.4f"
-		% [wood_lum, wm.albedo_color if wm != null else "无", wavg, amb])
 	var char_lit := -1.0
 	var tab_lit := -1.0
-	if lamp != null and got_geo and cl["lum"] >= 0.0 and wood_lum >= 0.0:
-		char_lit = cl["lum"] * _irradiance(lamp, ab.get_center(), amb)
+	var lit_log := ""
+	if lamp != null and wood_lum >= 0.0:
+		for x in CHAR_SLOTS.size():
+			var l: float = cl[x]["lum"] * _irradiance(lamp, ab[x].get_center(), amb)
+			lit_log += "slot%d albedo%.3f×照度%.3f=%.4f | " % [CHAR_SLOTS[x], cl[x]["lum"],
+				_irradiance(lamp, ab[x].get_center(), amb), l]
+			char_lit = maxf(char_lit, l)
 		for p in corners:
 			tab_lit = maxf(tab_lit, wood_lum * _irradiance(lamp, p, amb))
-	_check(lamp != null and got_geo and cl["lum"] >= 0.0 and wood_lum >= 0.0,
-		"（前提）角色的 albedo、木桌的 albedo、吊灯都量得到（角色 %.3f / 木桌 %.3f / 灯 %s）"
-			% [cl["lum"], wood_lum, "在" if lamp != null else "缺"])
+	print("  [实测] %s木头外框有效 albedo 亮度 %.3f / 环境光那一份 %.4f" % [lit_log, wood_lum, amb])
+	_check(lamp != null and cl[max_idx]["lum"] >= 0.0 and wood_lum >= 0.0,
+		"（前提）三人的 albedo、木桌的 albedo、吊灯都量得到（最亮那件 %.3f / 木桌 %.3f / 灯 %s）"
+			% [cl[max_idx]["lum"], wood_lum, "在" if lamp != null else "缺"])
 	if lamp != null and char_lit >= 0.0 and tab_lit >= 0.0:
 		var ratio: float = char_lit / maxf(tab_lit, 0.0001)
 		_check(ratio <= CHAR_LIT_RATIO_MAX,
-			"**角色不再是画面里最亮的东西**：角色 albedo × 照度 %.4f ≤ %.2f × 桌面那一笔 %.4f"
+			"**角色不再是画面里最亮的东西**：三人里最亮那笔 albedo × 照度 %.4f ≤ %.2f × 桌面那一笔 %.4f"
 				% [char_lit, CHAR_LIT_RATIO_MAX, tab_lit]
-				+ "（实得比值 %.3f；形心 %s 照度 %.3f）—— 把 `CHAR_TINT` 改回 (1,1,1) 这条立刻红"
-				% [ratio, ab.get_center(), _irradiance(lamp, ab.get_center(), amb)])
+				+ "（实得比值 %.3f；把 `CHAR_TINT` 改回 (1,1,1) 这条立刻红）" % ratio)
 
-	# 影子：**不投影**（房间的纪律：全场唯一投影源是那盏吊灯）。这不是"顺手" ——
-	# `layout_test` 那条「房间物件一律不投影」扫的正是 `Room` 整棵子树，角色一投影那条立刻红。
+	# ⑦-b **最坏座位 × 调色板里的每一个模型**（本任务新增 —— 上一段只量了"这一份座位序上"的三个人，
+	#     而哪家坐哪把椅子由各家的**棋子色**决定 ⇒ 判据必须对**每一个色号**都成立，不能靠这一份
+	#     座位序恰好把最亮的那件模型放在了别处而侥幸过线）。
+	#     **为什么是 slot 3**：吊灯在 `LAMP_LIGHT_POS.x = -4.13`（桌子偏左上方）⇒ 左座吃到的照度
+	#     最大（实测 1.339，右座 0.967 —— 差 1.385 倍）。Task 1 只有右座那一个人，取值是按右座留的
+	#     余量；三个座位一起来，左座才是判据要守的那一个。
+	if lamp != null and wood_lum >= 0.0 and tab_lit > 0.0:
+		var sweep_bad: Array = []
+		var sweep_log := ""
+		for color in GameData.PLAYER_COLORS.size():
+			var trial: Array = [{"peer": 2, "color": 1, "name": "乙"}]
+			for k in CHAR_SLOTS.size():
+				# 让**色号 color** 正好坐在最亮的 slot 3 上，另两个座位填别的色号（凑齐三个人）。
+				var cc: int = (color + 1 + k) % GameData.PLAYER_COLORS.size() if k < 2 else color
+				trial.append({"peer": 10 + cc, "color": cc, "name": "试%d" % cc})
+			chars.set_chars(trial)
+			await process_frame
+			var ct := chars.get_node_or_null("Char%d" % CHAR_SLOTS[2]) as Node3D
+			if ct == null:
+				sweep_bad.append(color)
+				continue
+			var clum: float = _subtree_lit_albedo_lum(ct)["lum"]
+			var lit: float = clum * _irradiance(lamp, _subtree_world_aabb(ct).get_center(), amb)
+			var rr: float = lit / tab_lit
+			sweep_log += "色%d→%s albedo%.3f×照度=%.4f(比值%.3f) | " % [color, chars.char_model(CHAR_SLOTS[2]),
+				clum, lit, rr]
+			if rr > CHAR_LIT_RATIO_MAX:
+				sweep_bad.append(color)
+		print("  [实测] 最坏座位（slot %d）× 全部色号：%s" % [CHAR_SLOTS[2], sweep_log])
+		_check(sweep_bad.is_empty(),
+			"**每一个色号的模型放在最亮的座位上也不亮过桌面**（越线的色号 %s —— 判据要按最坏座位收敛："
+				% str(sweep_bad) + "吊灯挂在桌子偏左上方，实测左座照度是右座的 1.385 倍）")
+		chars.set_chars(seats)      # 复位（下面 ⑨~⑪ 与末段读数要的仍是这一份座位序）
+		await process_frame
+		c = []
+		for i in seats.size():
+			c.append(chars.get_node_or_null("Char%d" % i) as Node3D)
+
+	# ⑧ 影子：**不投影**（房间的纪律：全场唯一投影源是那盏吊灯）
 	var casting := 0
-	for n in c1.find_children("*", "GeometryInstance3D", true, false):
-		if (n as GeometryInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
-			casting += 1
-	_check(casting == 0, "角色不投影（违规 %d 个 —— 吊灯仍是全场唯一投影源）" % casting)
+	for i in CHAR_SLOTS:
+		for n in c[i].find_children("*", "GeometryInstance3D", true, false):
+			if (n as GeometryInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				casting += 1
+	_check(casting == 0, "三个角色都不投影（违规 %d 个 —— 吊灯仍是全场唯一投影源）" % casting)
 
-	# 供报告的原始读数
-	print("  [实测] 角色世界 AABB %s..%s（尺寸 %s）" % [ab.position, ab.end, ab.size])
-	print("  [实测] 脚底 y=%.4f（地板 %.4f，差 %+.4f）/ 髋 y=%.4f（座面 %.4f，差 %+.4f）"
-		% [feet, GameRoom.FLOOR_Y, feet_off, hip_y, seat_y, hip_y - seat_y])
-	print("  [实测] 腿分件 scale = %s（`LEG_SQUASH` = %.2f）"
-		% [leg_l.scale if leg_l != null else Vector3.ZERO, GameChars.LEG_SQUASH])
-	print("  [实测] 座位锚点 %s / 人 %s" % [an.origin, cp])
+	# ⑨ **模型按棋子色选**（本轮新增）：喂进来的座位序里色号与座位号**处处不等** ⇒
+	#    按椅子号取模型的话，slot 1 会拿到 `model_for_color(1)`（g）而不是期望的 d ⇒ 必红。
+	#    另外比一下**真正实例化出来那个节点的名字**（不只是自己记的那个字符串）。
+	var model_bad: Array = []
+	var mm_log := ""
+	var peer_model := {}      # peer -> 模型（给 ⑩ 用）
+	for i in CHAR_SLOTS:
+		var color := int((seats[i] as Dictionary).get("color", 0))
+		var want: String = GameChars.model_for_color(color)
+		var got: String = chars.char_model(i)
+		# 真正加载进来那个 GLB 的根节点名（`character-a.glb` → `character-a`）
+		var inst_name := String((c[i].get_child(0) as Node).name) if c[i].get_child_count() > 0 else ""
+		var ok: bool = got == want and got != GameChars.model_for_color(i) \
+			and inst_name.begins_with(want.get_basename())
+		if not ok:
+			model_bad.append(i)
+		peer_model[int((seats[i] as Dictionary).get("peer", 0))] = got
+		mm_log += "slot%d(色%d)→%s（按座位号会是 %s）/实例节点 %s | " % [i, color, got,
+			GameChars.model_for_color(i), inst_name]
+	print("  [实测] 模型：%s" % mm_log)
+	_check(model_bad.is_empty(),
+		"**模型按各家的棋子色选**（=`CHAR_MODELS_BY_COLOR[color]`，而且**不是**按椅子号取；"
+			+ "实例化出来的 GLB 根节点名也与之一致；不符的座位 %s）" % str(model_bad))
+	_check(chars.char_peers() == [GameData.NO_PEER, 3, 4, 5],
+		"`char_peers()` 逐槽位给出 peer（slot 0 = `NO_PEER`，那是「我」）：实得 %s" % str(chars.char_peers()))
+
+	# ⑩ **同一个 peer 换椅子坐仍是同一张脸**：座位序轮转一格（三个人的椅子全换了）后逐家比对。
+	#    这条是"重广播 / 重连 / 换轮次不许换脸"的可执行版。
+	var before := peer_model.duplicate()
+	chars.set_chars(_seats_rotated())
+	await process_frame
+	var swapped: Array = []
+	var f_log := ""
+	for i in CHAR_SLOTS:
+		var p := int((_seats_rotated()[i] as Dictionary).get("peer", 0))
+		var got2: String = chars.char_model(i)
+		if got2 != String(before.get(p, "")):
+			swapped.append(p)
+		f_log += "peer %d 换到 slot%d：%s → %s | " % [p, i, before.get(p, "?"), got2]
+	print("  [实测] %s" % f_log)
+	_check(swapped.is_empty(),
+		"**同一个 peer 换椅子坐仍是同一张脸**（轮转座位序后逐家比对；换脸的是 peer %s —— "
+			% str(swapped) + "模型按棋子色定，所以与坐哪把椅子无关）")
+	_check(chars.char_peers() == [GameData.NO_PEER, 5, 3, 4],
+		"轮转后 `char_peers()` 跟着座位序走（实得 %s）—— 人与椅子一起换，不是只换椅子"
+			% str(chars.char_peers()))
+
+	# ⑪ **早退**（本轮新增）：同样的座位序再来一次 ⇒ **同一批节点实例**（不重建）。
+	#    `_refresh_players()` 每次状态广播都调 `set_chars()` —— 少了早退，每次广播都要
+	#    重新 load + 实例化 + 复制材质。**去掉早退这条立刻红**（拿到的是新节点）。
+	chars.set_chars(_seats())
+	await process_frame
+	var again: Array = []
+	for i in seats.size():
+		again.append(chars.get_node_or_null("Char%d" % i) as Node3D)
+	# 轮转那一次本来就会重建（指纹变了）⇒ 这里先确认"确实换过一批"，再确认"同样的序不再换"。
+	chars.set_chars(_seats())
+	await process_frame
+	var same := true
+	for i in CHAR_SLOTS:
+		var now := chars.get_node_or_null("Char%d" % i) as Node3D
+		# `is_same(a, b)` 是**全局函数**（Godot 4 起：比较是不是同一个实例），不是节点上的方法。
+		if now == null or not is_same(now, again[i]):
+			same = false
+	_check(same,
+		"**同样的座位序再来一次 = 同一批节点实例**（`set_chars` 的早退：每次广播都调它，"
+			+ "少了早退就会把三个人整套重建 —— 那条注释里写的成本）")
+
+	# 供报告的原始读数。⚠ 节点在 ⑩ ⑪ 里**重建过**（那两条本来就要换一批实例）⇒ 这里重新取一遍，
+	# 别用早先那批引用（旧引用已经 `queue_free` 了，读它会报 `previously freed`）。
+	for i in CHAR_SLOTS:
+		var cc := chars.get_node_or_null("Char%d" % i) as Node3D
+		var aa := _subtree_world_aabb(cc)
+		var leg := cc.find_child("leg-left", true, false) as Node3D
+		print("  [实测] slot%d 模型 %s / 世界 AABB %s..%s（尺寸 %s）/ 腿 scale %s"
+			% [i, chars.char_model(i), aa.position, aa.end, aa.size,
+				leg.scale if leg != null else Vector3.ZERO])
 
 	if fails == 0:
 		print("CHARS TEST: PASS")

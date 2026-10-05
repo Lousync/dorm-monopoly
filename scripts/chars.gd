@@ -11,13 +11,18 @@ extends Node3D
 ## + `AnimationPlayer` 动**节点变换**」⇒ 摆姿势用 `rotation` / `scale`，不是 `set_bone_pose`
 ## （普查 §三）。**没有蒙皮 ⇒ 也没有"骨骼动画很贵"那个成本**。
 ##
-## **本任务（Task 1）只做一件事：一个人坐对（slot 1）。** 复数化 / 逐座位选模型 / 动画播放 /
-## 随取景淡出都归后面的任务，这里一行都不提前写。
+## **二期 Task 2：座位上的人齐了** —— `slot 1/2/3` 各坐一个（**`slot 0` 仍为空**：那是「我」，
+## 相机就在那儿，spec §5.1）。谁坐哪把椅子由 `set_chars(seats)` 喂进来，**那份座位序与
+## `room.set_seats()` 是同一份**（`game.gd:_refresh_players()` 同一处喂）—— 各写一份就会坐错位。
+## 逐座位选模型（按棋子色，见 `CHAR_MODELS_BY_COLOR`）已做；**动画播放 / 随取景淡出**
+## 仍归后面的任务，这里一行都不提前写。
 ##
 ## ⚠ **静态依赖纪律**：`tests/layout_test.gd` 静态引用 `GameRoom` ⇒ `room.gd` 的整条静态依赖链
 ## （含本文件）会在 `--script` 启动时、**autoload 注册之前**被编译。所以本文件**不许静态引用
 ## autoload 链上的任何东西**（`UIKit` → `Fx` / `Net`）—— 要就照 `room.gd._ui_kit_tex()` 那样
-## 运行时 `load()`。**本文件当前一个外部标识符都不用**（连 `GameRoom` 都不写，见 `seat_pose()`）。
+## 运行时 `load()`。**本文件只用 `GameData`**（`class_name`，纯数据、不引 autoload：
+## `NO_PEER` / `PLAYER_COLORS` 的下标）—— **连 `GameRoom` 都不写**（见 `seat_pose()`：
+## 座位坐标直接读椅子锚点，正是为了不形成类名环）。
 
 ## 总开关（同 `room.gd.ROOM_ENABLED` 的用法）：置 false 就整层不建 —— 角色出任何问题都可以
 ## 先关掉它，不影响对局，也不影响一期的房间。
@@ -61,14 +66,24 @@ const LEG_SQUASH := 0.8
 ## **做法 = 一期 Task 8 对家具做的同一手**（那次能整片换材质是因为家具是纯色、无所谓；角色有脸、
 ## 有衣服，只能乘法压暗）。
 ##
-## **取值**：`0.36/0.30/0.26`（亮度 **0.317**）—— 与一期家具的 `FURN_ALBEDO`（`0.34/0.27/0.21`，
-## 亮度 0.281）**同族、略亮一点**：角色要能"认人"（spec §十 F8：不靠名牌、靠角色本身认人），
-## 压到与家具一样暗就把这一条弄丢了。
+## **取值**：`0.29/0.25/0.21`（亮度 **0.264**）—— 与一期家具的 `FURN_ALBEDO`（`0.34/0.27/0.21`，
+## 亮度 0.281）**同族、略暗一点**。
 ##
-## **判据（可执行，`chars_test` 钉着）**：角色的有效 albedo × 照度 **不许高过桌面那一笔**
-## （同一把照度代理式、同一把 albedo 尺子）。实测比值 **0.83**；
-## **改回 `Color(1,1,1)`（= 不压暗）这条立刻红**（实测 2.65）。
-const CHAR_TINT := Color(0.36, 0.30, 0.26)
+## ⚠ **本任务（Task 2）把它从 `0.36/0.30/0.26` 调到 `0.29/0.25/0.21`（≈ ×0.81）** —— 理由**不是**
+## 观感变了，而是**判据的适用面变宽了**：见 `CHAR_MODELS_BY_COLOR` 那段，**左座吃到的照度是
+## 右座的 1.385 倍**，Task 1 的取值只按右座留了余量（实测 0.826）；三个座位一起来，**最坏那个
+## 座位**才是判据要守的。降下来之后**实测**（`chars_test` 的"最坏座位 × 全部色号"那一段）：
+## `k 0.728 / g 0.744 / n 0.910 / p 0.837`，最坏 **0.910** —— 与 Task 1 当年的 0.826 同档有余量。
+##
+## **代价（如实记）**：数值上暗了约 19%，但**实测的脸并不比 Task 1 验收时暗** —— 判据把"亮脸的
+## 模型"整个挡在门外（`CHAR_MODELS_BY_COLOR` ①），选出来的这四个贴图本身就更暗、压得少；
+## 实测头部那块 0.10~0.12，而 Task 1 验收的 `character-a` 是 **0.116** ⇒ **观感同档**，
+## 变的是"哪个模型"，不是"暗了多少"。
+##
+## **判据（可执行，`chars_test` 钉着）**：三个人里**最亮的那一笔**（各自的有效 albedo × 各自
+## 座位上的照度）**不许高过桌面那一笔**（同一把照度代理式、同一把 albedo 尺子）；
+## **改回 `Color(1,1,1)`（= 不压暗）这条立刻红**。
+const CHAR_TINT := Color(0.29, 0.25, 0.21)
 
 ## **头部额外缩放**（本轮 fix round 的有界实验，见 `.superpowers/sdd/3D房间-二期-实施计划/fix-chars-t1-report.md`）。
 ## `head` 节点自己带一层嵌套 `scale 0.1`（导入器把模型的比例搬到了节点上），这里**再乘一个小系数**，
@@ -81,31 +96,143 @@ const CHAR_TINT := Color(0.36, 0.30, 0.26)
 ## 覆盖掉会把头放大十倍。
 const HEAD_SHRINK := 0.82
 
-## 角色模型（Task 1 只放一个人，先固定用 a；Task 2 起按 peer 的棋子色索引挑，**18 个里选 3 个**）。
-const CHAR_MODEL := "character-a.glb"
+## **一个棋子色 = 一个固定模型**（下标 = `GameData.PLAYER_COLORS` 的下标，= `st` 里各家的 `p.color`）。
+## ⇒ **同一个 peer 永远拿到同一张脸**：重广播 / 重连 / 换轮次都不换脸（本任务的硬要求）。
+##
+## ⚠ **为什么是 4 个而不是 3 个**（与计划书的字面「18 个里挑 3 个」不同，理由如下）：
+## 棋盘上 4 家各占一个**棋子色**（`PLAYER_COLORS` 4 个），而同时露脸的只有 3 家
+## （`slot 0` = 我，不渲染）。**若只挑 3 个模型按色号取，4 个色号 → 3 个模型按鸽笼原理必然撞车**
+## ⇒ 四人局里那两家会**长得一模一样**（哪两家撞取决于当局用到了哪些色号，实测 4 种色号组合里
+## 有 2 种会撞 = 一半的对局），而 spec §十 F8 的定案是「**四家各有模型**、靠角色本身认人」
+## ⇒ 那正是本任务要保住的东西。4 个模型一一对应，**永不撞车**（同一局 4 个色号互不相同）。
+##
+## **这 4 个是怎么挑出来的**（口径可复现，逐项读数见 `task-2-report.md`）：把 18 个模型按
+## 「色调 ⊙ 那一块贴图的平均色」逐件量一遍，再筛三关：
+##  ① **不许亮过桌面**（Ruling E2 的 J1 判据）—— ⚠ **门槛要按"最亮的那个座位"算，不是 Task 1
+##     那个座位**：吊灯在 `LAMP_LIGHT_POS.x = -4.13`（灯挂在桌子**偏左**上方），实测**左座
+##     （slot 3）吃到的照度是右座（slot 1）的 1.385 倍**。Task 1 只做了右座 ⇒ 那时 `CHAR_TINT`
+##     的余量是"右座的余量"（实测比值 0.826），**换到左座同一个人就会红**
+##     （拿 Task 1 的 `character-a` 放左座实算 1.145）⇒ 本任务起判据必须按**最坏座位**收敛。
+##     在左座上要过线，"最亮那件"的有效 albedo 得 ≤ 0.159 ⇒ **18 个里只有 8 个合格**
+##     （脸最亮的 `a/c/d/e/i` 全出局）—— 这不是挑色，是**房间的灯**定下来的。
+##  ② **脸不能被压黑**（spec §十 F8 要认人）：剩下的 8 个里取**头部那块最亮**的；
+##  ③ 再在池子里取**两两最不像**的一组（按头 / 躯干 / 双臂 / 双腿各自那块贴图的 8×8 / 4×4
+##     取样签名求最小两两距离，最大化它）—— 排掉了近似的 `g`/`h` 双胞胎（同脸、只差胸前
+##     一道红 / 紫条纹，压暗后基本读不出差别）。
+## **成品**：`k`（棕发棕脸 + 砖红上衣，胡子）/ `g`（蓝灰 + 胸前红闪电）/ `n`（**绿身子 + 红腰带、
+## 一张白脸** —— 四个里最好认的一张脸）/ `p`（紫蓝马甲 + 金背带）。四个头都还亮（压暗后
+## 0.10~0.12，与 Task 1 验收时的 `character-a` 头 0.116 同档）。
+## **顺带对上两个棋子色**（不是挑选条件，是巧）：蓝 → `g`、绿 → `n`；橙 / 黄没有对应的模型
+## （包里没有橙人 / 黄人），按"先保脸再配色"的原则**不为配色牺牲脸**。
+const CHAR_MODELS_BY_COLOR := [
+	"character-k.glb",   # 0 橙：砖红上衣 + 棕发棕脸（暖色一族里最像橙的）
+	"character-g.glb",   # 1 蓝：蓝灰身子 + 胸前一道红闪电
+	"character-n.glb",   # 2 绿：**绿身子 + 红腰带**，一张白脸（四个里最好认的一张脸）
+	"character-p.glb",   # 3 黄：紫蓝马甲 + 金背带（暖金那一笔在背带上）
+]
+
+## 「我」的座位号：**0 = 近侧 = 相机所在那一侧**（spec §5.1）⇒ 这个座位上**不出人**
+## （一期只在那一侧留椅背 + 名牌）。`set_chars()` 跳过它，`char_peers()` 在那里给 `NO_PEER`。
+const MY_SLOT := 0
 
 ## 一期那四把椅子（`Room/Seats`）—— 座位坐标的**唯一来源**（见 `seat_pose()`）。
 var _seats: Node3D
 
+## 每个 slot 上的**角色外套节点**（`Node3D`），**下标 = 椅子号**（与 `seat_anchor(slot)` 同一序）；
+## 没人的槽位是 `null`。与 `_char_peers` / `_char_models` 三者**同进同出**（都在 `set_chars` 里重建）。
+var _chars: Array = []
+## 每个 slot 上的 peer（`GameData.NO_PEER` = 这个座位上没人）。`char_peers()` 直接返回它。
+var _char_peers: Array = []
+## 每个 slot 上的模型文件名（`""` = 这个座位上没人）。`char_model()` 直接返回它。
+var _char_models: Array = []
+## 上一次喂进来的那份座位序的指纹（**早退用**，与 `room.gd.set_seats` 同款同序）。
+## `_refresh_players()` 每次状态广播都会调 `set_chars()` —— 少了这条早退，每次广播都会把
+## 三个人**整套重建一遍**（重新 `load()` GLB + 重新实例化 + 重新复制材质）。
+var _char_key := ""
+
 ## 建角色层。**只建节点，不摆人** —— 摆人要读座位锚点的 `global_transform`，那要求整棵子树
 ## **已经入树**；而 `build()` 是 `table_3d._init()` 里调的，那时还没入树（读全局量会打
 ## `Condition "!is_inside_tree()" is true` 并**静默写错值**，同一期 `_build_furniture` 那条）。
-## 真正的摆人在 `_ready()`。
+##
+## **摆人一律由 `set_chars()` 驱动**（`game.gd:_refresh_players()` 每次状态广播喂一份座位序）
+## —— **不在 `_ready()` 里摆**：`_ready` 那一刻还没有任何状态，"谁坐哪"根本无从谈起
+## （一期 Task 5 的 `set_seats()` 就是同一条理由，同一处喂）。
 static func build(parent: Node3D, seats: Node3D) -> GameChars:
 	if not CHARS_ENABLED:
 		return null
 	var c := GameChars.new()
 	c.name = "Chars"
 	# **先塞座位表、再加进树**：父节点已经在树里时 `add_child()` 会**同步**触发 `_ready()`,
-	# 那时 `_seats` 还是空的（这一手是给"房间建完就入树"的场景留的）。
+	# 那时 `_seats` 还是空的（这一身位是给"房间建完就入树"的场景留的）。
 	c._seats = seats
 	parent.add_child(c)
 	return c
 
-func _ready() -> void:
-	# Task 1：只放**一个人**，且在 **1 号座位**（右侧那把椅子）上。
-	# 0 号 = 近侧 = 相机这一侧 = 「我」⇒ **不渲染**（spec §5.1）；复数化归 Task 2。
-	_place(1)
+## 喂座位序：`[{peer, color, name}, …]`，**下标 = 椅子号**（与 `room.set_seats()` 逐项相同，
+## 都由 `game.gd:_refresh_players()` 从 `_seat_peers()` 推出来）。
+##
+## **`MY_SLOT`（0 = 我）不出人**；其余每把椅子按**那一家的棋子色**选模型（`CHAR_MODELS_BY_COLOR`）。
+## **顺序 / 颜色 / 名字一字未变时直接返回**（与 `room.set_seats` 同款早退：本函数每次广播都调，
+## 少了它每次广播都要把三个人整套重建）。
+func set_chars(seats: Array) -> void:
+	# ⚠ 座位锚点是 `global_transform` ⇒ **只在入树之后调**（同 `room.seat_anchor` 那条）。
+	# 不入树就读全局量会打 ERROR 并**静默写错值** ⇒ 这里宁可什么都不做（也**不记指纹**：
+	# 下一次带着正确的树再来一次，仍然会建）。
+	if not is_inside_tree():
+		push_warning("角色层还没入树：set_chars() 要在入树之后调（座位锚点才读得准）")
+		return
+	var key := ""
+	for s in seats:
+		var d: Dictionary = s
+		key += "%d/%d/%s|" % [int(d.get("peer", GameData.NO_PEER)),
+			int(d.get("color", 0)), String(d.get("name", ""))]
+	if key == _char_key:
+		return
+	_char_key = key
+	_clear()
+	for i in seats.size():
+		if i == MY_SLOT:
+			# 「我」这一侧不出人（spec §5.1）：三个数组都记一个"空位"，下标才对得上椅子号。
+			_chars.append(null)
+			_char_peers.append(GameData.NO_PEER)
+			_char_models.append("")
+			continue
+		var color := int((seats[i] as Dictionary).get("color", 0))
+		var model := model_for_color(color)
+		_chars.append(_place(i, model))
+		_char_peers.append(int((seats[i] as Dictionary).get("peer", GameData.NO_PEER)))
+		_char_models.append(model)
+
+## 第 `slot` 把椅子上那个人**是哪一家**（`GameData.NO_PEER` = 那个座位上没人）。
+##
+## **返回的是逐槽位的数组**（下标 = 椅子号，长度 = 上一次喂进来的座位数）⇒ 与房主的
+## `game._seat_peers()` **逐位对齐**（`slot 0` 是 `NO_PEER` —— 那是「我」，不渲染）。
+## 房主那份里 `slot 0` 是**我自己的 peer**，所以两者**只在第 0 位不同**（`hud_test` 钉着这条）。
+func char_peers() -> Array:
+	return _char_peers
+
+## 第 `slot` 把椅子上那个人**用的哪个模型**（`""` = 那个座位上没人）。测试用它核对
+## "按棋子色选、不是按椅子号选"（同一份座位序里让"色号"与"座位号"处处不等）。
+func char_model(slot: int) -> String:
+	if slot < 0 or slot >= _char_models.size():
+		return ""
+	return String(_char_models[slot])
+
+## 棋子色 → 模型文件名（`CHAR_MODELS_BY_COLOR` 的查表，越界钳到最后一档，同
+## `room.gd._refresh_nameplates` 对色号的处理）。**纯查表、无副作用** ⇒ 测试可以直接引用它。
+static func model_for_color(color: int) -> String:
+	return CHAR_MODELS_BY_COLOR[clampi(color, 0, CHAR_MODELS_BY_COLOR.size() - 1)]
+
+## 拆掉当前所有角色（**先 `remove_child` 再 `queue_free`**：`queue_free` 要到帧末才真的释放，
+## 只调它的话紧接着的 `get_node_or_null("Char1")` 还会找到**旧人**——测试与出图都会读错）。
+func _clear() -> void:
+	for c in _chars:
+		if c != null and is_instance_valid(c):
+			remove_child(c)
+			c.queue_free()
+	_chars.clear()
+	_char_peers.clear()
+	_char_models.clear()
 
 ## 第 `slot` 把椅子上**人该站的那一点**（位置 + 朝向）。
 ##
@@ -126,11 +253,11 @@ func seat_pose(slot: int) -> Transform3D:
 	# 但写成局部的那一版，将来椅子要是加了倾角也不会错）。
 	return anchor.translated_local(Vector3(0.0, SEAT_ROOT_Y * CHARS_SCALE, 0.0))
 
-## 把一个人摆到第 `slot` 把椅子上。返回**外套节点**（没摆成给 null）。
-func _place(slot: int) -> Node3D:
-	var packed: PackedScene = load("res://assets/models/chars/%s" % CHAR_MODEL)
+## 把 `model` 这个人摆到第 `slot` 把椅子上。返回**外套节点**（没摆成给 null）。
+func _place(slot: int, model: String) -> Node3D:
+	var packed: PackedScene = load("res://assets/models/chars/%s" % model)
 	if packed == null:
-		push_warning("角色缺模型：%s（跳过）" % CHAR_MODEL)
+		push_warning("角色缺模型：%s（跳过）" % model)
 		return null
 	# **外套节点**：坐姿的整体下移放在它身上（见 `SEAT_ROOT_Y` 那段）——`AnimationPlayer`
 	# 够不着它，`idle` 顶不掉。它也是将来"随取景淡出 / 停播"要按的锚（Task 3）。

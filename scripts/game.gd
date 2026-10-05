@@ -2499,6 +2499,14 @@ func _refresh_players() -> void:
 					"name": String(pl.get("name", "?")),
 				})
 			room.set_seats(seats)
+			# 二期 Task 2：**同一份座位序**再喂一遍给角色层（就在这一处、用同一份数组 ——
+			# 分开推两份就会"人坐错椅子"，而那正是二期最难查的那类错）。下标 = 椅子号，
+			# `GameChars` 自己跳过 slot 0（那是「我」）并按各家的棋子色选模型。
+			# 走 `get_node_or_null` + 动态调用：`CHARS_ENABLED = false` 时角色层根本不存在
+			# （本期的保命开关），而且 game.gd 不该把 `chars.gd` 写成静态依赖。
+			var chars := room.get_node_or_null("Chars")
+			if chars != null:
+				chars.set_chars(seats)
 	_money_flies.clear()     # 本帧飞钞队列（批次 13 ⑥：记在钱循环里、播在身家条刷完之后）
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}

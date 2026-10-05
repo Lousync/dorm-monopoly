@@ -228,6 +228,41 @@ func _run() -> void:
 			"椅背名牌按**各家的棋子色**上色（座位 0 = 我 = peer %d → 实得 %s，期望与 `p.color` 同源）"
 				% [int(seat_peers[0]) if seat_peers.size() > 0 else -1, str(got_colors)])
 
+	# ---- 二期 Task 2：**角色顺序 == `game._seat_peers()`**（房间 ↔ 房主同一份顺序）----
+	# ① **必须在 `g.s_state(...)` 之后**（同上一条）：角色是 `_refresh_players()` 喂进房间的
+	#    （**不在 `_ready`** —— 那一刻 `st` 还空着、座位序给空数组）。
+	# ② **先断言 `_seat_peers()` 非空**：两边都是 `[]` 的话 `[] == []` 恒真，等于什么都没断言
+	#    （一期就踩过这个坑，所以这里连着断言两次）。
+	# ③ 期望值 = 房主那份座位序**把第 0 位换成 `NO_PEER`**：`slot 0` 是「我」，**不渲染**（spec §5.1）
+	#    ⇒ 角色层在那一格记的是"空位"。**除第 0 位外逐位相等**才是"没人坐错椅子"的可执行版。
+	print("== 二期 Task 2：角色顺序 == game._seat_peers()（房间 ↔ 房主同一份顺序）==")
+	_check(seat_peers.size() > 0, "（前提）房主的座位序非空（实得 %d 项）" % seat_peers.size())
+	var chars5: Node = room5.get_node_or_null("Chars") if room5 != null else null
+	_check(chars5 != null, "桌面的房间下挂着角色层（`Room/Chars`，二期）")
+	if chars5 != null and seat_peers.size() > 0:
+		var want: Array = seat_peers.duplicate()
+		want[0] = GameData.NO_PEER          # slot 0 = 我 ⇒ 不出人
+		var got: Array = chars5.char_peers()
+		_check(got.size() > 0 and got == want,
+			"**角色顺序 == `game._seat_peers()`**（房主 %s / 角色层 %s —— 第 0 位是「我」、记作空位；"
+				% [str(seat_peers), str(got)]
+				+ "各写一份顺序就会在二期坐错位）")
+		# 每个座位上那个模型 = **那一家棋子色**对应的模型（`p.color` → `CHAR_MODELS_BY_COLOR`），
+		# **不是按座位序号取模型**。这一份状态 color = peer-1、座位序 = [2,3,4,1] ⇒ 座位 1 是
+		# peer 3（color 2 → 模型 n）；**按座位序号取**的话会是 `CHAR_MODELS_BY_COLOR[1]`（模型 g）⇒ 必红。
+		var models_ok := true
+		var got_models: Array = []
+		for i in seat_peers.size():
+			var pl: Dictionary = g._state_player(int(seat_peers[i]))
+			var want_m: String = "" if i == 0 else chars5.model_for_color(int(pl.get("color", 0)))
+			var got_m: String = chars5.char_model(i)
+			got_models.append(got_m)
+			if got_m != want_m:
+				models_ok = false
+		_check(models_ok,
+			"每个座位上的角色 = **那一家的棋子色**对应的模型（逐座位实得 %s；slot 0 为空）"
+				% str(got_models))
+
 	var bars: Array = g.corner_bars
 	_check(bars.size() == 1, "四角条**只剩「我」这一条**（实得 %d）" % bars.size())
 	_check((bars[0].root as Control).visible, "我这条可见")
