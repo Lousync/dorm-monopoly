@@ -492,6 +492,10 @@ var table_mesh: MeshInstance3D
 var wood_mesh: MeshInstance3D       # 木纹外框（桌垫之外那一圈木桌，见 _build_table）
 var vignette: ColorRect        # 屏幕层暗角贴片（build_vignette 造，挂在调用方给的屏幕上）
 
+## 房间（`Room` 节点）。**存一份**：`_apply_camera()` 要把取景量也推给它
+##（吊灯随取景隐藏，见 `room.set_view_t`）。
+var _room: GameRoom
+
 var table_mat: StandardMaterial3D   # 桌面材质（取样窗口与 TEX_WINDOW_PX 同源）
 
 ## `lamp_light` 是**全场唯一**的灯（批次 6；**批次 12 A1 起台灯的可见几何已删**，
@@ -850,6 +854,10 @@ func _apply_camera() -> void:
 	#（snap_view 与 _process 都调它），所以这是唯一不会漏的推送点。
 	if table_props != null:
 		table_props.set_view_t(view_t)
+	# 取景量**同时**推给房间：吊灯在"只看棋盘"那一档要退场（用户「2D 视角隐藏灯」；
+	# 近正俯视下它会投影到桌面、遮住左边那块立牌，见 `room.set_view_t` 那段）。
+	if _room != null and is_instance_valid(_room):
+		_room.set_view_t(view_t)
 
 ## 逐帧把 view_t 平滑逼近 view_target。指数逼近：每帧把剩余差距乘 e^(-VIEW_SNAP*delta)，
 ## 与帧率无关（60fps 与 144fps 走同样的时间曲线），且**永不过冲**（单调逼近）。
@@ -908,6 +916,7 @@ func _build_viewport() -> void:
 	# **整张桌子**的外沿摆的、不是贴着桌垫摆的，而木纹的宽度是桌子的实现 ⇒ 由桌子这边算好递过去，
 	# `room.gd` 里就不必再写一遍那 0.7（一期 Task 5 Fix round 1）。
 	var room := GameRoom.build(self, LAMP_LIGHT_POS, Vector2(WOOD_HALF_W, WOOD_HALF_D))
+	_room = room
 
 # ---------------- 屏幕层暗角（设计稿 §三 / §6.4） ----------------
 

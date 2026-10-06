@@ -349,6 +349,70 @@ const DECK_LABEL_COLORS := {
 	"机会": Color(0.97, 0.85, 0.52),
 	"命运": Color(0.80, 0.75, 1.00),
 }
+## ---------------- 牌背贴图（程序化，v0.8.0 第六次复核） ----------------
+#
+## 用户 2026-10-06：「桌面上的"机会"、"命运"卡牌堆显示进行优化，太单调了，而且边缘有锯齿」。
+## 锯齿那半是渲染设置的事（`project.godot` 开了 4x MSAA）；**单调那半是这里**。
+#
+## 原样：5 层同样的薄板 + 顶上一行字 ⇒ 读作"一摞砖"，没有"牌"的样子。
+## 做法照项目那条老纪律 —— **能用程序化手段画出来的就别加素材**（转盘 / 房子等级纹理 /
+## 卡面都是这么做的）：逐张 `Image` 画一张**牌背**，贴在压顶那一层的上表面（牌名压在它上面）。
+##
+## **画什么**：牌身底色再压暗一档当底 → 一圈**双线描边**（外侧粗、内侧细）→ 中间一片
+## **斜向格纹**（45° 细线，很淡）→ 正中一枚**菱形徽记**。三层都在同一族色里，靠明度分层，
+## 不引入新色相（免得两摞牌的"机会 / 命运"配色对不上）。
+const DECK_FACE_TEX := Vector2i(128, 184)     # 与 DECK_SIZE 的宽高比一致（0.389:0.561）
+const DECK_FACE_BASE_DIM := 0.78              # 底色在牌身色上再压暗多少
+const DECK_FACE_EDGE_A := 0.75                # 描边不透明度
+const DECK_FACE_LATTICE_A := 0.13             # 斜格纹的不透明度
+const DECK_FACE_EMBLEM_A := 0.42              # 徽记的不透明度
+## `dname -> Texture2D`。**只生成一次**（颜色只与牌名有关，与取景无关）。
+var _deck_face_texs := {}
+
+## 生成（或取回）某一摞的牌背贴图。纯 `Image` 逐像素画，**与状态 / 取景都无关**。
+func _deck_face_tex(dname: String) -> Texture2D:
+	if _deck_face_texs.has(dname):
+		return _deck_face_texs[dname]
+	var body: Color = DECK_BODY_COLORS.get(dname, Color(0.35, 0.30, 0.20))
+	var ink: Color = DECK_LABEL_COLORS.get(dname, Color.WHITE)
+	var w := DECK_FACE_TEX.x
+	var h := DECK_FACE_TEX.y
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var base := body.darkened(1.0 - DECK_FACE_BASE_DIM)
+	var edge := Color(ink.r, ink.g, ink.b, DECK_FACE_EDGE_A)
+	var fine := Color(ink.r, ink.g, ink.b, DECK_FACE_EDGE_A * 0.55)
+	var latt := Color(ink.r, ink.g, ink.b, DECK_FACE_LATTICE_A)
+	var embl := Color(ink.r, ink.g, ink.b, DECK_FACE_EMBLEM_A)
+	# 边距（按短边取，宽窄两个方向看起来一样粗）
+	var m_out := int(round(float(w) * 0.055))
+	var m_in := m_out + maxi(2, int(round(float(w) * 0.022)))
+	var cx := float(w) * 0.5
+	var cy := float(h) * 0.5
+	for y in h:
+		for x in w:
+			var col := base
+			# ① 斜向格纹：45° 细线（`(x+y) % P` 落在细带里就压一档）
+			if 0 == (x + y) % 14:
+				col = col.lerp(latt, 1.0)
+			# ② 双线描边
+			var on_outer: bool = x < m_out or y < m_out or x >= w - m_out or y >= h - m_out
+			var on_inner: bool = x < m_in or y < m_in or x >= w - m_in or y >= h - m_in
+			if on_outer:
+				if not on_inner:
+					col = edge
+				elif x < m_in - 2 or y < m_in - 2 or x >= w - (m_in - 2) or y >= h - (m_in - 2):
+					col = fine
+			# ③ 正中菱形徽记（|dx|/a + |dy|/b <= 1，且留一圈空心）
+			var dxr: float = absf(float(x) - cx) / (float(w) * 0.20)
+			var dyr: float = absf(float(y) - cy) / (float(h) * 0.14)
+			var d: float = dxr + dyr
+			if d <= 1.0 and d >= 0.62:
+				col = embl
+			img.set_pixel(x, y, col)
+	var tex := ImageTexture.create_from_image(img)
+	_deck_face_texs[dname] = tex
+	return tex
+
 ## 牌堆名（也是节点名的后缀）由调用方给（`build_decks` 的字典键；节点名 = `Deck_<牌名>`）——
 ## 这里**不另立一份牌名表**：`board_view` 那两处硬编码的牌名是这套名字的唯一来源，
 ## 谁摆牌堆谁把名字传进来，多一份常量就多一处会漂开的数。
@@ -363,7 +427,9 @@ var _decks_root: Node3D
 ## **批次 8 起连 `top_local` / `top_world` 也不存**：它们只服务于抽卡"从摞顶面抽出"的起点
 ##（`deck_top_px`），而演出已搬到屏幕层、不再需要起点（见文件头"摆放约定"）。
 var _decks := {}
-var _deck_mesh: BoxMesh              # 两摞共用一份：牌面尺寸完全一致
+var _deck_mesh: BoxMesh
+## 牌背那块贴图平面（**两个 deck 共用同一份 mesh**：尺寸跟着脚印走，见 `_apply_deck_footprint`）。
+var _deck_face_mesh: PlaneMesh              # 两摞共用一份：牌面尺寸完全一致
 
 ## 按 `decks`（**牌名 → 画布像素**中心，调用方从 `board.deck_screen_pos` 取）摆两摞实体牌堆；
 ## `size_px` 是这摞卡背在画布上的**整体脚印**（宽 × 进深，调用方从 `board.deck_screen_size` 取）。
@@ -406,6 +472,8 @@ func _apply_deck_footprint(size_px: Vector2, ref_px: Vector2) -> void:
 	var dx: float = (_t3.canvas_px_to_world(ref_px + Vector2(size_px.x, 0.0)) - o).length()
 	var dz: float = (_t3.canvas_px_to_world(ref_px + Vector2(0.0, size_px.y)) - o).length()
 	_deck_mesh.size = Vector3(dx, DECK_LAYER_T, dz)
+	if _deck_face_mesh != null:
+		_deck_face_mesh.size = Vector2(dx, dz)
 
 ## 造一摞（节点只造一次）：5 层薄板 + 顶面平贴的牌名。
 ## 局部坐标原点 = **这摞牌堆的中心在地面的落点**（见 _place_deck）：层 0（最下）抬半层高，
@@ -417,6 +485,9 @@ func _make_deck(dname: String) -> Dictionary:
 	if _deck_mesh == null:
 		_deck_mesh = BoxMesh.new()
 		_deck_mesh.size = DECK_SIZE
+	if _deck_face_mesh == null:
+		_deck_face_mesh = PlaneMesh.new()
+		_deck_face_mesh.size = Vector2(DECK_SIZE.x, DECK_SIZE.z)   # 默认 FACE_Y = 平躺朝上
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = DECK_BODY_COLORS.get(dname, Color(0.35, 0.30, 0.20))
 	mat.roughness = 0.72
@@ -435,7 +506,20 @@ func _make_deck(dname: String) -> Dictionary:
 		var off := (half - float(i)) * DECK_LAYER_SHIFT
 		mi.position = Vector3(off, DECK_LAYER_T * (float(i) + 0.5), off)
 		root.add_child(mi)
-	# 顶面：最上一层（i = LAYERS-1，off = -half × SHIFT）的**上表面中心** —— 牌名就平贴在这儿
+	# 牌背：压在顶层的上表面（比牌名低一点点，牌名盖在它上面）。**它才是"这是一摞牌"的那句话**：
+	# 原来的五层同色薄板 + 一行字读作一摞砖，加上这张背纹之后才读得出是牌。
+	var face := MeshInstance3D.new()
+	face.name = "Face"
+	face.mesh = _deck_face_mesh
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_texture = _deck_face_tex(dname)
+	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	fmat.roughness = 0.8
+	fmat.metallic = 0.0
+	fmat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	face.material_override = fmat
+	face.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # 影子交给牌身
+	# 顶面：最上一层（i = LAYERS-1，off = -half × SHIFT）的**上表面中心** —— 牌背与牌名都贴在这儿
 	#（原先它还是抽卡的「抽出」起点，那个消费者已随批次 8 删除，见文件头"摆放约定"）。
 	var top_local := Vector3(-half * DECK_LAYER_SHIFT, DECK_LAYER_T * float(DECK_LAYERS),
 		-half * DECK_LAYER_SHIFT)
@@ -458,7 +542,9 @@ func _make_deck(dname: String) -> Dictionary:
 	# 字头朝远端（-Z）—— 从近端的镜头看文字正是正的（转 +90° 才是倒的，那面朝下看不见）。
 	# 不 billboard：它是一张印在牌面上的标签，不该随镜头转。
 	lab.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
-	lab.position = top_local + Vector3(0.0, 0.001, 0.0)      # 抬 1mm：与顶层上表面不共面（免得 z-fighting）
+	face.position = top_local + Vector3(0.0, 0.0006, 0.0)    # 抬 0.6mm：与顶层上表面不共面
+	root.add_child(face)
+	lab.position = top_local + Vector3(0.0, 0.0016, 0.0)     # 牌名再抬一档，压在牌背之上
 	root.add_child(lab)
 	# 只留**后面真会读**的一项（修复波 G）：`_place_deck` 读 root。层与标签由 root 的 transform
 	# 一起带走、材质只在上面用过一次 —— 存进字典没人读，只会让人以为"刷新还会改它们"。

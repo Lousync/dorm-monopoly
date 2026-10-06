@@ -35,5 +35,9 @@ pointing/emulate_touch_from_mouse=false
 
 [rendering]
 
+; 4x MSAA（用户 2026-10-06：「卡牌堆边缘有锯齿」）。Compatibility 渲染器支持 3D MSAA；
+; 关掉的话任何斜边都出锯齿 —— 牌堆这种**大块平色 + 直边斜着放**的东西最明显。
+anti_aliasing/quality/msaa_3d=2
+
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
