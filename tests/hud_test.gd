@@ -2405,6 +2405,55 @@ func _run() -> void:
 			and bool(sc.get("call_local", false)),
 			"s_card_close 是 authority + call_local（房主 → 全员，房主自己也收）")
 
+	# ---- M5：棋盘右键取消，端到端链路（台账 §三 测试缺口）----
+	# 此前只各钉了一半：layout_test 验「被实体消费的按下、其配对的松开要吞掉」（3D 转发那一侧），
+	# 本文件里的取消一律直调 `_cancel_target()`。「桌垫右键 → board_view 解释为单击 →
+	# `cancel_clicked` 信号 → `_cancel_target` 收回选中态/选目标态」这条链没人走完过。
+	# 入口用**真函数** `_begin_peer_target`（读同步快照挑可选目标），事件走 board_view 自己的
+	# `_gui_input`（3D 实体层的转发/吞掉已有 layout_test 的转发块覆盖，这里不重复）。
+	print("== 棋盘右键取消：端到端链路（M5） ==")
+	g.my_peer = 1
+	g.hp = _host_roster()
+	g._broadcast_state()
+	await process_frame
+	g._begin_peer_target(0, false, false)
+	_check(g._tgt_stage == "peer", "（前置）真入口进入选目标态（实得 '%s'）" % g._tgt_stage)
+	g.selected_slot = 0   # 选中态一并摆上：取消要把两者一起收回（_cancel_target 的注释口径）
+	var rpress := InputEventMouseButton.new()
+	rpress.button_index = MOUSE_BUTTON_RIGHT
+	rpress.pressed = true
+	rpress.position = Vector2(200, 200)
+	g.board._gui_input(rpress)
+	var rrel := InputEventMouseButton.new()
+	rrel.button_index = MOUSE_BUTTON_RIGHT
+	rrel.pressed = false
+	rrel.position = rpress.position
+	g.board._gui_input(rrel)
+	await process_frame
+	_check(g._tgt_stage == "" and g._tgt_slot == -1, "右键单击 → 选目标态收回")
+	_check(g.selected_slot == -1, "右键单击 → 选中态一并收回")
+	if g.target_hint != null:
+		_check(not g.target_hint.visible, "选目标提示条隐藏")
+	# 反例：右键按下 → 拖动（超阈值）→ 松开 = 拖拽平移，不是取消（board_view 的「非拖拽平移」限定）
+	g._begin_peer_target(0, false, false)
+	_check(g._tgt_stage == "peer", "（前置）重新进入选目标态")
+	var rpress2 := InputEventMouseButton.new()
+	rpress2.button_index = MOUSE_BUTTON_RIGHT
+	rpress2.pressed = true
+	rpress2.position = Vector2(200, 200)
+	g.board._gui_input(rpress2)
+	var rdrag := InputEventMouseMotion.new()
+	rdrag.button_mask = MOUSE_BUTTON_MASK_RIGHT
+	rdrag.position = Vector2(320, 260)
+	g.board._gui_input(rdrag)
+	var rrel2 := InputEventMouseButton.new()
+	rrel2.button_index = MOUSE_BUTTON_RIGHT
+	rrel2.pressed = false
+	rrel2.position = Vector2(320, 260)
+	g.board._gui_input(rrel2)
+	await process_frame
+	_check(g._tgt_stage == "peer", "右键拖拽平移后松开：不取消（选目标态保留）")
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:
