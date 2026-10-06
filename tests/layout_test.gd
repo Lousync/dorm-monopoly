@@ -622,6 +622,78 @@ func _run() -> void:
 			_check(rug_hit == 0,
 				"地毯不压到任何一把椅子（压到 %d 把：%s —— 地毯大一圈就「坐到地毯上」了）" % [rug_hit, rug_log])
 
+			# ---- 三期：吊灯的**可见几何**（`Room/Pendant`）----
+			# 三条一起钉。它对应的是简报里那三条要求（"一盏看得见的吊灯 / 挂在光的位置附近 /
+			# **别改光本身**"），而**光**那一边由上面「唯一主光源 + 桌面照度均匀」那一整段守着
+			#（`LAMP_*` 一个数都不许动 ⇒ 这一段只量**新加的几何**，两者互不重叠）。
+			#
+			#   ① **吊杆顶到天花板**（`ROOM_CEIL_Y`）—— 少了它，灯就是"浮在桌上方的半截"。
+			#   ② **灯罩在桌上方的光位附近**：平面落点 = `LAMP_LIGHT_POS` 的 (x, z)（容差 0.05）。
+			#      这条挡的是"把灯挪到桌子正中 / 挪到墙角"——那种改法一眼看过去"也挺好看"，
+			#      而它已经不是"挂在光的位置上"了。
+			#   ③ **灯罩的屏幕脚印不压在桌垫窗口上**（协调者给的判据："默认档下它不许压到棋盘"）。
+			#      量法：把灯罩世界 AABB 的八个角过 `world_to_canvas_px` 投影成画布矩形，
+			#      与 `TEX_WINDOW_PX`（= 桌垫在画布上的那一块）比相交。**同一把尺子**：
+			#      下面"光源不在桌垫窗口内"那条量的是**光点**，这条量的是**罩子的体**。
+			#      **变红验证**：把 `room.gd.PENDANT_SHADE_BOTTOM` 从 2.6 降到 1.6 ⇒ 罩子沉下来、
+			#      立刻压到左边那一列格子 ⇒ 这条先红（出图 `shots/room_c_bad_*` 那种）。
+			var pend: Node = room.get_node_or_null("Pendant")
+			_check(pend != null, "房间挂着吊灯（`Room/Pendant` —— 光有可见载体了）")
+			if pend != null:
+				var pend_box := _subtree_world_aabb(pend)
+				_check(absf(pend_box.end.y - GameRoom.ROOM_CEIL_Y) < 0.05,
+					"吊灯一路够到天花板（整盏顶面 y=%.2f == ROOM_CEIL_Y=%.2f —— 杆不够长就是浮着的一截）"
+						% [pend_box.end.y, GameRoom.ROOM_CEIL_Y])
+				var sh: Node = pend.get_node_or_null("Shade")
+				var sb := _self_world_aabb(sh)
+				_check(sb.size != Vector3.ZERO, "吊灯有灯罩（`Pendant/Shade` 量得到几何）")
+				if sb.size != Vector3.ZERO:
+					var sc: Vector3 = sb.get_center()
+					_check(absf(sc.x - t3.LAMP_LIGHT_POS.x) < 0.05 and absf(sc.z - t3.LAMP_LIGHT_POS.z) < 0.05,
+						"灯罩挂在吊灯光位附近（罩心 (%.2f, %.2f) vs LAMP_LIGHT_POS (%.2f, %.2f)）"
+							% [sc.x, sc.z, t3.LAMP_LIGHT_POS.x, t3.LAMP_LIGHT_POS.z])
+					# ③-a **平面落点**（协调者给的判据原话）：罩心的平面落点要在桌垫窗口之外。
+					#     **与"光源不在桌垫窗口内"那条同一把尺子**（`world_to_canvas_px`
+					#     + `TEX_WINDOW_PX`）—— 灯罩挂的就是光那一点，所以这两条本来就该同结论。
+					var cpx: Vector2 = t3.world_to_canvas_px(sc)
+					_check(not t3.TEX_WINDOW_PX.has_point(cpx),
+						"灯罩的平面落点在桌垫窗口之外（罩心画布 %s —— 与那条「光源不在桌垫窗口内」同一把尺子）" % cpx)
+					# ③-b **屏幕上不遮住桌垫** —— ③-a 只是**平面落点**这一点，而"压没压到棋盘"
+					#     说的是**遮挡**，两者在"灯吊在桌面上方"时并不等价（罩子在 2.6~4.0 高处，
+					#     它挡住的是**更远**那一块桌面，不是它正下方那一块）。
+					#     ⇒ 真正要钉的是**相机投影下**的遮挡，量法：
+					#       ① 罩子上下两圈口沿各取 16 点，投影到屏幕，取**凸包**（罩子是圆台、
+					#          它的轮廓就是这两圈的凸包 ⇒ 这是**精确**轮廓，不是包络）；
+					#       ② 桌垫四角走 `table_mesh.global_transform * uv_to_world` 投影成四边形；
+					#       ③ `Geometry2D.intersect_polygons`——**空 = 不遮住**。
+					#     **为什么不是"两个包围盒比相交"**：那是拿**矩形**替**圆台 / 斜四边形**，
+					#     虚大的那一圈会把"其实一格没盖"报成盖住（这一条第一次跑就是这么假红的，
+					#     实测两个包围盒交 103×85px，而轮廓多边形不相交）。
+					#     两个半径**从 mesh 上读**（`CylinderMesh.bottom_radius` / `top_radius`），
+					#     不抄 `room.gd` 的常量 —— 与全文件"不把实现重述一遍"同一条纪律。
+					var scm := (sh as MeshInstance3D).mesh as CylinderMesh
+					var rim: Array = []
+					if scm != null:
+						rim = [[scm.bottom_radius, sb.position.y], [scm.top_radius, sb.end.y]]
+					_check(rim.size() == 2,
+						"（前提）灯罩是圆台、量得到上下两个半径（否则下面那条恒真）")
+					var sh_pts := PackedVector2Array()
+					for ring in rim:
+						for i_k in 16:
+							var ang: float = TAU * float(i_k) / 16.0
+							var r_k: float = float(ring[0])
+							sh_pts.append(t3.camera.unproject_position(Vector3(
+								sc.x + cos(ang) * r_k, float(ring[1]), sc.z + sin(ang) * r_k)))
+					var mat_quad := PackedVector2Array()
+					for uv in [Vector2(0.0, 0.0), Vector2(1.0, 0.0), Vector2(1.0, 1.0), Vector2(0.0, 1.0)]:
+						mat_quad.append(t3.camera.unproject_position(
+							t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIZE)))
+					var hull := Geometry2D.convex_hull(sh_pts)
+					var inter := Geometry2D.intersect_polygons(hull, mat_quad)
+					_check(inter.is_empty(),
+						"吊灯罩在屏幕上不遮住桌垫（罩轮廓 %d 点 ⊗ 桌垫四边形 = %d 块交 —— 默认档）"
+							% [hull.size(), inter.size()])
+
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
 	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：

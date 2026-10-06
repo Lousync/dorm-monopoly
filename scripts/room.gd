@@ -125,6 +125,10 @@ var _furn_mat: StandardMaterial3D
 ## 木料**时成立，而用户要的恰恰是"看得出哪件是哪件" ⇒ 拆开。
 var _chair_mat: StandardMaterial3D
 
+## 吊灯灯罩那一份材质（三期复核后加）：`PENDANT_SHADE_ALBEDO` + 自发光。理由见
+## `_build_pendant` 的"材质"那一段。
+var _pendant_shade_mat: StandardMaterial3D
+
 ## ---- 家具与椅子的材质（一期 Task 8 Step 0）----
 ##
 ## **病因（Task 7 出图实证）**：Kenney 那批 `.glb` 是**零贴图的纯平色**（Task 1 已证），
@@ -273,6 +277,13 @@ func _make_materials() -> void:
 	_chair_mat = _lit_mat(CHAIR_ALBEDO, "")
 	_chair_mat.roughness = CHAIR_ROUGH
 	_chair_mat.metallic = CHAIR_METALLIC
+	# 吊灯灯罩（三期复核后改，见 `PENDANT_SHADE_ALBEDO` / `_build_pendant`）：**同族的暗暖色**
+	# ＋一点自发光。它是屋里**唯一一份带 emission 的材质** —— 那盏 `OmniLight3D` 照不到灯罩自己
+	#（N·L ≈ 0），不给自发光它就是一坨深灰。
+	_pendant_shade_mat = _lit_mat(PENDANT_SHADE_ALBEDO, "")
+	_pendant_shade_mat.emission_enabled = true
+	_pendant_shade_mat.emission = PENDANT_GLOW
+	_pendant_shade_mat.emission_energy_multiplier = PENDANT_GLOW_ENERGY
 
 ## 受光的粗糙材质。**不许用 UNSHADED** —— 那会让房间对吊灯与环境光毫无反应、
 ## 变成一块死平的贴图（与 `table_3d._build_table()` 里桌垫那段注释同一个道理）。
@@ -668,33 +679,45 @@ func _build_trim() -> void:
 #   * 平面位置 = `LAMP_LIGHT_POS` 的 (x, z) —— "挂在光的位置上"；
 #   * 高度**不能**用光的 y（10.0）：50° 俯角下画面顶端那条视线在 z = 0 处只到 y ≈ 5.06
 #     （默认档）—— 灯罩放在 y = 10 就是**永远不在画面里**（等于没做）。所以灯罩落到
-#     **y ∈ [2.6, 5.4]**：拉远端那一档整只入画，默认档上方被画面上沿裁掉一点（正常构图）；
-#     它在屏幕上的落点是**左上方那条空带**（默认档实测画布 x≈204 / y≈100 上下），
-#     **压不到棋盘**（棋盘上沿在画布 y≈230）。
+#     **y ∈ [2.6, 4.0]**（罩口到罩顶）：两档都整只入画，而罩口中心的画布落点是
+#     **(245, 211)** —— 在**左上方那条空带**里，**压不到棋盘**（棋盘上沿在画布 y≈230）。
 #
-# **模型**：`lampRoundFloor.glb`（Kenney，CC0，尺寸表里那 25 件之一）。
+# **几何用"程序化"而不是那批 `.glb`** —— 这是**量出来**的结论，不是偏好：
 #
-# **为什么是它、而且为什么要翻过来**（出图两轮才定）：
-#   * 先试的是 `lampSquareCeiling.glb`（名字最像吊灯）：实测它的灯罩是**方盒子、开口朝上**
-#     （`lamp` 面 y ∈ [0, 1.5]、金属杆从盒底升到 2.30）。摆上去是一口**开口朝上的箱子**
-#     （出图 `shots/room3_a_dollyfar_table_plain.png` 左上角就是它），读不出是灯。
-#   * `lampRoundFloor` 是**落地灯**：底座在 y = 0、灯杆到 7.61、**灯罩在顶
-#     （y ∈ [6.82, 8.60]）且开口朝下**。**绕 X 转 180°** 之后整个倒过来 ——
-#     底座变成**天花板底座**、灯杆朝下伸出、灯罩落到最下面**开口朝下**，这正是吊灯的样子。
-#     **只有"转过来"这一条路**：杆与罩的上下关系是模型定死的，靠摆位换不来。
-#   * ⚠ 绕 X 转 180° 会把 **(x, y, z) → (x, −y, −z)**：`x` 不变、**`z` 的偏移要反号**
-#     （见下面 `_build_pendant` 里那一行）。少反这一个号，灯罩就整体偏出去 1.2。
-const PENDANT_MODEL := "lampRoundFloor.glb"
-## 吊灯的缩放（**不是** `FURNITURE_SCALE`）。灯要**从天花板一直垂到画面里**：天花板在 16.0、
-## 灯罩口要落到 2.6 上下 ⇒ 整灯得拉到 `(16.0 − 2.6) / 0.86 = 15.58`（`0.86` = 模型 8.6 高归一）。
-## 顺带把灯罩放大到 2.37 宽（原 1.52）—— 参考图里那盏吊灯本来就比家具显眼。
-const PENDANT_SCALE := 15.58
+# 拿三个 Kenney 灯逐面量了"罩的口 / 顶哪边宽"（`surface_get_arrays` 的顶点，取上下各 10%
+# 那一圈的最大半径）：
+#   * `lampRoundFloor` 罩 `lamp` 面：底圈 1.71 / 顶圈 1.46 ⇒ **口朝下**（落地灯本来就该朝下）；
+#   * `lampRoundTable` 罩：底 1.71 / 顶 1.46 ⇒ 同上；
+#   * `lampSquareCeiling` 罩：底 1.70 / 顶 1.70 ⇒ 方盒，口朝上。
+#
+# 而**吊灯的形状要求两个条件同时成立**：罩在最下面 **且** 口朝下。落地灯的罩在**杆顶**
+# ⇒ 不翻过来就吊不了；**绕 X 翻 180° 又会把口翻成朝上**（出图实证：`shots/room3_g_…`
+# 里那口"朝上的六边形盆"、能看见罩腔）。
+# ⇒ 那两款模型的罩**两条件不可兼得**（罩与杆的上下关系是模型定死的，靠摆位换不来）。
+# 所以这一件走**程序化**：一个 `CylinderMesh` 圆台（口朝下、顶封住）+ 一根细杆 + 一块天花板底座
+# —— 与项目既有的那条纪律一致（"能用程序化手段画出来的就别加素材"，转盘 / 房子贴图 / 卡面
+# 都是这么做的），而且**零新增素材**。
+#
+# **尺寸**（协调者给的目标：罩宽 2.5~3.5 世界）：
+const PENDANT_SHADE_R := 1.25        # 罩**口**半径 ⇒ 宽 2.50 世界 = 0.50 m（一盏普通吊灯罩）
+const PENDANT_SHADE_TOP_R := 0.60    # 罩**顶**半径（收口；顶封住，从相机这一侧看过去是个盖）
+const PENDANT_SHADE_H := 1.40        # 罩高 —— **比宽小得多**（宽:高 = 1.79:1），
+                                     # 这一条是改版的要害：上一版罩高 2.77（比它还宽），读成一根柱子
+const PENDANT_ROD_R := 0.085         # 吊杆半径（细杆；它要一路顶到天花板 = 12 个单位长）
+const PENDANT_SEG := 8               # 段数：与 Kenney 那批的低模调子同一档（8 段 = 八棱圆台）
+## 天花板底座（贴着 `ROOM_CEIL_Y` 的那块小圆盘）的半径 / 厚。
+const PENDANT_PLATE_R := 0.42
+const PENDANT_PLATE_H := 0.30
+## 灯罩**口**（最下面那一圈）挂的世界高度。这是唯一的自由量：罩顶 = 它 + `PENDANT_SHADE_H`、
+## 吊杆从罩顶拉到天花板。取 **3.0** 是**画布判据**定的：`layout_test` 有一条
+## 「吊灯罩在屏幕上不遮住桌垫」（把罩子上下两圈口沿投影成凸包，与桌垫四边形求交）。
+## 2.6 那一档实测**刚好擦到桌垫左缘 ~2px**（罩子有一角伸到 x = −2.83，落在桌垫的 x 范围内，
+## 而它挂得越低、屏幕上就越往右下走）—— 抬到 3.0 之后实测余量 ≈18px。
+## 再往上抬会**削弱"这是吊着的"那件事**（默认档画面上沿只到 y ≈ 5.06，罩顶 4.4 已经是
+## 露出来的那截吊杆的下限了），所以 3.0 是这条画布判据与构图之间的平衡点。
+const PENDANT_SHADE_BOTTOM := 3.0
 
 func _build_pendant() -> void:
-	var packed: PackedScene = load("res://assets/models/%s" % PENDANT_MODEL)
-	if packed == null:
-		push_warning("房间缺吊灯模型：%s（跳过）" % PENDANT_MODEL)
-		return
 	var root := Node3D.new()
 	root.name = "Pendant"
 	add_child(root)
@@ -702,38 +725,82 @@ func _build_pendant() -> void:
 	#（批次 12 A1 删台灯实物时留下的：树里不许再有那盏**台灯**）。那一条查的是**容器的直接
 	# 子节点**、挂在这里本来也不会撞；改叫 `Pendant` 是为了**读代码的人一眼分得清**
 	# ——"台灯的实物已删"与"这轮新加的吊灯"是两件事。
-	var mi := packed.instantiate() as Node3D
-	root.add_child(mi)
-	mi.scale = Vector3.ONE * PENDANT_SCALE
-	mi.rotation_degrees = Vector3(180.0, 0.0, 0.0)      # 倒过来：罩朝下、杆朝天板（见那段注释）
-	# 模型原点**不在灯的轴心上**（实测 AABB x ∈ [−0.16, 1.36]、z ∈ [−1.48, 0.28]，×10 之前）
-	# ⇒ 摆位要减掉半个身位才把灯**对准** `LAMP_LIGHT_POS` 那一点。
-	# **转了 180° 之后 z 反号**（`c.z` 变 `−c.z`），x 不变 —— 那一条别漏。
-	var ab := _model_aabb(packed)
-	var c := ab.get_center()
-	mi.position = Vector3(_lamp_light_pos.x - c.x * PENDANT_SCALE, ROOM_CEIL_Y,
-		_lamp_light_pos.z + c.z * PENDANT_SCALE)
-	_no_shadow(mi)
-	# **保留模型自带的两个材质**（灯罩的奶白 + 金属杆）—— 别的家具一律 `_paint` 成一色，
-	# 吊灯**不能**：灯罩就是要"亮一点"才读得出是灯。于是走 `_lit_shade()`：
-	#   ① 逐面压暗一档（`PENDANT_DIM`，与 `_dim_subtree` 同一套手法）；
-	#   ② **灯罩那一面自发光**（`PENDANT_GLOW`）。
 	#
-	# **② 不是装饰、是必须的**（出图实证）：那盏 `OmniLight3D` 就吊在**灯罩正上方 4.6 处**，
-	# 灯罩的侧面几乎是竖直的 ⇒ `N·L ≈ 0` ⇒ **灯罩自己是全场最暗的那块**（出图是一坨深灰，
-	# 见 `shots/room3_b_table_plain.png` 左上角）—— 一盏"灯"比墙还暗，读起来就是个障碍物。
-	# 灯罩本来就该是**里头的灯泡照亮的**，自发光正是这件事的近似。
+	# 三块都按 `LAMP_LIGHT_POS` 的 **(x, z)** 摆（"挂在光的位置上"），y 由 `PENDANT_*` 那几个定。
+	var axis := Vector3(_lamp_light_pos.x, 0.0, _lamp_light_pos.z)
+	var shade_top: float = PENDANT_SHADE_BOTTOM + PENDANT_SHADE_H
+	# ① 灯罩：圆台，**口朝下**（`bottom_radius` > `top_radius`）、**顶封住**（`cap_top`）。
+	#    相机在 50° 俯角上、灯罩又在桌上方的近处 ⇒ 看过去只会看到**顶盖 + 外壁**，
+	#    "能看见罩腔"那件事（上一版 .glb 的病灶）从根上没了。
+	var shade := MeshInstance3D.new()
+	shade.name = "Shade"
+	var scm := CylinderMesh.new()
+	scm.top_radius = PENDANT_SHADE_TOP_R
+	scm.bottom_radius = PENDANT_SHADE_R
+	scm.height = PENDANT_SHADE_H
+	scm.radial_segments = PENDANT_SEG
+	scm.cap_top = true
+	scm.cap_bottom = true
+	shade.mesh = scm
+	shade.material_override = _pendant_shade_mat
+	shade.position = axis + Vector3(0.0, PENDANT_SHADE_BOTTOM + PENDANT_SHADE_H * 0.5, 0.0)
+	shade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(shade)
+	# ② 吊杆：从罩顶一路拉到天花板（12 个单位长）。**它大半在画面之外**（默认档画面上沿在
+	#    z = 0 处只到 y ≈ 5.06）—— 露出来的那一小截正好是"这盏灯是吊着的"那句话。
+	var rod_h: float = ROOM_CEIL_Y - shade_top
+	var rod := MeshInstance3D.new()
+	rod.name = "Rod"
+	var rcm := CylinderMesh.new()
+	rcm.top_radius = PENDANT_ROD_R
+	rcm.bottom_radius = PENDANT_ROD_R
+	rcm.height = rod_h
+	rcm.radial_segments = PENDANT_SEG
+	rod.mesh = rcm
+	rod.material_override = _furn_mat          # **与其余 17 件家具同一份材质**（见下面"材质"那段）
+	rod.position = axis + Vector3(0.0, shade_top + rod_h * 0.5, 0.0)
+	rod.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(rod)
+	# ③ 天花板底座（`ROOM_CEIL_Y` 之上那一小块圆盘）。**它永远不在画面里** —— 留着与
+	#    "吊杆要顶到天花板上"这件事对上，将来镜头一动不必回来补。
+	var plate := MeshInstance3D.new()
+	plate.name = "CeilingPlate"
+	var pcm := CylinderMesh.new()
+	pcm.top_radius = PENDANT_PLATE_R
+	pcm.bottom_radius = PENDANT_PLATE_R
+	pcm.height = PENDANT_PLATE_H
+	pcm.radial_segments = PENDANT_SEG
+	plate.mesh = pcm
+	plate.material_override = _furn_mat
+	plate.position = axis + Vector3(0.0, ROOM_CEIL_Y - PENDANT_PLATE_H * 0.5, 0.0)
+	plate.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(plate)
+	# ---- 材质（三期复核后改，协调者判图 + 探针实测）----
+	#
+	# **病灶**：屋里每一件家具都走 `_paint()` 压成暗木调，**吊灯是唯一一件没压的** ——
+	# 探针量到它自带的 `metal (0.48, 0.50, 0.51)`（一块**冷灰**）与 `lamp (0.55, 0.53, 0.43)`
+	# （奶白），**两块都亮过家具（0.281）与墙（有效 0.52）** ⇒ 它是画面里唯一的亮色块。
+	# ⇒ 照家具那条口径走：
+	#   * **吊杆 / 底座** → `_furn_mat`（**与其余 17 件家具逐字同一份材质**，"同一族"就是这么落实的）；
+	#   * **灯罩** → `_pendant_shade_mat`：**同族的暗暖色**打底（`PENDANT_SHADE_ALBEDO`）
+	#     ＋**一点自发光**（`PENDANT_GLOW`）。
+	#
+	# **自发光不是装饰、是必须的**：那盏 `OmniLight3D` 就吊在灯罩正上方 4.6 处，罩壁几乎竖直
+	# ⇒ `N·L ≈ 0` ⇒ 光**照不到灯罩自己**（试过不给自发光：出图是一坨深灰，
+	# `shots/room3_b_table_plain.png` 左上角）。灯罩本来就该是**里头的灯泡照亮的** ——
+	# **底色先压到家具那一档、再靠它读出来**，才是对的次序。
 	# ⚠ 它**不是第二盏灯**：`emission` 只加在材质上、不产生任何光照，`layout_test` 那两条
 	#（"唯一投影源" / "补光恰好一盏"）数的是 `Light3D`，与它无关。
-	_lit_shade(mi, PENDANT_DIM, "lamp", PENDANT_GLOW, PENDANT_GLOW_ENERGY)
 
-## 吊灯灯罩的压暗系数（见 `_build_pendant`）。出图调的一档：再亮就成"一块白斑"。
-const PENDANT_DIM := 0.55
-## 灯罩的自发光色 / 强度。暖橙（与 `table_3d.LAMP_COLOR` 同族的暖），强度取到
-## "看得出它在亮、但不至于白成一块板"那一档（出图调的：0.85 时出图是一整块发白的方块，
-## 见 `shots/room3_c_dollyfar_table_plain.png` 左上角；0.30 那一档灯罩有自己的明暗）。
-const PENDANT_GLOW := Color(1.0, 0.62, 0.30)
-const PENDANT_GLOW_ENERGY := 0.30
+## 灯罩的面色：**与家具同族的暗暖色**（比 `FURN_ALBEDO (0.34, 0.27, 0.21)` 稍暗、更偏琥珀）。
+const PENDANT_SHADE_ALBEDO := Color(0.38, 0.26, 0.15)
+## 灯罩的自发光色 / 强度。**暖白**（不是纯橙）—— 纯橙的自发光会把罩子染成一块**饱和橙**
+## （上一版 `(1.0, 0.56, 0.26) @ 0.45` 出图就是一只橙色塑料筒，见 `shots/room3_g_*` 那两轮）。
+## 现在这组：`albedo×受光 + emission×energy ≈ (0.49, 0.39, 0.27)`（亮度 0.39、R/B ≈ 1.8）——
+## **亮过家具（0.281）、仍暗于桌垫（0.56）**，"灯在亮着"读得出来，但抢不走棋盘。
+## 强度 0.38 是出图调的第三档（0.85 白成一块板 → 0.45 饱和橙 → 0.38 暖白）。
+const PENDANT_GLOW := Color(1.0, 0.82, 0.58)
+const PENDANT_GLOW_ENERGY := 0.38
 
 ## 桌下那块地毯（一期 Task 8 Step 0）。**"把桌子锚在地上"最省的一手，且不挡棋盘**
 ##（它整个躺在 `FLOOR_Y` 上、比桌面低 3.7，从取景轨道上任何位置都看不进桌垫）。
@@ -853,37 +920,6 @@ static func _paint(root: Node, mat: Material) -> void:
 ## 按面覆盖才保得住模型自带的分工。
 ## 复制一份再改：`instantiate()` 出来的材质与 `PackedScene` **共用同一份资源**，
 ## 直接改会污染缓存里的那份（同一场景第二次实例化就带着上一次的改动）。
-## `_dim_subtree` 的**带自发光**版（吊灯用，见 `_build_pendant`）：逐面复制材质、乘 `factor`，
-## 再把**名字等于 `glow_name` 的那一面**点亮（`emission_color` / `emission_energy_multiplier`）。
-##
-## **为什么按面名认灯罩**：Kenney 那几个灯的 `.glb` 里每个面带自己的 `resource_name`
-##（实测吊灯是 `lamp` 与 `metal` 两个面 —— 见 `_build_pendant` 那段）。按名字认比"按尺寸
-## 猜哪一面是罩"稳；真认不出来（名字变了）时**不会崩**：一个面都不点亮，灯罩退回纯受光。
-##
-## 与 `_dim_subtree` 同一条纪律：**复制一份再改** —— 材质与 `PackedScene` 共用同一份资源，
-## 直接改会污染缓存（同一场景第二次实例化就带着上一次的改动）。
-static func _lit_shade(root: Node, factor: float, glow_name: String,
-		glow: Color, glow_energy: float) -> void:
-	for n in root.find_children("*", "GeometryInstance3D", true, false):
-		var gi := n as GeometryInstance3D
-		if gi is not MeshInstance3D:
-			continue
-		var mesh := (gi as MeshInstance3D).mesh
-		if mesh == null:
-			continue
-		for s in mesh.get_surface_count():
-			var src := gi.get_active_material(s) as BaseMaterial3D
-			if src == null:
-				continue
-			var m := src.duplicate() as BaseMaterial3D
-			m.albedo_color = Color(m.albedo_color.r * factor, m.albedo_color.g * factor,
-				m.albedo_color.b * factor, m.albedo_color.a)
-			if String(src.resource_name) == glow_name:
-				m.emission_enabled = true
-				m.emission = glow
-				m.emission_energy_multiplier = glow_energy
-			gi.set_surface_override_material(s, m)
-
 static func _dim_subtree(root: Node, factor: float) -> void:
 	for n in root.find_children("*", "GeometryInstance3D", true, false):
 		var gi := n as GeometryInstance3D
