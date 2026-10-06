@@ -184,15 +184,12 @@ var rules_tab := ""
 ##（`set_placard_hot` / `set_placard_timer`），判据仍是同一份。
 ## `regression_test` 的反向契约仍钉着更早的右栏名册（`roster_box` / `roster_rows`）必须不存在。
 var corner_bars: Array = []
-## **桌面立牌的牌面**（v0.8.0 第三次改版）：每一块 = **旧名册格那一块 Control**
-##（`TableHud.make_chip`）装在一个**离屏 `SubViewport`** 里，烘成贴图交给 `table_props`
-## 贴到桌面立牌上。**字典形态与 `corner_bars` 里那条逐项同形**（同一份 `_fill_peer_bar` 刷），
-## 所以高亮 / 倒计时那两处刷新函数能直接把它们并进同一条循环（见 `_hl_bars`）。
-##
-## ⚠ **它自己不在屏幕上**（`SubViewport` 是离屏的），别当它是可见控件。
-var placard_chips: Array = []
-## 立牌面的烘图倍率（2 倍烘、屏幕上再缩回来 ⇒ 字更清楚）。
-const PLACARD_BAKE_SCALE := 2.0
+## **桌面立牌**（每名对手一块）**不在 `game` 上存任何东西** —— 牌面是
+## `table_props` 里的 3D 节点（`Placards/Placard{peer}`），`game` 每次广播把
+## `{peer, slot, color, name, rank, alive}` 推给 `set_placards` 即可（同 `set_tokens` 那套）。
+## 高亮与倒计时各推一次（`set_placard_hot` / `set_placard_timer`），判据仍是
+## **唯一那份** `_hl_peers` / `_op_owner`。
+## 旧的名册条（`roster_strip` / `roster_strip_rows`）已随本改版整体删除。
 ## 最近一次广播算出的身家表（peer -> `_refresh_players` 里那份 entry，带 rank / worth / money）。
 ## **名次徽章的唯一来源**：原先 `_rank_of` 是回头去 `corner_bars` 里翻，四角条只剩一条之后
 ## 那条路只查得到自己 ⇒ 弹窗里别人的徽章会集体消失，所以改成留一份表。
@@ -2733,7 +2730,7 @@ func _refresh_corner_bars(standing: Array) -> void:
 		_refresh_my_energy(mine, mine_peer)
 
 	# ② 桌面立牌：其余所有人（v0.8.0 第三次改版 —— 名册条从屏幕搬上桌）
-	_refresh_placards(standing, mine_peer, turn_peer, phase)
+	_refresh_placards(standing, mine_peer)
 
 ## 把一条身家条 / 名册行按 `standing` 里那一项刷一遍 —— **「我」那条与名册条共用的同一个填法**。
 ## 只有三处按"是哪一种载体"分叉（`is_self`）：徽章位、现金行、名字后面的「（我）」标记 ——
@@ -2839,15 +2836,14 @@ func _refresh_my_energy(bar: Dictionary, peer: int) -> void:
 			Color(0.95, 0.78, 0.35) if lit else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 
-## 桌面立牌（v0.8.0 第三次改版：**名册条从屏幕搬上桌**，用户 2026-10-06）。
+## 桌面立牌（v0.8.0 第四次复核：名册条从屏幕搬上桌；**牌面改成原生 3D 画法**）。
 ##
-## ⚠ **做法不是"照着名册格重画一遍"** —— 那正是本改版第一版走错的弯路（用户：
-## 「做成跟之前屏幕左上角相同的样式（一模一样），你不要乱改」）。这里**直接用那一块 Control**：
-## `TableHud.make_chip` 建出与旧名册格**同一个节点树**，放进一个**离屏 `SubViewport`** 烘成贴图，
-## 再把贴图交给 `table_props` 当牌面。于是：
-##   * 观感**逐像素一致**（同一份绘制代码、同一套常量）；
-##   * 高亮（`_apply_corner_style`）与倒计时（`_refresh_corner_timer`）**继续刷同一块 Control**
-##     —— 那两处只认字典字段、不认挂在哪儿 ⇒ 本文件里**没有一行 3D 专用的高亮 / 倒计时代码**。
+## ⚠ **本函数只推"数据"** —— 用户 2026-10-06 否掉了"把名册格烘成贴图"那条路：
+## 「人物铭牌不要这个贴图，一是尺寸不对，二是文字模糊，你自己重新做一个吧」。
+## 那张烘出来的图**两条病都躲不掉**：`SubViewport` 的分辨率是固定的，屏幕上一缩就糊，
+## 而它的宽高比又被名册格的内容宽度绑死、与牌面尺寸对不上。
+## ⇒ 牌面上的字 / 色片 / 倒计时现在全由 `table_props._make_placard` 用 `Label3D` 与几何画，
+## **矢量渲染，缩到多小都清楚**；每一维都自己定，不跟任何 Control 的比例走。
 ##
 ## `standing` 是身家倒序的那份名单（`_refresh_players` 里算好）。**只摆"别人"** ——
 ## 与「我」那一侧不出人同一条：我自己的信息在左下角那条身家条里。
@@ -2855,11 +2851,11 @@ func _refresh_my_energy(bar: Dictionary, peer: int) -> void:
 ## **立在"他自己那一侧"**：`slot` 从 `_seat_peers()` 反查（1 右 / 2 对面 / 3 左）。
 ## **座位表里找不到他**（观战 / 掉线重连这类边界）⇒ 退到"按名次轮流坐"（`slot = 1 + 序号 % 3`）：
 ## 与旧名册条那条"自己不在名册里就从第 0 家起轮转"同一个意思 —— 总得有个地方站。
-func _refresh_placards(standing: Array, mine_peer: int, turn_peer: int, phase: String) -> void:
+func _refresh_placards(standing: Array, mine_peer: int) -> void:
 	if table3d == null or table3d.table_props == null:
 		return
 	var seats: Array = _seat_peers()
-	var order: Array = []
+	var rows: Array = []
 	var nth := 0
 	for e in standing:
 		if int(e.peer) == mine_peer:
@@ -2872,61 +2868,14 @@ func _refresh_placards(standing: Array, mine_peer: int, turn_peer: int, phase: S
 		if slot == 0:
 			slot = 1 + (nth % 3)
 		nth += 1
-		order.append({"e": e, "slot": slot})
-	while placard_chips.size() < order.size():
-		placard_chips.append(_make_placard_chip(placard_chips.size()))
-	var rows: Array = []
-	for i in placard_chips.size():
-		var chip: Dictionary = placard_chips[i]
-		var root: Control = chip.root
-		var vp: SubViewport = chip.chip_vp
-		if i >= order.size():
-			# 人少了：多出来的那一块**收起并停烘**（旧名册条是同一条支：`visible = false` + 哨兵 peer）
-			root.visible = false
-			chip.peer = GameData.NO_PEER
-			vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
-			continue
-		root.visible = true
-		_fill_peer_bar(chip, order[i].e, turn_peer, phase, false)
-		# 尺寸**照那一格自己算出来的**（宽内容驱动、高恒 `ROSTER_ROW_SIZE.y`）——
-		# 立牌的宽高比就取这个：昵称一长牌面跟着变宽，而不是把字压扁。
-		var sz: Vector2 = root.get_combined_minimum_size()
-		sz.y = TableHud.ROSTER_ROW_SIZE.y
-		chip["w"] = maxf(1.0, sz.x)
-		chip["h"] = maxf(1.0, sz.y)
-		var px := Vector2i(maxi(1, int(ceil(sz.x * PLACARD_BAKE_SCALE))),
-			maxi(1, int(ceil(sz.y * PLACARD_BAKE_SCALE))))
-		if vp.size != px:
-			vp.size = px
-		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-		rows.append({"peer": int(order[i].e.peer), "slot": int(order[i].slot),
-			"tex": vp.get_texture(), "w": sz.x, "h": sz.y})
-	table3d.table_props.set_placard_faces(rows)
-
-## 建一块**离屏立牌面**（名册格那一块 Control + 承载它的 SubViewport）。
-##
-## `PLACARD_BAKE_SCALE` 是烘图倍率：2 倍烘、屏幕上再缩回来 ⇒ 字比 1 倍烘清楚
-##（贴图过滤是 `LINEAR_WITH_MIPMAPS`，缩小不会闪）。Control 的 `scale` 在 SubViewport 里
-## 照常生效（它是那棵子树的根）。
-func _make_placard_chip(i: int) -> Dictionary:
-	var vp := SubViewport.new()
-	vp.name = "PlacardBake%d" % i
-	vp.size = Vector2i(120, 42)
-	vp.transparent_bg = true
-	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	hud_layer.add_child(vp)
-	var chip: Dictionary = TableHud.make_chip(self, vp)
-	(chip.root as Control).scale = Vector2.ONE * PLACARD_BAKE_SCALE
-	chip["chip_vp"] = vp
-	return chip
-
-## 把一块离屏立牌面标成"下次渲染重烘一遍"（内容 / 样式 / 倒计时变过之后都要标）。
-## `_apply_corner_style` 与 `_refresh_corner_timer` 里各调一次 —— 那两处**不认载体**，
-## 只认字典里有没有这一位。
-func _mark_chip_dirty(bar: Dictionary) -> void:
-	var vp: SubViewport = bar.get("chip_vp")
-	if vp != null and is_instance_valid(vp):
-		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		rows.append({"peer": int(e.peer), "slot": slot, "color": int(e.color),
+			"name": String(e.name), "rank": int(e.rank), "alive": bool(e.alive)})
+	table3d.table_props.set_placards(rows)
+	# ⚠ **池子可能刚被重建**（人换了 / 断线重连 ⇒ `set_placards` 收了旧牌、建了新牌，
+	# 新牌的倒计时默认是收着的）。而 `_placard_timer_sig` 那道早退只按"值有没有变"——
+	# **不限时**的窗口里值恒为 `[owner, 0, false]` ⇒ 重建之后它不会再推一次 ⇒
+	# 那块新牌在整个窗口里都收着倒计时。⇒ 重建之后**清掉签名**，逼下一帧重推一遍。
+	_placard_timer_sig = []
 
 ## 高亮 / 倒计时共用的**条 + 行**清单（批次 12 D1）：「我」那条 + 名册条的每一行。
 ## **别把它们分别遍历** —— "谁亮着"（`_hl_peers`）与"倒计时挂谁"（`_op_owner`）各只有一份判据，
@@ -2935,10 +2884,6 @@ func _hl_bars() -> Array:
 	var out: Array = []
 	for b in corner_bars:
 		out.append(b)
-	# 离屏立牌面（v0.8.0 第三次改版）：**与四角条同形** ⇒ 高亮 / 倒计时两处一行都不用改
-	#（这正是当年名册格挂进这条清单的那个理由；载体的形态没变，只是搬到了离屏）。
-	for c in placard_chips:
-		out.append(c)
 	return out
 
 ## 把「此刻可被选中的玩家」（`_hl_peers`）那份高亮贴到**条与名册行**上 —— **每次状态广播末尾重放一遍**。
@@ -2965,8 +2910,10 @@ func _refresh_corner_highlight() -> void:
 			continue                     # 常态早退；点亮那一次一定重贴
 		bar["hot"] = hot
 		_apply_corner_style(bar, bool(bar.get("border_active", false)), hot)
-	# （v0.8.0 第三次改版：立牌的金边不再由 3D 那侧画 —— 它就在烘出来的那张牌面里，
-	#  见 `_apply_corner_style` 末尾那记"标脏"。）
+	# 桌面立牌那三块（落点从名册条搬到了桌上）：**判据仍是唯一一份 `_hl_peers`**，
+	# 这里只负责"把金贴上"（`table_props` 那边就是给牌身染金）。
+	if table3d != null and table3d.table_props != null:
+		table3d.table_props.set_placard_hot(_hl_peers)
 
 ## 一条身家条 / 一个名册行的样式（行动者 / 可选中两件事合成一张样式盒）。
 ## 行动者 = 1px 金边；**可选中 = 2px 金边 + 底色提亮一档**（两者可叠加：选中态若正好轮到 TA 行动，
@@ -2986,8 +2933,6 @@ func _apply_corner_style(bar: Dictionary, active: bool, hot: bool) -> void:
 		bw = 2
 	var sb: StyleBoxTexture = UIKit.card_stylebox(bg, 10, border, bw, 4)
 	root.add_theme_stylebox_override("panel", sb)
-	# 离屏立牌面：样式换了就得重烘一遍（**只有它需要** —— 屏幕上那条是当场重绘的）。
-	_mark_chip_dirty(bar)
 
 func _refresh_actions() -> void:
 	var await_state := String(st.get("await", ""))
@@ -5196,7 +5141,20 @@ func _refresh_op_timer(delta: float) -> void:
 ## 形态：环节名 + 细进度条 + 剩余秒数，**只出现在 `_op_owner` 那一条上**（其余各条内容收起）；
 ## 没有操作窗口时所有条的倒计时内容一律收起。`_op_total <= 0`（黑市那种不限时）= 仍写环节名，
 ## 但**不写秒数、不画进度条** —— 与小卖部面板那份逐条对齐（同一口径）。
+## 立牌倒计时上一帧推过去的那一份（**只在变了才推**：本函数逐帧调，立牌那边一次推送
+## 要写两条几何的位置与缩放）。
+var _placard_timer_sig := []
+
 func _refresh_corner_timer() -> void:
+	# **不限时**（`_op_total <= 0`）的口径与屏幕层逐字对齐：那时连底轨都不画（见 `set_placard_timer`）。
+	var pt_timed: bool = _op_kind != "" and _op_total > 0.0
+	var pt_frac: float = clampf(_op_left / _op_total, 0.0, 1.0) if pt_timed else 0.0
+	var pt_peer: int = _op_owner if _op_kind != "" else GameData.NO_PEER
+	var pt_sig := [pt_peer, snappedf(pt_frac, 0.002), pt_timed]
+	if pt_sig != _placard_timer_sig:
+		_placard_timer_sig = pt_sig
+		if table3d != null and table3d.table_props != null:
+			table3d.table_props.set_placard_timer(pt_peer, pt_frac, pt_timed)
 	if _hl_bars().is_empty():
 		return
 	var show := _op_kind != ""
@@ -5218,7 +5176,6 @@ func _refresh_corner_timer() -> void:
 			continue
 		if kind_l.text != kind_text:
 			kind_l.text = kind_text
-			_mark_chip_dirty(bar)
 		# 颜色**只在真的变了**才写 override（同本函数下面「秒数只在文本变化时写」的先例）：
 		# 这两个 `add_theme_color_override` 原先每帧都写一次 —— 本函数由 `_process` 逐帧调、
 		# 而 override 会触发一次主题重算与重绘（行动者那一条每帧白跑两遍）。
@@ -5230,7 +5187,6 @@ func _refresh_corner_timer() -> void:
 		var txt := "%d 秒" % ceili(maxf(_op_left, 0.0))
 		if left_l.text != txt:
 			left_l.text = txt
-			_mark_chip_dirty(bar)
 		var want_left_col: Color = UIKit.DANGER if warn else UIKit.TEXT
 		if left_l.get_theme_color("font_color") != want_left_col:
 			left_l.add_theme_color_override("font_color", want_left_col)

@@ -601,26 +601,9 @@ const CORNER_TIMER_ROW_H := 19
 ##      `my` 是外沿到**屏幕底**的距离，与条高无关 ⇒ 条只会朝**上**长，变高不会压到谁。
 const MY_BAR_SLOT := {"preset": Control.PRESET_BOTTOM_LEFT, "mx": 12.0, "my": 20.0}
 
-## **名册条的落位常量（`ROSTER_X` / `ROSTER_Y` / `ROSTER_SEP`）已删除** —— 它在屏幕上
-## 不复存在了（v0.8.0 第三次改版：信息搬上桌）。
-##
-## 但**那一格的观感（格尺寸 / 卡片内边距）留下来了**：桌面立牌是**把那一块 Control
-## 原样烘成贴图**贴上去的（`make_chip` + `game._refresh_placards`），所以下面这两个
-## **必须与烘图那份一致**（它们就是烘图时用的值）。
-## ⇒ 这是"一模一样"的可执行版：不是照着它重画一遍，是**用同一份绘制代码**。
-## **v0.8.0 第四次复核：42 → 30**（用户：「通过减间距、减字号缩小一点，这样就可以减小桌面
-## 边缘宽度」）。这一格是**桌面立牌的牌面**（烘成贴图），它多大，桌子那条木纹带就要多宽
-##（见 `table_props.PLACARD_W`）⇒ 收它一档，`table_3d.WOOD_FRAME` 才能从 1.5 收到 0.85。
-const ROSTER_ROW_SIZE := Vector2(0.0, 30.0)
-const ROSTER_CARD_PAD := 2
-
-## 把那一格的卡片上下内边距收成 `ROSTER_CARD_PAD`（**两处调用点都必须调**：
-## `make_chip` 建的时候贴一次，`game._apply_corner_style` 换样式盒时再贴一次）。
-static func slim_card_pad(sb: StyleBoxTexture) -> void:
-	if sb == null:
-		return
-	sb.content_margin_top = ROSTER_CARD_PAD
-	sb.content_margin_bottom = ROSTER_CARD_PAD
+## 名册条那一套常量（`ROSTER_X` / `ROSTER_Y` / `ROSTER_SEP` / `ROSTER_ROW_SIZE` /
+## `ROSTER_CARD_PAD`）与 `make_chip()` / `slim_card_pad()` **已随名册条整体删除**
+##（v0.8.0 第四次复核：信息搬上桌，牌面由 `table_props` **原生**画，不再烘贴图 —— 见那里）。
 
 ## 「我」那条身家条上「能量」行的高度（屏幕像素）。行**常驻占位**，内容恒有（读数 + 小格），
 ## 所以它不是"按需显隐"那一类 —— 写死是为了让 `CORNER_BAR_SIZE` 有一个可核算的加数。
@@ -782,112 +765,10 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 		"peer": GameData.NO_PEER, "border_active": false,
 	}
 
-## 名册格那一块（**离线烘图用**）：内容 = 名次徽章 + 棋子色小片 + 昵称 + 一条常驻占位的
-## 细倒计时行。它是 `v0.8.0` 第三次改版之前屏幕上那条名册条的**同一份代码** ——
-## 今天不再挂在屏幕上，而是被 `game._refresh_placards` 放进 SubViewport 烘成贴图、
-## 贴到**桌面立牌**上（用户 2026-10-06：「做成跟之前屏幕左上角相同的样式（一模一样）」）。
-##
-## **`_fill_peer_bar` / `_apply_corner_style` / `_refresh_corner_timer` 一字未改地继续刷它** ——
-## 那三处只认这个字典的字段名，不认它挂在哪儿。⇒ "一模一样"不是照着重画，
-## 是**同一份代码、同一个字典形态**。
-##
-## ⚠ **结构别乱动**：`game._fill_peer_bar` 会读 `badge_slot` / `chip_slot` / `name_l` /
-## `timer_*` 这些键，`_refresh_corner_timer` 读 `timer_kind/left/track`。
-
-static func make_chip(g: Node, parent: Node) -> Dictionary:
-	var root := UIKit.panel_container(Color(0.085, 0.095, 0.138, 0.82), 10,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 4)
-	# 把卡片自身的上下内边距收到 `ROSTER_CARD_PAD`（批次 13 辛 ③；默认是 8）——
-	# 这条格只有 42 高，8+8 就吃掉近一半，塞不下「一行 + 细倒计时行」。
-	# **只改这一枚**：`card_stylebox` 每次调用都新造一个 `StyleBoxTexture`（缓存的是纹理、
-	# 不是样式盒），所以这里动的是本实例，四角身家条（126 高）仍用默认值。
-	# **`game._apply_corner_style` 换样式盒时会再贴一遍**（同一条常量的两处调用点，见上面说明）。
-	slim_card_pad(root.get_theme_stylebox("panel") as StyleBoxTexture)
-	# **不吃输入**：这一份是**离屏烘图**用的（`game._refresh_placards` 把它放进 SubViewport，
-	# 烘成贴图贴到桌面立牌上）。点击由 `table_props.placard_hit` 命中之后走**同一个**
-	# `game._on_corner_bar_clicked` —— 后果函数一字未改。
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.custom_minimum_size = ROSTER_ROW_SIZE
-	root.visible = false                 # 还没收到状态：一格都不显示
-	parent.add_child(root)
-
-	var m := UIKit.margins(5, 5, 1, 1)   # v0.8.0 第四次复核：6/6/2/2 → 5/5/1/1（缩小一档）
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(m)
-	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 2)
-	outer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(outer)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 3)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	outer.add_child(row)
-	# 名次徽章（批次 13 ② 新加）：身家倒序第几名，与玩家详情弹窗里那枚同一套画法。
-	var badge_slot := Control.new()
-	badge_slot.custom_minimum_size = Vector2(13, 13)   # 16 → 13（v0.8.0 第四次复核）
-	badge_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	badge_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(badge_slot)
-	var chip_slot := Control.new()
-	chip_slot.custom_minimum_size = Vector2(11, 11)    # 14 → 11（v0.8.0 第四次复核）
-	chip_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	chip_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(chip_slot)
-	# 昵称一律 `clip_text` + **固定 46px 最小宽**（批次 13 辛 ③ 从 60 收）：格宽由内容驱动，
-	# 但**名字不许把格撑开**（昵称再长也只在 46px 里裁掉 ⇒ 格宽、进而整条名册条的宽度都与昵称无关）。
-	# 【下面这条旧理由已过期，留此备查】原话是"撑开了名册条的右边缘就会与
-	# `game._refresh_roster` 算出来的对不上、并可能压到畸变横幅"—— `_refresh_roster` 今天
-	# **直接取条自身的 `get_combined_minimum_size()`** 推右边缘、再软夹一道屏幕中线（见 §②），
-	# 条怎么宽它都跟得上，所以"算出来的对不上"不再成立；这条裁剪保的是"格宽可预期"。
-	var name_l := UIKit.label("", 10, UIKit.TEXT)      # 12 → 10（v0.8.0 第四次复核）
-	name_l.clip_text = true
-	name_l.custom_minimum_size = Vector2(34, 0)
-	name_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(name_l)
-
-	# 倒计时行（常驻占位、内容按需填）：与「我」那条同一形态，只是小一号 —— 行动者若是**别人**，
-	# 他的倒计时就落在名册条这一格上（`game._refresh_corner_timer` 按 `_op_owner` 选格）。
-	var timer_row := HBoxContainer.new()
-	timer_row.add_theme_constant_override("separation", 2)
-	# 14 → 13（批次 13 辛 ③）：**必须 ≥ 行内 9 号字标签的自然高（≈12.3）** ——
-	# 否则行动者换到别人身上、这一行的内容一亮出来，这一格就被撑高 0.3px、整条名册一开一合
-	#（`hud_test` 那条"倒计时出现后每条仍各自一样高"钉的就是这个）。
-	timer_row.custom_minimum_size = Vector2(0, 11)
-	timer_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	outer.add_child(timer_row)
-	var timer_kind := UIKit.label("", 8, UIKit.ACCENT)  # 9 → 8（v0.8.0 第四次复核）
-	timer_kind.visible = false
-	timer_row.add_child(timer_kind)
-	var timer_track := ColorRect.new()
-	timer_track.color = Color(1, 1, 1, 0.13)
-	timer_track.custom_minimum_size = Vector2(0, 3)    # 细进度条 4 → 3（v0.8.0 第四次复核）
-	timer_track.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	timer_track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	timer_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	timer_track.visible = false
-	timer_row.add_child(timer_track)
-	var timer_fill := ColorRect.new()
-	timer_fill.color = UIKit.ACCENT
-	timer_fill.size = Vector2(0, 4)
-	timer_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	timer_track.add_child(timer_fill)
-	var timer_left := UIKit.label("", 8, UIKit.ACCENT)   # 9 → 8（v0.8.0 第四次复核）
-	timer_left.custom_minimum_size = Vector2(20, 0)     # 26 → 20（v0.8.0 第四次复核）
-	timer_left.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	timer_left.visible = false
-	timer_row.add_child(timer_left)
-
-	return {
-		"root": root, "chip_slot": chip_slot, "chip": null, "chip_color": -999,
-		"badge_slot": badge_slot, "badge": null, "badge_rank": -1,
-		"name_l": name_l,
-		"timer_row": timer_row, "timer_kind": timer_kind, "timer_track": timer_track,
-		"timer_fill": timer_fill, "timer_left": timer_left,
-		"peer": GameData.NO_PEER, "border_active": false,
-		# 「这一枚的卡片要按 `ROSTER_CARD_PAD` 收上下内边距」——`game._apply_corner_style`
-		# 换样式盒时靠它决定要不要再贴一遍（四角身家条没有这一位 ⇒ 用默认的 8）。
-		"slim_pad": true,
-	}
+## **`make_chip()` 已随名册条整体删除**（v0.8.0 第四次复核）。
+## 它一度被用来把名册格烘成贴图贴到桌面立牌上 —— 用户 2026-10-06 否掉了那条路：
+## 「不要这个贴图，一是尺寸不对，二是文字模糊」。现在牌面由 `table_props._make_placard`
+## **原生**用 `Label3D` + 几何画（矢量渲染，缩到多小都清楚），不经过任何 Control。
 
 # ================= 房主：初始化与主循环 =================
 

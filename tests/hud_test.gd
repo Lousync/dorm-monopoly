@@ -3,10 +3,11 @@ extends SceneTree
 ##
 ## **v0.8.0 第三次改版**：**名册条（`game.roster_strip` / `game.roster_strip_rows`）整体删除**，
 ## 它承载的四件事搬到**桌面立牌**（"立在每名对手那一侧木纹带上、正对相机"的小方牌）。
-## ⚠ **那一格 Control 本身没消失**：它改叫 `TableHud.make_chip`，由 `game._refresh_placards`
-## 装进**离屏 `SubViewport`** 烘成贴图（`game.placard_chips` / `PLACARD_BAKE_SCALE`），再交给
-## `table_props.set_placard_faces` 贴上去 ⇒ **高亮 / 倒计时仍是同一份 `_hl_bars()` + 同一批
-## `game._fill_peer_bar / _apply_corner_style / _refresh_corner_timer`**，判据一个字没改。
+## ⚠ **第四次复核：牌面改回原生 3D 画法** —— 用户 2026-10-06 否掉了"烘贴图"那条路
+##（「人物铭牌不要这个贴图，一是尺寸不对，二是文字模糊」）⇒ 名册格那块 Control
+##（`TableHud.make_chip`）/ 离屏 `SubViewport` / `set_placard_faces` **整体删除**，
+## 牌面上的色片 / 名次 / 昵称 / 倒计时改由 `table_props._make_placard` 用
+## `PlaneMesh` + `Label3D` 画（`game._refresh_placards` 只推数据）。
 ## ⇒ 本文件里**一切"量名册条在屏幕上怎么摆"的断言整段删除**（`roster_strip` 已经不是成员，
 ## 留着就是恒假的红条）；那部分覆盖新建在 **`tests/placard_test.gd`**（①~⑩）。
 ## 本文件从此只钉「我」那一条身家条（`corner_bars` 就剩它一条）。
@@ -210,11 +211,12 @@ func _run() -> void:
 	# 这里原先写的是 `% size` —— 今天 `p.color ∈ 0..3` 两者同值，但色号一旦越界，
 	# 这条断言的期望色就与实现无关了（消息是给人看的，会误导下一个改色号的人）⇒ 照实现写钳位。
 	#
-	# **载体换过两次**：椅背名牌（一期）→ 头顶名牌（v0.8.0 三次改版）→ **桌面立牌**（四次改版；
+	# **载体换过三次**：椅背名牌（一期）→ 头顶名牌（v0.8.0 三次改版）→ **桌面立牌**（四次改版；
 	# 用户「人物顶部铭牌去掉」+「将屏幕左上角的玩家信息块移到桌面上」）。守的那件事
 	# ——**色随 `p.color` 走、不随座位序号走**——**一次都没变**。今天它读的是
-	# **烘好的那块牌面**（`g.placard_chips`：字典形态与 `corner_bars` 同形，`chip_color`
-	# 与 `chip` 是 `_fill_peer_bar` 写的，与屏幕层同一条链）。
+	# **牌面上那枚棋子色小片**（`table_props._placards[peer].chip_mat.albedo_color`）——
+	# 第四次复核把"烘好的那块牌面（`game.placard_chips`）"整体删了，牌面改成原生 3D 元素，
+	# 小片色是 `_fill_placard` 直接写进材质里的 ⇒ 读**真的贴上去的那个色**（比读色号更硬）。
 	if room5 != null:
 		var in_room: Array = room5.seat_peers()
 		_check(in_room == seat_peers,
@@ -223,31 +225,30 @@ func _run() -> void:
 		var colors_ok := true
 		var got_colors: Array = []
 		var n_chips := 0
+		var placards: Dictionary = g.table3d.table_props._placards
 		for i in seat_peers.size():
 			if i == 0:
 				continue                        # slot 0 =「我」⇒ 桌上没有我的牌（同"我那一侧不出人"）
 			var pl5: Dictionary = g._state_player(int(seat_peers[i]))
 			var want: Color = GameData.PLAYER_COLORS[
 				clampi(int(pl5.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
-			# ⚠ `bar.chip_color` 是**色号下标（int）**，不是 `Color`：真正那张小片是
-			# `UIKit.chip(PLAYER_COLORS[idx], …)` 造出来的 `TextureRect`（`game._fill_peer_bar`）。
-			# ⇒ 这里比下标，等价于比颜色，而且**读的是实现写进去的那一位**（不重算一遍颜色）。
-			var got := -1
+			# ⚠ 小片的载体是 `Chip`（`PlaneMesh`），它的材质色由 `table_props._fill_placard`
+			# 按 `clampi(color, 0, size-1)` 取 `GameData.PLAYER_COLORS` 写进去
+			# ⇒ 这里比的是那个 `Color` 本身，而期望色**与实现同一条钳位口径**（【终审 F5】）。
+			var got := Color(-1.0, -1.0, -1.0)
 			var found := false
-			for chip in g.placard_chips:
-				if int(chip.get("peer", GameData.NO_PEER)) != int(seat_peers[i]):
-					continue
+			var pl_d = placards.get(int(seat_peers[i]), {})
+			if not (pl_d as Dictionary).is_empty():
 				found = true
-				got = int(chip.get("chip_color", -1))
-			var want_idx := clampi(int(pl5.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)
-			got_colors.append(got)
+				got = ((pl_d as Dictionary)["chip_mat"] as StandardMaterial3D).albedo_color
+			got_colors.append(str(got))
 			n_chips += 1
-			if not found or got != want_idx:
+			if not found or not got.is_equal_approx(want):
 				colors_ok = false
 		_check(n_chips == 3 and colors_ok,
-			"桌面立牌的牌面按**各家的棋子色**上色（座位 1..3 → 实得色号 %s，期望与 `p.color` 同源；"
+			"桌面立牌的牌面按**各家的棋子色**上色（座位 1..3 → 实得 %s，期望与 `p.color` 同源；"
 				% str(got_colors)
-				+ "按座位序号取色的话座位 1 会是 1，这里是 2）")
+				+ "按座位序号取色的话座位 1 会是蓝、这里是绿）")
 
 	# ---- 二期 Task 2：**角色顺序 == `game._seat_peers()`**（房间 ↔ 房主同一份顺序）----
 	# ① **必须在 `g.s_state(...)` 之后**（同上一条）：角色是 `_refresh_players()` 喂进房间的
@@ -300,11 +301,12 @@ func _run() -> void:
 		"名册三层载体都已从 game 上删净（roster_box / roster_rows / roster_strip / roster_strip_rows）")
 
 	# ---- 桌面立牌（v0.8.0 第三次改版：**名册条整体删除**，信息搬上桌）----
-	# 立牌**可见的那一块**是 3D 节点、挂在 `table3d.table_props` 下（牌面是 `hud_layer` 下一个
-	# **离屏** `SubViewport` 烘出来的贴图，不上屏）⇒ 屏幕上再没有"一格名册行"可量。
+	# 立牌**可见的那一块**是 3D 节点、挂在 `table3d.table_props` 下（第四次复核起牌面是
+	# `BoxMesh` + `Label3D` 画的原生 3D 元素，**不经过任何不上屏的 Control**）⇒ 屏幕上再没有
+	# "一格名册行"可量。
 	# 那部分覆盖**整段搬去 `tests/placard_test.gd`**：
 	#   ① 三个人各一块立牌、没有「我」那块；② 牌色随 `p.color` 走（不随座位序号）；③ 昵称 / 名次；
-	#   ④ 落点在自己那一侧的木纹带里、不压地块；⑤ 随视角躺平（−25° / −90°）；⑥ 金边（选目标）；
+	#   ④ 落点在自己那一侧、不压地块；⑤ 整块正对相机（billboard）；⑥ 金边（选目标）；
 	#   ⑦ 行动者倒计时（`Track`/`Bar`）；⑧ 命中链（`placard_hit`）；⑨ 点它开弹窗；⑩ 幂等 / 收掉。
 	# 本文件只保留**与"我这条身家条"同源**的那几条（名次徽章 / 身家 / 现金 / 能量 / 高亮）。
 	# 名次徽章上的数字就是身家名次。身家 = 现金 + 地产；甲 12000 + 一号楼地价(3800) = 15800，
@@ -448,7 +450,7 @@ func _run() -> void:
 			% [rb.get_center().y, g.log_toggle.get_global_rect().get_center().y])
 	_check(not rb.intersects(g.log_toggle.get_global_rect()), "两枚按钮不重叠")
 	# 展开战报栏 → 不许压住「我」那条身家条（⑩ 明写「身家条与展开的战报栏不许打架」）。
-	# **名册条那半随载体退场**：立牌可见的那一块是 3D 节点（牌面是离屏烘图，不上屏）⇒ 与屏幕层的
+	# **名册条那半随载体退场**：立牌可见的那一块是 3D 节点（原生 3D 牌面，不在屏幕层）⇒ 与屏幕层的
 	# 战报栏天然不同层。立牌不压地块 / 不飘出桌子由 `tests/placard_test.gd` ④ 守。
 	g._toggle_log()
 	await process_frame
