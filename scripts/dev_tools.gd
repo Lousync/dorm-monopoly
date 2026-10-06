@@ -662,7 +662,7 @@ func take_shot(path: String) -> void:
 		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
 		g.casino.s_casino_roll.rpc({g.my_peer: 5})
 	if path.contains("target") and g.multiplayer.is_server() and not g.htiles.is_empty():
-		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**名册格**亮着、其余不亮"
+		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的那几块**桌面立牌**亮着、其余不亮"
 		#（落点史：桌上立牌 → 屏幕四角条（批次 9）→ 名册条右上（批次 12 D）→ **名册条左上角、
 		# 「暂停」旁一列（批次 13 ②）**；高亮由 `_refresh_corner_highlight`
 		# 在批次 9 Task 3 接上，出图名 `xx_target_plain.png`）。

@@ -2525,6 +2525,37 @@ func set_placard_timer(peer: int, frac: float, timed: bool) -> void:
 		bar.position = Vector3(-PLACARD_TRACK_W * 0.5 + PLACARD_TRACK_W * f * 0.5,
 			(pl["track"] as MeshInstance3D).position.y, 0.020)
 
+## 屏幕点命中的立牌（**屏幕空间**入口）。
+##
+## **为什么需要它**：拖动指向（#24）松手那一下拿到的是**屏幕坐标**（`table_3d.on_table_release`
+## 带出来的 `mb.position`），而命中盒是在画布像素里算的 ⇒ 这里先 `screen_to_viewport` 再交给
+## `placard_hit`。**屏幕点落在牌上时、射线打到的桌面点在牌的后方**，所以这一次换算永远有效
+##（牌的命中盒是投影出来的，与桌面上的落点不是同一个点，但两者一一对应）。
+##
+## ⚠ 这一条是**合并 main 时的适配**：同事的拖动出牌原先在松手时命中**屏幕层的名册条**决定目标，
+## 而名册条在 v0.8.0 第四次改版已整体删除、落点搬到了桌面立牌上 ——
+## 不换这一处的话，拖动指向会**一律走"取消"**（`_hl_bars()` 只剩我自己那一条，永远命中不了对手）。
+func placard_peer_at_screen(screen_px: Vector2) -> int:
+	if _t3 == null:
+		return GameData.NO_PEER
+	var px = _t3.screen_to_viewport(screen_px)
+	if px == null:
+		return GameData.NO_PEER
+	return placard_hit(px)
+
+## 某块立牌的**屏幕中心**（拖动指向的箭头吸附到它）。找不到 / 相机不可用时给 `Vector2.INF`
+##（调用方按 `is_finite` 判空 —— 屏幕坐标里 `INF` 是个干净的哨兵，不用另立常量）。
+func placard_screen_center(peer: int) -> Vector2:
+	if _t3 == null or _t3.camera == null:
+		return Vector2.INF
+	var pl = _placards.get(peer)
+	if pl == null:
+		return Vector2.INF
+	var root: Node3D = pl.get("root")
+	if root == null or not is_instance_valid(root):
+		return Vector2.INF
+	return _t3.camera.unproject_position(root.global_position)
+
 ## 立牌命中（画布像素进、peer 出；`GameData.NO_PEER` = 没打中）。
 ## 口径与 `token_hit` 逐条相同（八角投影取包围盒 + 四面放宽；相机不可用时跳过）。
 ##

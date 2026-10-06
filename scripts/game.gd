@@ -5014,8 +5014,10 @@ func _selectable_props(peer: int) -> Array:
 ## 传空数组 = 全部熄灭；换阶段（peer → tile）与取消都走它。
 ##
 ## 批次 9：立牌退场，原先"推给立牌"那一路随之删掉；高亮改画在屏幕层的条上（批次 12 D 起
-## 他人那一格在名册条上（**批次 13 ② 起在左上角「暂停」旁**），见
-## `_refresh_corner_highlight`）。`_hl_peers` 是这份高亮的**单一来源**（广播末尾按它重放）。
+## 他人那一格在名册条上，**批次 13 ② 起在左上角「暂停」旁**）。
+## **v0.8.0 第四次改版：名册条整体删除 ⇒ 他人那一份落点搬到了桌面立牌**
+##（`table_props.set_placard_hot`；`_refresh_corner_highlight` 末尾推一次）。
+## `_hl_peers` 是这份高亮的**单一来源**（广播末尾按它重放）。
 func _push_peer_highlight(peers: Array) -> void:
 	if board != null:
 		board.set_select_peers(peers)
@@ -5041,12 +5043,12 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_peer = -1
 	_tgt_tiles = []
 	_tgt_swap_mine = -1
-	# 入口是**屏幕左上角名册条里对手那一格**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
-	# → 顶部名册条右上（批次 12 D）→ **名册条左上角、暂停按钮旁（批次 13 ②）**）——
+	# 入口 = **桌面上对手那一块立牌**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
+	# → 顶部名册条（批次 12 D）→ 左上角名册条（批次 13 ②）→ **桌面立牌（v0.8.0 四次改版）**）——
 	# 与规则说明（`rules_text.gd` 基础操作页）同源口径，
-	# 别再说"立牌 / 玩家卡 / 四角条"（玩家会照着找一样已经不存在的东西）。
-	_show_target_hint("拖到左上角名册条里对手那一格松手（或直接点它；Esc/右键取消）" \
-		if not then_prop else "拖到对手那一格松手，再选他的一块地（Esc/右键取消）")
+	# 别再说"名册条 / 玩家卡 / 四角条"（玩家会照着找一样已经不存在的东西）。
+	_show_target_hint("拖到桌上对手的立牌上松手（或直接点它；Esc/右键取消）" \
+		if not then_prop else "拖到对手的立牌上松手，再选他的一块地（Esc/右键取消）")
 	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）
@@ -5225,11 +5227,14 @@ func _on_table_release(screen_pos: Vector2, button: int) -> void:
 		return                                   # 单击：保留选目标态，等玩家点目标
 	_resolve_release_target(screen_pos)
 
-## 松手落点结算：选玩家态命中名册格 → `_on_seat_clicked`；选地块态反算棋盘格 → `_finish_tile_target`；
-## 都没命中 → 取消。
+## 松手落点结算：选玩家态命中**桌面立牌** → `_on_seat_clicked`；选地块态反算棋盘格 →
+## `_finish_tile_target`；都没命中 → 取消。
+##
+## ⚠ **落点换过**：同事写 #24 时命中的是**屏幕层的名册条**；名册条已随 v0.8.0 第四次改版
+## 整体删除、目标落点搬到了桌面立牌上（与"点它开弹窗 / 选目标描金边"是同一批牌）。
 func _resolve_release_target(screen_pos: Vector2) -> void:
 	if _tgt_stage == "peer":
-		var peer := _bar_peer_at(screen_pos)
+		var peer := _target_peer_at(screen_pos)
 		if peer != GameData.NO_PEER and peer in _hl_peers:
 			_on_seat_clicked(peer)
 		else:
@@ -5245,15 +5250,16 @@ func _resolve_release_target(screen_pos: Vector2) -> void:
 					return
 		_cancel_target()
 
-## 屏幕点命中的名册格 / 身家条的 peer（没有则 NO_PEER）。只查可见的候选落点。
-func _bar_peer_at(screen_pos: Vector2) -> int:
-	for b in _hl_bars():
-		var root: Control = b.root
-		if root == null or not is_instance_valid(root) or not root.visible:
-			continue
-		if root.get_global_rect().has_point(screen_pos):
-			return int(b.get("peer", GameData.NO_PEER))
-	return GameData.NO_PEER
+## 屏幕点命中的**目标落点**的 peer（没有则 NO_PEER）。
+##
+## **v0.8.0 第四次改版：落点从"屏幕层的名册条"搬到了"桌面立牌"** —— 名册条整体删除之后
+## `_hl_bars()` 只剩我自己那一条 ⇒ 原先那个遍历**永远命中不了对手**（拖动指向一律被取消）。
+## ⇒ 改成问立牌的屏幕命中（`table_props.placard_peer_at_screen`，与点击那条链**同一个命中盒**）。
+## **是否"此刻可选"仍由调用方按 `_hl_peers` 判**（判据没动，只是落点换了载体）。
+func _target_peer_at(screen_pos: Vector2) -> int:
+	if table3d == null or table3d.table_props == null:
+		return GameData.NO_PEER
+	return table3d.table_props.placard_peer_at_screen(screen_pos)
 
 ## 每帧驱动瞄准箭头：选目标态期间从手牌那张卡指向鼠标；鼠标压在合法名册格上时吸附到它中心。
 func _update_aim_arrow() -> void:
@@ -5267,14 +5273,14 @@ func _update_aim_arrow() -> void:
 		aim_arrow.hide_aim()
 		return
 	var tip: Vector2 = get_viewport().get_mouse_position()
+	# 选玩家态：鼠标压在**合法的那块立牌**上时吸附到它的中心（落点与 `_resolve_release_target`
+	# 同源 —— 都是 `placard_peer_at_screen` + `_hl_peers`）。
 	if _tgt_stage == "peer":
-		for b in _hl_bars():
-			var root: Control = b.root
-			if root == null or not is_instance_valid(root) or not root.visible:
-				continue
-			if int(b.get("peer", GameData.NO_PEER)) in _hl_peers and root.get_global_rect().has_point(tip):
-				tip = root.get_global_rect().get_center()
-				break
+		var hp: int = table3d.table_props.placard_peer_at_screen(tip)
+		if hp != GameData.NO_PEER and _hl_peers.has(hp):
+			var c: Vector2 = table3d.table_props.placard_screen_center(hp)
+			if is_finite(c.x) and is_finite(c.y):
+				tip = c
 	aim_arrow.show_aim(src as Vector2, tip)
 
 ## 悬停手牌 → 屏幕层放大预览（#23）：内容随悬停那张牌换，位置贴着那张牌上方；没悬停则收起。

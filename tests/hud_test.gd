@@ -1990,7 +1990,7 @@ func _run() -> void:
 	_check(not _corner_bar_hot(g, g.corner_bars[0]),
 		"取消选目标后我这条身家条仍是熄灭的（高亮只在可选中的那几家身上）")
 
-	print("== 拖动指向（#24）：拖到名册格松手 = 选定；拖到别处松手 = 取消 ==")
+	print("== 拖动指向（#24）：拖到对手的桌面立牌松手 = 选定；拖到别处松手 = 取消 ==")
 	# 按下手牌 = 一次"拖动指向"的起点（`_drag_active`），配对松开由 `table3d.on_table_release`
 	# 交给 `_on_table_release` 收尾：拖动超过阈值才结算，单击保留旧交互。
 	g.my_peer = 2
@@ -2008,14 +2008,19 @@ func _run() -> void:
 		"拖动：按下强拆令被手牌消费")
 	_check(g._tgt_stage == "peer" and g._drag_active,
 		"拖动：按下后进选玩家态且 _drag_active 置真（tgt_stage=「%s」）" % g._tgt_stage)
-	# 拖到 peer1 那一行松手（起点假装在别处，> 阈值）
-	var dbar := _bar_of(g, 1)
-	var dc: Vector2 = (dbar.root as Control).get_global_rect().get_center()
+	# 拖到 peer1 那块**桌面立牌**松手（起点假装在别处，> 阈值）。
+	# ⚠ **落点换过**：同事写 #24 时用的是**屏幕层名册条里那一格**，而名册条已随 v0.8.0
+	# 第四次改版整体删除、目标落点搬到了桌面立牌上（`table_props.placard_screen_center`，
+	# 与点击那条链**同一个命中盒**）。不换这里的话 `_bar_of(g, 1)` 会给一个空字典 ⇒
+	# 取 `.root` 当场报错、整段 `_run()` 中断（表现为**测试挂死**）。
+	var dc: Vector2 = g.table3d.table_props.placard_screen_center(1)
+	_check(is_finite(dc.x) and is_finite(dc.y),
+		"（前提）peer1 那块桌面立牌能折出屏幕中心（实得 %s）" % str(dc))
 	g._drag_press_pos = dc + Vector2(160, 160)
 	g._on_table_release(dc, MOUSE_BUTTON_LEFT)
 	await process_frame
 	_check(g._tgt_stage == "tile" and g._tgt_peer == 1,
-		"拖到 peer1 松手 → 走既有选目标链（强拆令两段式 ⇒ 转选地块，实得「%s」/%d）"
+		"拖到 peer1 的立牌上松手 → 走既有选目标链（强拆令两段式 ⇒ 转选地块，实得「%s」/%d）"
 			% [g._tgt_stage, g._tgt_peer])
 	# 单击（移动 < 阈值）：不结算，保留选目标态（旧的"点卡再点目标"仍可用）
 	g._drag_active = true
