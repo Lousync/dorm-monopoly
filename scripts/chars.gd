@@ -16,10 +16,23 @@ extends Node3D
 ## `room.set_seats()` 是同一份**（`game.gd:_refresh_players()` 同一处喂）—— 各写一份就会坐错位。
 ## 逐座位选模型（按棋子色，见 `CHAR_MODELS_BY_COLOR`）已做。
 ##
-## **二期 Task 3：人活了，并且为它付了账** —— ① 待机 `idle`（**循环模式必须自己设**，导入器
-## 给的是 `LOOP_NONE`，见 `_loop_idle`）；② 当前行动者 = **同一条 `idle` 提速**（`set_actor`）；
-## ③ **随取景淡出并停播**（`set_fade`）—— "读棋盘"那几档（推近端 / 2D 端）把动画与绘制一起停掉，
-## 二期不拖慢主玩法档。三条都**只读表现层**：行动者读 `st.turn`，取景读 `view_t` / `dolly`。
+## **二期 Task 3（v0.8.0 改版）：完全静止 + 头顶名牌** —— 用户 2026-10-06 判图后拍板：
+## **人物不要乱动**，并且"靠角色本身认人"读不出来 ⇒ 加标识。**本条推翻了二期 spec §5.7
+## 的旧定案**（"不改名牌、靠角色本身认人"）。于是：
+##   ① **一帧动画都不播** —— 待机 `idle` 整条退场（模型停在自己导入时的静止姿，叠加手摆坐姿
+##      就是"坐着的静止人"）；连带那条"当前行动者 = 同一条 `idle` 提速 1.4×"也一起退场；
+##   ② **头顶浮动名牌**（`Tags/Tag{i}`）：**棋子色牌 + 昵称**、整块 `billboard` 朝向镜头、
+##      立在**头顶之上**（牌底边按模型的**世界 AABB 顶**算，不是写死的数）；
+##   ③ **当前行动者靠牌上一圈金边**表达（静止的，不闪）—— 替掉原来的提速线索；
+##   ④ **随取景淡出**照旧（`set_fade`）："读棋盘"那几档（推近端 / 2D 端）把**人 + 名牌**一起隐掉，
+##      二期不拖慢主玩法档。
+## 四条都**只读表现层**：行动者读 `st.turn`，取景读 `view_t` / `dolly`。
+##
+## ⚠ **名牌为什么挂在 `Chars/Tags` 下、而不是挂在 `Char{i}` 里**：`chars_test` 有一整批断言
+## 拿**角色子树的 AABB**去量落位 / 穿模 / 破产收势（`_subtree_world_aabb(Char{i})`）—— 名牌一进去，
+## 那个"最高点"就变成牌顶，几条判据会**悄悄换了对象**（一期 `layout_test` 把 `Nameplate`
+## 从家具那一批里剔出去，就是同一个理由）。挂成**兄弟节点**则各量各的，谁也不用剔谁。
+## 代价：名牌的显隐 / 透明度由 `_apply_fade` **显式**带着一起做（见那里）。
 ##
 ## **二期 Task 4：四个玩法事件各有一动**（`react()`）—— 出牌 / 付钱 / 被抢地 / 破产，
 ## **四条动画名全部是普查实测存在的**（见 `REACT_ANIMS`）；破产那一条**停在 `die` 的末帧**
@@ -144,30 +157,60 @@ const CHAR_MODELS_BY_COLOR := [
 ## （一期只在那一侧留椅背 + 名牌）。`set_chars()` 跳过它，`char_peers()` 在那里给 `NO_PEER`。
 const MY_SLOT := 0
 
-# ---------------- 二期 Task 3：待机循环 / 当前行动者 / 随取景淡出并停播 ----------------
+# ---------------- 二期 Task 3（改版）：头顶名牌 / 随取景淡出 ----------------
 #
-# 本任务把角色"弄活"，并**为它付账**（性能）：三件事都在这一节里 ——
-#   ① **待机循环**（`idle` + `LOOP_LINEAR`，必须自己设，见 `IDLE_ANIM`）；
-#   ② **当前行动者**（同一条 `idle` 提速，见 `ACTOR_SPEED`）；
-#   ③ **随取景淡出并停播**（"读棋盘"那几档不许被二期拖慢，见 `set_fade`）。
+# 本节的契约（v0.8.0 改版后）：
+#   ① **完全静止** —— 本文件**不播任何动画**（`_place` 里没有 `play()`；一次性反应播完 `stop()`）；
+#   ② **头顶名牌**（`Tags/Tag{i}`）—— 棋子色牌 + 昵称 + billboard；行动者多一圈金边；
+#   ③ **随取景淡出**（"读棋盘"那几档把人 + 牌一起隐掉，见 `set_fade`）。
 # **一行玩法都不碰**：行动者是从表现层**读**来的（`game.gd:_refresh_players` 里的 `st.turn`），
 # 取景也是从**表现层读**来的（往上找那个暴露 `view_t` / `dolly` 的祖先）⇒ 没有新的状态、
 # 没有新的 `@rpc`。
 
-## 待机动画名（普查 §5.4：27 条里唯一合适的持续型动画 —— 只动躯干 + 双臂 + 头 4 条轨道，
-## 正是"呼吸 / 小幅摇摆"要的那一面，且**不碰 `root` / 腿**）。
-const IDLE_ANIM := "idle"
-
-## **当前行动者**的 `idle` 提速倍率（普查 §5.4 建议 1.3~1.5，取中档）。
+## ---------------- 头顶名牌（`Tags/Tag{i}`） ----------------
+#
+## **它为什么存在**：用户 2026-10-06 判图后说「加个标识，不然我不知道他是谁」——
+## 二期 spec §5.7 当初定的"靠角色本身认人"（四个模型按棋子色一一对应、永不撞车）**读不出来**。
+## 原因也是量得出来的：`CHAR_TINT` 为了"角色不许是画面里最亮的东西"把整张贴图压到
+## `0.29/0.25/0.21`（Task 2 那段），加上屋里只有一盏吊灯 ⇒ 蓝 / 红 / 绿三个人在**背对镜头**
+## 的那两把椅子上都是**一团暗褐色**，只能靠正面那张脸认——而正面只有对面那一家露得出来。
 ##
-## **为什么只能靠提速**：包里**没有第二条持续型动画** —— 唯一的另外两条（`walk` / `sprint`）
-## 是**位移动作**，坐着的人播它不合适（普查 §5.4 建议表）。⇒ "轮到我了"只能靠**同一条 `idle`
-## 快一点**表达。基准档见 `IDLE_SPEED`（= 1.0）。
-## **幅度取中档**：慢了看不出来，快了像"抖" —— 1.4 是"看得出比别人精神一点"的那一档。
-const ACTOR_SPEED := 1.4
-## 非行动者的 `idle` 速度（基准）。**必须有这个显式的基准**：`set_actor` 要能把上一个
-## 行动者**降回来**，不能只往上加。
-const IDLE_SPEED := 1.0
+## **做法 = 一期椅背名牌的同一套语言**（BoxMesh 薄牌 + Label3D），只改三处：**billboard 朝向镜头**、
+## **立在头顶之上**、**行动者多一圈金边**。颜色仍取 `GameData.PLAYER_COLORS`（与 HUD 名册条、
+## 椅背名牌、棋盘色条同一个来源 ⇒ 同一家在哪都是同一个色）。
+##
+## ⚠ **牌子要"亮"是故意的**：屋里唯一的亮色就是它，而它的职责就是**被认出来** ——
+## 与一期椅背名牌同一条口径（`layout_test` 那批"家具不许是最亮的东西"的断言里，
+## 名牌是被**点名剔除**的："名牌是另一码事（棋子色，故意的亮）"）。名牌挂在 `Chars/Tags` 下，
+## 不在 `Char{i}` 里 ⇒ 角色那几条 AABB 断言的对象不变（见文件头那段）。
+
+## 牌面尺寸（世界单位）。取 **1.7 × 0.52** —— 参照是模型的头（`head` 0.8 模型单位
+## × `CHARS_SCALE` 2.8125 = **2.25 世界宽**）：牌子略窄于头，挂在头顶不显得比人还重。
+const TAG_W := 1.7
+const TAG_H := 0.52
+
+## 牌底边离**模型世界 AABB 顶**的净空（世界单位）。**不写死"头顶在第几米"** ——
+## 位置由 `_tag_top()` 从模型实测的 AABB 顶算出来，`SEAT_ROOT_Y` / `CHARS_SCALE` /
+## `HEAD_SHRINK` 哪一个改了，牌子都跟着走。
+const TAG_GAP := 0.28
+
+## 行动者那一圈金边的**单边宽度**（世界单位；牌面每边各外扩这么多）。
+const TAG_RIM := 0.075
+## 金边色（行动者专用）。取自转盘那一族的暖金（`table_props.WHEEL_GOLD` 同调），
+## 在暗屋里与棋子色都拉得开。
+const TAG_ACTOR_GOLD := Color(0.95, 0.78, 0.35)
+
+## 牌面 / 金边**自带的光**（`emission_energy_multiplier`）。屋里只有一盏吊灯，纯反光的牌子
+## 在背光那两把椅子上会糊掉 ⇒ 给一点自发光让"棋子色 + 金边"稳定读出来。
+## **不取更大**：再大就把牌子变成画面里最亮的东西，压过桌面（一期 Task 8 那条判据管的是家具，
+## 但同一条观感纪律在这里一样成立）。
+const TAG_EMIT := 0.55
+
+## 名字的字号与**世界尺寸**。`pixel_size` 是"1 像素 = 多少世界单位"，所以世界字高 ≈
+## `TAG_FONT_SIZE × TAG_FONT_PS`。名字长的时候按 `_make_tag()` 里那条式子**自动缩**，
+## 保证整串字不出牌面。
+const TAG_FONT_SIZE := 64
+const TAG_FONT_PS := 0.0045
 
 ## ---------------- 随取景淡出：阈值（见 `set_fade`） ----------------
 ##
@@ -207,8 +250,30 @@ var _char_key := ""
 
 ## 每个 slot 上的 `AnimationPlayer`（**下标 = 椅子号**，与 `_chars` / `_char_peers`
 ## 三者**同进同出**）。`null` = 这个座位上没人 / 模型里没找到播放器。
-## 待机（`idle`）就是由它播的；`speed_scale` 是"当前行动者"的表达（见 `set_actor`）。
+## **改版后没人靠它播待机了** —— 它只剩两个用处：`react()` 播**一次性**反应、
+## `_pose_die()` 停破产末帧。
 var _char_players: Array = []
+
+## 头顶名牌的**挂载点**（`Chars/Tags`，本文件建、跟着本层同生共死）。
+##
+## **为什么牌子不挂在 `Char{i}` 里**：见文件头那段（角色子树的 AABB 被一整批断言量着）。
+## 它是兄弟节点 ⇒ 位置得**自己算**（读模型的**全局 AABB 顶**，见 `_make_tag`），
+## 显隐 / 透明度也得由 `_apply_fade` 显式带着做。
+var _tags_root: Node3D
+## 每个 slot 上的**头顶名牌**（`Node3D`，下标 = 椅子号，与 `_chars` 同进同出）；
+## 没人的槽位是 `null`。`char_tag()` 直接返回它。
+var _char_tags: Array = []
+
+## 每个 slot 上那个人的**静止姿快照**（`[[Node3D, Transform3D], …]`）：`_place()` 摆完手摆坐姿、
+## **还没有任何动画碰过**的那一瞬间，把模型子树里每个 `Node3D` 的 `transform` 记下来。
+##
+## **为什么需要它**（本改版实测到的坑）：`AnimationPlayer.stop()` **不会把姿态复位** ——
+## 实测：一次性反应播完 `stop()` 之后，分件仍停在**末帧**（slot1 的世界 AABB 深 6.89，
+## 而同一个模型在静止姿上是 4.5；"在播 否"却仍是伸手姿态）。旧版之所以看不出来，
+## 是因为 `_react_finished` 紧接着 `play(idle)` —— 待机那条动画**逐帧重写**了躯干 / 双臂 / 头，
+## 把残留姿态盖掉了。改版后**没有第二条动画来盖** ⇒ 必须**自己记、自己还原**
+##（`_rest_pose`），否则打一次牌那个人就永远伸着手。
+var _rest_xf: Array = []
 
 ## 当前行动者的 peer（`GameData.NO_PEER` = 没有行动者 / 还没读到）。
 ## **只读表现层**：由 `game.gd:_refresh_players()` 从 `st.turn` 喂进来（`set_actor`），
@@ -243,6 +308,12 @@ static func build(parent: Node3D, seats: Node3D) -> GameChars:
 	# 那时 `_seats` 还是空的（这一身位是给"房间建完就入树"的场景留的）。
 	c._seats = seats
 	parent.add_child(c)
+	# 头顶名牌的挂载点（见 `_tags_root` 那段：牌子是角色的**兄弟**，不挂进 `Char{i}`）。
+	# 与角色层同生共死 —— 它不参与 `set_chars` 的早退，牌子的重建在 `_clear()` / `set_chars` 里。
+	var tags := Node3D.new()
+	tags.name = "Tags"
+	c.add_child(tags)
+	c._tags_root = tags
 	return c
 
 ## 喂座位序：`[{peer, color, name}, …]`，**下标 = 椅子号**（与 `room.set_seats()` 逐项相同，
@@ -269,20 +340,25 @@ func set_chars(seats: Array) -> void:
 	_clear()
 	for i in seats.size():
 		if i == MY_SLOT:
-			# 「我」这一侧不出人（spec §5.1）：四个数组都记一个"空位"，下标才对得上椅子号。
+			# 「我」这一侧不出人（spec §5.1）：六个数组都记一个"空位"，下标才对得上椅子号。
 			_chars.append(null)
 			_char_peers.append(GameData.NO_PEER)
 			_char_models.append("")
 			_char_players.append(null)
+			_char_tags.append(null)
+			_rest_xf.append(null)
 			continue
-		var color := int((seats[i] as Dictionary).get("color", 0))
+		var sd: Dictionary = seats[i]
+		var color := int(sd.get("color", 0))
 		var model := model_for_color(color)
 		_chars.append(_place(i, model))
-		_char_peers.append(int((seats[i] as Dictionary).get("peer", GameData.NO_PEER)))
+		_char_peers.append(int(sd.get("peer", GameData.NO_PEER)))
 		_char_models.append(model)
 		_char_players.append(_find_player(_chars[i]))
+		# 名牌：**颜色与名字都取自喂进来的这一份**（与椅背名牌、HUD 名册条同一个来源）。
+		_char_tags.append(_make_tag(i, color, String(sd.get("name", ""))))
 	# 新摆的这批人要**立刻**带上当前的行动者档与取景档（不能等下一次 `_process` / `set_actor`：
-	# 重建之后的那几帧会各是"谁都没加速 + 全亮"，而出图恰好抓的就是这几帧）。
+	# 重建之后的那几帧会各是"谁都没戴金边 + 全亮"，而出图恰好抓的就是这几帧）。
 	_apply_actor()
 	_apply_fade()
 
@@ -306,6 +382,15 @@ func char_model(slot: int) -> String:
 static func model_for_color(color: int) -> String:
 	return CHAR_MODELS_BY_COLOR[clampi(color, 0, CHAR_MODELS_BY_COLOR.size() - 1)]
 
+## 第 `slot` 把椅子上那个人的**头顶名牌**（`null` = 那个座位上没人 / 还没喂过座位序）。
+## 测试用它核"牌色 = 那一家的棋子色、牌上写着昵称、立在头顶、朝向镜头"；
+## 节点路径是 `Chars/Tags/Tag{i}`（**不在 `Char{i}` 里**，见 `_tags_root` 那段）。
+func char_tag(slot: int) -> Node3D:
+	if slot < 0 or slot >= _char_tags.size():
+		return null
+	var tg := _char_tags[slot] as Node3D
+	return tg if tg != null and is_instance_valid(tg) else null
+
 ## 拆掉当前所有角色（**先 `remove_child` 再 `queue_free`**：`queue_free` 要到帧末才真的释放，
 ## 只调它的话紧接着的 `get_node_or_null("Char1")` 还会找到**旧人**——测试与出图都会读错）。
 func _clear() -> void:
@@ -313,10 +398,18 @@ func _clear() -> void:
 		if c != null and is_instance_valid(c):
 			remove_child(c)
 			c.queue_free()
+	# 名牌是**兄弟节点**（不在 `_chars` 里）⇒ 得单独拆（同一条"先 `remove_child` 再 `queue_free`"：
+	# 只 `queue_free` 的话紧接着的 `Tags/Tag1` 还会找到**旧牌**，测试与出图都会读错）。
+	if _tags_root != null and is_instance_valid(_tags_root):
+		for tg in _tags_root.get_children():
+			_tags_root.remove_child(tg)
+			tg.queue_free()
 	_chars.clear()
 	_char_peers.clear()
 	_char_models.clear()
 	_char_players.clear()
+	_char_tags.clear()
+	_rest_xf.clear()
 
 ## 第 `slot` 把椅子上**人该站的那一点**（位置 + 朝向）。
 ##
@@ -344,7 +437,7 @@ func _place(slot: int, model: String) -> Node3D:
 		push_warning("角色缺模型：%s（跳过）" % model)
 		return null
 	# **外套节点**：坐姿的整体下移放在它身上（见 `SEAT_ROOT_Y` 那段）——`AnimationPlayer`
-	# 够不着它，`idle` 顶不掉。它也是将来"随取景淡出 / 停播"要按的锚（Task 3）。
+	# 够不着它，动画顶不掉。它也是"随取景淡出"要按的锚（Task 3）。
 	var wrapper := Node3D.new()
 	wrapper.name = "Char%d" % slot
 	add_child(wrapper)
@@ -373,18 +466,139 @@ func _place(slot: int, model: String) -> Node3D:
 		head.scale *= HEAD_SHRINK
 	_shade(mi)
 	_no_shadow(mi)
-	# ---- 待机（Task 3）：**这条是"人活了"的那一口气** ----
-	# `idle` 由模型自带的 `AnimationPlayer` 播（普查 §三：这个包没有 `Skeleton3D`，
-	# 动画动的是**节点变换**）。
-	# ⚠ **循环模式必须自己设**（`_loop_idle`）—— 导入器给的是 `LOOP_NONE`，
-	# 不设的话 1.3333 s 之后三个人齐刷刷僵在末帧，且**日志里一个字都不说**。
-	var ap := _find_player(mi)
-	if ap != null:
-		if _loop_idle(ap):
-			ap.play(IDLE_ANIM)
-		else:
-			push_warning("角色模型里没有 `%s` 这条动画（待机播不出来）：%s" % [IDLE_ANIM, model])
+	# **静止姿快照**：就在这一刻（手摆坐姿都摆完了、还没有任何动画碰过）把整棵子树的
+	# `transform` 记下来 —— 一次性反应播完要靠它还原（见 `_rest_xf` 那段那个实测到的坑）。
+	# ⚠ **必须在任何 `play()` 之前**：一旦播过，被动画碰过的分件就再也回不到"出厂值"了。
+	_rest_xf.append(_snapshot(mi))
+	# ---- 完全静止（v0.8.0 改版）：**这里一个 `play()` 都没有** ----
+	# 待机 `idle` 整条退场（用户 2026-10-06："玩家人物不要乱动"）。模型停在自己导入时的
+	# **静止姿**（= 节点默认 TRS，普查 §4.1 那张表里"静止姿"那一行），叠加上面那三处手摆
+	# （外套节点 −0.2 / 腿压短 / 头收一点）就是"坐着的静止人"。
+	# ⚠ **别在这里加回 `play()`**：`chars_test` ⑫（一帧动画都不播）与 ⑬（分件真的静止）
+	# 两条会立刻红 —— 那正是本改版要守住的东西。
 	return wrapper
+
+## 给第 `slot` 把椅子上的人造一块**头顶名牌**（`Tags/Tag{i}`）。
+##
+## 结构（与一期椅背名牌同一套语言，只加了 billboard 与金边）：
+##   `Tag{i}`（`Node3D`，世界坐标的挂点）
+##     ├ `Plate`  `MeshInstance3D` + `QuadMesh`(TAG_W × TAG_H)，**棋子色**、带一点自发光
+##     ├ `Label`  `Label3D`，名字；**billboard** 朝向镜头
+##     └ `Border` `MeshInstance3D` + 更大的 `QuadMesh`，**金边**；只有当前行动者露出来
+##
+## **位置**：xy 取座位上那个人的世界坐标、y 取**模型世界 AABB 的顶 + `TAG_GAP` + 半牌高**
+## （`_tag_top()` 实测，不写死高度 —— 见 `TAG_GAP` 那段）。
+##
+## **朝向**：牌子与字各自 `billboard`（`BaseMaterial3D.BILLBOARD_ENABLED` / `Label3D.billboard`）。
+## 相机在本作里**不绕圈**（转视角已删）⇒ 牌子永远在 +Z 那一侧看过来，这也让下面那条
+## **世界坐标的层叠偏移**（金边 / 字各往后 / 往前挪一点）站得住。
+func _make_tag(slot: int, color: int, name_text: String) -> Node3D:
+	if _tags_root == null or not is_instance_valid(_tags_root):
+		return null
+	var tag := Node3D.new()
+	tag.name = "Tag%d" % slot
+	_tags_root.add_child(tag)
+	var tint: Color = GameData.PLAYER_COLORS[clampi(color, 0, GameData.PLAYER_COLORS.size() - 1)]
+	# ---- 金边（先加：它在最里层，靠世界 −Z 的偏移落到牌面之后）----
+	var border := MeshInstance3D.new()
+	border.name = "Border"
+	border.mesh = _tag_quad(TAG_W + TAG_RIM * 2.0, TAG_H + TAG_RIM * 2.0)
+	border.material_override = _tag_mat(TAG_ACTOR_GOLD)
+	border.position = Vector3(0.0, 0.0, -0.03)
+	border.visible = false          # `_apply_actor()` 按"谁是行动者"点开
+	tag.add_child(border)
+	# ---- 牌面 ----
+	var plate := MeshInstance3D.new()
+	plate.name = "Plate"
+	plate.mesh = _tag_quad(TAG_W, TAG_H)
+	plate.material_override = _tag_mat(tint)
+	tag.add_child(plate)
+	# ---- 名字（在最外层：往 +Z 挪一点，落在牌面之前）----
+	var lab := Label3D.new()
+	lab.name = "Label"
+	lab.font_size = TAG_FONT_SIZE
+	# **长名字自动缩**：世界字宽 ≈ 字数 × 字号 × `pixel_size` ⇒ 反解出"刚好不出牌面"的那一档，
+	# 再与 `TAG_FONT_PS` 取小。短名字吃 `TAG_FONT_PS` 那一档（四个字的昵称离上限还远）。
+	var n := maxf(1.0, float(name_text.length()))
+	lab.pixel_size = minf(TAG_FONT_PS, TAG_W * 0.90 / (n * float(TAG_FONT_SIZE)))
+	lab.text = name_text
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.autowrap_mode = TextServer.AUTOWRAP_OFF
+	lab.outline_size = 10
+	lab.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
+	lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lab.position = Vector3(0.0, 0.0, 0.05)
+	tag.add_child(lab)
+	_no_shadow(tag)
+	_place_tag(tag, slot)
+	return tag
+
+## 把 `tag` 立到第 `slot` 把椅子上那个人的**头顶之上**（见 `_make_tag` 的位置那段）。
+## 拆出来是因为位置要读**已经入树**的全局量（`_tag_top` 走 `global_transform`）。
+func _place_tag(tag: Node3D, slot: int) -> void:
+	var top := TAG_GAP
+	var w := _chars[slot] as Node3D if slot >= 0 and slot < _chars.size() else null
+	var xz := seat_pose(slot).origin
+	if w != null and is_instance_valid(w):
+		top = _tag_top(w) + TAG_GAP
+		xz = w.global_position
+	tag.global_position = Vector3(xz.x, top + TAG_H * 0.5, xz.z)
+
+## 一棵子树里**几何实例的世界 AABB 顶**（`-INF` = 一个几何实例都没有）。
+## 口径与 `room._model_aabb` / `chars_test._subtree_world_aabb` 同源（逐件 `global_transform ⊙ mesh AABB`
+## 再合并），但只取顶那一个数 —— 名牌要的只是"头顶在哪"。
+static func _tag_top(root: Node) -> float:
+	var top := -INF
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var gi := n as MeshInstance3D
+		if gi == null or gi.mesh == null:
+			continue
+		top = maxf(top, (gi.global_transform * gi.mesh.get_aabb()).end.y)
+	return top
+
+## 一棵子树里每个 `Node3D` 的 `transform` 快照（静止姿的唯一记录，见 `_rest_xf` 那段）。
+static func _snapshot(root: Node) -> Array:
+	var out: Array = []
+	for n in root.find_children("*", "Node3D", true, false):
+		out.append([n, (n as Node3D).transform])
+	return out
+
+## 把第 `slot` 个人**还原到静止姿**（一次性反应播完之后走它）。
+##
+## **为什么不是 `ap.stop()` 就完事**：实测 `AnimationPlayer.stop()` **不复位姿态**
+##（分件停在末帧，见 `_rest_xf` 那段）⇒ 得把快照里那几个 `transform` 一个个写回去。
+## 只碰**快照里记下的那些节点**（模型自带的分件）—— 外套节点 / 名牌都不在里面。
+func _rest_pose(slot: int) -> void:
+	if slot < 0 or slot >= _rest_xf.size():
+		return
+	var rec = _rest_xf[slot]
+	if rec == null:
+		return
+	for e in rec as Array:
+		var pair := e as Array
+		var n := pair[0] as Node3D
+		if n != null and is_instance_valid(n):
+			n.transform = pair[1]
+
+## 名牌用的一块四边形（**默认单面**：billboard 保证永远正面朝镜头，背面看不见也就不用管）。
+static func _tag_quad(w: float, h: float) -> QuadMesh:
+	var q := QuadMesh.new()
+	q.size = Vector2(w, h)
+	return q
+
+## 名牌用的材质：棋子色（或金边色）+ **一点自发光**（见 `TAG_EMIT`）+ billboard。
+## **不是 UNSHADED**：与房间同一条纪律（`room._lit_mat` 那段），牌面也要能吃到吊灯那一层。
+static func _tag_mat(c: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = 0.7
+	m.metallic = 0.0
+	m.emission_enabled = true
+	m.emission = c
+	m.emission_energy_multiplier = TAG_EMIT
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	return m
 
 ## 模型子树里的 `AnimationPlayer`（`null` = 没有）。走 `find_children` 按**类型**找，
 ## 不写死节点名：导入器给它的名字将来若变，这里不会静默失效（`chars_test` 有一条钉着"找到播放器"）。
@@ -393,38 +607,6 @@ static func _find_player(root: Node) -> AnimationPlayer:
 		return null
 	var found := root.find_children("*", "AnimationPlayer", true, false)
 	return found[0] as AnimationPlayer if not found.is_empty() else null
-
-## 把 `idle` 的循环模式设成 `LOOP_LINEAR`，返回是否设成了（那条动画存在才为 true）。
-##
-## **为什么非设不可**（普查 §三 实测细节 1）：glTF 格式里**没有循环标记**，导入器**不会**替你标
-## —— 27 条动画**逐条**都是 `loop_mode = 0 (LOOP_NONE)`。⇒ **"导入成功 ⇒ 会自动循环"是个
-## 会静默出错的假设**（表现是"站着的人动一下就僵住"，而不是任何报错）。
-##
-## **为什么是"复制一份再换回去"而不是就地改**：`instantiate()` 出来的动画资源与
-## `PackedScene` **共用同一份**（同 `_shade` 对材质那条理由）—— 就地改会污染缓存里的那份。
-## 这里取出来 `duplicate()`、改在副本上、再 `add_animation` 换回库里（同名覆盖）。
-## **它改的是本实例自己那份**，四个模型 / 多个实例之间互不串。
-##
-## ⚠ **找库要按"名字"找，不能按 `find_animation_library()` 的返回值判空**（本任务踩过）：
-## glTF 导入器把 27 条动画放进**默认库**，而 Godot 的默认库名**就是空 `StringName()`**
-## ⇒ `find_animation_library(src) == StringName("")` **既可能是"默认库里有它"、也可能是"没找到"**
-## （两者返回同一个值），照它分支会**静默走进"没找到"那一支**（红线验证当场把它抓出来了：
-## 改成 `LOOP_NONE` 之后那条断言仍是绿的）。⇒ 改成**逐库问 `has_animation()`**，不含糊。
-static func _loop_idle(ap: AnimationPlayer) -> bool:
-	var src := ap.get_animation(IDLE_ANIM)
-	if src == null:
-		return false
-	var a := src.duplicate() as Animation
-	a.loop_mode = Animation.LOOP_LINEAR
-	for lib_name in ap.get_animation_library_list():
-		var lib := ap.get_animation_library(lib_name)
-		if lib != null and lib.has_animation(IDLE_ANIM):
-			lib.add_animation(IDLE_ANIM, a)   # 同名覆盖：本实例从此用带循环标记的那一份
-			return true
-	# 一条 `idle` 在库里、却问不到它所在的库（不该发生）：退回**就地改**。
-	# 功能上仍是对的（循环模式对每个实例都一样），代价只是这一份共享资源被改脏 —— 比"没设上"好。
-	src.loop_mode = Animation.LOOP_LINEAR
-	return true
 
 ## 角色材质：**只调光照参数、绝不碰 `albedo_texture`**（普查 §7.2 那条硬约束）。
 ##
@@ -470,16 +652,17 @@ static func _no_shadow(root: Node) -> void:
 	for n in root.find_children("*", "GeometryInstance3D", true, false):
 		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
-# ---------------- Task 3：当前行动者（"轮到我了"） ----------------
+# ---------------- Task 3（改版）：当前行动者（"轮到我了"） ----------------
 
 ## 设当前行动者。**只读表现层** —— `game.gd:_refresh_players()` 从 `st.turn` 喂进来
 ## （与 `set_chars` 同一处、同一份状态），本文件不新增任何玩法状态、不发 RPC。
 ##
-## **表达方式 = 同一条 `idle` 提速**（`ACTOR_SPEED` / `IDLE_SPEED`）：包里没有第二条持续型动画
-## （`walk` / `sprint` 是位移动作），所以"轮到我了"只能靠**快一点**读出来。
+## **表达方式 = 他头顶那块名牌多一圈金边**（静止的，不闪）。原先是"同一条 `idle` 提速 1.4×"，
+## 随"完全静止"一起退场（用户 2026-10-06 判图后拍板）—— 这也顺带解决了一个老问题：
+## 靠"谁动得快"认人是**要求玩家盯着看**的，而金边是一眼就能看见的静态事实。
 ##
-## **不做早退**：`set_chars` 每次**重建**都会把新播放器带回基准速度 ⇒ 若这里按"peer 没变"早退，
-## 重建之后行动者的提速就丢了。四个赋值而已，每次广播都做也不贵。
+## **不做早退**：`set_chars` 每次**重建**都会造一批新牌子（金边默认不露）⇒ 若这里按"peer 没变"
+## 早退，重建之后行动者的金边就丢了。三个 `visible` 赋值而已，每次广播都做也不贵。
 func set_actor(peer: int) -> void:
 	_actor_peer = peer
 	_apply_actor()
@@ -488,49 +671,47 @@ func set_actor(peer: int) -> void:
 func actor_peer() -> int:
 	return _actor_peer
 
-## 把"谁是行动者"刷到每个播放器的 `speed_scale` 上。`_char_peers` 是**下标 = 椅子号**的数组
-## ⇒ 逐槽位比对即可（同一个 peer 只会在一把椅子上）。
+## 把"谁是行动者"刷到每块名牌的金边上。`_char_peers` 是**下标 = 椅子号**的数组
+## ⇒ 逐槽位比对即可（同一个 peer 只会在一把椅子上）。`slot 0`（我）没有牌子，跳过。
 func _apply_actor() -> void:
-	for i in _char_players.size():
-		var ap := _char_players[i] as AnimationPlayer
-		if ap == null or not is_instance_valid(ap):
+	for i in _char_tags.size():
+		var tag := _char_tags[i] as Node3D
+		if tag == null or not is_instance_valid(tag):
 			continue
-		var is_actor: bool = _actor_peer != GameData.NO_PEER and i < _char_peers.size() \
+		var bd := tag.get_node_or_null("Border") as Node3D
+		if bd == null:
+			continue
+		bd.visible = _actor_peer != GameData.NO_PEER and i < _char_peers.size() \
 			and int(_char_peers[i]) == _actor_peer
-		ap.speed_scale = ACTOR_SPEED if is_actor else IDLE_SPEED
 
-## 第 `slot` 把椅子上那个播放器的 `speed_scale`（`0.0` = 那个座位上没人 / 没有播放器）。
-## 测试用它核"行动者明显比别人快"。
-func char_speed(slot: int) -> float:
-	var ap := char_player(slot)
-	return ap.speed_scale if ap != null else 0.0
-
-## 第 `slot` 把椅子上的 `AnimationPlayer`（`null` = 没人 / 没找到）。测试用它核循环模式与播放状态。
+## 第 `slot` 把椅子上的 `AnimationPlayer`（`null` = 没人 / 没找到）。
+## **改版后没人靠它播待机了**（见 `_char_players`）—— 测试与 `react` / `_pose_die` 用它。
 func char_player(slot: int) -> AnimationPlayer:
 	if slot < 0 or slot >= _char_players.size():
 		return null
 	var ap := _char_players[slot] as AnimationPlayer
 	return ap if ap != null and is_instance_valid(ap) else null
 
-# ---------------- Task 3：随取景淡出并停播 ----------------
+# ---------------- Task 3（改版）：随取景淡出 ----------------
 
-## 设「读棋盘程度」`t ∈ [0,1]`，并据此淡出 + 停播。**契约（可执行，`chars_test` 钉着）**：
+## 设「读棋盘程度」`t ∈ [0,1]`，并据此淡出。**契约（可执行，`chars_test` 钉着）**：
 ##
 ## | `t` | 表现 |
 ## |---|---|
-## | `t <= FADE_SOLID_T`(0.25) | **全亮**（`GeometryInstance3D.transparency == 0`）+ **`idle` 在播** |
-## | `t >= FADE_GONE_T`(0.75) | **全隐**（外套节点 `visible = false`）+ **`AnimationPlayer.is_playing() == false`** |
-## | 中间 | 透明度线性过渡（`transparency = 1 − alpha`），**仍在播** |
-##
-## **停播只在"已经看不见"之后才发生**（`FADE_GONE_T`）：提前停会让"半透明但看得见"的那几帧僵住。
+## | `t <= FADE_SOLID_T`(0.25) | **全亮**（`GeometryInstance3D.transparency == 0`）、人 + 名牌都在 |
+## | `t >= FADE_GONE_T`(0.75) | **全隐**（外套节点与名牌 `visible = false`） |
+## | 中间 | 透明度线性过渡（`transparency = 1 − alpha`），**仍看得见** |
 ##
 ## **判据按"取景档"，不按"是否落在视口内"**（spec §5.3 的前提已被 Task 1 出图更正）：
 ## 角色在 3D 端**恒在画内**（哪怕被画面边缘切掉一半）⇒ 视口判据**永远为真、等于没判**。
-## 真正的判据是"**是不是读棋盘的那几档**"：推近端 / 2D 端 ⇒ 淡出停播；默认档 / 拉远端 ⇒ 在。
+## 真正的判据是"**是不是读棋盘的那几档**"：推近端 / 2D 端 ⇒ 淡出；默认档 / 拉远端 ⇒ 在。
 ##
-## **为什么必须停播**（本任务的性能底线，spec §六）：读棋盘那一档是**主玩法档**，
-## 二期不许把它拖慢 —— `AnimationPlayer` 一停，那几档的逐帧动画求值归零；
-## 加上外套节点 `visible = false`，三个角色的绘制调用也一并省掉。
+## **为什么全隐**（本任务的性能底线，spec §六）：读棋盘那一档是**主玩法档**，二期不许把它拖慢
+## —— 外套节点 `visible = false` 之后三个角色的绘制调用一并省掉。
+## 改版后**待机动画整条退场**（"完全静止"），原先"停播"那一半随之作废；能省的就只剩绘制。
+##
+## **名牌跟着一起淡**（本改版新增）：它是**兄弟节点**（不在 `Char{i}` 里，见 `_tags_root` 那段）
+## ⇒ 显隐 / 透明度得在这里**显式**带着做。漏掉的话，读棋盘那一档会剩三块牌浮在棋盘上。
 ##
 ## **透明度走 `GeometryInstance3D.transparency`，不碰材质**：
 ## 它是**逐实例**的（0 = 完全恢复不透明、走不透明管线）⇒ 在"在"的那几档上
@@ -597,7 +778,7 @@ func _faded_out() -> bool:
 ## 把 `_fade_t` 落到节点上：透明度 + 可见性 + 播放状态。
 ##
 ## **已经趴下的那一家（`_dead_peers`）单独一支**：见 `_pose_die` / `REACT_DIE` 那段 ——
-## 他是**停在 `die` 末帧**的，既不能跟着"回来就 `play(idle)`"（那是**复活**），
+## 他是**停在 `die` 末帧**的，既不能跟着"回来就摆回静止姿"（那是**复活**），
 ## 也不能因为 `stop()` 把姿态丢掉（从淡出回来时要重新摆回末帧）。
 func _apply_fade() -> void:
 	var a := clampf((FADE_GONE_T - _fade_t) / (FADE_GONE_T - FADE_SOLID_T), 0.0, 1.0)
@@ -608,6 +789,11 @@ func _apply_fade() -> void:
 			continue
 		w.visible = not gone
 		_alpha(w, a)
+		# 名牌是**兄弟节点** ⇒ 显隐 / 透明度在这里显式跟着（见 `set_fade` 那段最后一条）。
+		var tg := _char_tags[i] as Node3D if i < _char_tags.size() else null
+		if tg != null and is_instance_valid(tg):
+			tg.visible = not gone
+			_alpha(tg, a)
 		var ap := _char_players[i] as AnimationPlayer if i < _char_players.size() else null
 		if ap == null or not is_instance_valid(ap):
 			continue
@@ -616,10 +802,13 @@ func _apply_fade() -> void:
 				ap.stop()
 		elif char_dead(i):
 			# 趴着的那一家：`stop()`（淡出档）与 `set_chars` 重建都会**把姿态丢掉** ⇒ 每次都重新
-			# 摆回末帧。**不能写成"回来就 `play(idle)`"** —— 那正是"复活"。
+			# 摆回末帧。**不能写成"回来就摆回静止"** —— 那正是"复活"。
 			_pose_die(ap, w)
 		elif not ap.is_playing():
-			ap.play(IDLE_ANIM)
+			# 不在播 ⇒ 摆回静止姿。**从淡出档回来就走这一支**（淡出时那条被 `stop()` 打断的反应
+			# 会把分件留在末帧的伸手姿态，而 `stop()` 自己不复位 —— 见 `_rest_xf` 那段）。
+			# **在播就别动它**：一条反应正打到一半时取景小幅晃一下，不该把它掐掉。
+			_rest_pose(i)
 
 ## 一棵子树里所有几何实例的**逐实例透明度**（`a` = 不透明程度：1 = 全亮、0 = 全隐）。
 ## 走 `GeometryInstance3D.transparency`（= `1 − a`）—— **不动材质**（见 `set_fade` 那段）。
@@ -708,13 +897,14 @@ var _dead_peers := {}
 ## **读不到就什么都不做**（找不到这个 peer / 这条动画时只 `push_warning` 一条）：
 ## 事件是从**已同步的状态**读来的，允许"人还没摆上椅子"这种时序（广播可能早一帧）。
 ##
-## ⚠ **不碰 `speed_scale`** —— 那是"当前行动者"的表达（`set_actor`），幅度含蓄、不放大。
+## ⚠ **不碰 `speed_scale`** —— 改版后 `set_actor` 已不再用它（它去点名牌上的金边），但这条
+## 仍然有效：反应的播放速度一律留在 **1.0**，不许"顺势放大一点看得清"（`chars_test` 钉着它）。
 ##
 ## ⚠⚠ **已经淡到「全隐 + 停播」那一档时，反应一律丢掉、不排队**（本轮 fix round，终审 findings ①）。
 ## 那一档（推近端 / 2D 端 = **读棋盘的主玩法档**）对二期的承诺就是"角色**停播 + 不绘制**"
 ##（spec §5.3 / §六）。而 `react()` 原先不看淡出档：对手在读棋盘那一档付租 ⇒ 这里照常 `play()`
-## ⇒ **在一个 `visible = false` 的节点上重新开播**；0.17~0.67 s 后 `_react_finished` 又把它接到
-## **`LOOP_LINEAR` 的 `idle`** 上 ⇒ **待机从此一直播下去**；而 `set_fade` 在 `t` 没变时早退
+## ⇒ **在一个 `visible = false` 的节点上重新开播**；0.17~0.67 s 后 `_react_finished` 才把它停下
+## ⇒ 整条动作在看不见的地方白播一遍；而 `set_fade` 在 `t` 没变时早退
 ##（见那里）⇒ `_apply_fade` 不会再被调用 ⇒ 这个播放器在整个读棋盘档里**逐帧求值到取景变化为止**
 ## —— 那条性能承诺**静默失效**（⑭(b)(c) 抓不到：它在淡出与断言之间没有任何事件，这正是修它的原因）。
 ##
@@ -725,8 +915,8 @@ var _dead_peers := {}
 ## ⚠⚠ **`die` 是这条早退的唯一例外**（fix round 3 更正）：淡出档上**播放**照丢，但**破产的记忆**
 ## **必须活过淡出**（`_dead_peers[peer] = true` 照常种下、再随早退把播放丢掉）。两条理由：
 ##   ① **它是终局的**（与 play / pay / rob 那种"一次小动作"不同）：一旦破产就不复活；而
-##      `_apply_fade` 从淡出档回来时**正是问 `_dead_peers`** 决定"摆回 `die` 末帧"还是"`play(idle)`"
-##      ⇒ 记忆丢了，这个人会**从淡出档回来继续呼吸**（HUD 却已经说他出局了），此后还会对
+##      `_apply_fade` 从淡出档回来时**正是问 `_dead_peers`** 决定"摆回 `die` 末帧"还是"什么都不做"
+##      ⇒ 记忆丢了，这个人会**从淡出档回来重新坐正**（HUD 却已经说他出局了），此后还会对
 ##      `pay` / `rob` 起反应 —— 而"记忆被种下"正是基线的行为（早退那道门必须排在这一支**之后**）。
 ##   ② **不会再补发**：`game.gd` 是在**同一次调用里**把 `alive` 的真→假边沿消费掉的
 ##      （`_react_chars()` 末尾 `_react_alive[peer] = alive`）⇒ 没有"下一次广播再送一遍"这条路。
@@ -758,10 +948,9 @@ func react(peer: int, kind: String) -> void:
 		_dead_peers[peer] = true
 		_pose_die(ap, _chars[i] as Node3D)
 		return
-	# 三条**一次性小动作**：播完**自己走回待机** —— 不回来的话人僵在末帧、再也不呼吸
-	#（`idle` 被 `play()` 顶掉之后不会自己回来）。一次性连接 `CONNECT_ONE_SHOT` 就够：
-	# 这个包里除 `walk`/`sprint` 之外的动画都是 `LOOP_NONE` ⇒ 播完**必发** `animation_finished`
-	#（`idle` 那份的循环标记是本实例自己改成 `LOOP_LINEAR` 的，见 `_loop_idle`）。
+	# 三条**一次性小动作**：播完**自己回到静止姿** —— 不回来的话人僵在末帧的伸手姿态。
+	# 一次性连接 `CONNECT_ONE_SHOT` 就够：这个包里除 `walk`/`sprint` 之外的动画都是 `LOOP_NONE`
+	# ⇒ 播完**必发** `animation_finished`（`animation_finished` 对 `LOOP_NONE` 的动画一定会发）。
 	# ⚠ **信号带一个参数**（`animation_finished(anim_name)`）⇒ 回调的签名必须**先接住它**
 	#（少写一个参数是一条 SCRIPT ERROR，而表现只是"动作播完人僵住" —— 出图 / 断言都看得见）。
 	#
@@ -775,12 +964,18 @@ func react(peer: int, kind: String) -> void:
 		ap.animation_finished.disconnect(cb)
 	ap.animation_finished.connect(cb, CONNECT_ONE_SHOT)
 
-## 一次性动作播完 → 回到待机（除非这一家已经趴下了，见 `_dead_peers`）。
+## 一次性动作播完 → **回到静止姿**（除非这一家已经趴下了，见 `_dead_peers`）。
+##
+## **改版后是 `stop()` + `_rest_pose()`**：`stop()` 只是"别播了"，**它不复位姿态**
+##（实测，见 `_rest_xf` 那段），所以紧接着要把静止姿快照写回去。
+## 旧版在这里 `play(idle)` —— 待机那条动画会把残留姿态**逐帧盖掉**，所以当年看不出这个问题；
+## 改版后没有第二条动画来盖，只剩 `_rest_pose()` 这一条路。
 ## 第一个参数是信号自带的动画名（用不到，接住它是为了签名对得上）。
 func _react_finished(_anim: StringName, ap: AnimationPlayer, peer: int) -> void:
 	if ap == null or not is_instance_valid(ap) or _dead_peers.has(peer):
 		return
-	ap.play(IDLE_ANIM)
+	ap.stop()
+	_rest_pose(_slot_of_peer(peer))
 
 ## 把某人的播放器**停在 `die` 的末帧**（= 躺下 / 趴着）—— 但**先把"整体倒地"那一条摘掉**、
 ## 再补一个**座位上的收势**。两条都是实测逼出来的（见下）。
@@ -796,7 +991,7 @@ func _react_finished(_anim: StringName, ap: AnimationPlayer, peer: int) -> void:
 ## ⇒ 表现是**人不见了**（出图实证：对面那把椅子空了）—— 而 spec §九④ 明确否掉的正是"消失"：
 ## 「消失等于'这家没了'，趴着才是'他输光了'」。**简报那条"die 的末帧正是趴着"只对站着的人生效。**
 ##
-## **做法**：`die` 复制一份、**只摘掉 `root` 的旋转轨**（`_die_without_fall`，手法同 `_loop_idle`），
+## **做法**：`die` 复制一份、**只摘掉 `root` 的旋转轨**（`_die_without_fall`，手法同「复制一份再换回库里」），
 ## 保留它自己的其余内容（手臂 180°＝举双手、头、`root` 的微量位移），再手摆一个
 ## **座位上的收势**（`_slump`：前折 + 侧倒 + 低头）—— 与 `HEAD_SHRINK` / `LEG_SQUASH`
 ## 同一条思路（这个包没有"弯腰"这条动画，普查 §5.4：**包里没有后仰 / 拍桌 / 低头这类细分动作**）。
@@ -833,12 +1028,12 @@ func _slump(w: Node3D) -> void:
 	if head != null:
 		head.rotation.x = deg_to_rad(DIE_HEAD_DEG)
 
-## `die` 的**去掉"整体倒地"那一条**的副本（装回本实例的库里，同名覆盖 —— 同 `_loop_idle` 的手法）。
+## `die` 的**去掉"整体倒地"那一条**的副本（装回本实例的库里，同名覆盖 —— 同「复制一份再换回库里」的手法）。
 ## 摘掉的是 `root` 的**旋转**轨（那条把整个人绕脚底转 −90°，见 `_pose_die` 那段实测）；
 ## 其余一条不动（`root` 的位移、`torso` / `arm-*` / `head` / `leg-*` 全部保留）。
 ##
 ## **为什么是"复制一份再换回去"**：`instantiate()` 出来的动画资源与 `PackedScene` 共用同一份
-## ⇒ 就地删轨会污染缓存（同 `_loop_idle` / `_shade` 那条理由）。
+## ⇒ 就地删轨会污染缓存（同 `_shade` 那条理由）。
 static func _die_without_fall(ap: AnimationPlayer) -> bool:
 	var src := ap.get_animation(REACT_DIE)
 	if src == null:
@@ -860,7 +1055,7 @@ static func _die_without_fall(ap: AnimationPlayer) -> bool:
 		if lib != null and lib.has_animation(REACT_DIE):
 			lib.add_animation(REACT_DIE, a)   # 同名覆盖：本实例从此用"不倒"的那一份
 			return true
-	src.remove_track(idx)   # 退路（同 `_loop_idle`：问不到库时就地改，宁可脏一份也别不生效）
+	src.remove_track(idx)   # 退路（问不到库时就地改，宁可脏一份也别不生效）
 	return true
 
 ## 这个 peer 坐在第几把椅子上（`-1` = 他不在座上 / 还没有角色层）。

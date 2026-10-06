@@ -196,6 +196,8 @@ func _run() -> void:
 	_check(seat_peers.size() > 0, "（前提）房主的座位序非空（实得 %d 项）" % seat_peers.size())
 	var room5: Node = g.table3d.get_node_or_null("Room") if g.table3d != null else null
 	_check(room5 != null, "桌面上挂着 3D 房间（Room 节点）")
+	# 角色层（二期）也在这里取一次：下面的"头顶名牌色"要读它（`Room/Chars/Tags/Tag{i}/Plate`）。
+	var chars5b: Node = room5.get_node_or_null("Chars") if room5 != null else null
 	if room5 != null:
 		var in_room: Array = room5.seat_peers()
 		_check(in_room == seat_peers,
@@ -204,20 +206,28 @@ func _run() -> void:
 		# 名牌色取**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`），**不是按座位序号取色**。
 		# 这一份状态的 color 恰好等于 peer-1，而座位序是 [我, 下家, 对家, 上家] = [2,3,4,1]
 		# ⇒ 座位 0 是 peer 2（color 1 → 蓝）；**按序号取色**的话这块会是 PLAYER_COLORS[0]（橙）⇒ 必红。
-		# 【终审 F5】期望值必须**与实现同一条口径**：`room.gd._refresh_nameplates` 用的是
-		# `clampi(color, 0, size-1)`，这里原先写的是 `% size` —— 今天 `p.color ∈ 0..3` 两者同值，
-		# 但色号一旦越界，这条断言的期望色就与实现无关了（消息是给人看的，会误导下一个改色号的人）。
-		# ⇒ 照实现写钳位（两处**不共享助手**是有意的：`room.gd` 在本轮只许改注释）。
+		# 【终审 F5】期望值必须**与实现同一条口径**：实现用的是 `clampi(color, 0, size-1)`，
+		# 这里原先写的是 `% size` —— 今天 `p.color ∈ 0..3` 两者同值，但色号一旦越界，
+		# 这条断言的期望色就与实现无关了（消息是给人看的，会误导下一个改色号的人）⇒ 照实现写钳位。
+		#
+		# **v0.8.0 改版：这条断言从"椅背名牌"改指"头顶名牌"**（`Room/Chars/Tags/Tag{i}/Plate`）。
+		# 椅背那块牌子**整段删了**（用户 2026-10-06：「去掉椅子上的铭牌」），而它守的这件事
+		# ——**色随 `p.color` 走、不随座位序号走**——**一点没变**，只是换了个载体：
+		# 头顶名牌的牌色同样取自 `PLAYER_COLORS[color]`（`chars.gd._make_tag`）。
+		# 座位 ↔ 牌子的对应关系仍是"第 i 把椅子上那个人"，所以这一条原样成立，不必放宽。
 		var colors_ok := true
 		var got_colors: Array = []
 		for i in seat_peers.size():
 			var pl: Dictionary = g._state_player(int(seat_peers[i]))
 			var want: Color = GameData.PLAYER_COLORS[
 				clampi(int(pl.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
-			var seat: Node = room5.get_node_or_null("Seats/Seat%d" % i)
 			var plate: MeshInstance3D = null
-			if seat != null:
-				plate = seat.get_node_or_null("Nameplate/Plate") as MeshInstance3D
+			if i != 0 and chars5b != null:      # slot 0 =「我」⇒ 不渲染、没有名牌（同角色层）
+				var tg: Node = chars5b.get_node_or_null("Tags/Tag%d" % i)
+				if tg != null:
+					plate = tg.get_node_or_null("Plate") as MeshInstance3D
+			if i == 0:
+				continue                        # slot 0 的期望是"没有名牌"，由 chars_test 钉
 			var pm: StandardMaterial3D = null
 			if plate != null:
 				pm = plate.material_override as StandardMaterial3D
@@ -225,8 +235,9 @@ func _run() -> void:
 			if pm == null or not pm.albedo_color.is_equal_approx(want):
 				colors_ok = false
 		_check(colors_ok,
-			"椅背名牌按**各家的棋子色**上色（座位 0 = 我 = peer %d → 实得 %s，期望与 `p.color` 同源）"
-				% [int(seat_peers[0]) if seat_peers.size() > 0 else -1, str(got_colors)])
+			"头顶名牌按**各家的棋子色**上色（座位 1..3 → 实得 %s，期望与 `p.color` 同源；"
+				% str(got_colors)
+				+ "按座位序号取色的话座位 1 会是 PLAYER_COLORS[1]，这里是 PLAYER_COLORS[2]）")
 
 	# ---- 二期 Task 2：**角色顺序 == `game._seat_peers()`**（房间 ↔ 房主同一份顺序）----
 	# ① **必须在 `g.s_state(...)` 之后**（同上一条）：角色是 `_refresh_players()` 喂进房间的

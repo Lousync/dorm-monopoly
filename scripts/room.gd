@@ -120,6 +120,11 @@ var _ceil_mat: StandardMaterial3D
 ## `material_override` 整片换掉（见 `_paint` 与 `FURN_ALBEDO`）。
 var _furn_mat: StandardMaterial3D
 
+## 椅子的**独立**材质（本轮改版新增，见 `CHAIR_ALBEDO`）。改版前它与 `_furn_mat` 是同一份
+## （一期 Task 8 Step 0 的理由是"屋里出现两种木色会读成随手凑的"）—— 那条理由在**家具都是同一种
+## 木料**时成立，而用户要的恰恰是"看得出哪件是哪件" ⇒ 拆开。
+var _chair_mat: StandardMaterial3D
+
 ## ---- 家具与椅子的材质（一期 Task 8 Step 0）----
 ##
 ## **病因（Task 7 出图实证）**：Kenney 那批 `.glb` 是**零贴图的纯平色**（Task 1 已证），
@@ -168,22 +173,71 @@ const FURN_ALBEDO := Color(0.34, 0.27, 0.21)
 ## 而墙整体暗下去之后拉远端那张图的墙面会塌掉 —— 这一条卡的是"像一间宿舍"，不是"像一张灰纸"。
 ## 验收那两张**摆拍图**同向（有 HUD 与暗角在场、绝对值更低）：同一采样点 `#3e3429`
 ##（R/B 1.5、亮度 0.21）⇒ `#3e2816`（**R/B 2.8**、亮度 0.17）。
-const WALL_ALBEDO := Color(0.30, 0.22, 0.15)
+## **本轮改版（v0.8.0 判图后，用户 2026-10-06）**：`0.30/0.22/0.15` → **`0.58/0.55/0.50`**。
+##
+## 上面那两轮（一期 Task 8 / Task 9）调的都还是"**暖色的墙**"——Task 9 那次是把一块**中性灰**
+## 往暖里拽（`0.30/0.285/0.27` → `0.30/0.22/0.15`，把绿蓝两维压下去），治的是"灰白斑块"。
+## 而用户 2026-10-06 判图时点的是另一件事：「地板、椅子、墙面、家具**颜色太接近**」——
+## 四件东西全在暗褐色族里，其中**墙是最不该是木色的那一件**（真实房间里墙是刷漆的，
+## 地板 / 家具才是木头）。
+##
+## **取值口径 = 让墙成为四件里唯一"非木"的面**：往**浅 + 低饱和 + 微暖**走
+##（`0.58/0.55/0.50`，比木桌的 `0.62/0.55/0.46` 更灰更亮一点 —— 刷漆墙对木桌）。
+## 实测出图：默认档 / 拉远端两档下，墙与木地板 / 木家具 / 灰蓝椅子**四件都分得开**，
+## 而**桌面棋盘仍是画面里最亮的对象**（`FURN_LIT_RATIO_MAX` 那条管的是家具，本项不参与；
+## 灯照在墙上那一片最亮 0.55 上下，与桌垫那一带的读数同档 —— 主玩法区没有被抢）。
+##
+## **为什么这一次不违反 Task 9 那条"墙一亮就假"**：那条说的是"**一块中性灰**被暖灯打成
+## 死灰白斑"（当时实测那块斑 R/B = 1.5，与木色的 3~4 差得远 ⇒ 一眼出戏）。现在这块墙
+## 是**暖灰**（R/B ≈ 1.16 的底、被暖灯照完仍偏暖），而它旁边就挨着更饱和的木地板 ——
+## 两条放在一起读作"刷漆墙 + 木地板"，正是要的那件事。判据仍是**出图**，四档两两比对过。
+const WALL_ALBEDO := Color(0.58, 0.55, 0.50)
+
+## ---- 本轮改版（v0.8.0 判图后，用户 2026-10-06）：**四件东西各自一个色** ----
+##
+## **病因（用户原话）**：「地板、椅子、墙面、家具颜色太接近了，缺少真实感」。量一下确实如此：
+## 改版前四件全落在一个暗褐色族里 —— 地板 `0.30/0.26/0.22`、墙 `0.30/0.22/0.15`、
+## 天花板 `0.34/0.33/0.33`、家具与椅子 `0.34/0.27/0.21`（后两件还共用**同一份材质、同一张木纹**）。
+## ⇒ 屋里只能靠**明暗**读体积，读不出一件东西是墙还是柜子，更读不出"这是个什么房间"。
+##
+## **判据（可执行，`layout_test` 钉着）**：`FURN_LIT_RATIO_MAX`（**家具与椅子**不许是画面里最亮
+## 的东西 —— 见下面那条断言）与「房间在暗环境里」的调性。**墙一亮就假**那条（一期 Task 9）说的
+## 是**中性灰打上暖光**会变成死灰白斑，不是"墙不许换色" ⇒ 这次让墙往**冷**走
+##（刷漆墙的色相），亮度基本不动。
+##
+## **本文件里这些取值是"变体 A（暗调性 + 色相拉开）"**：亮度大体维持在改版前那一档，
+## 靠**色相 + 明度**把四件拉开 —— 地板暖木、墙冷灰、家具深胡桃、椅子冷灰蓝（金属/塑料椅）。
+## **变体 B（整体提亮）** 是另一套数（更亮的墙 / 更大的明度差），只用于出图对比，不在代码里留。
+const FLOOR_ALBEDO := Color(0.26, 0.18, 0.11)
+const CEIL_ALBEDO := Color(0.20, 0.21, 0.23)
+## 椅子：**独立**于家具的一份材质（改版前共用 `_furn_mat`）。冷灰蓝 = 一把刷漆 / 金属椅，
+## 与暖木的书桌、书架摆在一起才分得清"哪件是坐的"。不带木纹贴图，粗糙度也低一档
+##（`CHAIR_ROUGH` / `CHAIR_METALLIC`）—— "另一种材料"这件事得**在材质参数上也成立**，
+## 只改颜色的话它读起来还是同一块木头。
+const CHAIR_ALBEDO := Color(0.19, 0.21, 0.25)
+const CHAIR_ROUGH := 0.55
+const CHAIR_METALLIC := 0.15
 
 func _make_materials() -> void:
-	_floor_mat = _lit_mat(Color(0.30, 0.26, 0.22), "res://assets/textures/wood_floor.jpg")
+	_floor_mat = _lit_mat(FLOOR_ALBEDO, "res://assets/textures/wood_floor.jpg")
 	# 地板比"可见房间"多出**近半侧**那一截（见 `ROOM_NEAR_EXTRA`）⇒ 木纹的重复密度按
 	# **地板自己的尺寸**算，否则地板一长、木条被拉长 1.28×（`_lit_mat` 里那份是按
 	# `ROOM_W`/`ROOM_D` 写的，那里服务的是墙 / 天花板 —— 它们不带贴图，无所谓）。
 	_floor_mat.uv1_scale = Vector3(ROOM_W / 3.0, (ROOM_D + ROOM_NEAR_EXTRA) / 3.0, 1.0)
 	_wall_mat  = _lit_mat(WALL_ALBEDO, "")
-	_ceil_mat  = _lit_mat(Color(0.34, 0.33, 0.33), "")
+	_ceil_mat  = _lit_mat(CEIL_ALBEDO, "")
 	# 家具 / 椅子：同一张木纹贴图，但**不按房间尺寸重复** —— `_lit_mat` 给的是
 	# `ROOM_W/3 × ROOM_D/3`（每 3 世界单位一轮），那是给整面墙 / 整块地板定的；
 	# 家具是 `_model_aabb` 撑到 8 个单位的小件，按同一个密度贴上去木纹会细成噪点。
 	# 这里取 **1.0**（= 模型自己的 UV 铺一张贴图），与"一件家具一层木纹"的观感一致。
 	_furn_mat = _lit_mat(FURN_ALBEDO, "res://assets/textures/wood_floor.jpg")
 	_furn_mat.uv1_scale = Vector3.ONE
+	# 椅子（本版新增的**独立**材质，见 `CHAIR_ALBEDO`）：**不带木纹贴图**（与"金属 / 塑料椅"的
+	# 观感一致），粗糙度也比木家具低一档（`CHAIR_ROUGH`）—— 一期那把椅子是共用 `_furn_mat` 的，
+	# 用户 2026-10-06 判图后指出"地板 / 椅子 / 墙面 / 家具颜色太接近"，于是把它拆出来。
+	_chair_mat = _lit_mat(CHAIR_ALBEDO, "")
+	_chair_mat.roughness = CHAIR_ROUGH
+	_chair_mat.metallic = CHAIR_METALLIC
 
 ## 受光的粗糙材质。**不许用 UNSHADED** —— 那会让房间对吊灯与环境光毫无反应、
 ## 变成一块死平的贴图（与 `table_3d._build_table()` 里桌垫那段注释同一个道理）。
@@ -245,7 +299,7 @@ static var FURNITURE_ANCHORS: Array[Vector3] = []
 # ---------------- 四把椅子 + 椅背名牌（一期 Task 5） ----------------
 #
 # **这是二期的接口**（spec §十）：每把椅子定死「位置 + 朝向」、并挂一个名牌挂点，
-# 二期"把人放上去"只改这一处 —— `seat_anchor(slot)` / `NAMEPLATE_ANCHORS`。
+# 二期"把人放上去"只读这一处 —— `seat_anchor(slot)`（名牌挂点 `NAMEPLATE_ANCHORS` 已删）。
 
 ## 椅子用的模型（Task 1 落地的 Kenney Furniture Kit，`assets/models/*.glb`，CC0）。
 ## **四把同一款**：桌面是张学习桌，四把各一款会读成"随手凑来的四把椅子"。
@@ -269,38 +323,19 @@ const CHAIR_MODEL := "chair.glb"
 ## 于是留一条看得见的缝、而不是让椅子与裙子互穿。
 const SEAT_INSET := 0.15
 
-## 椅背名牌：一块薄牌（BoxMesh）+ 一行名字（Label3D）。薄牌的**颜色 = 这家的棋子色**
-## （`GameData.PLAYER_COLORS`，spec §六/§十）—— **不是**按座位序号取的色。
-const NAMEPLATE_SIZE := Vector3(1.10, 0.42, 0.06)
-## 名牌文字的量法（同 `table_props.DECK_FONT_PS`）：`pixel_size × font_size` = 一个字的边长（世界）。
-## 0.0022 × 64 = 0.141 —— 两个汉字 0.282，占牌宽 1.10 的 **26%**（名字长一点也不会溢出）。
-const NAMEPLATE_FONT_PS := 0.0022
-
-## **名牌嵌进椅背的深度**（一期 Task 9 Step 0 追加）。
+## **椅背名牌整段已删（v0.8.0 判图后，用户 2026-10-06）** —— 用户原话：「去掉椅子上的铭牌」。
 ##
-## **病因（定位是量出来的，不是猜的）**：**侧向那两把椅子的名牌从相机看是侧视** —— 牌面法线
-## 朝屋外，于是默认档 / 拉远端两张图上各留一道**游离的亮线**。真窗口渲染后逐像素扫（1280×800）：
-##   * 左缘 `x 28–59 / y 287–356` 有 **94 个**亮度 > 0.45 的像素（最亮 **0.67**，棋子色黄）；
-##   * 右缘 `x 1220–1251` 同样 **94 个**（最亮 0.55）；
-##   * 把 `Seat1` / `Seat3` 的名牌**各藏一次** ⇒ **两道亮线各自消失**（94 → 0）——
-##     就是这两块牌，**不是椅子、不是墙**（藏椅子反而更多亮像素：露出的墙面更亮）。
-##   * **摆拍图**（`shots/t8_table_plain.png`，有 HUD 与暗角）同一条扫描：左缘 / 右缘各 **94** 个
-##     （最亮 0.75 / 0.45）；改后（`shots/room_final_table_plain.png`）**两边都是 0**（最亮 0.21 / 0.20）。
+## **为什么删得掉**：它的职责（认出这把椅子上坐的是谁）**整段搬到了 `chars.gd` 的头顶名牌**
+## （`Tags/Tag{i}`：棋子色 + 昵称 + billboard + 行动者金边，见 `scripts/chars.gd`）。
+## 两块牌子同时存在只会互相干扰 —— 而且椅背那块**本来就看不见**：它挂在椅背**朝外**那一面
+##（一期 Task 9 把它嵌进椅背外表面，为的是消掉侧向那两把椅子在画面边缘留下的亮线），
+## 也就是说除了"对面那一家"之外，其余两家的牌一律背对相机 ⇒ 二期"靠角色认人"读不出来，
+## 有一半原因就在这儿。
 ##
-## **做法：把牌从"挂在椅背外侧"改成"嵌在椅背外表面上"**（往里 0.06）。
-## 椅子自己的背板于是把牌从**背面**挡住 —— 实测同一像素区的最亮值 **0.67 → 0.16**（= 椅背本身），
-## 亮线消失；而**朝屋外那一面（贴着名字那一面）照旧露在最外**（标签比牌本身还外 0.01）
-## ⇒ 二期"人坐上椅子"之后这块牌仍读得到。
-##
-## **为什么不压暗**（也试过）：压暗到 0.45 倍只是把亮线换成暗线（同一区域最亮仍有 0.44），
-## 且要动"牌色 = 棋子色"那条语义（`layout_test` / `hud_test` 都钉着它）；嵌进椅背是**让椅子
-## 自己挡掉**，牌子该亮的地方照旧亮。
-const NAMEPLATE_SINK := 0.06
-
-## 名牌挂点（世界坐标，与座位序同序）—— spec §十 要的二期接口。
-## 与 `FURNITURE_ANCHORS` 同为 `static var`、由 `_build_chairs()` 落定时填（房间在原点、无变换，
-## 局部即世界；`build()` 期不许读全局量，见 `_build_furniture` 那段）。
-static var NAMEPLATE_ANCHORS: Array[Vector3] = []
+## **连带删掉的东西**：`NAMEPLATE_SIZE` / `NAMEPLATE_FONT_PS` / `NAMEPLATE_SINK`、
+## `NAMEPLATE_ANCHORS`（原 spec §十 的"二期接口"，实际从未被消费 —— 二期取座位坐标一直走
+## `seat_anchor(slot)`）、`_make_nameplate()`、`_refresh_nameplates()`。
+## `set_seats()` 仍在（它维护 `_seat_peers` / `seat_peers()`，那是**角色层与 HUD 都要的那份顺序**）。
 
 # ---------------- 地毯（一期 Task 8 Step 0 追加） ----------------
 
@@ -532,7 +567,6 @@ func _build_chairs() -> void:
 	var seats := Node3D.new()
 	seats.name = "Seats"
 	add_child(seats)
-	NAMEPLATE_ANCHORS.clear()
 	var packed: PackedScene = load("res://assets/models/%s" % CHAIR_MODEL)
 	if packed == null:
 		push_warning("房间缺椅子模型：%s（跳过）" % CHAIR_MODEL)
@@ -571,49 +605,9 @@ func _build_chairs() -> void:
 		# 这正是 `layout_test` 那条"站在地板上"量的东西）。
 		mi.position = Vector3(-c.x * FURNITURE_SCALE, 0.0, -c.z * FURNITURE_SCALE)
 		_no_shadow(mi)
-		# 椅子与家具**同一份材质**（一期 Task 8 Step 0）：屋里出现两种木色会读成"随手凑的"。
-		_paint(mi, _furn_mat)
-		_make_nameplate(seat, ab, half_z)
-
-## 椅背名牌：一块薄牌 + 一行名字，挂在**椅背**上（座位框的 −z 侧 —— 模型自己的背在 −z）。
-## 薄牌的颜色**先留白**，等 `set_seats()` 喂进各家颜色再上色（没有状态时整块不露）。
-func _make_nameplate(seat: Node3D, ab: AABB, half_z: float) -> void:
-	var root := Node3D.new()
-	root.name = "Nameplate"
-	seat.add_child(root)
-	# 挂在椅背顶上：比椅子矮 0.30（不顶到椅子最高那一线），**嵌在背板外表面上**（见 `NAMEPLATE_SINK`）。
-	# 原式把牌**整个**挑在椅背之外（牌心离椅背外表面 0.05）；减去 0.06 之后牌心落到外表面
-	# **之内** 0.01 ⇒ 只剩外沿那 0.02 露在椅子外面，背面被椅子自己的背板挡住。
-	root.position = Vector3(0.0, ab.size.y * FURNITURE_SCALE - 0.30,
-		-half_z - NAMEPLATE_SIZE.z * 0.5 - 0.02 + NAMEPLATE_SINK)
-	var plate := MeshInstance3D.new()
-	plate.name = "Plate"
-	var bm := BoxMesh.new()
-	bm.size = NAMEPLATE_SIZE
-	plate.mesh = bm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.55, 0.55, 0.55)     # 没人坐时的底色（`set_seats` 会刷成棋子色）
-	mat.roughness = 0.72
-	plate.material_override = mat
-	root.add_child(plate)
-	var lab := Label3D.new()
-	lab.name = "Label"
-	lab.font_size = 64
-	lab.pixel_size = NAMEPLATE_FONT_PS
-	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lab.autowrap_mode = TextServer.AUTOWRAP_OFF
-	lab.outline_size = 10
-	lab.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
-	# 名字贴在牌的**外侧**那一面：Label3D 默认面朝 +z，而名牌挂在椅背的 −z 侧
-	#（读它的人站在椅子背后）⇒ 绕 Y 转 180°。
-	# 不 billboard：它是钉在椅背上的铭牌，不该随镜头转（同牌堆顶上那两块牌名）。
-	lab.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-	lab.position = Vector3(0.0, 0.0, -NAMEPLATE_SIZE.z * 0.5 - 0.01)
-	root.add_child(lab)
-	_no_shadow(root)
-	# 二期接口：名牌挂点（房间自己无变换 ⇒ 局部 == 世界）
-	NAMEPLATE_ANCHORS.append(seat.transform * root.position)
+		# 椅子用**自己那份**材质（本轮改版起，见 `CHAIR_ALBEDO`）—— 一期那句"与家具同一份材质"
+		# 是为了"别读成随手凑的"，而用户要的正是"椅子看得出是椅子"。
+		_paint(mi, _chair_mat)
 
 ## 一个模型（`PackedScene`）自己的 AABB。**用累乘的局部变换算，不读任何全局量**。
 ## 为什么不照 `_build_furniture` 那样直接摆：那些模型的几何挂在**嵌套**的子节点上
@@ -671,8 +665,12 @@ var _seats: Array = []
 var _seat_key := ""
 
 ## 喂座位序：`[{peer, color, name}, …]`，下标 = 第几把椅子（slot）。
-## `color` 是 `st` 里那个**棋子色下标**（`p.color`）⇒ 名牌取 `GameData.PLAYER_COLORS[color]`；
-## `name` 可缺（缺就是空名牌）。**顺序 / 颜色 / 名字一字未变时直接返回**（每次广播都调本函数）。
+## **顺序 / 颜色 / 名字一字未变时直接返回**（每次广播都调本函数）。
+##
+## **改版后本函数只干一件事**：维护 `_seat_peers` —— 那是**角色层与 HUD 都要的那份顺序**
+##（`game._refresh_players()` 从它推出喂给 `chars.set_chars()` 的座位序，`hud_test` 钉着两边同序）。
+## 原先它还负责把棋子色 / 昵称刷到椅背名牌上；**椅背名牌已整段删除**（见文件上方那段），
+## 那件事现在归 `chars.gd` 的头顶名牌。
 func set_seats(seats: Array) -> void:
 	var key := ""
 	for s in seats:
@@ -686,7 +684,6 @@ func set_seats(seats: Array) -> void:
 	_seat_peers.clear()
 	for s in _seats:
 		_seat_peers.append(int((s as Dictionary).get("peer", GameData.NO_PEER)))
-	_refresh_nameplates()
 
 ## 当前座位序（与喂进来的那份逐项相同）。
 func seat_peers() -> Array:
@@ -700,31 +697,6 @@ func seat_anchor(slot: int) -> Transform3D:
 	if seats == null or slot < 0 or slot >= seats.get_child_count():
 		return Transform3D()
 	return (seats.get_child(slot) as Node3D).global_transform
-
-## 把各家的棋子色与名字刷到椅背名牌上。座位比人多时（单人局）多出来的那几块收起。
-func _refresh_nameplates() -> void:
-	var seats := get_node_or_null("Seats")
-	if seats == null:
-		return
-	for i in seats.get_child_count():
-		var seat := seats.get_child(i) as Node3D
-		var root := seat.get_node_or_null("Nameplate") as Node3D
-		if root == null:
-			continue
-		var occupied := i < _seats.size()
-		root.visible = occupied
-		if not occupied:
-			continue
-		var s: Dictionary = _seats[i]
-		var plate := root.get_node_or_null("Plate") as MeshInstance3D
-		if plate != null:
-			var mat := plate.material_override as StandardMaterial3D
-			if mat != null:
-				mat.albedo_color = GameData.PLAYER_COLORS[
-					clampi(int(s.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
-		var lab := root.get_node_or_null("Label") as Label3D
-		if lab != null:
-			lab.text = String(s.get("name", ""))
 
 ## `UIKit` **走运行时 `load`**，不静态写类名：`ui_kit.gd` 里的按钮音效引用了 autoload `Fx`，
 ## 静态引用会把整条依赖链拽进 `--script` 入口的那一次编译（那时 autoload 还没注册）

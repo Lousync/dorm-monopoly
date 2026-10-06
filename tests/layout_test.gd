@@ -448,13 +448,13 @@ func _run() -> void:
 			desk_top = (stand_boxes["desk"] as AABB).end.y
 		_check(absf(desk_top) <= 0.35,
 			"书桌顶面与桌面齐平（顶面 y=%.2f，|y| ≤ 0.35；桌面在 y=0 —— spec §六）" % desk_top)
-		# 椅背顶取**座位框里除名牌之外**那部分几何的 AABB 顶（名牌挂在椅背顶上、会把它再抬 0.2）
+		# 椅背顶 = 座位框里那部分几何的 AABB 顶。
+		# （v0.8.0 改版：原先这里要**剔掉 `Nameplate`** —— 椅背名牌挂在椅背顶上、会把它再抬 0.2。
+		#  那块牌子已整段删除（用户 2026-10-06：「去掉椅子上的铭牌」），这道剔除也就跟着没了。）
 		var back_top := -INF
 		if seat_root != null:
 			var s0: Node3D = seat_root.get_child(0)
 			for ch in s0.get_children():
-				if ch.name == "Nameplate":
-					continue
 				for m in (ch as Node).find_children("*", "GeometryInstance3D", true, false):
 					var g2 := m as MeshInstance3D
 					if g2 == null or g2.mesh == null:
@@ -483,38 +483,14 @@ func _run() -> void:
 			_check(mapped == [10, 11, 12, 13],
 				"`seat_peers()` 原样保留喂进来的顺序（实得 %s —— 顺序就是 peer 的映射，不许在这里重排）"
 					% str(mapped))
-			_check(GameRoom.NAMEPLATE_ANCHORS.size() == 4,
-				"名牌挂点四份（spec §十 的二期接口；实得 %d）" % GameRoom.NAMEPLATE_ANCHORS.size())
-			# 名牌色 = **各家的棋子色**（`GameData.PLAYER_COLORS[color]`）。**不是**按座位序号取色：
-			# 这一条喂的 color 恰好等于下标，所以它只钉"色随 color 走"那一半；下标 ≠ color 时
-			# 的取证在 hud_test（那边的 color 由 `st` 决定、与座位序无关）。
-			var plate_ok := true
-			var plate_mats: Array = []
-			var fed_colors := [0, 1, 2, 3]
-			for i in 4:
-				var seat_i := seat_root.get_child(i) as Node3D
-				var plate := seat_i.get_node_or_null("Nameplate/Plate") as MeshInstance3D
-				var pm: StandardMaterial3D = null
-				if plate != null:
-					pm = plate.material_override as StandardMaterial3D
-				plate_mats.append(pm)
-				var want_c: Color = GameData.PLAYER_COLORS[fed_colors[i]]
-				if pm == null or not pm.albedo_color.is_equal_approx(want_c):
-					plate_ok = false
-			_check(plate_ok, "椅背名牌按各家的棋子色上色（slot i ← 喂进来的 color i）")
-			# 四块名牌**各有一份材质**：共用一份的话四家会被刷成同一个色（房子那 4 级同款坑 ——
-			# 材质按等级共用是对的，按"座位"共用就错了）。
-			var shared := false
-			for i in 4:
-				for j in range(i + 1, 4):
-					if plate_mats[i] != null and plate_mats[i] == plate_mats[j]:
-						shared = true
-			_check(not shared, "四块名牌各有一份材质（共用一份 = 四家被刷成同一个色）")
-			# 名牌挂在**椅背顶上**：座位框内比椅子矮一点、且贴在 −z 那一侧（模型自己的背在 −z）
-			var np0 := (seat_root.get_child(0) as Node3D).get_node_or_null("Nameplate") as Node3D
-			_check(np0 != null and np0.position.y > 1.0 and np0.position.z < -0.5,
-				"名牌挂在椅背顶部（座位框内 y=%.2f / z=%.2f —— 背在 −z 侧）"
-					% [np0.position.y if np0 != null else 0.0, np0.position.z if np0 != null else 0.0])
+			# **v0.8.0 改版：椅背名牌整段删除**（用户 2026-10-06：「去掉椅子上的铭牌」）。
+			# 本节原先在这里查四件事 —— `NAMEPLATE_ANCHORS` 四份、牌色 = 各家棋子色、
+			# 四块牌各有一份材质、牌挂在椅背顶上。**那四件事现在都不存在了**：
+			#   * 认人的职责整体搬到 `chars.gd` 的**头顶名牌**（`Chars/Tags/Tag{i}`），
+			#     牌色 / 昵称 / billboard / 行动者金边由 `chars_test` ⑰ 逐条钉；
+			#   * "色随 `p.color` 走、不随座位序号走"那一条由 `hud_test` 改指头顶名牌后继续守着；
+			#   * `NAMEPLATE_ANCHORS` 那个"二期接口"**从未被消费**（二期取座位坐标一直走 `seat_anchor`）。
+			# ⇒ 这里只留座位锚点那一段（二期真正的入口）。
 			# 座位锚点（**二期唯一入口**）：位置 + 朝向。四条边各一把，四把**都面朝桌心**。
 			# 朝向 = 座位框自己的 +z（模型朝 +z 长、背在 −z，实测顶点）⇒ 它应当指向桌心。
 			var anchor_ok := true
@@ -797,7 +773,8 @@ func _run() -> void:
 			if seats8 != null:
 				for s in seats8.get_children():
 					for ch in (s as Node).get_children():
-						if ch.name != "Nameplate":      # 名牌是另一码事（棋子色，故意的亮）
+						# （v0.8.0 改版：原先这里要跳过 `Nameplate` —— 它是棋子色、故意的亮。
+						#  椅背名牌已整段删除，椅子那一支现在只剩椅子自己。）
 							fur_roots.append(ch)
 		var wood_lum := 0.0
 		var wm8 := t3.wood_mesh.material_override as StandardMaterial3D

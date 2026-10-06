@@ -18,13 +18,17 @@ extends SceneTree
 ##      ⑩ **同一个 peer 换椅子坐仍是同一张脸**（座位序轮转一格后逐家比对）；
 ##      ⑪ **同样的座位序再来一次 = 同一批节点实例**（`set_chars` 的早退；
 ##      去掉早退这条立刻红 —— 每次广播都把三个人整套重建）。
-##   **【Task 3 新增】** ⑫ **待机 `idle` 在播、且 `loop_mode` 真的是 `LOOP_LINEAR`**
-##      （导入器给的是 `LOOP_NONE` ⇒ "导入成功就会循环"是个会静默出错的假设）；
-##      ⑬ **真的在动**（同一分件在两个动画相位上的世界位置必须不同 —— 只拍一帧什么都证明不了）；
-##      ⑭ **随取景淡出并停播**（走真接口 `snap_dolly` / `snap_view`：拉远端在、推近端与 2D 端
-##      **全隐 + `is_playing() == false`**，推回默认档又活过来）；
+##   **【v0.8.0 改版：完全静止 + 头顶名牌】**（用户 2026-10-06 判图后拍板：人物不要乱动，
+##      并且"靠角色本身认人"读不出来 ⇒ 加标识。**本条推翻了二期 spec §5.7 的旧定案**）
+##      ⑫ **三个人一帧动画都不播**（`is_playing()` 全假 —— "完全静止"就是它）；
+##      ⑬ **静止是选择、不是"没有动画"**（那条 `idle` 仍在模型里、且**真的静止**：同一分件在
+##      两个真实时间点上的世界位置必须**一模一样** —— 只拍一帧既证明不了在动、也证明不了没动）；
+##      ⑭ **随取景淡出**（走真接口 `snap_dolly` / `snap_view`：拉远端在、推近端与 2D 端**全隐**，
+##      推回默认档又回来）；
 ##      ⑮ **`set_fade(t)` 的阈值契约**（`FADE_SOLID_T` / `FADE_GONE_T` 四个点）；
-##      ⑯ 淡出用的推拉近端与一期 `DOLLY_MIN` 同值；⑰ **当前行动者靠 `idle` 提速**（"轮到我了"）。
+##      ⑯ 淡出用的推拉近端与一期 `DOLLY_MIN` 同值；
+##      ⑰ **头顶名牌**（棋子色牌 + 昵称、billboard 朝向镜头、立在头顶之上；
+##      **当前行动者靠牌上一圈金边**表达 —— 原先那条"同一条 `idle` 提速"随"完全静止"一起退场）。
 ##   **【fix round 新增】** ⑱ **淡出档上的反应丢掉播放**（`react()` 的早退）：淡到"全隐 + 停播"
 ##      之后三条一次性动作各来一次（人仍全隐、播放器仍未在播，等过标称时长后仍然如此），
 ##      `die` 再单独打一次（还要多钉一条"破产**记忆已种下**" + 取景复位后"**回来是趴着、
@@ -728,74 +732,65 @@ func _run() -> void:
 		"**同样的座位序再来一次 = 同一批节点实例**（`set_chars` 的早退：每次广播都调它，"
 			+ "少了早退就会把三个人整套重建 —— 那条注释里写的成本）")
 
-	# ================= 二期 Task 3：待机循环 / 当前行动者 / 随取景淡出并停播 =================
+	# ================= 二期 Task 3（改版）：完全静止 / 随取景淡出 =================
 	#
 	# 节点在前面 ⑩ ⑪ 里重建过 ⇒ 这里重新取一遍（旧引用已 `queue_free`）。
 	var t: Array = []
 	for i in seats.size():
 		t.append(chars.get_node_or_null("Char%d" % i) as Node3D)
 
-	# ⑫ **待机真的在循环** —— 这是本任务最锋利的一个坑（普查 §三 实测细节 1）：
-	#    glTF **没有循环标记**，导入器给 27 条动画**逐条**都是 `LOOP_NONE`
-	#    ⇒「导入成功 ⇒ 会自动循环」是个**会静默出错的假设**（表现只是"人动一下就僵住"）。
-	#    断言**从引擎里那份动画上读** `loop_mode`（不读实现里的常量 —— 读常量等于把实现重述一遍）。
-	#
-	#    ⚠ **动画名按字面核 `"idle"`，不读 `GameChars.IDLE_ANIM`**（本轮 fix round，终审 findings ③）：
-	#    名字那一半原先读实现里的常量 ⇒ 把它改成 `"sit"` / `"walk"`（包里都存在、都闭环）之后
-	#    **这条仍然全绿**，而"坐着的人在呼吸"这个**内容决定**就悄悄没了 —— 与 Task 4 那四条
-	#    按字面名字核的断言（`"interact-right"` / `"holding-left"` / `"emote-no"` / `"die"`）同一类。
-	#    `ACTOR_SPEED` / `FADE_*_T` 那几个是**阈值**（本身就是契约），读常量是对的，不算同类问题。
+	# ⑫ **一帧动画都不播**（v0.8.0 改版的核心：用户要的是"人物不要乱动"）。
+	#    判据 = 三个播放器 `is_playing()` **全假**。原先那条"三个人都在播 `idle`、且
+	#    `loop_mode` 是 `LOOP_LINEAR`"整段退场 —— 待机没了，循环标记也就无从谈起。
+	#    **变红口子**：在 `_place` 里加回 `ap.play("idle")` ⇒ 这条立刻红。
 	var play_bad: Array = []
-	var loop_bad: Array = []
 	var anim_log := ""
 	for i in CHAR_SLOTS:
 		var ap: AnimationPlayer = chars.char_player(i)
-		var a: Animation = ap.get_animation("idle") if ap != null else null
-		if ap == null or not ap.is_playing() or ap.current_animation != "idle":
+		if ap == null or ap.is_playing():
 			play_bad.append(i)
-		if a == null or a.loop_mode != Animation.LOOP_LINEAR:
-			loop_bad.append(i)
-		anim_log += "slot%d 播%s/在播%s/循环%d 时长%.4f | " % [i,
-			(ap.current_animation if ap != null else "无"),
+		anim_log += "slot%d 在播%s/当前\"%s\" | " % [i,
 			("是" if (ap != null and ap.is_playing()) else "否"),
-			(a.loop_mode if a != null else -1), (a.length if a != null else -1.0)]
+			(ap.current_animation if ap != null else "无")]
 	print("  [实测] %s" % anim_log)
 	_check(play_bad.is_empty(),
-		"**三个人都在播 `idle`**（按**字面名字**核；没在播的座位 %s —— 待机是常驻的，"
-			% str(play_bad) + "`_place` 里 `play()`。把 `IDLE_ANIM` 指到 `sit` / `walk` 这条立刻红）")
-	_check(loop_bad.is_empty(),
-		"**`idle` 真的被设成了 `LOOP_LINEAR`**（没设上的座位 %s —— glTF 没有循环标记，"
-			% str(loop_bad)
-			+ "导入器给的是 `LOOP_NONE`；不自己设的话 1.3333 s 之后三个人齐刷刷僵在末帧、"
-			+ "**而日志里一个字都不说**。把 `_loop_idle` 里那句设回 `LOOP_NONE` 这条立刻红；"
-			+ "把 `IDLE_ANIM` 指到别的动画（循环标记就设到那条上去了）这条也红）")
+		"**三个人一帧动画都不播（完全静止）**（还在播的座位 %s —— 待机随本改版一起退场；"
+			% str(play_bad) + "在 `_place` 里加回 `play()` 这条立刻红）")
 
-	# ⑬ **真的在动**（"两帧比对" —— **只有一帧相同不能证明它在动，也不能证明它没在动**）。
-	#    口径：把同一个分件（`head`，`idle` 动的 4 条轨道之一）在**两个动画相位**上各量一次
-	#    世界位置，必须不同。用 `seek()` 而不是 `await` 若干帧：**相位是钉死的**
-	#    （headless 下每帧的真实 delta 只有零点几毫秒，靠等帧量出来的位移会随机器而变 ⇒ 假红）。
+	# ⑬ **静止是"选择"、不是"没有动画"，而且真的静止**（两半都钉，缺一半就能骗过去）：
+	#    ① **那条 `idle` 仍在模型里** —— 否则"不播"可能只是"没得播"，这条断言就失去了意义
+	#      （将来素材换了、动画名变了，这一半会先红，指向真正的原因）；
+	#    ② **同一分件在两个真实时间点上的世界位置一模一样** —— 口径与旧版 ⑬ 的"两帧比对"同源，
+	#      但方向相反：旧版要求"必须不同"（证明在动），新版要求"必须完全相同"（证明静止）。
+	#      ⚠ 用**真实时间**（`create_timer`）而不是 `seek()`：`seek()` 是主动摆相位，
+	#      证明不了"没人来动它"。⚠ 也不能只 `await process_frame` 一两次 —— headless 下每帧的
+	#      delta 只有零点几毫秒，等帧量出来的位移会随机器而变（旧版注释里那条假红的成因）。
 	var still_bad: Array = []
 	var move_log := ""
+	# 顺手把**静止姿**的头位置记下来：此刻还没人碰过任何动画 ⇒ 这是后面 (e) 那条
+	# "反应播完回到静止姿"的**基准**（那一段之前已经被 (c2) 用 `seek+pause` 摆过相位，
+	# 到那时再量"静止姿"量到的其实是个伸手中途的相位 —— 必须在**这里**记）。
+	var rest_head := {}
 	for i in CHAR_SLOTS:
 		var ap: AnimationPlayer = chars.char_player(i)
 		var head := t[i].find_child("head", true, false) as Node3D
-		if ap == null or head == null:
+		if ap == null or head == null or not ap.has_animation("idle"):
 			still_bad.append(i)
 			continue
-		ap.seek(0.0, true)
-		await process_frame
 		var p0: Vector3 = head.global_position
-		ap.seek(0.4, true)
+		await create_timer(0.35).timeout
 		await process_frame
 		var p1: Vector3 = head.global_position
 		var d: float = p0.distance_to(p1)
-		if d <= 0.01:
+		if d > 0.0001:
 			still_bad.append(i)
-		move_log += "slot%d head 相位0.0→0.4 位移 %.4f 世界 | " % [i, d]
+		rest_head[i] = p1
+		move_log += "slot%d head 0.35s 前后位移 %.6f 世界 | " % [i, d]
 	print("  [实测] %s" % move_log)
 	_check(still_bad.is_empty(),
-		"**待机真的在动**（同一分件在两个动画相位上的世界位置必须不同；没动的座位 %s —— "
-			% str(still_bad) + "只拍一帧既证明不了它在动、也证明不了它没在动）")
+		"**待机那条 `idle` 仍在模型里、但没人播它；且分件真的静止**（不对的座位 %s —— "
+			% str(still_bad) + "①里 `has_animation(\"idle\")` 为假说明素材换了（先修这一头）；"
+			+ "②里位移不为 0 说明有东西在动它）")
 
 	# ⑭ **随取景淡出并停播**（走**真接口** `snap_dolly` / `snap_view`，不直调 `set_fade`）：
 	#    判据按**取景档**，不按"是否落在视口内"—— 角色在 3D 端**恒在画内**（哪怕被画面边缘
@@ -805,102 +800,97 @@ func _run() -> void:
 	var frames := 4
 	var fade_log := ""
 
-	# (a) 拉远端：**在、在播**
+	# (a) 拉远端：**在、全亮**（名牌也一起在 —— 它是"看屋子/看人"那一档才有的信息）
 	t3.snap_view(0.0)
 	t3.snap_dolly(t3.DOLLY_MAX)
 	for k in frames:
 		await process_frame
 	var far_bad: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
 		var tr_hi := _max_transparency(t[i])
-		if t[i] == null or not t[i].visible or tr_hi > 0.001 or ap == null or not ap.is_playing():
+		var tg := chars.get_node_or_null("Tags/Tag%d" % i) as Node3D
+		if t[i] == null or not t[i].visible or tr_hi > 0.001 or tg == null or not tg.visible:
 			far_bad.append(i)
-		fade_log += "拉远端 slot%d 可见%s/透明度%.2f/在播%s | " % [i, ("是" if t[i].visible else "否"),
-			tr_hi, ("是" if (ap != null and ap.is_playing()) else "否")]
+		fade_log += "拉远端 slot%d 可见%s/透明度%.2f/牌%s | " % [i, ("是" if t[i].visible else "否"),
+			tr_hi, ("在" if (tg != null and tg.visible) else "无")]
 	_check(far_bad.is_empty(),
-		"**拉远端（看屋子那一档）角色还在、且在播**（不对的座位 %s）" % str(far_bad))
+		"**拉远端（看屋子那一档）角色与头顶名牌都在、且全亮**（不对的座位 %s）" % str(far_bad))
 
-	# (b) 推近端（`DOLLY_MIN` = 0.7，"读棋盘"那一档）：**全隐 + 停播**
+	# (b) 推近端（`DOLLY_MIN` = 0.7，"读棋盘"那一档）：**全隐**（人 + 名牌一起）
 	t3.snap_dolly(t3.DOLLY_MIN)
 	for k in frames:
 		await process_frame
 	var near_bad: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		if t[i].visible or ap == null or ap.is_playing():
+		var tg := chars.get_node_or_null("Tags/Tag%d" % i) as Node3D
+		if t[i].visible or (tg != null and tg.visible):
 			near_bad.append(i)
-		fade_log += "推近端 slot%d 可见%s/在播%s | " % [i, ("是" if t[i].visible else "否"),
-			("是" if (ap != null and ap.is_playing()) else "否")]
+		fade_log += "推近端 slot%d 可见%s/牌%s | " % [i, ("是" if t[i].visible else "否"),
+			("在" if (tg != null and tg.visible) else "无")]
 	_check(near_bad.is_empty(),
-		"**推近端（读棋盘那一档）角色已淡出并停播**（不对的座位 %s —— "
-			% str(near_bad) + "把 `_apply_fade` 里的 `ap.stop()` 去掉、或不隐藏外套节点，这条立刻红）")
+		"**推近端（读棋盘那一档）角色与名牌都已淡出**（不对的座位 %s —— "
+			% str(near_bad) + "把 `_apply_fade` 里隐藏外套节点那两句去掉，这条立刻红）")
 
-	# (c) 2D 端（`view_t = 1`，也是读棋盘那一档）：**全隐 + 停播**
+	# (c) 2D 端（`view_t = 1`，也是读棋盘那一档）：**全隐**
 	t3.snap_dolly(1.0)
 	t3.snap_view(1.0)
 	for k in frames:
 		await process_frame
 	var v2d_bad: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		if t[i].visible or ap == null or ap.is_playing():
+		var tg := chars.get_node_or_null("Tags/Tag%d" % i) as Node3D
+		if t[i].visible or (tg != null and tg.visible):
 			v2d_bad.append(i)
-		fade_log += "2D端 slot%d 可见%s/在播%s | " % [i, ("是" if t[i].visible else "否"),
-			("是" if (ap != null and ap.is_playing()) else "否")]
+		fade_log += "2D端 slot%d 可见%s/牌%s | " % [i, ("是" if t[i].visible else "否"),
+			("在" if (tg != null and tg.visible) else "无")]
 	_check(v2d_bad.is_empty(),
-		"**2D 端（读棋盘那一档）角色已淡出并停播**（不对的座位 %s）" % str(v2d_bad))
+		"**2D 端（读棋盘那一档）角色与名牌都已淡出**（不对的座位 %s）" % str(v2d_bad))
 
-	# (d) 推回 3D 默认档：**又活过来**（淡出是可逆的，不是一次性的）
+	# (d) 推回 3D 默认档：**又回来**（淡出是可逆的，不是一次性的）
 	t3.snap_view(0.0)
 	t3.snap_dolly(1.0)
 	for k in frames:
 		await process_frame
 	var back_bad: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		if not t[i].visible or ap == null or not ap.is_playing():
+		var tg := chars.get_node_or_null("Tags/Tag%d" % i) as Node3D
+		if not t[i].visible or tg == null or not tg.visible or _max_transparency(t[i]) > 0.001:
 			back_bad.append(i)
 	_check(back_bad.is_empty(),
-		"**推回默认档（1.0）角色又回来、又在播**（不对的座位 %s —— 淡出必须可逆）" % str(back_bad))
-	print("  [实测] 取景停播四档：%s（推拉 %.2f→%.2f / 视角 0.0→1.0→0.0）"
+		"**推回默认档（1.0）角色与名牌又回来、且恢复不透明**（不对的座位 %s —— 淡出必须可逆）"
+			% str(back_bad))
+	print("  [实测] 取景淡出四档：%s（推拉 %.2f→%.2f / 视角 0.0→1.0→0.0）"
 		% [fade_log, t3.DOLLY_MAX, t3.DOLLY_MIN])
 
 	# ⑮ **`set_fade(t)` 的契约**（直接调接口，同步断言 —— 中间不 `await`，免得 `_process` 又把它按
 	#    当前取景覆写回去）。四个阈值点：`0.0` / `FADE_SOLID_T` / `FADE_GONE_T` / `1.0`。
 	var c0: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		c0.append(ap != null and ap.is_playing() and t[i].visible)
+		c0.append(t[i].visible and _max_transparency(t[i]) <= 0.001)
 	chars.set_fade(GameChars.FADE_SOLID_T)
 	var c_solid: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		c_solid.append(ap != null and ap.is_playing() and t[i].visible)
+		c_solid.append(t[i].visible and _max_transparency(t[i]) <= 0.001)
 	chars.set_fade(GameChars.FADE_GONE_T)
 	var c_gone: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		c_gone.append(ap != null and not ap.is_playing() and not t[i].visible \
-			and _max_transparency(t[i]) >= 1.0)
+		c_gone.append(not t[i].visible and _max_transparency(t[i]) >= 1.0)
 	chars.set_fade(1.0)
 	var c1: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		c1.append(ap != null and not ap.is_playing() and not t[i].visible)
+		c1.append(not t[i].visible)
 	chars.set_fade(0.0)   # 复位（后面几段还要读）
 	var c_back: Array = []
 	for i in CHAR_SLOTS:
-		var ap: AnimationPlayer = chars.char_player(i)
-		c_back.append(ap != null and ap.is_playing() and t[i].visible and _max_transparency(t[i]) <= 0.001)
+		c_back.append(t[i].visible and _max_transparency(t[i]) <= 0.001)
 	_check(c0.all(func(x): return x) and c_solid.all(func(x): return x),
-		"`set_fade(t<=%.2f)` ⇒ **全亮 + 在播**（t=0 全亮 %s / t=%.2f 全亮 %s）"
+		"`set_fade(t<=%.2f)` ⇒ **全亮**（t=0 全亮 %s / t=%.2f 全亮 %s）"
 			% [GameChars.FADE_SOLID_T, str(c0), GameChars.FADE_SOLID_T, str(c_solid)])
 	_check(c_gone.all(func(x): return x) and c1.all(func(x): return x),
-		"`set_fade(t>=%.2f)` ⇒ **全隐（透明度 1.0）+ 停播**（t=%.2f %s / t=1.0 %s）"
+		"`set_fade(t>=%.2f)` ⇒ **全隐（透明度 1.0）**（t=%.2f %s / t=1.0 %s）"
 			% [GameChars.FADE_GONE_T, GameChars.FADE_GONE_T, str(c_gone), str(c1)])
 	_check(c_back.all(func(x): return x),
-		"`set_fade(0.0)` 之后**又全亮 + 在播**（淡出可逆，实得 %s）" % str(c_back))
+		"`set_fade(0.0)` 之后**又全亮**（淡出可逆，实得 %s）" % str(c_back))
 
 	# ⑯ **`FADE_NEAR_DOLLY` 与一期的 `DOLLY_MIN` 是同一个数**（不静态引用、但也不许悄悄漂开）。
 	_check(is_equal_approx(GameChars.FADE_NEAR_DOLLY, t3.DOLLY_MIN),
@@ -909,33 +899,74 @@ func _run() -> void:
 			+ "vs `TableView3D.DOLLY_MIN=%.2f` —— 两边各写一份是为了不形成类名环，"
 			% t3.DOLLY_MIN + "但那两份必须相等：哪天一期的档位改了、这里没跟，就是「该淡的那一档不淡」）")
 
-	# ⑰ **当前行动者**（"轮到我了"）：包里没有第二条持续型动画（`walk`/`sprint` 是位移动作）
-	#    ⇒ 只能靠**同一条 `idle` 提速**表达（普查 §5.4）。座位序里 slot1/2/3 = peer 3/4/5。
+	# ⑰ **头顶名牌**（本改版新增）：牌色 = 那一家的棋子色、牌上写着昵称、整块 **billboard
+	#    朝向镜头**、**立在头顶之上**。**当前行动者靠牌上一圈金边**表达 —— 原先那条"同一条
+	#    `idle` 提速"随"完全静止"一起退场，辨认线索改由名牌承担（用户 2026-10-06 判图后拍板）。
+	#
+	#    位置与颜色的**唯一来源**仍是喂进来的那份座位序（`set_chars` 的入参）——
+	#    测试自己不去算坐标，只核"牌上写的就是喂进去的那一家"。
+	var tag_bad: Array = []
+	var tag_log := ""
+	for i in CHAR_SLOTS:
+		var s: Dictionary = seats[i]
+		var color := clampi(int(s.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)
+		var want: Color = GameData.PLAYER_COLORS[color]
+		var tg = chars.char_tag(i)
+		if tg == null:
+			tag_bad.append("slot%d 没有名牌" % i)
+			continue
+		var plate := tg.get_node_or_null("Plate") as MeshInstance3D
+		var lab := tg.get_node_or_null("Label") as Label3D
+		var plate_mat: StandardMaterial3D = plate.material_override as StandardMaterial3D if plate != null else null
+		var got_col: Color = plate_mat.albedo_color if plate_mat != null else Color.BLACK
+		var col_ok: bool = plate_mat != null and is_equal_approx(got_col.r, want.r) \
+			and is_equal_approx(got_col.g, want.g) and is_equal_approx(got_col.b, want.b)
+		var name_ok: bool = lab != null and lab.text == String(s.get("name", ""))
+		# 牌底 y 要在**模型世界 AABB 的顶**之上（「立在头顶之上」，不是插在脸上）
+		var model_top: float = _subtree_world_aabb(t[i]).end.y
+		var plate_half: float = 0.0
+		if plate != null and plate.mesh is QuadMesh:
+			plate_half = (plate.mesh as QuadMesh).size.y * 0.5
+		var above_ok: bool = tg.global_position.y - plate_half >= model_top
+		# 朝向镜头：牌与字**都**得是 billboard（只设一处的话另一处会随镜头侧过去）
+		var bb_ok: bool = plate_mat != null and plate_mat.billboard_mode == BaseMaterial3D.BILLBOARD_ENABLED \
+			and lab != null and lab.billboard == BaseMaterial3D.BILLBOARD_ENABLED
+		if not (col_ok and name_ok and above_ok and bb_ok):
+			tag_bad.append("slot%d(色%s/名%s/头上%s/朝向%s)" % [i, str(col_ok), str(name_ok),
+				str(above_ok), str(bb_ok)])
+		tag_log += "slot%d 色%s/名「%s」/牌心y%.2f vs 模型顶%.2f/朝向%s | " % [i, str(got_col),
+			(lab.text if lab != null else "<无>"), tg.global_position.y, model_top, str(bb_ok)]
+	print("  [实测] 头顶名牌：%s" % tag_log)
+	_check(tag_bad.is_empty(),
+		"**头顶名牌：棋子色对、昵称对、立在头顶之上、整块朝向镜头**（不对的 %s）" % str(tag_bad))
+	_check(chars.char_tag(MY_SLOT) == null,
+		"`slot %d`（近侧 =「我」）**没有名牌** —— 与「那个人不渲染」同一条（相机就在那儿）" % MY_SLOT)
+
+	# ⑰-b **当前行动者 = 牌上一圈金边**（静止的，不闪）
 	var actor_peer := int((seats[CHAR_SLOTS[0]] as Dictionary).get("peer", 0))
 	chars.set_actor(actor_peer)
-	var sp: Array = []
+	var a0: Array = []
 	for i in CHAR_SLOTS:
-		sp.append(chars.char_speed(i))
-	var others: Array = [sp[1], sp[2]]
-	_check(actor_peer == chars.actor_peer() and sp[0] >= others[0] + 0.2 and sp[0] >= others[1] + 0.2
-			and sp[0] > GameChars.IDLE_SPEED,
-		"**行动者的 `idle` 明显比其他人快**（行动者 peer %d 在 slot%d：速度 %.2f vs 其余 %.2f / %.2f；"
-			% [actor_peer, CHAR_SLOTS[0], sp[0], others[0], others[1]]
-			+ "把 `set_actor` 变成空函数这条立刻红）")
-	# 换成另一个行动者：**上一个必须降回来**（不能只往上加）
+		var bd0 = chars.char_tag(i).get_node_or_null("Border") as Node3D
+		a0.append(bd0 != null and bd0.visible)
+	_check(actor_peer == chars.actor_peer() and a0[0] and not a0[1] and not a0[2],
+		"**行动者的名牌上有金边、其余两家的没有**（行动者 peer %d 在 slot%d：%s）"
+			% [actor_peer, CHAR_SLOTS[0], str(a0)])
+	# 换一个行动者：**金边跟着换**（不能只往上加、不把旧的撤掉）
 	chars.set_actor(int((seats[CHAR_SLOTS[1]] as Dictionary).get("peer", 0)))
-	var sp2: Array = []
+	var a1: Array = []
 	for i in CHAR_SLOTS:
-		sp2.append(chars.char_speed(i))
-	_check(sp2[1] > sp2[0] + 0.2 and sp2[1] > sp2[2] + 0.2 and sp2[0] <= GameChars.IDLE_SPEED + 0.001,
-		"换一个行动者之后**上一个降回基准速**（实得 slot1 %.2f / slot2 %.2f / slot3 %.2f —— "
-			% [sp2[0], sp2[1], sp2[2]] + "只在「谁快」上做加法、不把旧的降回来，这条会红）")
+		var bd1 = chars.char_tag(i).get_node_or_null("Border") as Node3D
+		a1.append(bd1 != null and bd1.visible)
+	_check(not a1[0] and a1[1] and not a1[2],
+		"换一个行动者之后**金边跟着换**（实得 %s —— 只在新的那家上做加法、不撤掉旧的，这条会红）" % str(a1))
 	chars.set_actor(GameData.NO_PEER)
-	var sp3: Array = []
+	var a2: Array = []
 	for i in CHAR_SLOTS:
-		sp3.append(chars.char_speed(i))
-	_check(sp3.all(func(x): return x <= GameChars.IDLE_SPEED + 0.001),
-		"没有行动者时**三个人都回到基准速**（实得 %s）" % str(sp3))
+		var bd2 = chars.char_tag(i).get_node_or_null("Border") as Node3D
+		a2.append(bd2 != null and bd2.visible)
+	_check(a2.all(func(x): return not x),
+		"没有行动者时**三块牌都没有金边**（实得 %s）" % str(a2))
 
 	# ================= 二期 Task 4：四个玩法事件的反应 =================
 	#
@@ -1094,25 +1125,30 @@ func _run() -> void:
 	_check(floor_bad.is_empty(),
 		"出牌 / 付钱 / 被抢地**三条动作都不掉到地板以下**（越界 %s）" % str(floor_bad))
 
-	# (d) **幅度含蓄**：反应**不许动 `speed_scale`**（那是「当前行动者」的表达，`set_actor` 独占）。
-	#     "放大一点看得清"正是要拦住的那一手 —— 本作调性克制，四家同时动要变马戏团。
-	chars.set_actor(3)                       # 行动者 = slot1（peer 3）：速度 1.4
-	var ra_sp: float = chars.char_speed(1)
+	# (d) **幅度含蓄**：反应**不许动 `speed_scale`**（"放大一点看得清"正是要拦住的那一手 ——
+	#     本作调性克制，四家同时动要变马戏团）。改版之后 `set_actor` 不再碰 `speed_scale`
+	#     （它改去点名牌上的金边）⇒ 这条改成**直接钉住"反应的播放速度就是 1.0"**。
+	# (e) 一次性小动作**播完回到静止姿** —— 不回位的话人僵在末帧的伸手姿态。
+	#     ⚠ **基准取 ⑬ 那一刻量到的静止姿**（`rest_head`），不能在这里现量：本段之前 (c2) 已经
+	#     用 `seek+pause` 把这个人摆过好几个相位，那时量到的"静止姿"是个伸手中途的相位。
+	#     ⚠⚠ **这条断言是本改版抓出来的一个真缺陷**：`AnimationPlayer.stop()` **不复位姿态**
+	#     （实测：`stop()` 之后分件仍停在末帧，slot1 的世界 AABB 深 6.89 vs 静止姿 4.5）。
+	#     旧版靠 `play(idle)` 逐帧把残留姿态盖掉，改版后没有第二条动画可盖 ⇒ 必须显式还原。
+	var head1 := t[1].find_child("head", true, false) as Node3D
+	var rest1: Vector3 = rest_head.get(1, Vector3.ZERO)
 	chars.react(3, "play")
-	_check(is_equal_approx(chars.char_speed(1), ra_sp) and is_equal_approx(ra_sp, GameChars.ACTOR_SPEED),
-		"**反应不动 `speed_scale`**（幅度含蓄 —— 行动者档 %.2f，实得 %.2f → %.2f；"
-			% [GameChars.ACTOR_SPEED, ra_sp, chars.char_speed(1)]
-			+ "「顺手放大一点」这条立刻红）")
-
-	# (e) 三条一次性小动作**播完自己走回待机** —— 不回来的话人僵在末帧、再也不呼吸
-	#    （0.6667 s，speed 1.4 ⇒ ≈0.48 s；等 1.2 s 足够，且不是"看一眼就算"）
+	var rap: AnimationPlayer = chars.char_player(1)
+	_check(rap != null and is_equal_approx(rap.speed_scale, 1.0),
+		"**反应的播放速度就是 1.0**（幅度含蓄，实得 %.2f —— 「顺手放大一点」这条立刻红）"
+			% [(rap.speed_scale if rap != null else -1.0)])
 	await create_timer(1.2).timeout
-	var rae: AnimationPlayer = chars.char_player(1)
-	_check(rae != null and rae.current_animation == GameChars.IDLE_ANIM and rae.is_playing(),
-		"一次性动作播完**自己走回待机**（实得 \"%s\"/在播 %s —— 不回来人僵在末帧、再也不呼吸）"
-			% [(rae.current_animation if rae != null else "<没有播放器>"),
-				("是" if (rae != null and rae.is_playing()) else "否")])
-	chars.set_actor(GameData.NO_PEER)
+	await process_frame
+	var back_head: Vector3 = head1.global_position if head1 != null else Vector3.ZERO
+	var back_d: float = rest1.distance_to(back_head)
+	_check(rap != null and not rap.is_playing() and back_d <= 0.0001,
+		"一次性动作播完**回到静止姿**（在播 %s / 分件相对静止姿位移 %.6f —— 不回位的话人僵在末帧的"
+			% [("是" if (rap != null and rap.is_playing()) else "否"), back_d]
+			+ "伸手姿态；`stop()` 自己不复位，得靠 `_rest_pose()` 把快照写回去）")
 
 	# (f) 破产 → `die` + **停在末帧**。
 	#     ⚠ **名字要读 `assigned_animation`**：实测 Godot 4.6 里 `current_animation` 在
@@ -1120,7 +1156,7 @@ func _run() -> void:
 	#     拿 `current_animation` 核这条**必然假红**（第一版就是这么红的，探针量出来的）。
 	#     两条一起核：① 名字对；② **真的停在末帧**（位置 ≈ 时长、已不在播）—— 只核名字的话，
 	#     `play()` 之后直接 `pause()`（停在第 0 帧、还是坐姿）照样绿。
-	var ra_top0: float = _subtree_world_aabb(t[2]).end.y    # 待机时的最高点（下面 f3 的参照）
+	var ra_top0: float = _subtree_world_aabb(t[2]).end.y    # 静止姿的最高点（下面 f3 的参照）
 	chars.react(4, "die")
 	await process_frame
 	var ra4: AnimationPlayer = chars.char_player(2)
@@ -1182,7 +1218,7 @@ func _run() -> void:
 		"破产那家**定在末帧不动**（0.3 s 之后位置 %.4f，与刚播完时 %.4f 相同）" % [ra4_pos2, ra4_pos])
 
 	# (g) **淡出往返之后仍然是"留在座位上"的那一副**（这是最容易漏的那一半：
-	#     `_apply_fade` 从淡出档回来时会 `play(idle)`、`set_chars` 重建也会把人摆成待机）
+	#     `_apply_fade` 从淡出档回来时会摆回静止姿、`set_chars` 重建也会把人摆成静止姿）
 	chars.set_fade(1.0)
 	chars.set_fade(0.0)
 	await process_frame
@@ -1223,10 +1259,10 @@ func _run() -> void:
 	#   再把取景推回默认档，确认他回来时是**趴着**的（下面那一条）。
 	# **变红口子（记忆那一半）**：把 `react()` 早退那一支里的 `_dead_peers[peer] = true` 拿掉 ⇒
 	#   "破产记忆已种下"与"回来时趴在座位上（不是在呼吸）"两条立刻红（`_apply_fade` 从淡出档
-	#   回来时走 `play(idle)` 那一支 ⇒ `assigned_animation` 变成 `idle`、`is_playing()` 翻真）。
+	#   回来时会走**"没趴下就摆回静止"**那一支 ⇒ 这个人**重新坐正**、破产姿态被抹掉）。
 	# **变红口子（播放那一半）**：把整个 `if _faded_out():` 那支拿掉 ⇒ 三条小动作那一半当场红
-	#   （`play()` 立刻把 `is_playing()` 翻成真，而 `set_fade` 在 `t` 没变时早退 ⇒ **再没人来停它**），
-	#   后半段也红（0.17~0.67 s 后 `_react_finished` 把它接到 **`LOOP_LINEAR` 的 `idle`** 上 ⇒ 一直播下去）。
+	#   （`play()` 立刻把 `is_playing()` 翻成真，而 `set_fade` 在 `t` 没变时早退 ⇒ **再没人来停它**；
+	#   改版后 `_react_finished` 接到的是 `stop()`，但"在隐藏节点上重新开播"这件事本身已经红了）。
 	# ⚠ **为什么三条在前、`die` 单独放最后**：`die` 会**停在末帧**（`pause()`）—— 若把它排在三条中间，
 	# 它的 `pause()` 会把"后面还播着"的证据一起盖掉（第一版就是这么写的，红线验证当场发现它盖住了
 	# 后半段的变红口子 ⇒ 现在拆开打）。
@@ -1281,7 +1317,7 @@ func _run() -> void:
 			+ "`die` 是终局、且 `alive` 的边沿在同一次调用里就被消费掉（不会补发）⇒ 记忆必须活过"
 			+ "淡出档；否则他回来会继续呼吸（见下面那条「回来时趴在座位上」））")
 	# **从淡出档回到屋子里：他是趴着的，不是在呼吸**（N-1 的可见后果；走取景真接口复位）。
-	# 记忆若没活过淡出档，`_apply_fade` 会走 `play(idle)` 那一支 ⇒ 这个人**又开始呼吸**，
+	# 记忆若没活过淡出档，`_apply_fade` 会走**"没趴下就摆回静止"**那一支 ⇒ 这个人**重新坐正**，
 	# 而 HUD 已经说他出局了。**这一条就是简报要求"确认破产者回来时是趴着、不是在呼吸"的那条。**
 	t3.snap_view(0.0)
 	t3.snap_dolly(1.0)
@@ -1292,7 +1328,7 @@ func _run() -> void:
 		"破产那家**从淡出档回来时趴在座位上（不是在呼吸）**（实得 assigned=\"%s\" 在播 %s —— "
 			% [(back_ap.assigned_animation if back_ap != null else "<没有播放器>"),
 				("是" if (back_ap != null and back_ap.is_playing()) else "否")]
-			+ "记忆若没活过淡出档，这里会走 `_apply_fade` 的 `play(idle)` 那一支 ⇒ 他又开始呼吸、"
+			+ "记忆若没活过淡出档，这里会走 `_apply_fade` 的「摆回静止」那一支 ⇒ 他重新坐正、"
 			+ "还会对后来的 pay/rob 起反应；把早退那一支里的 `_dead_peers[peer] = true` 拿掉这条立刻红）")
 
 	# 供报告的原始读数。⚠ 节点在 ⑩ ⑪ 里**重建过**（那两条本来就要换一批实例）⇒ 这里重新取一遍，
