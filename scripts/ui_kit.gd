@@ -235,6 +235,8 @@ static func card_palette(kind: String) -> Array:
 			return [Color(0.42, 0.70, 0.95), Color(0.09, 0.14, 0.21, 0.95)]
 		"bust":
 			return [Color(0.95, 0.35, 0.35), Color(0.22, 0.07, 0.07, 0.95)]
+		"aberr":
+			return [Color(0.79, 0.65, 1.0), Color(0.12, 0.09, 0.20, 0.95)]   # 畸变：紫
 		_:
 			return [ACCENT, Color(0.16, 0.14, 0.08, 0.95)]
 

@@ -209,6 +209,14 @@ func build_panel() -> void:
 	var gal_btn := UIKit.button("道具卡图鉴", 11)
 	gal_btn.pressed.connect(g._open_card_gallery)
 	dev_inject_box.add_child(gal_btn)
+	# 手动进黑市（黑市专场 ③）：不用等机会卡，让当前行动者直接进店调试（房主侧）
+	var black_btn := UIKit.button("进入黑市", 11)
+	black_btn.tooltip_text = "让当前行动者直接进黑市（调试用）"
+	black_btn.pressed.connect(func() -> void:
+		if g.running and int(g._black_peer) == 0 and int(g._shop_peer) == 0 \
+				and not g.hp.is_empty():
+			g._run_blackshop(g.hp[g.turn_i]))
+	dev_inject_box.add_child(black_btn)
 	if not multiplayer.is_server():
 		dev_inject_box.visible = false  # 客户端：仅观察
 

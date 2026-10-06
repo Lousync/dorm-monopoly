@@ -55,6 +55,7 @@ func _run() -> void:
 	_test_insufficient(g)
 	_test_exit(g)
 	_test_refresh(g)
+	_test_picker(g)
 	_test_bot(g)
 	_test_shop_ui(g)
 	_test_stock_unique(g)
@@ -139,6 +140,22 @@ func _test_refresh(g) -> void:
 		if String(s) != "":
 			filled += 1
 	_check(filled >= 1, "货架重新铺货")
+
+## 交地清单（黑市专场 ①）：带详情行 + 进度头，买卖 / 出口同一套 UI
+func _test_picker(g) -> void:
+	print("== 交地清单 ==")
+	var tiles := _fresh_tiles()
+	var a := _prop_idx(0)
+	tiles[a] = {"owner": 1, "level": 2}
+	g.st = {"tiles": tiles, "black_pay_need": 2, "black_pay_got": 1}
+	g._rebuild_black_picker(true)
+	_check(g.black_picker.visible, "支付态显示交地清单")
+	_check(String(g.black_picker_head.text).contains("还需交 1 块") 		and String(g.black_picker_head.text).contains("已交 1"), "清单头部带进度（还需 / 已交）")
+	var rows: Array = g.black_picker_box.get_children()   # g 是 Node：动态调用推不出类型
+	_check(rows.size() == 1, "清单只列自己名下那块地")
+	_check(String(rows[0].get_child(0).text).contains("累计投入"), "清单行带累计投入详情")
+	g._rebuild_black_picker(false)
+	_check(not g.black_picker.visible, "退出支付态清单收起")
 
 func _test_bot(g) -> void:
 	print("== bot：买最值一件并留出口费 ==")

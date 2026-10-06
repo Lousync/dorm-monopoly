@@ -132,6 +132,7 @@ var black_btns: Array = []
 var black_hint: Label
 var black_picker: Control
 var black_picker_box: VBoxContainer
+var black_picker_head: Label   # 清单头部的进度行（还需交 N 块 · 已交 X）
 var _black_sig := ""
 
 # ---------------- 畸变（host 状态，规则与两道闸门见 doc/game-design/畸变.md §二） ----------------
@@ -1351,17 +1352,41 @@ func _ab_enqueue(id: String) -> void:
 ## 公告走 _log（s_log 顶部气泡），debuff 的震屏在 s_aberr 里对所有端生效。
 func _ab_trigger(p: Dictionary, id: String) -> void:
 	var d: Dictionary = AberrationData.def(id)
-	_log("【畸变】%s —— %s" % [id, String(d.get("desc", ""))], "#f0c064")
+	var left := -1   # 持续型在本函数内定档后回填（横幅 / 大字卡都带「剩 N 回合」）
 	if String(d.get("type", "")) == "持续":
-		var left := int(d.get("dur", 0))
+		left = int(d.get("dur", 0))
 		if left <= 0:
 			left = maxi(1, int(_settings.ab_dur))
+	var text := _ab_announce_text(id, left)
+	_log("【畸变】%s —— %s" % [id, text], "#f0c064")
+	# 触发大字卡（畸变可读性，台账 §六 #28）：屏幕层演出 3.2 秒自动收（不用任何人点确定，
+	# 定时器 fire-and-forget，不阻塞回合流；重复触发时后一张盖前一张，close 幂等）
+	s_card.rpc(text, "aberr", "🌀 畸变 · %s" % id)
+	get_tree().create_timer(3.2).timeout.connect(func() -> void: s_card_close.rpc())
+	if String(d.get("type", "")) == "持续":
 		_ab_active.append({"id": id, "left": left})
 		s_aberr.rpc(id, "start", left)
 		_ab_apply_persistent_start(p, id)
 	else:
 		s_aberr.rpc(id, "start", 0)
 		await _ab_apply_instant(p, id)
+
+## 畸变公告文案（唯一来源；触发大字卡 / 战报 / 横幅悬停共用，aberration_test 钉住）：
+## desc 全文 + 比例类畸变的实时数值 + 持续型的「剩 N 回合，到期自动解除」。
+## 所有畸变都**没有手动解除**——持续型到期自动消失（用户 2026-10-06 定口径）。
+static func _ab_announce_text(id: String, left := -1) -> String:
+	var d: Dictionary = AberrationData.def(id)
+	var text := String(d.get("desc", ""))
+	match id:
+		"金融危机":
+			text += "（无房产者扣 %d%%、有房产者扣 %d%%）" % [
+				int(AberrationData.FIN_RATE_NC * 100), int(AberrationData.FIN_RATE_C * 100)]
+		"枪打出头鸟":
+			text += "（按现金的 %d%%）" % int(AberrationData.BIRD_RATE * 100)
+	if String(d.get("type", "")) == "持续" and left > 0:
+		text += "
+持续 %d 回合，到期自动解除。" % left
+	return text
 
 ## 非持续型：触发瞬间结算（debuff 逐玩家独立被香皂/护盾免疫）
 func _ab_apply_instant(p: Dictionary, id: String) -> void:
@@ -2467,9 +2492,15 @@ func _refresh_ab_ui() -> void:
 		ab_label.visible = false
 		return
 	var parts := PackedStringArray()
+	var tips := PackedStringArray()
 	for a in act:
 		parts.append("%s·剩%d回合" % [String(a.id), int(a.left)])
+		# 悬停即查（畸变可读性）：全文说明 + 剩余回合；所有畸变到期自动解除、无手动解除
+		tips.append("%s：%s（剩 %d 回合，到期自动解除）" % [
+			String(a.id), AberrationData.def(String(a.id)).get("desc", ""), int(a.left)])
 	ab_label_l.text = "🌀 畸变生效中：%s" % "、".join(parts)
+	ab_label.tooltip_text = "
+".join(tips)
 	ab_label.visible = true
 
 ## 操作窗口剩余时间（全员可见）走这条专用 RPC，而不进 _broadcast_state：
@@ -6299,6 +6330,10 @@ func _rebuild_black_picker(active: bool) -> void:
 		c.free()
 	if not active:
 		return
+	var need := int(st.get("black_pay_need", 0))
+	var got := int(st.get("black_pay_got", 0))
+	black_picker_head.text = "本次结账还需交 %d 块（已交 %d）——逐块点「交出」，交齐自动生效" % [
+		maxi(need - got, 0), got]
 	var tiles_arr: Array = st.get("tiles", [])
 	var added := 0
 	for i in mini(tiles_arr.size(), GameData.TILES.size()):
@@ -6308,8 +6343,15 @@ func _rebuild_black_picker(active: bool) -> void:
 		var t: Dictionary = tiles_arr[i]
 		if int(t.get("owner", GameData.NO_OWNER)) != my_peer or bool(t.get("soil", false)):
 			continue
-		var b := UIKit.button("交出【%s】Lv%d · 地价 %s" % [
-			String(d.name), int(t.get("level", 0)), GameData.fmt_money(int(d.price))], 13)
+		# 清单行带详情：地皮名 / 等级 / 累计投入（地价 + 等级 × 升级费）——与变卖保底同一口径
+		var invested := int(d.price) + int(t.get("level", 0)) * GameData.upgrade_cost(i)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var l := UIKit.label("【%s】Lv%d · 累计投入 %s" % [
+			String(d.name), int(t.get("level", 0)), GameData.fmt_money(invested)], 13, UIKit.TEXT)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var b := UIKit.button("交出", 12)
 		var idx := i
 		b.pressed.connect(func() -> void:
 			if multiplayer.is_server():
@@ -6317,10 +6359,11 @@ func _rebuild_black_picker(active: bool) -> void:
 			else:
 				c_black_pay.rpc(idx)
 		)
-		black_picker_box.add_child(b)
+		row.add_child(b)
+		black_picker_box.add_child(row)
 		added += 1
 	if added == 0:
-		black_picker_box.add_child(UIKit.label("没有可用地皮", 12, UIKit.TEXT_DIM))
+		black_picker_box.add_child(UIKit.label("（没有可交的地皮）", 12, UIKit.TEXT_DIM))
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason
