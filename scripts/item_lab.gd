@@ -36,6 +36,7 @@ var _hint_l: Label
 var _log_box: VBoxContainer
 var _diff_box: VBoxContainer
 var _param_edit: LineEdit
+var _case_edit: LineEdit
 var _tile_l: Label
 
 func _ready() -> void:
@@ -64,6 +65,10 @@ func _ready() -> void:
 	_snap()
 	render()
 	_log("试验场就绪：4 名玩家、真实玩法逻辑、回合循环已停")
+	# `--lab-case=名字`：直达回放（main_menu 已把它当 `--lab` 的入口；这里读出名字并载入）。
+	var cn := _case_arg()
+	if cn != "":
+		_load_case(cn)
 
 # ================= UI =================
 
@@ -129,6 +134,19 @@ func _build_ui() -> void:
 	var hide_btn := UIKit.button("👁 隐藏面板", 12)
 	hide_btn.pressed.connect(_toggle_panels)
 	trow.add_child(hide_btn)
+	# 用例保存 / 回放（§九 D / ⑭）：存 = 可复现状态写 `user://lab_cases/<名>.json`；
+	# 读 = 清空后按 JSON 逐项注入（`LabCase`）。名字留空回落 `case`。启动参数 `--lab-case=名` 直达。
+	_case_edit = LineEdit.new()
+	_case_edit.text = "case1"
+	_case_edit.custom_minimum_size = Vector2(120, 0)
+	_case_edit.tooltip_text = "用例名（存 / 读共用）"
+	trow.add_child(_case_edit)
+	var save_case_btn := UIKit.button("💾 存用例", 12)
+	save_case_btn.pressed.connect(_save_case)
+	trow.add_child(save_case_btn)
+	var load_case_btn := UIKit.button("📂 读用例", 12)
+	load_case_btn.pressed.connect(func() -> void: _load_case(_case_edit.text))
+	trow.add_child(load_case_btn)
 	# 左：玩家（整栏可滚动）
 	var left := _panel("玩家（点选 = 操作对象）")
 	_p_left = left
@@ -660,6 +678,38 @@ func _copy_state() -> void:
 	DisplayServer.clipboard_set(payload)
 	_log("状态 JSON 已复制到剪贴板")
 	print(payload)
+
+# ================= 用例保存 / 回放（§九 D / ⑭） =================
+
+func _save_case() -> void:
+	var name := _case_edit.text if _case_edit != null else "case"
+	var path := LabCase.save(name, g)
+	if path == "":
+		_log("存用例失败（目录不可写？）")
+		return
+	_log("已存用例 → %s（现有：%s）" % [path, ", ".join(LabCase.list_cases())])
+
+func _load_case(name: String) -> bool:
+	var data := LabCase.load_data(name)
+	if data.is_empty():
+		_log("没有这个用例：%s（现有：%s）" % [LabCase.safe_name(name), ", ".join(LabCase.list_cases())])
+		return false
+	LabCase.apply(g, data)
+	if _case_edit != null:
+		_case_edit.text = name
+	actor_i = clampi(actor_i, 0, maxi(g.hp.size() - 1, 0))
+	target_i = -1
+	target_tile = -1
+	render()
+	_log("已回放用例 ← %s" % LabCase.path_for(name))
+	return true
+
+## 启动参数 `--lab-case=名字`（`main_menu` 把它与 `--lab` 同链处理；这里读出名字直达回放）。
+func _case_arg() -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--lab-case="):
+			return a.substr("--lab-case=".length())
+	return ""
 
 func _find_inst(p: Dictionary, id: String) -> Dictionary:
 	for it in p.get("items", []):

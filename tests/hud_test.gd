@@ -2454,6 +2454,27 @@ func _run() -> void:
 	await process_frame
 	_check(g._tgt_stage == "peer", "右键拖拽平移后松开：不取消（选目标态保留）")
 
+	# ---- ⑪：选目标提示条给战报气泡栈**动态让位**（§六 #7）----
+	# 此前提示条与气泡栈同挂在顶部居中 y 52 起、同带互压；本批改成"贴着气泡栈正下方"。
+	print("== 选目标提示条动态让位（⑪） ==")
+	while g.log_toast.get_child_count() > 0:
+		var old: Node = g.log_toast.get_child(0)
+		g.log_toast.remove_child(old)
+		old.queue_free()
+	g._show_target_hint("测试提示")
+	await process_frame
+	var base_top: float = g.target_hint_wrap.offset_top
+	g._push_log_toast("气泡一")
+	g._push_log_toast("气泡二")
+	await process_frame
+	var stack_bottom: float = g.log_toast.offset_top + g.log_toast.get_combined_minimum_size().y
+	_check(g.target_hint_wrap.offset_top >= stack_bottom,
+		"有气泡时提示条落在气泡栈下方（提示条 top %.1f ≥ 栈底 %.1f）"
+			% [g.target_hint_wrap.offset_top, stack_bottom])
+	_check(g.target_hint_wrap.offset_top > base_top,
+		"有气泡时提示条比无气泡时更低（%.1f > %.1f）" % [g.target_hint_wrap.offset_top, base_top])
+	g._cancel_target()
+
 	g.get_tree().paused = false
 	g.free()
 	if fails == 0:

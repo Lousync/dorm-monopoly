@@ -1119,6 +1119,7 @@ static func build_menu_ui(g: Node) -> void:
 	th_wrap.offset_bottom = 100
 	th_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.target_hint.add_child(th_wrap)
+	g.target_hint_wrap = th_wrap   # 动态让位（⑪）要改它的 offset_top / offset_bottom
 	var th := UIKit.panel_container(UIKit.PANEL_GLASS, 12,
 		Color(1.0, 0.86, 0.35, 0.85), 1, 8)
 	th_wrap.add_child(th)

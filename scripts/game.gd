@@ -91,6 +91,7 @@ var _tgt_tiles: Array = []  # 当前可选的地块 idx
 var _tgt_swap_mine := -1    # 转专业两段式：已选定的「我的那块地」（-1 = 还没选）
 var target_hint: Control
 var target_hint_l: Label
+var target_hint_wrap: Control    # 提示条锚点容器（§六 #7 / ⑪ 动态让位：`_place_target_hint` 改它的 offset）
 var shop_layer: Control          # 小卖部全屏界面（触发时独占，见 table_hud.gd）
 var shop_panel: PanelContainer
 var shop_cards: Array = []       # 每格 {holder: CenterContainer, price_l: Label}
@@ -2855,6 +2856,8 @@ func _push_log_toast(line: String) -> void:
 		var old := log_toast.get_child(0)
 		log_toast.remove_child(old)
 		old.queue_free()
+	# 提示条要让位给气泡栈（⑪）：新气泡的高度要等容器排完版才准 ⇒ 延后一拍重算。
+	call_deferred("_place_target_hint")
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -5753,9 +5756,31 @@ func _target_item_id() -> String:
 		return ""
 	return String(items[_tgt_slot].id)
 
+## 选目标提示条与战报气泡栈的净空 / 自身高度（§六 #7 / ⑪ 动态让位）。
+## 高度与 `table_hud` 里 `th_wrap` 的 `offset_bottom - offset_top`（100 − 52）一致。
+const TARGET_HINT_GAP := 10.0
+const TARGET_HINT_H := 48.0
+
+## 选目标提示条**贴着当前战报气泡栈正下方**（§六 #7 / ⑪，2026-10-06 拍板：动态让位）：
+## 气泡栈有几条、它就落在几条之下（净空 `TARGET_HINT_GAP`），两者永不同带。
+## **重算挂点两处**：`_push_log_toast`（战报新增气泡）与 `_show_target_hint`（进入选目标态，
+## 覆盖 `_begin_peer_target` / `_begin_tile_target`）；退出选目标态隐藏（`_cancel_target` 现状不变）。
+func _place_target_hint() -> void:
+	if target_hint_wrap == null or not is_instance_valid(target_hint_wrap):
+		return
+	# 气泡栈顶边取自它自己的锚点（单一来源，别写死 52）；没有气泡时提示条就落在原位。
+	var top := 52.0
+	if log_toast != null and is_instance_valid(log_toast):
+		top = log_toast.offset_top
+		if log_toast.get_child_count() > 0:
+			top += log_toast.get_combined_minimum_size().y + TARGET_HINT_GAP
+	target_hint_wrap.offset_top = top
+	target_hint_wrap.offset_bottom = top + TARGET_HINT_H
+
 func _show_target_hint(text: String) -> void:
 	if target_hint == null:
 		return
+	_place_target_hint()
 	target_hint.visible = true
 	if target_hint_l != null:
 		target_hint_l.text = text

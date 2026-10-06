@@ -1003,9 +1003,9 @@ func _run() -> void:
 	_check(floor_bad.is_empty(),
 		"出牌 / 付钱 / 被抢地**三条动作都不掉到地板以下**（越界 %s）" % str(floor_bad))
 
-	# (d) **幅度含蓄**：反应**不许动 `speed_scale`**（"放大一点看得清"正是要拦住的那一手 ——
-	#     本作调性克制，四家同时动要变马戏团）。改版之后 `set_actor` 不再碰 `speed_scale`
-	#     （它改去点名牌上的金边）⇒ 这条改成**直接钉住"反应的播放速度就是 1.0"**。
+	# (d) **幅度含蓄**：反应速度**统一 = `REACT_SPEED_SCALE`（0.6× 慢放）** —— 既不许"放大一点
+	#     看得清"（那会让四家同时动变马戏团），也不许随手乱调（2026-10-06 实机"快得像闪了一下"
+	#     ⇒ 定案慢放到 0.6×）。这条从"恒 1.0"改成"恒 `REACT_SPEED_SCALE`"：防的是**乱调**。
 	# (e) 一次性小动作**播完回到静止姿** —— 不回位的话人僵在末帧的伸手姿态。
 	#     ⚠ **基准取 ⑬ 那一刻量到的静止姿**（`rest_head`），不能在这里现量：本段之前 (c2) 已经
 	#     用 `seek+pause` 把这个人摆过好几个相位，那时量到的"静止姿"是个伸手中途的相位。
@@ -1016,10 +1016,10 @@ func _run() -> void:
 	var rest1: Vector3 = rest_head.get(1, Vector3.ZERO)
 	chars.react(3, "play")
 	var rap: AnimationPlayer = chars.char_player(1)
-	_check(rap != null and is_equal_approx(rap.speed_scale, 1.0),
-		"**反应的播放速度就是 1.0**（幅度含蓄，实得 %.2f —— 「顺手放大一点」这条立刻红）"
-			% [(rap.speed_scale if rap != null else -1.0)])
-	await create_timer(1.2).timeout
+	_check(rap != null and is_equal_approx(rap.speed_scale, GameChars.REACT_SPEED_SCALE),
+		"**反应速度 == REACT_SPEED_SCALE（%.2f）**（慢放统一，实得 %.2f —— 「顺手放大」/「随手乱调」都红）"
+			% [GameChars.REACT_SPEED_SCALE, (rap.speed_scale if rap != null else -1.0)])
+	await create_timer(1.5).timeout
 	await process_frame
 	var back_head: Vector3 = head1.global_position if head1 != null else Vector3.ZERO
 	var back_d: float = rest1.distance_to(back_head)
