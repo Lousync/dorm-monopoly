@@ -27,6 +27,18 @@ var room_name := "宿舍房间"
 var host_port := 0             # 房主实际使用的端口
 var last_error := ""           # 返回主菜单时展示给玩家看
 
+# ---------------- 掉线重连（协议 §六） ----------------
+## 重连凭证：开局时房主私发（s_assign_token），仅存内存；掉线后随 c_hello 带回认领座位。
+## 整局有效、可重复使用；认领成功 token 不变、座位表换绑新 peer。房主进程 / 客户端重启即失效。
+var rejoin_token := 0
+var rejoined := false          # 本次连接已认领成功（s_reclaim 置位；停掉 hello 重试）
+var last_join_addr := ""       # 上次加入的地址（主菜单回填，方便断线后一键重连）
+
+## 房主侧：token -> 座位 peer（开局发牌时建；认领后换绑新 peer）
+var _seat_tokens := {}
+## 房主侧：已连上但还没完成 hello / 认领的连接（peer_connected 不再立即踢，防误杀重连握手）
+var _pending_hello := {}
+
 var game_settings: GameSettings = GameSettings.new()   # 房主配置，大厅写、对局读（见 开局设置.md §三之一）
 var players: Array = []        # [{peer:int, name:String, color:int, bot:bool, ready:bool}]
 var chat_history: Array = []   # ["名字：文本", ...]
@@ -71,6 +83,9 @@ func host_game(port: int) -> Error:
 
 func join_game(address: String, port: int) -> Error:
 	_reset_peer()
+	rejoined = false   # 本次连接是否认领成功，由 s_reclaim 置位
+	if not address.is_empty():
+		last_join_addr = address
 	var peer := ENetMultiplayerPeer.new()
 	var err := peer.create_client(address, port)
 	if err != OK:
@@ -84,6 +99,7 @@ func leave() -> void:
 	_reset_peer()
 	players = []
 	in_game = false
+	rejoin_token = 0   # 主动退出 = 放弃座位，凭证作废
 
 func _reset_peer() -> void:
 	stop_disco()
@@ -190,7 +206,37 @@ func start_game() -> void:
 	if not can_start():
 		return
 	in_game = true
+	# 重连凭证（协议 §六）：开局给每位真人客户端私发一枚 token；掉线后凭它认领座位。
+	# 房主自己（peer 1）不发——房主掉线 = 服务器没了，无重连可言。
+	_seat_tokens.clear()
+	for p in players:
+		if not bool(p.bot) and int(p.peer) != 1:
+			var t := randi()
+			_seat_tokens[int(p.peer)] = t
+			s_assign_token.rpc_id(int(p.peer), t)
 	s_start.rpc()
+
+@rpc("authority", "call_remote", "reliable")
+func s_assign_token(token: int) -> void:
+	rejoin_token = token
+	print("NET: rejoin token assigned")
+
+## 客户端：认领成功。直进对局场景——状态快照是全量的，对局内各界面都由快照驱动。
+@rpc("authority", "call_remote", "reliable")
+func s_reclaim() -> void:
+	rejoined = true
+	print("AUTOTEST RECLAIM client ok")
+	Fx.go_to("res://scenes/game.tscn")
+
+## 自动化用：模拟「网络波动」断开（客户端主动掐断连接，本端表现 = server_disconnected）。
+## **不清 rejoin_token**——它正是重连认领要带的凭证。真机上的断线走 server_disconnected，
+## 本函数只让联机回归不用真拔网线（协议 §六）。
+func simulate_drop() -> void:
+	print("NET: simulate drop (autotest)")
+	_reset_peer()
+	players = []
+	in_game = false
+	connection_lost.emit("与房主的连接已断开")
 
 @rpc("authority", "call_local", "reliable")
 func s_start() -> void:
@@ -237,8 +283,16 @@ func _name_of(peer: int) -> String:
 
 func _on_peer_connected(id: int) -> void:
 	print("NET: peer_connected id=", id, " is_server=", multiplayer.is_server())
-	if multiplayer.is_server() and in_game:
-		_kick_peer(id, "对局已开始，无法中途加入")
+	if not multiplayer.is_server():
+		return
+	# 不再立即踢（对局中连接可能是掉线玩家的重连握手，先给 1.5 秒完成 hello / 认领）；
+	# 到点还没完成才按陌生人清走（协议 §六.4）。
+	_pending_hello[id] = true
+	get_tree().create_timer(1.5).timeout.connect(func() -> void:
+		if multiplayer.is_server() and _pending_hello.has(id) \
+				and multiplayer.get_peers().has(id):
+			_pending_hello.erase(id)
+			_kick_peer(id, "对局已开始，无法中途加入"))
 
 ## 先把踢人原因可靠送达，稍等一拍再断开连接（避免对端来不及收到就掉线）
 func _kick_peer(id: int, reason: String) -> void:
@@ -254,6 +308,7 @@ func _kick_peer(id: int, reason: String) -> void:
 		mp.disconnect_peer(id)
 
 func _on_peer_disconnected(id: int) -> void:
+	_pending_hello.erase(id)
 	if multiplayer.is_server() and not in_game:
 		for i in players.size():
 			if int(players[i].peer) == id:
@@ -272,9 +327,11 @@ func _hello_retry() -> void:
 	for i in HELLO_RETRIES:
 		if not (multiplayer.multiplayer_peer is ENetMultiplayerPeer):
 			return  # 已被踢 / 已断开，静默退出
-		c_hello.rpc_id(1, my_name)
+		if rejoined:
+			return  # 认领成功，不用再重试 hello
+		c_hello.rpc_id(1, my_name, rejoin_token)
 		await get_tree().create_timer(0.5).timeout
-		if not players.is_empty():
+		if not players.is_empty() or rejoined:
 			return
 	if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
 		_reset_peer()
@@ -306,19 +363,48 @@ func hello_verdict(sender: int) -> String:
 	return ""
 
 @rpc("any_peer", "call_remote", "reliable")
-func c_hello(pname: String) -> void:
+func c_hello(pname: String, token: int = 0) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
+	# 对局中：只认「凭证命中座位」的重连，其余照旧拒绝（协议 §六.3）
+	if in_game and not players.any(func(p) -> bool: return int(p.peer) == sender):
+		var old := _token_seat(int(token))
+		if old != GameData.NO_PEER:
+			var scene := get_tree().current_scene
+			if scene != null and scene.has_method("reclaim_seat") \
+					and scene.reclaim_seat(old, sender):
+				_seat_tokens.erase(old)
+				_seat_tokens[sender] = int(token)   # token 不变，座位换绑新 peer（可再掉再认领）
+				for p in players:
+					if int(p.peer) == old:
+						p.peer = sender   # 大厅行跟着换 key（聊天名等仍用它）
+						break
+				_pending_hello.erase(sender)
+				print("NET: seat reclaimed old_peer=", old, " new_peer=", sender)
+				s_reclaim.rpc_id(sender)
+				return
+		_kick_peer(sender, "对局已开始，无法中途加入")
+		return
 	var verdict := hello_verdict(sender)
 	if verdict != "":
 		_kick_peer(sender, verdict)
 		return
+	_pending_hello.erase(sender)
 	var clean := sanitize_name(String(pname))
 	print("NET: host accepted hello from peer ", sender, " name=", clean)
 	_add_player(sender, clean, false)
 	_add_chat_line("%s 加入了房间" % clean)
 	broadcast_lobby()
+
+## 按 token 反查座位 peer；没有命中返回 NO_PEER
+func _token_seat(token: int) -> int:
+	if token == 0:
+		return GameData.NO_PEER
+	for old in _seat_tokens:
+		if int(_seat_tokens[old]) == token:
+			return int(old)
+	return GameData.NO_PEER
 
 func _on_connection_failed() -> void:
 	print("NET: connection_failed")

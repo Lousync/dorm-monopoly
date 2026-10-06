@@ -39,6 +39,8 @@ const GAP := 5.0
 const MIN_ZOOM_FACTOR := 0.55   # 下限（全景附近）
 const MAX_ZOOM_FACTOR := 3.1    # 上限（明显更近）
 const SELECT_COLOR := Color(1.0, 0.86, 0.35)   # 指向性道具「可选中」高亮（金）
+## 起点格上的「+工资」读数：开局设置「起点补贴」可改，game._ready 注入本局值（默认 = 常量）
+var start_salary := GameData.SALARY
 ## 「我还有待决的买地/装修」高亮（批次 12 C1）：琥珀偏橙，与上一条的金色分得开
 const PENDING_COLOR := Color(1.0, 0.62, 0.20)
 ## 抽卡演出（`DECK_PUSH_FACTOR` / `DECK_*` / `CARD_SIZE` / 相位动画那一整套）已随批次 8
@@ -1057,7 +1059,7 @@ func render(state: Dictionary) -> void:
 			"again":
 				sub.text = "再动一次"
 			"start":
-				sub.text = "+" + _short_money(GameData.SALARY)
+				sub.text = "+" + _short_money(start_salary)
 			"jail":
 				sub.text = "反省处"
 			"go_jail":

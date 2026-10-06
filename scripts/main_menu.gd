@@ -222,6 +222,13 @@ func _ready() -> void:
 	if not Net.last_error.is_empty():
 		_status.text = Net.last_error
 		Net.last_error = ""
+	# 掉线重连（协议 §六）：手里还攥着凭证且已断开 → 地址栏回填 + 提示，点「加入」即回对局
+	var mp_r := Net.multiplayer.multiplayer_peer
+	if Net.rejoin_token != 0 and not Net.is_host \
+			and (mp_r == null or mp_r is OfflineMultiplayerPeer):
+		if not Net.last_join_addr.is_empty():
+			_addr_edit.text = Net.last_join_addr
+		_status.text = "连接中断——用同一地址点「加入」即可回到对局（座位已由机器人托管）"
 
 	var mp := Net.multiplayer.multiplayer_peer
 	if not _shot_game and mp != null and not (mp is OfflineMultiplayerPeer) and Net.is_host:
@@ -245,13 +252,17 @@ func _ready() -> void:
 		Net.my_name = "房主"
 		Net.host_game(7790)
 		get_tree().change_scene_to_file.call_deferred("res://scenes/lobby.tscn")
-	elif _at_mode == "client":
+	elif _at_mode == "client" or _at_mode == "reconnect":
 		Engine.time_scale = 3.0
-		Net.my_name = "客户端"
+		Net.my_name = "重连哥" if _at_mode == "reconnect" else "客户端"
 		var addr := "127.0.0.1"
 		for a in OS.get_cmdline_user_args():
 			if a.begins_with("--addr="):
 				addr = a.substr(7)
+		if _at_mode == "reconnect" and Net.rejoin_token != 0 and not Net.rejoined:
+			# 掉线后的第二轮：等一拍（让房主先看到断线）再凭凭证重连认领（协议 §六）
+			print("AUTOTEST RECONNECT: rejoining with token")
+			await get_tree().create_timer(1.2).timeout
 		var err := Net.join_game(addr, 7790)
 		if err != OK:
 			print("AUTOTEST CLIENT JOIN ERROR ", err)

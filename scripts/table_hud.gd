@@ -325,6 +325,49 @@ static func build_play_ui(g: Node) -> void:
 	g.shop_reopen_btn.pressed.connect(func() -> void: g._set_shop_collapsed(false))
 	g.add_child(g.shop_reopen_btn)
 
+	# 破产变卖保底（经济与胜负.md §三）：卖家本机 = 自选面板（压暗、模态）；旁观者 = 只读横幅。
+	# 数据（liq_peer / liq_need / 名下地皮）全在状态快照里，行内容由 game._refresh_liq_ui() 填。
+	g.liq_layer = Control.new()
+	g.liq_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.liq_layer.visible = false
+	g.liq_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 旁观者不被挡；压暗底自己 STOP
+	g.liq_layer.z_index = 66   # 高于弹问(60)、低于小卖部(70)：变卖期间不会有别的模态抢场
+	g.add_child(g.liq_layer)
+	g.liq_dim = ColorRect.new()
+	g.liq_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.liq_dim.color = Color(0.05, 0.03, 0.03, 0.68)
+	g.liq_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	g.liq_dim.visible = false
+	g.liq_layer.add_child(g.liq_dim)
+	var lc := CenterContainer.new()
+	lc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.liq_layer.add_child(lc)
+	g.liq_panel = UIKit.panel_container(Color(0.10, 0.07, 0.055, 0.985), 16, Color(0.9, 0.5, 0.28), 2, 14)
+	g.liq_panel.custom_minimum_size = Vector2(620, 0)
+	g.liq_panel.visible = false
+	lc.add_child(g.liq_panel)
+	var lpm := UIKit.margins(20, 20, 16, 16)
+	g.liq_panel.add_child(lpm)
+	var lpv := VBoxContainer.new()
+	lpv.add_theme_constant_override("separation", 10)
+	lpm.add_child(lpv)
+	lpv.add_child(UIKit.label("💸 变卖保底", 24, Color(0.98, 0.78, 0.55)))
+	lpv.add_child(UIKit.label("现金付不起应付款了——限时变卖名下地皮凑差价（每块按累计投入 × 30％ 回收，凑足即停、余款保留）", 12, UIKit.TEXT_DIM))
+	g.liq_status_l = UIKit.label("", 17, Color(0.98, 0.88, 0.6))
+	lpv.add_child(g.liq_status_l)
+	g.liq_rows = VBoxContainer.new()
+	g.liq_rows.add_theme_constant_override("separation", 6)
+	lpv.add_child(g.liq_rows)
+	# 旁观横幅：非卖家看到一条不挡点击的顶部窄条（挂在 liq_layer 里、与面板互斥显隐）
+	g.liq_watch = UIKit.label("", 16, UIKit.ACCENT)
+	g.liq_watch.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	g.liq_watch.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	g.liq_watch.offset_top = 52
+	g.liq_watch.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	g.liq_watch.visible = false
+	g.liq_layer.add_child(g.liq_watch)
+
 	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
 	g.black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,
 		Color(0.96, 0.55, 0.3, 0.6), 1, 8)

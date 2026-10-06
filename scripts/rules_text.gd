@@ -38,19 +38,26 @@ static func _prompt_rule(tier: String) -> String:
 
 
 ## 分页：[key, 标签, 正文]
-## tier = 本局「操作限时」挡位（见 开局设置.md §三之一）；秒数一律从 GameSettings 取，不写死
-static func pages(tier := GameSettings.TIER_CURRENT) -> Array:
+## tier = 本局「操作限时」挡位（见 开局设置.md §三之一）；秒数一律从 GameSettings 取，不写死。
+## st = 本局设置对象（开局设置.md）：经济 / 胜负页随它走；缺省（= null）按常量默认（= 现状）。
+static func pages(tier := GameSettings.TIER_CURRENT, st: GameSettings = null) -> Array:
 	return [
-		{"key": "basic", "title": "基础操作", "body": _basic()},
+		{"key": "basic", "title": "基础操作", "body": _basic(st)},
 		{"key": "turn", "title": "回合与行动", "body": _turn(tier)},
 		{"key": "board", "title": "棋盘与地产", "body": _board()},
-		{"key": "money", "title": "经济与胜负", "body": _money()},
+		{"key": "money", "title": "经济与胜负", "body": _money(st)},
 		{"key": "item", "title": "道具与事件", "body": _item()},
 	]
 
 # ---------------- 各页正文 ----------------
 
-static func _basic() -> String:
+static func _basic(st: GameSettings = null) -> String:
+	var round_lines := ["· 轮流行动，所有人各行动一次 = 一回合"]
+	if st == null or st.max_rounds > 0:
+		var lim := GameData.MAX_ROUNDS if st == null else st.max_rounds
+		round_lines.append("· 共 %d 回合；到轮未分胜负则按身家排名结算" % lim)
+	else:
+		round_lines.append("· 本局%s：只靠胜利条件（目标现金 / 最后存活）或全员破产结束" % _d("不限轮数"))
 	return "\n".join([
 		_h("视角"),
 		"· 滚轮：在「3D 第一人称」与「2D 桌面」之间连续推移视角（向前滚推向 2D 桌面、向后滚拉回 3D）",
@@ -72,9 +79,7 @@ static func _basic() -> String:
 		"",
 		_h("一局的基本盘"),
 		"· 1~4 人，房主即权威服务器；有人掉线由机器人接管",
-		"· 轮流行动，所有人各行动一次 = 一回合，共 %d 回合" % GameData.MAX_ROUNDS,
-		"· 第 %d 回合结束按身家排名结算" % GameData.MAX_ROUNDS,
-	])
+	]) + "\n" + "\n".join(round_lines)
 
 static func _turn(tier: String) -> String:
 	return "\n".join([
@@ -107,7 +112,7 @@ static func _turn(tier: String) -> String:
 		"  触发：转轮 0 待命、宿委会反省",
 	])
 
-static func _board() -> String:
+static func _board(st: GameSettings = null) -> String:
 	var lines := [
 		_h("棋盘"),
 		"· %d 格环形（%d×%d 外圈）" % [GameData.TILES.size(), GameData.BOARD_COLS, GameData.BOARD_ROWS],
@@ -139,16 +144,21 @@ static func _board() -> String:
 		"",
 		_h("出局与焦土"),
 		"· 付不起钱即出局：现金清零、名下地产收归无主且等级清零",
+	])
+	if st == null or st.liq_on:
+		lines.append("· 付不起时先%s：限时变卖名下地皮凑差价（累计投入 × 30％），凑足即停、余款保留"
+			% _d("变卖保底"))
+	lines.append_array([
 		"· 焦土：被「亡牌飞行员coco」炸毁的地皮无归属、不产租；",
 		"  任何玩家落地都要自动捐款累进进度，达标后恢复成%s地产" % _d("无主"),
 	])
 	return "\n".join(lines)
 
-static func _money() -> String:
+static func _money(st: GameSettings = null) -> String:
 	return "\n".join([
 		_h("资金"),
-		"· 起始资金 %s" % GameData.fmt_money(GameData.START_MONEY),
-		"· 踏过或停在起点领工资 %s" % GameData.fmt_money(GameData.SALARY),
+		"· 起始资金 %s" % GameData.fmt_money(GameData.START_MONEY if st == null else st.start_cash),
+		"· 踏过或停在起点领工资 %s" % GameData.fmt_money(GameData.SALARY if st == null else st.start_salary),
 		"· 钱主要花在%s：买地、装修、交租、小卖部、赌注" % _d("刀刃上"),
 		"",
 		_h("机会 / 命运卡"),
@@ -156,8 +166,8 @@ static func _money() -> String:
 		"· 机会格另有专属卡：被拉进小卖部、公告栏道具券、神秘短信（开黑市）",
 		"",
 		_h("失物招领（地图 %d 格）" % _count_of("item")),
-		"· 落地翻箱，按品质权重捡一件随机道具（白 45 / 绿 30 / 蓝 18 / 紫 5 / 橙 2）",
-		"· 背包满或该品质缺货则落空",
+		"· 落地翻箱「发现」三选一：按品质权重翻出三件候选，只有你能看到、私密选一件（白 45 / 绿 30 / 蓝 18 / 紫 5 / 橙 2）",
+		"· 背包满或该品质缺货则落空；机器人自动选",
 		"",
 		_h("特浓咖啡（地图 %d 格）" % _count_of("again")),
 		"· 落地灌一口，本回合%s（再掷一次轮盘并照常结算）" % _d("再行动一次"),
@@ -167,10 +177,26 @@ static func _money() -> String:
 		"· %s 租金、购买、赌注、道具消耗是中性，香皂挡不住" % _d("注意："),
 		"",
 		_h("胜负"),
-		"· 只剩 1 人存活 → 该玩家直接获胜（全员破产则学校胜）",
-		"· 否则第 %d 回合结束按身家排名" % GameData.MAX_ROUNDS,
-		"· 身家 = 现金 + Σ(地价 + 等级 × 升级费用)",
-	])
+		"· 胜利条件房主开局可设：到轮身家结算（默认）/ 目标现金 / 最后存活",
+	] + _win_lines(st))
+
+## 胜负页的收尾三行：按本局胜利条件展开（st 缺省 = 默认「到轮身家结算」）
+static func _win_lines(st: GameSettings = null) -> Array:
+	var mode := "rounds" if st == null else st.win_mode
+	var lim := GameData.MAX_ROUNDS if st == null else st.max_rounds
+	var out := ["· 身家 = 现金 + Σ(地价 + 等级 × 升级费用)"]
+	match mode:
+		"cash":
+			out.append("· 本局比拼%s：先到 %s 的玩家立即获胜；到轮未达标则按身家结算" % [
+				_d("目标现金"), GameData.fmt_money(50000 if st == null else st.win_cash)])
+		"last":
+			out.append("· 本局比拼%s：只剩一人时立即获胜%s" % [_d("最后存活"),
+				"" if lim <= 0 else "；到第 %d 轮仍未分出则按身家结算" % lim])
+		_:
+			out.append("· 第 %d 回合结束按身家排名，最富有者胜（全员破产则学校胜）" % lim
+				if lim > 0 else
+				"· 本局不限轮数：按身家结算只在全员破产时被跳过——胜负由最后存活者定")
+	return out
 
 static func _item() -> String:
 	return "\n".join([
