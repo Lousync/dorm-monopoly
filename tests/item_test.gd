@@ -55,6 +55,7 @@ func _run() -> void:
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	_test_egg(g)
 	_test_coco(g)
+	_test_use_guard(g)
 	await _test_soil(g)
 	await _test_discover(g)
 	if fails == 0:
@@ -91,6 +92,27 @@ func _test_egg(g) -> void:
 	_check(p1.items.size() == 1 or p1.money == 1100, "普通玩家收到礼物或现金")
 	_check(p3.items.is_empty() and p3.money == 1000, "出局玩家不参与")
 	_check(g._item_pool("").find("蛋蛋节") == -1, "焚毁道具已移出可获取池")
+
+## 出局/观战玩家显式禁用道具（台账 §三「观战禁用道具」剩余半条 ⑱）：
+## 破产虽已清空背包，`_use_item` 仍要有一道 alive 守卫，挡住其余一切入口。
+func _test_use_guard(g) -> void:
+	print("== 出局玩家禁用道具 ==")
+	var p0 := _mk_player(1, "甲")
+	p0.alive = false
+	p0.items = [{"id": "招财猫", "cd": 0}]
+	g.hp = [p0]
+	g.htiles = _fresh_tiles()
+	g.shops = {}
+	g.items_consumed = {}
+	g._awaiting_item = 1
+	g._item_epoch = 0
+	g._item_action = {}
+	g._use_item(1, 0, -1)
+	_check(p0.items.size() == 1 and String(p0.items[0].id) == "招财猫", "道具未被消耗")
+	_check(int(p0.items[0].cd) == 0 and int(p0.stamina) == 3, "冷却 / 体力未动")
+	_check(p0.money == 1000, "效果未生效（招财猫 +400 没发）")
+	_check(not bool(p0.item_used), "未占本回合使用额度")
+	_check(g._item_action.is_empty(), "未写道具动作（回合流程不被推进）")
 
 func _test_coco(g) -> void:
 	print("== 亡牌飞行员coco ==")

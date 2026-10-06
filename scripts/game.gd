@@ -48,6 +48,7 @@ const OP_KIND_LABELS := {
 
 # ---------------- 道具系统（host 状态，详见 doc/game-design/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
+var shop_weights: Dictionary = ItemData.SHOP_WEIGHTS.duplicate()  # 品质权重=运行时状态（小卖部.md §二）：道具/科技/设置可改、改后影响铺货；每局随 _host_setup 重置
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
 var _extra_move := false   # 特浓咖啡：本次落地后再行动一次（_play_turn 每轮重置后消费）
@@ -490,6 +491,7 @@ func lab_reset() -> void:
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
+	shop_weights = ItemData.SHOP_WEIGHTS.duplicate()   # 权重是局内状态，不是跨局设置
 	refresh_count = 0
 	items_consumed = {}
 	for i in GameData.TILES.size():
@@ -546,6 +548,7 @@ func _host_setup() -> void:
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
+	shop_weights = ItemData.SHOP_WEIGHTS.duplicate()   # 权重是局内状态，不是跨局设置
 	refresh_count = 0
 	blackshop_enabled = _settings.black_on   # 黑市开关：关 = 机会卡「黑市开张」不发
 	for i in GameData.TILES.size():
@@ -4251,8 +4254,10 @@ func _item_pool(quality: String) -> Array:
 		out.append(String(id))
 	return out
 
-## 按权重表抽品质（小卖部补货用 SHOP_WEIGHTS，失物招领格用 FIND_WEIGHTS）
-func _roll_quality(weights: Dictionary = ItemData.SHOP_WEIGHTS) -> String:
+## 按权重表抽品质（小卖部铺货传每局状态 `shop_weights`，失物招领格传 `FIND_WEIGHTS`）。
+## 权重表必须是调用方手里的运行时副本 —— 不给默认参数，防止顺手把 ItemData.SHOP_WEIGHTS
+## 常量本身传进来被改掉。
+func _roll_quality(weights: Dictionary) -> String:
 	var total := 0
 	for q in weights:
 		total += int(weights[q])
@@ -4264,7 +4269,7 @@ func _roll_quality(weights: Dictionary = ItemData.SHOP_WEIGHTS) -> String:
 	return "白"
 
 func _stock_one() -> String:
-	var q := _roll_quality()
+	var q := _roll_quality(shop_weights)
 	if q == "橙" and _item_pool("橙").is_empty():
 		q = "紫"  # 橙池空并入紫（定稿）
 	var pool := _item_pool(q)
@@ -4416,6 +4421,8 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 	var p := _player_by_peer(peer)
 	if p.is_empty() or _awaiting_item != peer:
 		return
+	if not bool(p.get("alive", true)):
+		return   # 出局/观战显式禁用道具（⑱）：破产虽已清包，这里挡住其余一切入口
 	if int(p.get("silence", 0)) > 0:
 		return
 	var limit := 2 if _has_item(p, "重修卡") else 1
