@@ -151,6 +151,16 @@ func _subtree_world_aabb(root: Node) -> AABB:
 		got = true
 	return out
 
+## **单个**几何节点（连同它自己）的世界 AABB —— `_subtree_world_aabb` 只扫**子孙**，
+## 量不到"传进来那一个节点自己"。桌子的三块（`TableBase` / 桌垫 `table_mesh` / 木纹外框
+## `wood_mesh`）都是**叶子** `MeshInstance3D` ⇒ 用 `_subtree_world_aabb` 量它们会拿到空盒
+##（与"量不到"分不开），于是桌子那一条会**恒真**。传 `null` 给空盒（调用方按空盒判）。
+func _self_world_aabb(n: Node) -> AABB:
+	var g := n as MeshInstance3D
+	if g == null or g.mesh == null:
+		return AABB()
+	return g.global_transform * g.mesh.get_aabb()
+
 ## 【批次 12 A1 删除】原先这里有个 `_shade_screen_bbox(t3, shade)`：把灯罩当成"底口半径 × 罩高"
 ## 的盒子投影到屏幕，用来判"台灯还看得见吗"。灯罩已随 A1 整体删除（`Lamp` 节点不存在了），
 ## 这个助手也跟着删掉 —— 留着只会在下一个读它的人那里暗示"还有灯罩可量"。
@@ -285,27 +295,40 @@ func _run() -> void:
 		var walls: Node = room.get_node_or_null("Walls")
 		_check(walls != null and walls.get_child_count() == 4, "房间有四面墙")
 
-		# ---- 一期 Task 4：家具摆位（书桌 / 书架 / 收纳箱）+ 光域断言 ----
-		# 家具**必须落在左半侧（x < 0）**：吊灯的光在 x ≈ -4.13（`table_3d.LAMP_LIGHT_POS`），
-		# 摆在远墙正中 / 右侧就掉出光域，退化成一块暗剪影 —— 等于白做（见设计 §四）。
-		# 另钉一条简报没写、但**必须有**的：**家具不许压在桌子足迹里**。
-		# 木桌远边在 z = -(TABLE_D/2 + WOOD_FRAME) ≈ -3.4795。**家具的 z 是从 `ROOM_D` 推导的**
-		# （Task 7 会重取取景、可能改 `ROOM_D`）—— 少了这条，`ROOM_D` 一收小家具就会静默叠到
-		# 桌子上（它跟着远墙一起往近端跑），而不是有人来重议一次摆位。
+		# ---- 一期 Task 4 起：家具摆位（**v0.8.0 三期按"铺满整间屋"重写**）----
+		#
+		# 【三期改版：删掉的两条 + 换成的是什么】用户 2026-10-06：「整个屋子的建模还是太粗糙了…
+		# 把能塞的都塞进去」。摆位从"远墙左半侧三件"变成"三面墙 + 两侧带铺满的 17 件"，于是
+		# 当年那两条**挡的就是新设计本身**，必须换掉：
+		#
+		#   ① 删「家具落在**左半侧**（x < 0，光域内）」。
+		#      **它当年守的是**："家具别掉出吊灯的光域、退化成一块暗剪影"。屋子铺满之后
+		#      左右两侧**都必须**有东西（用户原话），这条直接判设计违规。
+		#      ⇒ **换成**「**每件家具都落在吊灯的射程之内**」（`距离(灯, 家具形心) ≤ 射程`）：
+		#      同一条意图、同一个对象，只是把"左半侧"这个**当年的充分条件**换成了真正要守的
+		#      **充要条件**。它拦得住同一类错：把家具搬到射程外的角落（或把 `LAMP_RANGE` 收小
+		#      到够不着）—— 那时家具就是一块暗剪影，这条先红。
+		#
+		#   ② 删「家具都在**木桌远边之外**（z ≤ −3.6）」。
+		#      **它当年守的是**："家具别叠到桌子上"，附带一句"z 是从 `ROOM_D` 推导的，
+		#      `ROOM_D` 一收小家具会跟着往近端跑"。
+		#      ⇒ **换成**「**家具与桌子（底座 + 桌面 + 木纹外框的合并 AABB）不相交**」，并**新增**
+		#      一条「**家具与四把椅子不相交**」。新口径**更严也更对**：老那条只量**站位点**的 z、
+		#      而"叠没叠上"是**体**的事（一件 5.34 长的边柜站在 z = −3.9 上照样能把桌子压住）；
+		#      而且它只认桌子、不认椅子 —— 铺满之后家具最先撞上的其实是**四把椅子**。
+		#      它拦得住同一类错，还多拦一类：桌子 / 椅子跟着 `WOOD_FRAME` / `TABLE_D` 长大、
+		#      或家具跟着 `ROOM_D` 往近端跑，都会在这里现形。
+		#
+		# **保留**：两两不相交（17 件之后它比从前更值钱）、整体落在房间里、站在地板上、
+		# `FURNITURE_ANCHORS` 与摆出来的逐条对得上、一律不投影（在上一节）。
 		var furn: Node = room.get_node_or_null("Furniture")
-		_check(furn != null and furn.get_child_count() >= 3, "房间里至少摆了三件家具")
+		_check(furn != null and furn.get_child_count() >= 12, "房间里至少摆了 12 件家具（三期铺满之后）")
 		if furn == null:
 			_check(false, "Furniture 节点缺了，家具那几条断言整段跳过")
 		else:
-			var lamp_x: float = t3.LAMP_LIGHT_POS.x
-			var wood_far: float = -(t3.TABLE_SIZE.y * 0.5 + t3.WOOD_FRAME)   # ≈ -3.4795
-			for n in furn.get_children():
-				var fp: Vector3 = (n as Node3D).global_position
-				_check(fp.x < 0.0,
-					"家具落在左半侧（光域内）：%s x=%.2f < 0（吊灯 x=%.2f）" % [n.name, fp.x, lamp_x])
-				_check(fp.z <= -3.6,
-					"家具都在木桌远边之外：%s z=%.2f ≤ -3.6（木桌远边 z=%.4f —— 家具跟着远墙走，这条挡 ROOM_D 收小）"
-						% [n.name, fp.z, wood_far])
+			# 家具整体落在房间里 与 光域 两条共用的两个量：房间半宽 / 半深、吊灯的射程。
+			var hw: float = GameRoom.ROOM_W * 0.5
+			var hd: float = GameRoom.ROOM_D * 0.5
 			# 计划 Interfaces 承诺过的 `FURNITURE_ANCHORS`：今天没有下游消费，但它是"摆在哪"的唯一
 			# 记录（摆位表在 `room.gd` 里是常量，读它就等于把坐标再抄一遍）。钉它与摆出来的家具同源。
 			_check(GameRoom.FURNITURE_ANCHORS.size() == furn.get_child_count(),
@@ -326,8 +349,6 @@ func _run() -> void:
 				_check(got_mesh, "%s 有可量的几何实例（否则它的 AABB 是空盒、下面那条恒真）" % n.name)
 				if not got_mesh:
 					continue
-				var hw: float = GameRoom.ROOM_W * 0.5
-				var hd: float = GameRoom.ROOM_D * 0.5
 				# **竖直下界是地板**（一期 Task 5 Step 0：地板从"桌面那一层"降到 `FLOOR_Y`）。
 				# 这里原写 −0.02 —— 那是地板在桌面那一层的年代；不跟着改的话，家具悬在地板上方
 				# 或陷进地板都照样绿。
@@ -336,8 +357,18 @@ func _run() -> void:
 						and wb.position.y >= GameRoom.FLOOR_Y - 0.05 and wb.end.y <= GameRoom.ROOM_CEIL_Y,
 					"%s 整体落在房间里（世界 AABB %s..%s，尺寸 %s；房间 |x| ≤ %.1f / |z| ≤ %.1f / y ∈ [%.2f, %.1f]）"
 						% [n.name, wb.position, wb.end, wb.size, hw, hd, GameRoom.FLOOR_Y, GameRoom.ROOM_CEIL_Y])
-			# 三件**两两不相交**（AABB 口径 —— 比几何口径严）。家具一放大，最先撞上的就是彼此；
-			# 摆位表动一个数就可能让两件叠在一起，而"左半侧 / 在桌子之外"两条都拦不住它。
+				# **每件家具都落在吊灯的射程之内**（= 删掉的那条"左半侧（光域内）"的替身，
+				# 理由见上面那一段）。量的是**射程**（`omni_range`）而不是"x < 0"：
+				# 射程之外 `(1 − (d/range)^4)^2` 归零 ⇒ 那件家具**一点灯都吃不到**，
+				# 在暗屋子里就是一块纯黑剪影 —— 正是当年那条要防的东西。
+				var lamp_l2 = t3.get("lamp_light")
+				if lamp_l2 != null:
+					var d_lamp: float = (lamp_l2 as OmniLight3D).global_position.distance_to(wb.get_center())
+					_check(d_lamp <= (lamp_l2 as OmniLight3D).omni_range,
+						"%s 落在吊灯射程内（形心离灯 %.2f ≤ 射程 %.1f —— 射程外一点灯都吃不到、是块黑剪影）"
+							% [n.name, d_lamp, (lamp_l2 as OmniLight3D).omni_range])
+			# **17 件两两不相交**（AABB 口径 —— 比几何口径严）。家具一铺满，最先撞上的就是彼此；
+			# 摆位表动一个数就可能让两件叠在一起，而"在房间里 / 站在地板上"两条都拦不住它。
 			var fnames: Array = boxes.keys()
 			for i_f in fnames.size():
 				for j_f in range(i_f + 1, fnames.size()):
@@ -346,6 +377,32 @@ func _run() -> void:
 					_check(not a_f.intersects(b_f),
 						"%s 与 %s 不相交（%s..%s / %s..%s）"
 							% [fnames[i_f], fnames[j_f], a_f.position, a_f.end, b_f.position, b_f.end])
+			# **家具不许压在桌子 / 椅子上**（= 删掉的那条"都在木桌远边之外"的替身 + 一条新增的
+			# 椅子版，理由见上面那段）。**对象全部量出来、不写死尺寸**：
+			#   * 桌子 = `TableBase`（裙板）+ 桌垫（`table_mesh`）+ 木纹外框（`wood_mesh`）三块的
+			#     合并世界 AABB —— 这才是"那张桌子"占的地方（老那条只量"木桌远边那一刀"的 z）；
+			#   * 椅子 = 四把各自的世界 AABB（`_subtree_world_aabb` 与上面"站在地板上"同一条口径）。
+			# ⚠ **`_subtree_world_aabb` 量不到"传进来那个节点自己"**（它扫的是子孙）——
+			# 这三块都是 `MeshInstance3D` 叶子，所以要走 `_self_world_aabb`（带上自己那一块）。
+			var table_box := _self_world_aabb(t3.table_mesh)
+			table_box = table_box.merge(_self_world_aabb(t3.wood_mesh))
+			table_box = table_box.merge(_self_world_aabb(t3.get_node_or_null("TableBase")))
+			var solid: Array = [["桌子", table_box]]
+			var seats_f: Node = room.get_node_or_null("Seats")
+			if seats_f != null:
+				for ch in seats_f.get_children():
+					solid.append([ch.name, _subtree_world_aabb(ch)])
+			var on_top := 0
+			var on_top_log := ""
+			for nm in fnames:
+				for sl in solid:
+					if (boxes[nm] as AABB).intersects(sl[1] as AABB):
+						on_top += 1
+						on_top_log += "%s×%s " % [nm, sl[0]]
+			_check(on_top == 0,
+				"家具不压在桌子 / 椅子上（压上的 %d 处：%s —— 三期的 17 件铺满三面墙 + 两侧带；"
+					% [on_top, on_top_log]
+					+ "这条比当年那条「远边之外」更严：它量的是**体**，不是站位点）")
 
 		# ---- 一期 Task 5 Step 0：地板落到真实桌高（2026-10-05 用户拍板）----
 		# 地板原先在**桌面那一层**（y = −0.02）⇒ 桌子读作"平铺在地板上的一块板"，按人体比例

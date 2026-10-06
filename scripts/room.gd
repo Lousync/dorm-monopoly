@@ -210,6 +210,28 @@ const WALL_ALBEDO := Color(0.58, 0.55, 0.50)
 ## **变体 B（整体提亮）** 是另一套数（更亮的墙 / 更大的明度差），只用于出图对比，不在代码里留。
 const FLOOR_ALBEDO := Color(0.26, 0.18, 0.11)
 const CEIL_ALBEDO := Color(0.20, 0.21, 0.23)
+
+# ---------------- 程序化表面贴图（v0.8.0 三期「像一间宿舍」） ----------------
+#
+# **病**：地板 / 墙各是一块**平色板**（地板虽有 `wood_floor.jpg`，但它是一张
+# "远看像噪点、近看没有结构"的摄影贴图 —— 木条之间的**缝**在画面上根本读不出来）。
+# 参考图（Liar's Bar）里屋子读得出"什么材料"，靠的就是**板缝 / 砖缝**这类**结构线**。
+#
+# **做法**：用 `Image` **程序化生成**两张"细节图"（detail map）——不是新素材文件（硬约束 6：
+# 不许引入外部素材），而是**代码画出来的**，与项目"能用程序化手段画出来的就别加素材"那条一致
+#（转盘 / 房子贴图 / 卡面都是这么做的）。
+#
+# **两张图的共同约定**：它们是**细节图**，颜色**平均接近 1.0**、只把结构线压暗
+# ⇒ 与 `albedo_color`（`FLOOR_ALBEDO` / `WALL_ALBEDO`）**相乘**之后，
+# 屋子的整体明度基本不变（实测约 −8%），而**四件东西的调性一个都不动** —— 这正是要的。
+# 若把颜色整个烘进贴图（`albedo_color = WHITE`），那两个"色相锚点"常量就作废了，
+# 下一次调色的人得去改贴图代码 —— 不划算。
+##
+## 一张图 = **4 × 4 世界单位**（1 世界单位 = 0.2 m ⇒ 一张图 80 cm 见方）。
+## 世界侧的重复密度由 `uv1_scale` 定（地板 / 墙各自算，见 `_make_materials`）。
+const SURFACE_TILE := 4.0
+## 贴图边长（px）。256 落在"板缝看得清"与"生成够快"之间（两张 65536 像素的循环）。
+const SURFACE_PX := 256
 ## 椅子：**独立**于家具的一份材质（改版前共用 `_furn_mat`）。冷灰蓝 = 一把刷漆 / 金属椅，
 ## 与暖木的书桌、书架摆在一起才分得清"哪件是坐的"。不带木纹贴图，粗糙度也低一档
 ##（`CHAIR_ROUGH` / `CHAIR_METALLIC`）—— "另一种材料"这件事得**在材质参数上也成立**，
@@ -219,12 +241,25 @@ const CHAIR_ROUGH := 0.55
 const CHAIR_METALLIC := 0.15
 
 func _make_materials() -> void:
-	_floor_mat = _lit_mat(FLOOR_ALBEDO, "res://assets/textures/wood_floor.jpg")
+	# 地板：**程序化木条地**（v0.8.0 三期）。原先用的是 `wood_floor.jpg` —— 那张图**没有板缝**，
+	# 从取景轨道上看就是一块平色板（用户原话「地板…太粗糙」）。换成程序化的木条之后，
+	# "一块块木板"这件事**在画面上读得出来**。
+	_floor_mat = _lit_mat(FLOOR_ALBEDO, "")
+	_floor_mat.albedo_texture = _plank_texture()
+	_floor_mat.texture_repeat = true
 	# 地板比"可见房间"多出**近半侧**那一截（见 `ROOM_NEAR_EXTRA`）⇒ 木纹的重复密度按
 	# **地板自己的尺寸**算，否则地板一长、木条被拉长 1.28×（`_lit_mat` 里那份是按
 	# `ROOM_W`/`ROOM_D` 写的，那里服务的是墙 / 天花板 —— 它们不带贴图，无所谓）。
-	_floor_mat.uv1_scale = Vector3(ROOM_W / 3.0, (ROOM_D + ROOM_NEAR_EXTRA) / 3.0, 1.0)
+	_floor_mat.uv1_scale = Vector3(ROOM_W / SURFACE_TILE, (ROOM_D + ROOM_NEAR_EXTRA) / SURFACE_TILE, 1.0)
+	# 墙：**程序化砖墙**（v0.8.0 三期）。取色仍是 `WALL_ALBEDO`（上一轮"四件东西各自一个色"
+	# 那笔定下来的浅暖灰 = 刷了漆的墙），砖缝只在上面压出**结构**，不改色相。
 	_wall_mat  = _lit_mat(WALL_ALBEDO, "")
+	_wall_mat.albedo_texture = _brick_texture()
+	_wall_mat.texture_repeat = true
+	# 墙高 = `ROOM_CEIL_Y − FLOOR_Y`（19.7），**不是** `ROOM_D` —— `_lit_mat` 给的那一份是按
+	# 房间平面尺寸写的（那是给地板定的口径），照它贴砖缝会被**竖直拉长 3.3×**。
+	var wall_h: float = ROOM_CEIL_Y - FLOOR_Y
+	_wall_mat.uv1_scale = Vector3(ROOM_W / SURFACE_TILE, wall_h / SURFACE_TILE, 1.0)
 	_ceil_mat  = _lit_mat(CEIL_ALBEDO, "")
 	# 家具 / 椅子：同一张木纹贴图，但**不按房间尺寸重复** —— `_lit_mat` 给的是
 	# `ROOM_W/3 × ROOM_D/3`（每 3 世界单位一轮），那是给整面墙 / 整块地板定的；
@@ -257,6 +292,106 @@ func _lit_mat(base: Color, tex_path: String) -> StandardMaterial3D:
 			m.uv1_scale = Vector3(ROOM_W / 3.0, ROOM_D / 3.0, 1.0)   # 每 3 世界单位一轮
 	return m
 
+## 木条地板（程序化，见 `SURFACE_TILE` / `SURFACE_PX` 那段）。
+##
+## 画的是**一块 4 × 4 世界单位的木地板**（= 80 cm 见方）：
+##   * **板宽 1 个世界单位**（256 px / 4 条 = 64 px）⇒ 20 cm 一块板，与真实的窄条地板同档；
+##   * 板与板之间一道**近黑的缝**（3 px）—— 这就是"读得出是地板"的那条结构线；
+##   * 每条板的**端缝**（横缝）各自错开（`joint[]`），错缝才是"铺出来"的样子，
+##     不错缝会读成**瓷砖**；
+##   * 板面加**沿板长方向的细木纹**（正弦叠加，±8%）与**逐板色差**（±10%）。
+##
+## 返回值是**细节图**：均值≈0.92、最暗是缝（0.22）—— 与 `FLOOR_ALBEDO` 相乘用，
+## 不自己带颜色（见那两张图的共同约定）。`Image.FORMAT_RGB8`（不需要 alpha）。
+##
+## `seed` 固定：同一份地板每次跑出来**逐像素一样** —— 摆拍与"改前 / 改后"逐格比对才有意义
+##（随机的话两张图永远不一样，比对就无从谈起）。
+func _plank_texture() -> ImageTexture:
+	var n := SURFACE_PX
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 0x5EED_0001
+	var planks := 4                       # 4 条板铺满一张图
+	var pw: int = n / planks               # 每条板的像素宽（64）
+	# 逐板的底色（0.86~1.0）与端缝位置（0..n，逐板错开）
+	var tone: PackedFloat32Array = PackedFloat32Array()
+	var joint: PackedInt32Array = PackedInt32Array()
+	for i in planks:
+		tone.append(rng.randf_range(0.86, 1.0))
+		joint.append(rng.randi_range(0, n - 1))
+	for x in n:
+		var pi: int = x / pw
+		# "是不是板缝"：每条板的边界上那 3 px
+		var d_edge: int = x % pw
+		var is_seam: bool = d_edge < 2 or d_edge >= pw - 1
+		for y in n:
+			# 端缝：每条板在 `joint[pi]` 上下各 2 px 压暗（绕一圈：两头都算，接得上）
+			var is_joint: bool = false
+			var dy: int = absi(y - joint[pi])
+			if dy < 2 or n - dy < 2:
+				is_joint = true
+			var v: float = tone[pi]
+			if is_seam:
+				v *= 0.28
+			elif is_joint:
+				v *= 0.46
+			else:
+				# 木纹：沿板长（y）方向拉长的细纹 —— 横跨 x 的频率高、沿 y 的频率低
+				var g: float = sin(float(x) * 2.7 + sin(float(y) * 0.11 + float(pi)) * 2.4)
+				v *= 1.0 - 0.08 * (g * 0.5 + 0.5)
+				# 一丝逐像素噪声：纯正弦会读成"塑料"
+				v *= 1.0 - 0.03 * absf(sin(float(x * 7 + y * 13) * 0.7))
+			img.set_pixel(x, y, Color(v, v, v))
+	return ImageTexture.create_from_image(img)
+
+## 砖墙（程序化，见 `SURFACE_TILE` / `SURFACE_PX` 那段）。
+##
+## 画的是**一块 4 × 4 世界单位的砖墙**（= 80 cm 见方）：砖 **1 × 0.5 世界单位**
+##（64 × 32 px = 20 × 10 cm，与实心砖的"两皮一顺"比例同档），**错缝砌**（每隔一皮错半砖）。
+##   * 砖面亮度逐块抖动（0.80~1.0，`tone[]`）—— 一块块砖才读得出来；
+##   * 灰缝比砖**暗**（0.45）：砖墙在**暗屋子里**就是靠这几条缝读出来的，
+##     缝一亮（砂浆本色比砖亮）就变成"贴了砖纹的纸"；
+##   * 砖面再加一点噪声，免得整块砖是死平的。
+##
+## 同样是**细节图**（与 `WALL_ALBEDO` 相乘）。上界锁在 1.0 之内，所以墙会**略暗一点**
+##（实测墙均值 ≈ 0.90 ⇒ 有效 albedo 0.58 → 0.52）—— 这一点是**有意的**：
+## 砖缝吃掉的亮度正好把上一轮"墙比别的都亮"那口气收回来，而墙仍是四件里最浅的那一件。
+func _brick_texture() -> ImageTexture:
+	var n := SURFACE_PX
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 0x5EED_0002
+	var bw := 64                          # 砖宽（px）= 1 世界单位
+	var bh := 32                          # 砖高（px）= 0.5 世界单位
+	var rows: int = n / bh
+	var cols: int = n / bw
+	# 逐块砖的亮度（按 [皮][列] 存，错缝时按同一块砖查得到同一个值）
+	var tone: Array = []
+	for r in rows:
+		var line: PackedFloat32Array = PackedFloat32Array()
+		for c in cols:
+			line.append(rng.randf_range(0.80, 1.0))
+		tone.append(line)
+	for y in n:
+		var r: int = y / bh
+		var in_row: int = y % bh
+		# 灰缝：每一皮的上下各 2 px
+		var is_bed: bool = in_row < 2 or in_row >= bh - 2
+		# 错缝：奇数皮整体右移半砖
+		var shift: int = (bw / 2) if (r % 2 == 1) else 0
+		for x in n:
+			var xs: int = (x - shift + n) % n
+			var in_col: int = xs % bw
+			var is_head: bool = in_col < 2 or in_col >= bw - 2
+			var v := 0.45                                  # 灰缝色（比砖暗）
+			if not is_bed and not is_head:
+				v = tone[r][xs / bw]
+				v *= 1.0 - 0.04 * absf(sin(float(x * 11 + y * 5) * 0.5))
+			elif is_bed and is_head:
+				v = 0.40                                   # 缝的交点再压一点，砖格读得更清
+			img.set_pixel(x, y, Color(v, v, v))
+	return ImageTexture.create_from_image(img)
+
 ## 家具清单：`[模型文件名, 世界位置（**站立点的世界坐标**）, 绕 Y 的朝向角]`。
 ## **位置全在左半侧（x < 0）** —— 落在吊灯的光域里（见下面那条断言的理由）。
 ## 模型文件名出自 Task 1 落地的 Kenney Furniture Kit（`assets/models/*.glb`，CC0）。
@@ -278,17 +413,54 @@ func _lit_mat(base: Color, tex_path: String) -> StandardMaterial3D:
 ## 四条约束一条没丢：**位置由 `ROOM_W`/`ROOM_D` 推导**、**两两 AABB 不相交**、**都在木桌远边
 ## （z ≤ −3.48）之外**、**整体落在房间里**（含 y：站在 `FLOOR_Y` 上、高不过天花板）。
 const FURNITURE := [
-	# 书架：贴西墙（最靠里的一件）。x = 西墙 + 0.5（墙边留 0.5）；z = 远墙 + 2.65
-	#（= 进深 2.5 + 离远墙 0.15）—— 与原来的 +1.4（进深 1.25 + 0.15）同一条式子，只是进深翻倍。
-	["bookcaseOpen.glb",       Vector3(-ROOM_W * 0.5 + 0.5, FLOOR_Y, -ROOM_D * 0.5 + 2.65), 0.0],
-	# 书桌：贴远墙、在书架右边。z = 远墙 + 3.95（= 进深 3.8 + 离远墙 0.15）；
-	# x 让开书架（书架右沿 −6.5，这里从 −6.3 起 ⇒ 净空 0.2）。桌宽 7.34 ⇒ x 一直到 +1.05，
-	# 但**站位坐标仍落在左半侧**（−6.2 < 0，光域那条断言量的就是它）。
-	["desk.glb",               Vector3(-ROOM_W * 0.5 + 4.8, FLOOR_Y, -ROOM_D * 0.5 + 3.95), 0.0],
-	# 收纳箱：在书架**前面**（原本转 20° 是为了"别排成一条直线"，×10 之后它在书架正前方、
-	# 已经不成直线了，而转 20° 会让它的 AABB 往书架那边多伸 0.6（2.13 → 2.72）⇒ 净空掉到 0.03，
-	# 所以**回到 0 度**，换来 0.18 的净空）。z = 远墙 + 4.95（= 进深 2.13 + 离书架 0.18 + …）。
-	["cardboardBoxClosed.glb", Vector3(-ROOM_W * 0.5 + 1.0, FLOOR_Y, -ROOM_D * 0.5 + 4.95), 0.0],
+	# ---- 远墙一排（rot 0 = 正面朝 +z / 朝屋里；`az` 一律 = 远墙 + 进深 + 0.15）----
+	# 敞口书架：最靠左的一件。它左边那条 `x ∈ [西墙, −6.93]` 归西墙的书桌（那张桌沿 z 轴铺
+	# 满整个远半侧），所以这里从 −6.5 起 ⇒ 与书桌净空 0.43。
+	["bookcaseOpen.glb",       Vector3(-ROOM_W * 0.5 + 4.5, FLOOR_Y, -ROOM_D * 0.5 + 2.65), 0.0],
+	# 双门大书柜：远墙正中（桌子正后方）。8.0 宽 ⇒ 从 −2.0 到 +6.0，与左边那件净空 0.5。
+	# 它是**唯一一件会从桌子远边之上露出来的大家伙**（高 7.9），远墙那一条带子全靠它撑。
+	["bookcaseClosedWide.glb", Vector3(-ROOM_W * 0.5 + 9.0, FLOOR_Y, -ROOM_D * 0.5 + 2.65), 0.0],
+	# 矮柜（床边抽屉柜）：远墙右段，与书柜净空 0.3。矮（2.63）⇒ 补"远墙一排全是高柜"的单调。
+	["cabinetBedDrawer.glb",   Vector3(-ROOM_W * 0.5 + 17.4, FLOOR_Y, -ROOM_D * 0.5 + 2.20), 0.0],
+
+	# ---- 西墙：那张长书桌（rot 90 = 正面朝 +x / 朝屋里）----
+	# 7.34 长的书桌**只能沿侧墙摆**：正向摆在远墙上时，它 3.92 的进深 + 一把椅子的 3.14
+	# 已经吃掉 7.1，而远半侧的可用进深只有 5.37 ⇒ 桌椅摆不开（见报告"放不下"那节）。
+	# 转 90° 后它沿 z 从 −9 铺到 −1.66（离远墙 0.15），x 只占 3.92 ⇒ 与游戏桌净空 2.08。
+	["desk.glb",               Vector3(-ROOM_W * 0.5 + 3.95, FLOOR_Y, -ROOM_D * 0.5 + 7.39), 90.0],
+
+	# ---- 西侧带（书桌以南）：一路摆到近角，人从桌子左后侧绕过去 ----
+	# 垃圾桶：紧挨游戏桌左后的椅子（slot3，x ∈ [−7, −5]）外沿，净空 0.16。
+	["trashcan.glb",           Vector3(-ROOM_W * 0.5 + 2.8, FLOOR_Y, -ROOM_D * 0.5 + 8.80), 0.0],
+	# 摊在地上的笔记本电脑（地板上，不是桌上 —— 见"不许叠放"那节）。
+	["laptop.glb",             Vector3(-ROOM_W * 0.5 + 2.0, FLOOR_Y, -ROOM_D * 0.5 + 12.80), 0.0],
+	# 台灯（圆）落在地上当"备用灯"：贴着西墙，与垃圾桶净空 0.10。
+	["lampRoundTable.glb",     Vector3(-ROOM_W * 0.5 + 0.3, FLOOR_Y, -ROOM_D * 0.5 + 10.60), 0.0],
+	# 台灯（方）+ 盆栽：西近角一组，给左下方一点东西可看。
+	["lampSquareTable.glb",    Vector3(-ROOM_W * 0.5 + 0.6, FLOOR_Y, -ROOM_D * 0.5 + 13.20), 0.0],
+	["plantSmall1.glb",        Vector3(-ROOM_W * 0.5 + 1.0, FLOOR_Y, -ROOM_D * 0.5 + 14.00), 0.0],
+
+	# ---- 东墙：矮边柜（rot 270 = 正面朝 −x）+ 落地灯 ----
+	# 边柜 5.34 长，沿 z 铺在远侧段（−4.0 ~ +1.34），与桌右椅子（z ∈ [−1, 1]，x ≤ 7）净空 1.7。
+	["sideTable.glb",          Vector3(ROOM_W * 0.5 - 2.2, FLOOR_Y, -ROOM_D * 0.5 + 5.10), 270.0],
+	# 落地灯：东北角，与矮柜净空 0.28。它是画面右上角唯一的竖向元素（高 8.6）。
+	["lampRoundFloor.glb",     Vector3(ROOM_W * 0.5 - 1.6, FLOOR_Y, -ROOM_D * 0.5 + 1.58), 0.0],
+	# 盆栽：东侧中部，给"矮柜—箱子"之间补一件。
+	["plantSmall1.glb",        Vector3(ROOM_W * 0.5 - 3.8, FLOOR_Y, -ROOM_D * 0.5 + 7.00), 0.0],
+
+	# ---- 近半侧（只在 `Ctrl`+滚轮拉远端那一档入画）：箱子 / 备用椅子 ----
+	# 敞口收纳箱：东侧中部，与边柜净空 0.43。
+	["cardboardBoxOpen.glb",   Vector3(ROOM_W * 0.5 - 3.8, FLOOR_Y, -ROOM_D * 0.5 + 12.90), 0.0],
+	# 圆背椅（rot 270 = 朝 −x）：桌右椅子外侧的一把备用椅。
+	["chairRounded.glb",       Vector3(-ROOM_W * 0.5 + 15.0, FLOOR_Y, -ROOM_D * 0.5 + 13.00), 270.0],
+	# 软垫椅（rot 180 = 朝 −z / 面朝桌子）：桌左椅子外侧的备用椅。
+	["chairModernCushion.glb", Vector3(-ROOM_W * 0.5 + 7.0, FLOOR_Y, -ROOM_D * 0.5 + 13.20), 180.0],
+
+	# ---- 中段散件（远半侧的空隙：桌子背后那一条）----
+	# 书堆：大书柜正前方地上（与柜净空 0.21），补远墙一排的"生活感"。
+	["books.glb",              Vector3(-ROOM_W * 0.5 + 14.0, FLOOR_Y, -ROOM_D * 0.5 + 3.80), 0.0],
+	# 封口纸箱：近左角（桌左椅子外侧），与近侧那把椅子净空 0.27。
+	["cardboardBoxClosed.glb", Vector3(-ROOM_W * 0.5 + 7.6, FLOOR_Y, -ROOM_D * 0.5 + 15.20), 0.0],
 ]
 
 ## 摆出来的家具落点（世界坐标，与 `FURNITURE` 逐条同序）。
@@ -422,11 +594,146 @@ func _build_shell() -> void:
 		Vector2(ROOM_W, h), Vector3(-90, 0, 0), _wall_mat, walls)
 	_plane("WallW", Vector3(-ROOM_W * 0.5, wy, mid_z), Vector2(span_z, h), Vector3(90, 90, 0),  _wall_mat, walls)
 	_plane("WallE", Vector3( ROOM_W * 0.5, wy, mid_z), Vector2(span_z, h), Vector3(90, -90, 0), _wall_mat, walls)
+	_build_trim()
+	_build_pendant()
 	_build_furniture()
 	_build_chairs()
 	_build_chars()
 	_build_rug()
 	_build_fill_light()
+
+# ---------------- 踢脚线 / 顶角线（v0.8.0 三期） ----------------
+#
+# **为什么要有**：一块平墙 + 一块平地直接相交，交线在画面上**读不出来**（两片暗色糊在一起），
+# 屋子就"没有角"。参考图里墙脚那一圈深色线条是**屋子立得住**的关键之一 —— 它同时给出
+# "墙从哪儿开始"与"地板到哪儿为止"。
+#
+# **做法**：四面墙各一条 `BoxMesh` 压在墙脚，**厚度 0.30、高 1.1 世界单位**（= 6 cm × 22 cm 的
+# 踢脚板，真实尺寸）。`WALL_*` 那一套照旧；踢脚线用**比墙暗得多的木色**
+#（`TRIM_ALBEDO`）—— 与地板同族、但比地板更暗，于是"墙 / 踢脚 / 地板"三段分得开。
+#
+# **顶角线**同尺寸、贴着天花板（`ROOM_CEIL_Y`）。⚠ **它今天一个像素都入不了画**
+#（50° 俯角下天花板从不入画，见 `ROOM_CEIL_Y` 那段）—— 留着是为了"四面墙是完整的"
+# 这件事在数据上成立，将来镜头一动不必回来补。它**不参与任何断言**，也不投影。
+const TRIM_ALBEDO := Color(0.16, 0.115, 0.075)
+const TRIM_H := 1.1           # 踢脚板高（世界单位）= 22 cm
+const TRIM_T := 0.30          # 踢脚板厚（世界单位）= 6 cm（比家具离墙的 0.15 略厚，压在家具脚后）
+
+func _build_trim() -> void:
+	var root := Node3D.new()
+	root.name = "Trim"
+	add_child(root)
+	var mat := _lit_mat(TRIM_ALBEDO, "")
+	# 四面墙：`[名字, 中心, 尺寸]`。踢脚线**贴在墙内侧**（墙在 `±ROOM_W/2` / `−ROOM_D/2`），
+	# 中心从墙面往里让半个厚度 ⇒ 它的外表面与墙共面、内表面朝屋里凸出 `TRIM_T`。
+	# 与墙**共面**（而不是埋进墙里）是有意的：埋进去之后"凸出来那一点"就只剩一半，
+	# 在 22 单位的墙上看不见。
+	var half_t: float = TRIM_T * 0.5
+	var span_z: float = ROOM_D + ROOM_NEAR_EXTRA
+	var mid_z: float = ROOM_NEAR_EXTRA * 0.5
+	# 踢脚线的**纵向**落点：底面 == 地板，顶面 = 地板 + TRIM_H（同 `FLOOR_Y` 那条纪律）
+	var trim_y: float = FLOOR_Y + TRIM_H * 0.5
+	var crown_y: float = ROOM_CEIL_Y - TRIM_H * 0.5
+	for row in [
+		# 远墙 / 近墙：沿 x 铺满 ROOM_W，贴在自己的 z 上
+		["TrimN", Vector3(0.0, 0.0, -ROOM_D * 0.5 + half_t), Vector3(ROOM_W, TRIM_H, TRIM_T)],
+		["TrimS", Vector3(0.0, 0.0, ROOM_D * 0.5 + ROOM_NEAR_EXTRA - half_t),
+			Vector3(ROOM_W, TRIM_H, TRIM_T)],
+		# 东西墙：沿 z 铺满整段（含近半侧那一截），贴在自己的 x 上
+		["TrimW", Vector3(-ROOM_W * 0.5 + half_t, 0.0, mid_z), Vector3(TRIM_T, TRIM_H, span_z)],
+		["TrimE", Vector3(ROOM_W * 0.5 - half_t, 0.0, mid_z), Vector3(TRIM_T, TRIM_H, span_z)],
+	]:
+		for yv in [trim_y, crown_y]:
+			var mi := MeshInstance3D.new()
+			mi.name = String(row[0]) + ("Crown" if yv == crown_y else "")
+			var bm := BoxMesh.new()
+			bm.size = row[2]
+			mi.mesh = bm
+			mi.material_override = mat
+			mi.position = (row[1] as Vector3) + Vector3(0.0, yv, 0.0)
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			root.add_child(mi)
+
+# ---------------- 吊灯的**可见几何**（v0.8.0 三期） ----------------
+#
+# **病**：批次 12 A1 把台灯那四件实物删掉之后，屋子里**没有任何可见光源** ——
+# 光从空气里来（`table_3d` 那段写着"观感上变成窗外透进来的一束暖光"）。用户这轮要的是
+# 参考图里那盏**看得见的吊灯**（它是整个氛围的来源）。
+#
+# **⚠ 只加几何、不动光**：`LAMP_ENERGY` / `LAMP_RANGE` / `LAMP_ATTEN` / `LAMP_LIGHT_POS`
+# 一个都不碰（它们被 `layout_test` 的照度与"唯一投影源"那几条钉着）。这里挂的是一盏
+# `OmniLight3D` **都没有**的纯摆设。
+#
+# **灯挂在哪儿**：
+#   * 平面位置 = `LAMP_LIGHT_POS` 的 (x, z) —— "挂在光的位置上"；
+#   * 高度**不能**用光的 y（10.0）：50° 俯角下画面顶端那条视线在 z = 0 处只到 y ≈ 5.06
+#     （默认档）—— 灯罩放在 y = 10 就是**永远不在画面里**（等于没做）。所以灯罩落到
+#     **y ∈ [2.6, 5.4]**：拉远端那一档整只入画，默认档上方被画面上沿裁掉一点（正常构图）；
+#     它在屏幕上的落点是**左上方那条空带**（默认档实测画布 x≈204 / y≈100 上下），
+#     **压不到棋盘**（棋盘上沿在画布 y≈230）。
+#
+# **模型**：`lampRoundFloor.glb`（Kenney，CC0，尺寸表里那 25 件之一）。
+#
+# **为什么是它、而且为什么要翻过来**（出图两轮才定）：
+#   * 先试的是 `lampSquareCeiling.glb`（名字最像吊灯）：实测它的灯罩是**方盒子、开口朝上**
+#     （`lamp` 面 y ∈ [0, 1.5]、金属杆从盒底升到 2.30）。摆上去是一口**开口朝上的箱子**
+#     （出图 `shots/room3_a_dollyfar_table_plain.png` 左上角就是它），读不出是灯。
+#   * `lampRoundFloor` 是**落地灯**：底座在 y = 0、灯杆到 7.61、**灯罩在顶
+#     （y ∈ [6.82, 8.60]）且开口朝下**。**绕 X 转 180°** 之后整个倒过来 ——
+#     底座变成**天花板底座**、灯杆朝下伸出、灯罩落到最下面**开口朝下**，这正是吊灯的样子。
+#     **只有"转过来"这一条路**：杆与罩的上下关系是模型定死的，靠摆位换不来。
+#   * ⚠ 绕 X 转 180° 会把 **(x, y, z) → (x, −y, −z)**：`x` 不变、**`z` 的偏移要反号**
+#     （见下面 `_build_pendant` 里那一行）。少反这一个号，灯罩就整体偏出去 1.2。
+const PENDANT_MODEL := "lampRoundFloor.glb"
+## 吊灯的缩放（**不是** `FURNITURE_SCALE`）。灯要**从天花板一直垂到画面里**：天花板在 16.0、
+## 灯罩口要落到 2.6 上下 ⇒ 整灯得拉到 `(16.0 − 2.6) / 0.86 = 15.58`（`0.86` = 模型 8.6 高归一）。
+## 顺带把灯罩放大到 2.37 宽（原 1.52）—— 参考图里那盏吊灯本来就比家具显眼。
+const PENDANT_SCALE := 15.58
+
+func _build_pendant() -> void:
+	var packed: PackedScene = load("res://assets/models/%s" % PENDANT_MODEL)
+	if packed == null:
+		push_warning("房间缺吊灯模型：%s（跳过）" % PENDANT_MODEL)
+		return
+	var root := Node3D.new()
+	root.name = "Pendant"
+	add_child(root)
+	# **不叫 `Lamp`**：`layout_test` 有一条反向契约查 `t3.get_node_or_null("Lamp") == null`
+	#（批次 12 A1 删台灯实物时留下的：树里不许再有那盏**台灯**）。那一条查的是**容器的直接
+	# 子节点**、挂在这里本来也不会撞；改叫 `Pendant` 是为了**读代码的人一眼分得清**
+	# ——"台灯的实物已删"与"这轮新加的吊灯"是两件事。
+	var mi := packed.instantiate() as Node3D
+	root.add_child(mi)
+	mi.scale = Vector3.ONE * PENDANT_SCALE
+	mi.rotation_degrees = Vector3(180.0, 0.0, 0.0)      # 倒过来：罩朝下、杆朝天板（见那段注释）
+	# 模型原点**不在灯的轴心上**（实测 AABB x ∈ [−0.16, 1.36]、z ∈ [−1.48, 0.28]，×10 之前）
+	# ⇒ 摆位要减掉半个身位才把灯**对准** `LAMP_LIGHT_POS` 那一点。
+	# **转了 180° 之后 z 反号**（`c.z` 变 `−c.z`），x 不变 —— 那一条别漏。
+	var ab := _model_aabb(packed)
+	var c := ab.get_center()
+	mi.position = Vector3(_lamp_light_pos.x - c.x * PENDANT_SCALE, ROOM_CEIL_Y,
+		_lamp_light_pos.z + c.z * PENDANT_SCALE)
+	_no_shadow(mi)
+	# **保留模型自带的两个材质**（灯罩的奶白 + 金属杆）—— 别的家具一律 `_paint` 成一色，
+	# 吊灯**不能**：灯罩就是要"亮一点"才读得出是灯。于是走 `_lit_shade()`：
+	#   ① 逐面压暗一档（`PENDANT_DIM`，与 `_dim_subtree` 同一套手法）；
+	#   ② **灯罩那一面自发光**（`PENDANT_GLOW`）。
+	#
+	# **② 不是装饰、是必须的**（出图实证）：那盏 `OmniLight3D` 就吊在**灯罩正上方 4.6 处**，
+	# 灯罩的侧面几乎是竖直的 ⇒ `N·L ≈ 0` ⇒ **灯罩自己是全场最暗的那块**（出图是一坨深灰，
+	# 见 `shots/room3_b_table_plain.png` 左上角）—— 一盏"灯"比墙还暗，读起来就是个障碍物。
+	# 灯罩本来就该是**里头的灯泡照亮的**，自发光正是这件事的近似。
+	# ⚠ 它**不是第二盏灯**：`emission` 只加在材质上、不产生任何光照，`layout_test` 那两条
+	#（"唯一投影源" / "补光恰好一盏"）数的是 `Light3D`，与它无关。
+	_lit_shade(mi, PENDANT_DIM, "lamp", PENDANT_GLOW, PENDANT_GLOW_ENERGY)
+
+## 吊灯灯罩的压暗系数（见 `_build_pendant`）。出图调的一档：再亮就成"一块白斑"。
+const PENDANT_DIM := 0.55
+## 灯罩的自发光色 / 强度。暖橙（与 `table_3d.LAMP_COLOR` 同族的暖），强度取到
+## "看得出它在亮、但不至于白成一块板"那一档（出图调的：0.85 时出图是一整块发白的方块，
+## 见 `shots/room3_c_dollyfar_table_plain.png` 左上角；0.30 那一档灯罩有自己的明暗）。
+const PENDANT_GLOW := Color(1.0, 0.62, 0.30)
+const PENDANT_GLOW_ENERGY := 0.30
 
 ## 桌下那块地毯（一期 Task 8 Step 0）。**"把桌子锚在地上"最省的一手，且不挡棋盘**
 ##（它整个躺在 `FLOOR_Y` 上、比桌面低 3.7，从取景轨道上任何位置都看不进桌垫）。
@@ -489,6 +796,19 @@ func _build_furniture() -> void:
 			push_warning("房间家具缺模型：%s（跳过）" % path)
 			continue
 		var mi := packed.instantiate() as Node3D
+		# **同名模型（两盆盆栽）要给后一件一个稳定名字**：Godot 的自动改名给的是
+		# `@Node3D@21` 这类**随节点序号漂移**的名字，日志里读不出是哪一件（三期铺满之后
+		# 表里就有两件 `plantSmall1`）。**第一件保持原名** —— `layout_test` 有一条断言
+		# 按 `stand_boxes["desk"]` 取书桌（"书桌顶面与桌面齐平"），改名字会把它打空。
+		# ⚠ 要在 `add_child` **之前**查重：加进去之后 `has_node` 连**它自己**都能查到，
+		# 于是每一件都会被改成 `xxx_2`（书桌那条断言就是这么红过一次的）。
+		var nm: String = String(row[0]).get_basename()
+		if fur.has_node(NodePath(nm)):
+			var k := 2
+			while fur.has_node(NodePath("%s_%d" % [nm, k])):
+				k += 1
+			nm = "%s_%d" % [nm, k]
+		mi.name = nm
 		fur.add_child(mi)
 		# **缩放只改变外形，不改"站哪儿"**：节点的 `position` 活在**父节点**那一系里，与它自己的
 		# `scale` 无关 ⇒ 上面那张表里的坐标仍是**世界站立点**（`layout_test` 量的也是 global_position）。
@@ -533,6 +853,37 @@ static func _paint(root: Node, mat: Material) -> void:
 ## 按面覆盖才保得住模型自带的分工。
 ## 复制一份再改：`instantiate()` 出来的材质与 `PackedScene` **共用同一份资源**，
 ## 直接改会污染缓存里的那份（同一场景第二次实例化就带着上一次的改动）。
+## `_dim_subtree` 的**带自发光**版（吊灯用，见 `_build_pendant`）：逐面复制材质、乘 `factor`，
+## 再把**名字等于 `glow_name` 的那一面**点亮（`emission_color` / `emission_energy_multiplier`）。
+##
+## **为什么按面名认灯罩**：Kenney 那几个灯的 `.glb` 里每个面带自己的 `resource_name`
+##（实测吊灯是 `lamp` 与 `metal` 两个面 —— 见 `_build_pendant` 那段）。按名字认比"按尺寸
+## 猜哪一面是罩"稳；真认不出来（名字变了）时**不会崩**：一个面都不点亮，灯罩退回纯受光。
+##
+## 与 `_dim_subtree` 同一条纪律：**复制一份再改** —— 材质与 `PackedScene` 共用同一份资源，
+## 直接改会污染缓存（同一场景第二次实例化就带着上一次的改动）。
+static func _lit_shade(root: Node, factor: float, glow_name: String,
+		glow: Color, glow_energy: float) -> void:
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var gi := n as GeometryInstance3D
+		if gi is not MeshInstance3D:
+			continue
+		var mesh := (gi as MeshInstance3D).mesh
+		if mesh == null:
+			continue
+		for s in mesh.get_surface_count():
+			var src := gi.get_active_material(s) as BaseMaterial3D
+			if src == null:
+				continue
+			var m := src.duplicate() as BaseMaterial3D
+			m.albedo_color = Color(m.albedo_color.r * factor, m.albedo_color.g * factor,
+				m.albedo_color.b * factor, m.albedo_color.a)
+			if String(src.resource_name) == glow_name:
+				m.emission_enabled = true
+				m.emission = glow
+				m.emission_energy_multiplier = glow_energy
+			gi.set_surface_override_material(s, m)
+
 static func _dim_subtree(root: Node, factor: float) -> void:
 	for n in root.find_children("*", "GeometryInstance3D", true, false):
 		var gi := n as GeometryInstance3D
