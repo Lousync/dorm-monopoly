@@ -31,6 +31,13 @@ var fps_probe := 0.0
 ## 而**机器人根本不会主动装修**（实测：预热 60 秒只到第 9 轮、场上 **0 块房子**），所以"打到 15 轮
 ## 再采"采不到满盘，只能像 `level` 摆拍那样**在房主侧注入局面**（不动玩法代码）。见 `fps_probe_run`。
 var fps_houses := false
+## `--dolly=档位`（一期 Task 7）：帧率探针**开始采样前**把推拉推到这一档（如 `--dolly=1.4` = 拉远端）。
+## **上限就是 `DOLLY_MAX = 1.4`**（终审 F6 改正：原举例写 `--dolly=1.8`，而 `set_dolly` 会**静默**
+## 钳到 1.4 ⇒ 照抄那个例子拿到的并不是它说的那一档）。
+## 用途：量"**推拉拉远之后阴影贴图密度摊薄**"那份代价（`设计决策留痕` §十三 记过"射程一大、
+## 密度稀 ~2.4×"）。不传 = 不动推拉（旧口径一字不差）。走真接口 `table3d.snap_dolly`，
+## **只碰表现层**，一行玩法都不动。**注意要配 `--` 分隔符**（同本项目所有开关）。
+var dolly_arg := -1.0
 
 # ---------------- 转发给宿主 ----------------
 
@@ -421,6 +428,14 @@ func fps_probe_run() -> void:
 				g.htiles[i].level = GameData.MAX_LEVEL
 		g._broadcast_state()
 		await get_tree().create_timer(0.3, true, false, true).timeout
+	# **推拉档注入**（一期 Task 7，`--dolly=档位`）：在"局面自述"之前摆好 —— 相机是取样那段帧时间
+	# 的一部分，摆晚了量的还是旧档。读在这里而不是让宿主转发：本函数是探针唯一的入口。
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--dolly="):
+			dolly_arg = float(a.substr(8))
+	if dolly_arg > 0.0 and g.table3d != null:
+		g.table3d.snap_dolly(dolly_arg)
+		await get_tree().create_timer(0.3, true, false, true).timeout
 	Engine.time_scale = 1.0
 	# 采样起点的**局面自述**（批次 11 T4）：帧率数字必须连着"当时场上有几块房子"一起读 ——
 	# 旧口径开采在 round=1、0 块房子，那种数字不能拿来代表"满盘装修"。
@@ -496,6 +511,14 @@ func take_shot(path: String) -> void:
 	# 没有这个分支就拍不出 2D 端那张图（default 只能拍到 3D 端）。
 	if path.contains("view2d") and g.table3d != null:
 		g.table3d.snap_view(1.0)
+	# 文件名带 dollyfar / dollynear（一期 Task 7）：把**推拉**推到那一端出图。
+	# 与上面 tilt / view2d 同形同理由：走**真接口**（`snap_dolly`），不手搓相机 ——
+	# 手搓的那份数学会和 `_apply_camera` 漂开，摆出来的图就不是玩家真能滚到的那一档。
+	# `dollyfar` = 拉远端（看屋子：远墙 + 三件家具）、`dollynear` = 推近端（读棋盘：格子最大）。
+	if path.contains("dollyfar") and g.table3d != null:
+		g.table3d.snap_dolly(g.table3d.DOLLY_MAX)
+	if path.contains("dollynear") and g.table3d != null:
+		g.table3d.snap_dolly(g.table3d.DOLLY_MIN)
 	if not path.contains("table"):
 		# 对局近景摆拍；路径带 table 则停在围桌全景（验证布局用）
 		# 倍率是「全景的倍数」：2.0 ≈ 屏幕时代那个 0.8（0.8/0.40，见 board_view 顶部常量）
@@ -639,7 +662,7 @@ func take_shot(path: String) -> void:
 		g.casino.s_casino_start.rpc("投骰子", 800, 3200, [g.my_peer], {g.my_peer: "房主"})
 		g.casino.s_casino_roll.rpc({g.my_peer: 5})
 	if path.contains("target") and g.multiplayer.is_server() and not g.htiles.is_empty():
-		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的**名册格**亮着、其余不亮"
+		# 摆拍（批次 9）：停在**选目标态**，核对"可选中的那几块**桌面立牌**亮着、其余不亮"
 		#（落点史：桌上立牌 → 屏幕四角条（批次 9）→ 名册条右上（批次 12 D）→ **名册条左上角、
 		# 「暂停」旁一列（批次 13 ②）**；高亮由 `_refresh_corner_highlight`
 		# 在批次 9 Task 3 接上，出图名 `xx_target_plain.png`）。
@@ -738,6 +761,55 @@ func take_shot(path: String) -> void:
 			g._broadcast_state()
 			await get_tree().create_timer(0.35).timeout
 			get_tree().paused = true   # 冻住：自动对局下一拍会把 _shop_peer 改掉
+	# 【终审 findings ⑦】react 摆拍**定格住的那个播放器与被定住的位置** —— 声明在这里（外层块），
+	# 好让下面那三帧连拍**每一帧出图前重放一次 `seek + pause`**：取景树没暂停（只有 shop 那一支
+	# 会 `get_tree().paused = true`），自动对局还在 3 倍速跑，0.6~1.8 s 的窗口里同一个 peer 的
+	# 又一次 `pay` / `play` / `rob` 会把定住的姿态顶掉 ⇒ 拍到的就不是想要的那条。
+	var shot_react_ap: AnimationPlayer = null
+	var shot_react_at := 0.0
+	if path.contains("react") and g.multiplayer.is_server():
+		# 摆拍（二期 Task 4）：四个玩法事件各拍一张。走**真入口** `chars.react(peer, kind)`
+		#（与 gameplay 触发的是同一个函数、同一条链），出图只看**它把哪条动画摆到了身上**。
+		#   * 名字（四选一）：`react_play` / `react_pay` / `react_rob` / `react_die`；
+		#   * 建议配 `dollyfar` + `table` + `plain`：看屋子那一档、对面那把椅子完整在画内
+		#    （默认档下对面角色的头会被画面上缘切掉，见 Ruling G2）；
+		#   * 用法：`--autotest=host --rounds=3 --shot=shots/t4_react_die_dollyfar_table_plain.png`
+		#
+		# **为什么三条要"定格在中段"**：三帧连拍落在 0.6 / 1.2 / 1.8 s，而这四条里除 `die` 之外
+		# 都只有 0.17~0.67 s（自动对局还有 3 倍速）⇒ 不定格就只能拍到"已经演完、人回到待机"。
+		# 定格的是**一帧真实的中间姿态**（`seek(长度 × 0.45)`），不是另摆的假姿势。
+		# **`die` 那一条不定格** —— 它本来就停在末帧（趴着），那正是要拍的证据（spec §5.4 定案）。
+		var kind := ""
+		for k in ["play", "pay", "rob", "die"]:
+			if path.contains("react_" + k):
+				kind = k
+		var rm: Node = g.table3d.get_node_or_null("Room") if g.table3d != null else null
+		var chars_r: Node = rm.get_node_or_null("Chars") if rm != null else null
+		if chars_r != null and kind != "":
+			var peers_r: Array = chars_r.char_peers()
+			# 用 **slot 2（对面那把椅子）**：它是正对镜头的那一个（一期 Ruling G2 验收的那把）。
+			var slot_r := 2 if peers_r.size() > 2 else 1
+			var peer_r: int = int(peers_r[slot_r]) if peers_r.size() > slot_r else GameData.NO_PEER
+			chars_r.react(peer_r, kind)
+			if kind != "die":
+				var ap_r: AnimationPlayer = chars_r.char_player(slot_r)
+				var a_r: Animation = null
+				if ap_r != null and ap_r.current_animation != "":
+					a_r = ap_r.get_animation(ap_r.current_animation)
+				if a_r != null:
+					shot_react_ap = ap_r                 # 记住：连拍每一帧前重放（见下面的循环）
+					shot_react_at = a_r.length * 0.45
+					ap_r.seek(shot_react_at, true)
+					ap_r.pause()
+			# **打"最终落在哪条动画上"，不打印"请求了什么"**（终审 findings ⑦）：请求的名字对、
+			# 却在中途被同一个人另一次事件顶成别的动画时，只记请求那一行**看不出来**，
+			# 出图错了也发现不了。`assigned_animation`（不是 `current_animation`）才留得住名字
+			#（暂停 / 播完停下时后者会被清成 `""`，同 `chars.gd._pose_die` 那段）。
+			var ap_now: AnimationPlayer = chars_r.char_player(slot_r)
+			print("SHOTREACT kind=%s slot=%d peer=%d → assigned=%s 在播=%s" % [kind, slot_r, peer_r,
+				(String(ap_now.assigned_animation) if ap_now != null else "<无播放器>"),
+				("是" if (ap_now != null and ap_now.is_playing()) else "否")])
+
 	if path.contains("shopopen") and g.multiplayer.is_server():
 		# 摆拍（#25）：**本人**视角的小卖部 —— 核对右上角 ✕「收起界面看棋盘」在不在、
 		# 排布不挤。文件名再带 `collapsed` 则顺带收起，核对右下角「回到小卖部」入口。
@@ -768,10 +840,30 @@ func take_shot(path: String) -> void:
 	# 连拍三帧，避开 3 倍速下真实抽卡与摆拍的相互干扰
 	for i in 3:
 		await get_tree().create_timer(0.6).timeout
+		# react 摆拍：**出图前重放一次定格**（树没暂停、自动对局一直在跑，见上面 `shot_react_ap`
+		# 那段）。`seek(x, true)` 立刻把姿态落到分件上 ⇒ 紧接着的 `frame_post_draw` 拍到的就是它。
+		#
+		# ⚠ **`shot_react_ap` 中途失效时必须出声**（终审 N-2）：它是外层块记下的**那个播放器实例**，
+		# 而自动对局里的重广播会让 `set_chars()` 把角色整套重建（旧实例 `queue_free`）⇒ 从那一帧
+		# 起它就不是有效实例了 ⇒ 定格重放**失效**、拍到的是重建后那个人的当前动画。原先这里
+		# `and is_instance_valid(...)` 一假就**静默跳过**，只看到"出图不对"却查不出为什么。
+		if shot_react_ap != null:
+			if is_instance_valid(shot_react_ap):
+				shot_react_ap.seek(shot_react_at, true)
+				shot_react_ap.pause()
+			else:
+				print("SHOTREACT frame%d 定格重放失效：播放器实例已被重建（自动对局的重广播会 "
+					% i + "`set_chars()` 整套重建角色）⇒ 这一帧不是定格的姿态")
 		await RenderingServer.frame_post_draw
 		var p := path if i == 0 else path.replace(".png", "_%d.png" % i)
 		get_viewport().get_texture().get_image().save_png(p)
 		print("SHOT SAVED ", p)
+		# 出图那一刻**真的**是哪条动画（不是请求的那条）—— 只打这一行就能看出"拍错了"。
+		# 播放器失效时**照打**（N-2：这一行原先会整个消失，等于"最后一条诊断也哑了"）。
+		if shot_react_ap != null:
+			print("SHOTREACT frame%d assigned=%s" % [i,
+				(String(shot_react_ap.assigned_animation) if is_instance_valid(shot_react_ap)
+					else "<播放器已失效（被重建）>")])
 	get_tree().quit(0)
 
 func _dev_player_edit(edit: Callable) -> void:

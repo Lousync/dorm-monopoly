@@ -204,30 +204,20 @@ var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
 var rules_tab := ""
 ## **「我」那条身家条**（屏幕左下角）。批次 5 起是"四条一起建"，**批次 12 D 起只剩这一条**：
-## 他人的信息改由下面的名册条承担（`roster_strip` / `roster_strip_rows`，**批次 13 ② 起在左上角**），选目标高亮与
-## 行动者倒计时也跟着搬了过去 —— 但**判据一字未改**（`_hl_peers` / `_op_owner`），
-## 只是"贴到哪一块控件上"多了一处落点（`_hl_bars()` 把两者合成同一条循环）。
-## 它取代的是更早的右侧名册栏（`roster_box` / `roster_rows` 已删，理由见 table_hud.gd 里那段）。
-## **注意别与这里的 `roster_strip_rows` 混为一谈**：那个是批次 12 D 新加的**名册条**的格
-##（批次 13 ② 起在**左上角**「暂停」旁），
-## 与已删除的右侧名册栏不是同一样东西（`regression_test` 的反向契约仍钉着旧的 `roster_rows` 必须不存在）。
+## 他人的信息改由名册条承担，选目标高亮与行动者倒计时也跟着搬了过去 —— 但**判据一字未改**
+##（`_hl_peers` / `_op_owner`）。
+## **v0.8.0 第三次改版**：名册条（`roster_strip` / `roster_strip_rows`）**整体删除**，
+## 他人信息搬到了**桌面立牌**（`table_props` 的 `Placards/Placard{peer}`）——
+## 于是 `_hl_bars()` 今天只剩这一条，而"谁亮着 / 倒计时挂谁"两件事多了一个**3D 落点**
+##（`set_placard_hot` / `set_placard_timer`），判据仍是同一份。
+## `regression_test` 的反向契约仍钉着更早的右栏名册（`roster_box` / `roster_rows`）必须不存在。
 var corner_bars: Array = []
-## 名册条（批次 12 D1 建；**批次 13 ② 从右上角搬到左上角「暂停」旁；批次 13 辛 ③ 改横排 + 做小**）：
-## 「他人」一格一位（名次徽章 + 棋子色小片 + 昵称 + 那一格的倒计时）。
-## 由 `TableHud.build_play_ui` 建、`_refresh_roster` 刷；**常驻**（不在可折叠的战报栏里）。
-## 每一格的字典形态与 `corner_bars` 里那条**同形**（`table_hud._make_roster_row`），
-## 于是高亮 / 倒计时两处刷新函数可以直接把它们并进同一条循环（见 `_hl_bars`）。
-##
-## **类型必须是 `HBoxContainer`**（批次 13 辛 ③ 用户拍板要横排、并从竖向每格 64 收到横排每格 42 高）：
-## 条仍然只占**左上角**那一片（`ROSTER_X=104` 起、与「暂停」同一条 y 带），横排之后**宽度**才是
-## 要盯的量 —— 由 `_refresh_roster` 里那道**屏幕中线软夹**兜住（详细理由见 `table_hud.build_play_ui`
-## 那段"横排的由来"）。
-## **容器种类写错会当场炸**：批次 13 ② 把这里写成 `HBoxContainer` 而 `build_play_ui` 赋的是
-## `VBoxContainer`，赋值那行直接 `Invalid assignment …` **把整个界面构建打断**
-##（后面 `RulesPanel.build` / 移动弹窗全没跑，测试里表现为"条全空 + 卡住"，排错花掉 9 分钟）——
-## 改容器种类时**这一处必须与 `table_hud` 一起改**，别只改一边。
-var roster_strip: HBoxContainer
-var roster_strip_rows: Array = []
+## **桌面立牌**（每名对手一块）**不在 `game` 上存任何东西** —— 牌面是
+## `table_props` 里的 3D 节点（`Placards/Placard{peer}`），`game` 每次广播把
+## `{peer, slot, color, name, rank, alive}` 推给 `set_placards` 即可（同 `set_tokens` 那套）。
+## 高亮与倒计时各推一次（`set_placard_hot` / `set_placard_timer`），判据仍是
+## **唯一那份** `_hl_peers` / `_op_owner`。
+## 旧的名册条（`roster_strip` / `roster_strip_rows`）已随本改版整体删除。
 ## 最近一次广播算出的身家表（peer -> `_refresh_players` 里那份 entry，带 rank / worth / money）。
 ## **名次徽章的唯一来源**：原先 `_rank_of` 是回头去 `corner_bars` 里翻，四角条只剩一条之后
 ## 那条路只查得到自己 ⇒ 弹窗里别人的徽章会集体消失，所以改成留一份表。
@@ -325,6 +315,18 @@ var _money_flies: Array = []
 ## 测试观测点（批次 13 ⑥）：peer -> **当帧**飞钞终点（`_spawn_money_fly` 里写）。
 ## 用途：钉住"终点用的是 `_refresh_corner_bars` 之后的绑定"，不是上一次广播的旧绑定。
 var _money_fly_goal := {}
+
+# ---------------- 二期 Task 4：四个事件反应的**边沿缓存**（只读表现层，见 `_react_chars`） ----------------
+#
+# 这三份都**只读**：从已同步的 `st` 里读"当前值"，与上一次那一份比出**边沿**（"刚刚出局 /
+# 刚刚易主 / 这一回合刚出过牌"），再把事件转给角色层。**不改任何玩法状态、不发任何 RPC。**
+# **为什么必须有它们**：`st` 只给当前值，而这三个事件的定义就是"变了的那一下"——
+# 上一次那份只能自己留着（同 `_money_shown` 那条既有做法）。付钱不需要：它就在钱循环里，
+# 差分当场就有（见 `_refresh_players` 里那两行）。
+var _react_seen := false     # 还没拿到过"上一次那一份"（第一次广播只记、不发 —— 否则开局全员"破产"）
+var _react_alive := {}       # peer -> 上一次广播时还活着吗（真→假 = 破产）
+var _react_used := {}        # peer -> 上一次广播时这一回合的牌出过没有（假→真 = 出牌）
+var _react_owners: Array = []  # 上一份 `st.tiles` 的 owner（逐格；变 = 易主）
 var _chat_shown := 0
 var _prompt_tw: Tween
 var _prompt_bar: ProgressBar
@@ -2020,9 +2022,15 @@ func _on_table_click(canvas_px: Vector2, button: int = MOUSE_BUTTON_LEFT) -> boo
 	if button == MOUSE_BUTTON_LEFT and tp.wheel_hit(canvas_px):
 		_on_roll_pressed()
 		return true
-	# 3) 选目标：改点**屏幕层的名册行**，见 `_on_corner_bar_clicked`（批次 9 落点在四角条，
-	#    批次 12 D 起他人那一条在名册条上；**批次 13 ② 起那条在左上角「暂停」旁**）——
-	#    原先的"点桌上立牌"那一支随立牌一起删掉了（立牌命中链已不存在）。
+	# 3) **桌面立牌**（v0.8.0 第三次改版：名册条从屏幕搬上桌 ⇒ "点桌上立牌"那一支回来了，
+	#    落点就是每名对手座位前那块牌）。只吃左键。走的是**同一个** `_on_corner_bar_clicked` ——
+	#    选目标态 ⇒ `_on_seat_clicked(peer)`，否则 ⇒ `_open_player_popup(peer)`：
+	#    与名册条时代**逐条一致**（用户「立牌的交互作用和现在信息块效果一致」）。
+	if button == MOUSE_BUTTON_LEFT:
+		var pp: int = tp.placard_hit(canvas_px)
+		if pp != GameData.NO_PEER:
+			_on_corner_bar_clicked(pp)
+			return true
 	return false
 
 # ================= 悬停棋子的信息条（批次 11 Task 3）+ 悬停手牌放大（批次 12 B3） =================
@@ -2055,6 +2063,10 @@ func _on_table_hover(canvas_px: Vector2) -> int:
 		return GameData.NO_PEER
 	var tp = table3d.table_props
 	var peer: int = tp.token_hit(canvas_px)
+	# 棋子没中再看**桌面立牌**（v0.8.0 第三次改版）：悬停别人的牌也浮出同一条信息条 ——
+	# 与名册条时代"悬停那一格"的语义一致（那时靠 HUD 的 tooltip，今天走桌面这一条）。
+	if peer == GameData.NO_PEER:
+		peer = tp.placard_hit(canvas_px)
 	_set_token_hover(peer)
 	# 手牌：棋子优先（两样都命中时棋子赢），没命中棋子才轮到牌。
 	var hi: int = -1 if peer != GameData.NO_PEER else tp.hand_hit(canvas_px)
@@ -3076,9 +3088,109 @@ func _name_by_peer(peer: int) -> String:
 			return String(p.name)
 	return "?"
 
+## 角色层（`Room/Chars`，二期）。`CHARS_ENABLED = false` 时它**根本不存在**（二期的保命开关）
+## ⇒ 一律 `get_node_or_null`；走动态调用（`game.gd` 不把 `chars.gd` 写成静态依赖，
+## 同 `_refresh_players` 里那处既有写法）。
+func _chars_node() -> Node:
+	if table3d == null:
+		return null
+	var room := table3d.get_node_or_null("Room")
+	return room.get_node_or_null("Chars") if room != null else null
+
+## 把一条反应转给角色层（`react` 的 kind 表在 `chars.gd.REACT_ANIMS`）。角色层不在就什么都不做。
+func _char_react(peer: int, kind: String) -> void:
+	var chars := _chars_node()
+	if chars != null:
+		chars.react(peer, kind)
+
+## 二期 Task 4：从**已同步的状态**里读出**边沿**事件、转给角色层（见那三份缓存）。
+##
+## **只读表现层**：判据是 `item_used`（出牌）/ `alive`（破产）/ `st.tiles[i].owner`（被抢地）——
+## 都是客户端也算得出来的量。**一处 `@rpc` 没加、状态机一行没改**（spec §5.5 那条纪律）。
+##
+## **付钱不在这个函数里**：它与既有**飞钞**同一拍，直接用钱循环里已经算好的差分
+##（`_refresh_players` 里 `if diff < 0: _char_react(peer, "pay")` 那两行）。
+##
+## 判据的边界（都是**故意的**，不是漏）：
+##   * 第一次广播（`_react_seen` 为假）**只记不发** —— 否则开场人人"刚破产、刚被抢地"；
+##   * 出局那一家**同一帧**还会被收走名下地产（`htiles[..].owner = NO_OWNER`）⇒ "被抢地"那条
+##     按**新状态里还活着**过滤，免得刚趴下的人又被摇一次头；
+##   * 易主的**上一手主人**才是"被抢地"的那一位（新主人是抢的人，不摇头）。
+func _react_chars() -> void:
+	var chars := _chars_node()
+	if chars == null:
+		return                      # 角色层不在（CHARS_ENABLED=false）：整段不跑
+	var players: Array = st.get("players", [])
+	var tiles_arr: Array = st.get("tiles", [])
+	# ① 破产 / 出牌：逐家比"上一次那一份"
+	for p in players:
+		var peer := int(p.get("peer", GameData.NO_PEER))
+		var alive := bool(p.get("alive", true))
+		var used := bool(p.get("item_used", false))
+		if _react_seen:
+			if bool(_react_alive.get(peer, alive)) and not alive:
+				chars.react(peer, "die")        # 出局：留在座位上（停末帧）
+			elif alive and used and not bool(_react_used.get(peer, used)):
+				chars.react(peer, "play")       # 出牌：这一回合的牌刚出过
+		_react_alive[peer] = alive
+		_react_used[peer] = used
+	# ② 被抢地：逐格比 owner（对不上尺寸的那一次只记不比）
+	if _react_seen and _react_owners.size() == tiles_arr.size():
+		for i in tiles_arr.size():
+			var was := int(_react_owners[i])
+			var now := int((tiles_arr[i] as Dictionary).get("owner", GameData.NO_OWNER))
+			if was != now and was != GameData.NO_OWNER and bool(_react_alive.get(was, true)):
+				chars.react(was, "rob")
+	_react_owners = []
+	for t in tiles_arr:
+		_react_owners.append(int((t as Dictionary).get("owner", GameData.NO_OWNER)))
+	_react_seen = true
+
 func _refresh_players() -> void:
 	# 桌面实体物件：每次状态广播都重新贴回桌垫坐标（见 _refresh_table_props 的注释）
 	_refresh_table_props()
+	# 椅子 ↔ peer 的座位顺序：**在这里喂，不在 `_ready`** —— `_ready` 那刻 `st` 还空着，
+	# `_seat_peers()` 会返回空数组、名牌永远出不来；而本函数每次状态广播都跑。
+	# 顺序就是 `_seat_peers()`（**与房间那边是同一份，不许各写一份**），
+	# 另外把**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`）与名字一起带过去：
+	# 名牌的颜色是"这家的棋子色"、**不是**按座位序号取的色（spec §六/§十），
+	# 只喂 peer 的话名牌就没色可上。
+	# 椅子本身一期不进玩法（`room.gd` 只摆位与长相）：这里喂的只是"哪把椅子是哪一家"。
+	if table3d != null:
+		var room := table3d.get_node_or_null("Room")
+		if room != null:
+			var seats: Array = []
+			for peer in _seat_peers():
+				var pl := _state_player(int(peer))
+				# 【终审 F5 · 只加注释，行为一字未动】`pl` 理论上**必非空** —— `_seat_peers()`
+				# 就是从 `st.players` 推出来的（同一个 `st`）⇒ 下面两个 `get` 的缺省值
+				# （`0` / `"?"`，`_state_player` 找不到人时返回 `{}`）**今天不可达**，是防御性写法。
+				# **留着的理由**：它**静默** —— 万一哪天变成可达（`_seat_peers()` 改了取数口径、
+				# 或喂进来一份没同步的 `st`），这块名牌会拿**别人家的棋子色** + 一个 `?` 顶上，
+				# 查起来比直接炸难得多。谁动 `_seat_peers()` 时请顺手确认这条前提仍成立。
+				seats.append({
+					"peer": int(peer),
+					"color": int(pl.get("color", 0)),
+					"name": String(pl.get("name", "?")),
+				})
+			room.set_seats(seats)
+			# 二期 Task 2：**同一份座位序**再喂一遍给角色层（就在这一处、用同一份数组 ——
+			# 分开推两份就会"人坐错椅子"，而那正是二期最难查的那类错）。下标 = 椅子号，
+			# `GameChars` 自己跳过 slot 0（那是「我」）并按各家的棋子色选模型。
+			# 走 `_chars_node()`（内部 `get_node_or_null`）+ 动态调用：`CHARS_ENABLED = false` 时
+			# 角色层根本不存在（本期的保命开关），而且 game.gd 不该把 `chars.gd` 写成静态依赖。
+			# 【终审 findings ⑥：与 `_chars_node()` 合并 —— 同一个节点只留**一条查找路径**，
+			#  免得哪天 `Chars` 换挂点时只改了一处、另一处静默找空。此处 `table3d != null` 已知，
+			#  所以 `_chars_node()` 的守卫不会改变行为。】
+			var chars := _chars_node()
+			if chars != null:
+				chars.set_chars(seats)
+				# 二期 Task 3：**当前行动者**（"轮到我了"）—— 与 `set_chars` 同一处、同一份状态。
+				# 行动者就是快照里的 `turn`（= `hp[turn_i].peer`），**只读**：这里一个玩法状态都不改、
+				# 不发 RPC，只是把"谁在行动"转给表现层（同一个 `st.turn` 也已喂给轮盘与行动者光环，
+				# 见 `spin_wheel` / `set_ring` 那两处）。不在这里喂它就没人喂 —— 角色层不认识 `st`。
+				# （原先这里还喂一行"当前行动者"给角色层 —— v0.8.0 第四次改版删掉了：
+				#  用户「人物顶部铭牌去掉」，行动者的表达整体在桌面立牌上，见 `chars.gd` 那段。）
 	_money_flies.clear()     # 本帧飞钞队列（批次 13 ⑥：记在钱循环里、播在身家条刷完之后）
 	var tiles_arr: Array = st.get("tiles", [])
 	var worth_map := {}
@@ -3121,6 +3233,11 @@ func _refresh_players() -> void:
 			# **飞钞要等一帧再播**（批次 13 ⑥ 修的真 bug，见下面 `_money_flies` 那段注释）：
 			# 这里只记差分，播放在 `_refresh_corner_bars` 之后。
 			_money_flies.append({"peer": peer, "diff": diff})
+			# 二期 Task 4：**付钱**的反应 —— 与飞钞**同一拍**（`diff < 0` = 这一家掏了钱；
+			# 进账不动，见 spec §5.4 的"资金减少"那一行）。这里不需要边沿缓存：
+			# 判据就是上面这行刚算出来的差分（同上一条：只在 `alive` 时才播）。
+			if diff < 0:
+				_char_react(peer, "pay")
 
 	# 身家排名（名次徽章的依据）
 	var order: Array = worth_map.keys()
@@ -3151,6 +3268,9 @@ func _refresh_players() -> void:
 	for f in _money_flies:
 		_spawn_money_fly(int(f.peer), int(f.diff))
 	_money_flies.clear()
+	# 二期 Task 4：**出牌 / 被抢地 / 破产**三条边沿事件 → 角色层的反应（付钱那条在上面钱循环里，
+	# 与飞钞同一拍）。读的全是已同步的状态，玩法一行没碰（见 `_react_chars`）。
+	_react_chars()
 	# 玩家道具弹窗（批次 9）：打开期间随广播重填（数值实时）；那个人离场或整局结束即关掉
 	#（弹一个已经不存在的人的弹窗没有意义）。
 	if player_popup != null and player_popup.is_open():
@@ -3214,8 +3334,8 @@ func _refresh_corner_bars(standing: Array) -> void:
 		_fill_peer_bar(mine, mine_e, turn_peer, phase, true)
 		_refresh_my_energy(mine, mine_peer)
 
-	# ② 名册条：其余所有人
-	_refresh_roster(standing, mine_peer, turn_peer, phase)
+	# ② 桌面立牌：其余所有人（v0.8.0 第三次改版 —— 名册条从屏幕搬上桌）
+	_refresh_placards(standing, mine_peer)
 
 ## 把一条身家条 / 名册行按 `standing` 里那一项刷一遍 —— **「我」那条与名册条共用的同一个填法**。
 ## 只有三处按"是哪一种载体"分叉（`is_self`）：徽章位、现金行、名字后面的「（我）」标记 ——
@@ -3321,44 +3441,46 @@ func _refresh_my_energy(bar: Dictionary, peer: int) -> void:
 			Color(0.95, 0.78, 0.35) if lit else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 
-## 名册条（批次 12 D1 建；**批次 13 ② 搬左上角「暂停」旁；批次 13 辛 ③ 改横排**）：其余玩家一格一位，
-## 按 `standing` 的顺序（身家倒序 = 名次）**自左往右**排 —— 用户 ② 要的就是"排列顺序根据排名实时变化"，
-## 所以**这一份顺序一个字都不用改**，搬位 / 改朝向顺手就拿到了实时排序。
+## 桌面立牌（v0.8.0 第四次复核：名册条从屏幕搬上桌；**牌面改成原生 3D 画法**）。
 ##
-## 格数按需增删（人少了把多出来的格**藏起来**、不拆节点，同四角条那套）；
-## 条宽/条高（右边缘 / 下边缘）取**容器自己算的那份**，左边缘固定在 `ROSTER_X`。
-## 格内容走 `_fill_peer_bar(..., is_self = false)`：与「我」那条同一个填法。
-func _refresh_roster(standing: Array, mine_peer: int, turn_peer: int, phase: String) -> void:
-	if roster_strip == null or not is_instance_valid(roster_strip):
+## ⚠ **本函数只推"数据"** —— 用户 2026-10-06 否掉了"把名册格烘成贴图"那条路：
+## 「人物铭牌不要这个贴图，一是尺寸不对，二是文字模糊，你自己重新做一个吧」。
+## 那张烘出来的图**两条病都躲不掉**：`SubViewport` 的分辨率是固定的，屏幕上一缩就糊，
+## 而它的宽高比又被名册格的内容宽度绑死、与牌面尺寸对不上。
+## ⇒ 牌面上的字 / 色片 / 倒计时现在全由 `table_props._make_placard` 用 `Label3D` 与几何画，
+## **矢量渲染，缩到多小都清楚**；每一维都自己定，不跟任何 Control 的比例走。
+##
+## `standing` 是身家倒序的那份名单（`_refresh_players` 里算好）。**只摆"别人"** ——
+## 与「我」那一侧不出人同一条：我自己的信息在左下角那条身家条里。
+##
+## **立在"他自己那一侧"**：`slot` 从 `_seat_peers()` 反查（1 右 / 2 对面 / 3 左）。
+## **座位表里找不到他**（观战 / 掉线重连这类边界）⇒ 退到"按名次轮流坐"（`slot = 1 + 序号 % 3`）：
+## 与旧名册条那条"自己不在名册里就从第 0 家起轮转"同一个意思 —— 总得有个地方站。
+func _refresh_placards(standing: Array, mine_peer: int) -> void:
+	if table3d == null or table3d.table_props == null:
 		return
-	var others: Array = []
+	var seats: Array = _seat_peers()
+	var rows: Array = []
+	var nth := 0
 	for e in standing:
-		if int(e.peer) != mine_peer:
-			others.append(e)
-	while roster_strip_rows.size() < others.size():
-		roster_strip_rows.append(TableHud._make_roster_row(self, roster_strip))
-	for i in roster_strip_rows.size():
-		var row: Dictionary = roster_strip_rows[i]
-		var root: Control = row.root
-		if i >= others.size():
-			root.visible = false                  # 人少了：多出来的行藏起来
-			row.peer = GameData.NO_PEER
-			root.set_meta("peer", GameData.NO_PEER)
+		if int(e.peer) == mine_peer:
 			continue
-		root.visible = true
-		_fill_peer_bar(row, others[i], turn_peer, phase, false)
-	# 落位（**批次 13 ② 起条锚在 TOP_LEFT**；**批次 13 辛 ③ 起是横排，所以"宽"才是要盯的量**）：
-	# 左边缘固定在 `ROSTER_X`（暂停按钮右侧），宽/高取**容器自己算的那份**
-	#（`get_combined_minimum_size()`：格是内容驱动的宽度，自己按"格数 × 固定格宽"手算会与真实
-	# 宽度对不上 —— 实测踩过）。**这一段对横排 / 竖排都成立**（容器给的就是各自朝向的那一份），
-	# 所以③改朝向时这里一个字都没改。
-	# **夹一道屏幕中线**：名册条整条只许待在左半 —— 横排之后这条比竖排时代更要紧，
-	# 免得昵称一长就把右边缘推进居中的横幅 / 气泡里。
-	roster_strip.offset_left = TableHud.ROSTER_X
-	var strip_min: Vector2 = roster_strip.get_combined_minimum_size()
-	var left_limit: float = maxf(TableHud.ROSTER_X + 120.0, size.x * 0.5 - 20.0)
-	roster_strip.offset_right = minf(TableHud.ROSTER_X + strip_min.x, left_limit)
-	roster_strip.offset_bottom = TableHud.ROSTER_Y + strip_min.y
+		var slot := 0
+		for i in seats.size():
+			if int(seats[i]) == int(e.peer):
+				slot = i
+				break
+		if slot == 0:
+			slot = 1 + (nth % 3)
+		nth += 1
+		rows.append({"peer": int(e.peer), "slot": slot, "color": int(e.color),
+			"name": String(e.name), "rank": int(e.rank), "alive": bool(e.alive)})
+	table3d.table_props.set_placards(rows)
+	# ⚠ **池子可能刚被重建**（人换了 / 断线重连 ⇒ `set_placards` 收了旧牌、建了新牌，
+	# 新牌的倒计时默认是收着的）。而 `_placard_timer_sig` 那道早退只按"值有没有变"——
+	# **不限时**的窗口里值恒为 `[owner, 0, false]` ⇒ 重建之后它不会再推一次 ⇒
+	# 那块新牌在整个窗口里都收着倒计时。⇒ 重建之后**清掉签名**，逼下一帧重推一遍。
+	_placard_timer_sig = []
 
 ## 高亮 / 倒计时共用的**条 + 行**清单（批次 12 D1）：「我」那条 + 名册条的每一行。
 ## **别把它们分别遍历** —— "谁亮着"（`_hl_peers`）与"倒计时挂谁"（`_op_owner`）各只有一份判据，
@@ -3367,8 +3489,6 @@ func _hl_bars() -> Array:
 	var out: Array = []
 	for b in corner_bars:
 		out.append(b)
-	for r in roster_strip_rows:
-		out.append(r)
 	return out
 
 ## 把「此刻可被选中的玩家」（`_hl_peers`）那份高亮贴到**条与名册行**上 —— **每次状态广播末尾重放一遍**。
@@ -3395,6 +3515,10 @@ func _refresh_corner_highlight() -> void:
 			continue                     # 常态早退；点亮那一次一定重贴
 		bar["hot"] = hot
 		_apply_corner_style(bar, bool(bar.get("border_active", false)), hot)
+	# 桌面立牌那三块（落点从名册条搬到了桌上）：**判据仍是唯一一份 `_hl_peers`**，
+	# 这里只负责"把金贴上"（`table_props` 那边就是给牌身染金）。
+	if table3d != null and table3d.table_props != null:
+		table3d.table_props.set_placard_hot(_hl_peers)
 
 ## 一条身家条 / 一个名册行的样式（行动者 / 可选中两件事合成一张样式盒）。
 ## 行动者 = 1px 金边；**可选中 = 2px 金边 + 底色提亮一档**（两者可叠加：选中态若正好轮到 TA 行动，
@@ -3413,13 +3537,6 @@ func _apply_corner_style(bar: Dictionary, active: bool, hot: bool) -> void:
 	if hot:
 		bw = 2
 	var sb: StyleBoxTexture = UIKit.card_stylebox(bg, 10, border, bw, 4)
-	# 名册格比四角身家条矮一档 ⇒ 它那张卡片的**上下**内边距要跟着收（见 `table_hud.ROSTER_CARD_PAD`）。
-	# **这一笔不能少**：本函数每次都新造一张样式盒换上去，不贴回去那一格就弹回默认的 8+8
-	#（高 42 → 52），而**只有"行动者变了 / 亮灭变了"的那些格才会走到这里** ⇒
-	# 同一排的格会一半 42 一半 52、名册条一开一合。判据走 `bar` 上那一位 `slim_pad`
-	#（`table_hud._make_roster_row` 建的格才有；四角身家条没有 ⇒ 保持默认）。
-	if bool(bar.get("slim_pad", false)):
-		TableHud.slim_card_pad(sb)
 	root.add_theme_stylebox_override("panel", sb)
 
 func _refresh_actions() -> void:
@@ -5435,8 +5552,10 @@ func _selectable_props(peer: int) -> Array:
 ## 传空数组 = 全部熄灭；换阶段（peer → tile）与取消都走它。
 ##
 ## 批次 9：立牌退场，原先"推给立牌"那一路随之删掉；高亮改画在屏幕层的条上（批次 12 D 起
-## 他人那一格在名册条上（**批次 13 ② 起在左上角「暂停」旁**），见
-## `_refresh_corner_highlight`）。`_hl_peers` 是这份高亮的**单一来源**（广播末尾按它重放）。
+## 他人那一格在名册条上，**批次 13 ② 起在左上角「暂停」旁**）。
+## **v0.8.0 第四次改版：名册条整体删除 ⇒ 他人那一份落点搬到了桌面立牌**
+##（`table_props.set_placard_hot`；`_refresh_corner_highlight` 末尾推一次）。
+## `_hl_peers` 是这份高亮的**单一来源**（广播末尾按它重放）。
 func _push_peer_highlight(peers: Array) -> void:
 	if board != null:
 		board.set_select_peers(peers)
@@ -5462,12 +5581,12 @@ func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> vo
 	_tgt_peer = -1
 	_tgt_tiles = []
 	_tgt_swap_mine = -1
-	# 入口是**屏幕左上角名册条里对手那一格**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
-	# → 顶部名册条右上（批次 12 D）→ **名册条左上角、暂停按钮旁（批次 13 ②）**）——
+	# 入口 = **桌面上对手那一块立牌**（落点史：桌上立牌（批次 5）→ 屏幕四角条（批次 9）
+	# → 顶部名册条（批次 12 D）→ 左上角名册条（批次 13 ②）→ **桌面立牌（v0.8.0 四次改版）**）——
 	# 与规则说明（`rules_text.gd` 基础操作页）同源口径，
-	# 别再说"立牌 / 玩家卡 / 四角条"（玩家会照着找一样已经不存在的东西）。
-	_show_target_hint("拖到左上角名册条里对手那一格松手（或直接点它；Esc/右键取消）" \
-		if not then_prop else "拖到对手那一格松手，再选他的一块地（Esc/右键取消）")
+	# 别再说"名册条 / 玩家卡 / 四角条"（玩家会照着找一样已经不存在的东西）。
+	_show_target_hint("拖到桌上对手的立牌上松手（或直接点它；Esc/右键取消）" \
+		if not then_prop else "拖到对手的立牌上松手，再选他的一块地（Esc/右键取消）")
 	_push_peer_highlight(peers)
 
 ## 进入「选地块」阶段（快递直达：任意格）
@@ -5646,11 +5765,14 @@ func _on_table_release(screen_pos: Vector2, button: int) -> void:
 		return                                   # 单击：保留选目标态，等玩家点目标
 	_resolve_release_target(screen_pos)
 
-## 松手落点结算：选玩家态命中名册格 → `_on_seat_clicked`；选地块态反算棋盘格 → `_finish_tile_target`；
-## 都没命中 → 取消。
+## 松手落点结算：选玩家态命中**桌面立牌** → `_on_seat_clicked`；选地块态反算棋盘格 →
+## `_finish_tile_target`；都没命中 → 取消。
+##
+## ⚠ **落点换过**：同事写 #24 时命中的是**屏幕层的名册条**；名册条已随 v0.8.0 第四次改版
+## 整体删除、目标落点搬到了桌面立牌上（与"点它开弹窗 / 选目标描金边"是同一批牌）。
 func _resolve_release_target(screen_pos: Vector2) -> void:
 	if _tgt_stage == "peer":
-		var peer := _bar_peer_at(screen_pos)
+		var peer := _target_peer_at(screen_pos)
 		if peer != GameData.NO_PEER and peer in _hl_peers:
 			_on_seat_clicked(peer)
 		else:
@@ -5666,15 +5788,16 @@ func _resolve_release_target(screen_pos: Vector2) -> void:
 					return
 		_cancel_target()
 
-## 屏幕点命中的名册格 / 身家条的 peer（没有则 NO_PEER）。只查可见的候选落点。
-func _bar_peer_at(screen_pos: Vector2) -> int:
-	for b in _hl_bars():
-		var root: Control = b.root
-		if root == null or not is_instance_valid(root) or not root.visible:
-			continue
-		if root.get_global_rect().has_point(screen_pos):
-			return int(b.get("peer", GameData.NO_PEER))
-	return GameData.NO_PEER
+## 屏幕点命中的**目标落点**的 peer（没有则 NO_PEER）。
+##
+## **v0.8.0 第四次改版：落点从"屏幕层的名册条"搬到了"桌面立牌"** —— 名册条整体删除之后
+## `_hl_bars()` 只剩我自己那一条 ⇒ 原先那个遍历**永远命中不了对手**（拖动指向一律被取消）。
+## ⇒ 改成问立牌的屏幕命中（`table_props.placard_peer_at_screen`，与点击那条链**同一个命中盒**）。
+## **是否"此刻可选"仍由调用方按 `_hl_peers` 判**（判据没动，只是落点换了载体）。
+func _target_peer_at(screen_pos: Vector2) -> int:
+	if table3d == null or table3d.table_props == null:
+		return GameData.NO_PEER
+	return table3d.table_props.placard_peer_at_screen(screen_pos)
 
 ## 每帧驱动瞄准箭头：选目标态期间从手牌那张卡指向鼠标；鼠标压在合法名册格上时吸附到它中心。
 func _update_aim_arrow() -> void:
@@ -5688,14 +5811,14 @@ func _update_aim_arrow() -> void:
 		aim_arrow.hide_aim()
 		return
 	var tip: Vector2 = get_viewport().get_mouse_position()
+	# 选玩家态：鼠标压在**合法的那块立牌**上时吸附到它的中心（落点与 `_resolve_release_target`
+	# 同源 —— 都是 `placard_peer_at_screen` + `_hl_peers`）。
 	if _tgt_stage == "peer":
-		for b in _hl_bars():
-			var root: Control = b.root
-			if root == null or not is_instance_valid(root) or not root.visible:
-				continue
-			if int(b.get("peer", GameData.NO_PEER)) in _hl_peers and root.get_global_rect().has_point(tip):
-				tip = root.get_global_rect().get_center()
-				break
+		var hp: int = table3d.table_props.placard_peer_at_screen(tip)
+		if hp != GameData.NO_PEER and _hl_peers.has(hp):
+			var c: Vector2 = table3d.table_props.placard_screen_center(hp)
+			if is_finite(c.x) and is_finite(c.y):
+				tip = c
 	aim_arrow.show_aim(src as Vector2, tip)
 
 ## 悬停手牌 → 屏幕层放大预览（#23）：内容随悬停那张牌换，位置贴着那张牌上方；没悬停则收起。
@@ -5967,7 +6090,20 @@ func _refresh_op_timer(delta: float) -> void:
 ## 形态：环节名 + 细进度条 + 剩余秒数，**只出现在 `_op_owner` 那一条上**（其余各条内容收起）；
 ## 没有操作窗口时所有条的倒计时内容一律收起。`_op_total <= 0`（黑市那种不限时）= 仍写环节名，
 ## 但**不写秒数、不画进度条** —— 与小卖部面板那份逐条对齐（同一口径）。
+## 立牌倒计时上一帧推过去的那一份（**只在变了才推**：本函数逐帧调，立牌那边一次推送
+## 要写两条几何的位置与缩放）。
+var _placard_timer_sig := []
+
 func _refresh_corner_timer() -> void:
+	# **不限时**（`_op_total <= 0`）的口径与屏幕层逐字对齐：那时连底轨都不画（见 `set_placard_timer`）。
+	var pt_timed: bool = _op_kind != "" and _op_total > 0.0
+	var pt_frac: float = clampf(_op_left / _op_total, 0.0, 1.0) if pt_timed else 0.0
+	var pt_peer: int = _op_owner if _op_kind != "" else GameData.NO_PEER
+	var pt_sig := [pt_peer, snappedf(pt_frac, 0.002), pt_timed]
+	if pt_sig != _placard_timer_sig:
+		_placard_timer_sig = pt_sig
+		if table3d != null and table3d.table_props != null:
+			table3d.table_props.set_placard_timer(pt_peer, pt_frac, pt_timed)
 	if _hl_bars().is_empty():
 		return
 	var show := _op_kind != ""

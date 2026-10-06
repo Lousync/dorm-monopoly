@@ -29,3 +29,7 @@ Thumbs.db
 
 # ZCode 会话本地目录（计划草稿等，非项目源码）
 .zcode/
+
+# superpowers 技能的本地产物（头脑风暴画板 / 计划草稿，非项目源码）
+.superpowers/
+.vscode

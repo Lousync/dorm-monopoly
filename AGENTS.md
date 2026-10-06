@@ -87,7 +87,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/tech_test.gd    # 开局科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
-& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（名册/底栏/客户端视角）
+& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（身家条/底栏/客户端视角）
+& $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
@@ -199,6 +200,11 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   并在根目录 `LICENSE` 的**第三方素材登记**里逐个写明**来源与授权**（原 `assets/CREDITS.md` 已并入那里）；
   来源不明或许可不兼容的素材不要引入。**能用程序化手段画出来的就别加素材**（转盘、房子贴图、
   卡面、棋子与房子的等级纹理等都是这么做的）。
+  **已批准的例外：`Quaternius Asset License (QAL) v1.0`**（2026-10-05 用户拍板；理由、证据与两条
+  约束见 `doc/game-design/设计决策留痕.md` §十四）。它**不是标准开源许可证、不在上面的白名单里**，
+  但实质兼容：商用 / 免署名 / 永久不可撤销，唯一额外限制是**不能把素材本身当素材包再分发**。
+  登记时**必须写 QAL 及其版本、不能写 CC0**（Quaternius 官网三处说法互相矛盾，§7 定"以取得素材时
+  生效的版本为准"；若下载包内自带 `LICENSE` 文本，以**包内那份**为准）。
 
 - **Godot 生成文件已忽略**（`*.import` / `*.uid` / `shots/`）：新克隆后先用编辑器打开项目一次重建，否则可能报资源缺失。
 - **整数除法**：GDScript 的 `total / n` 返回 int（向零截断），注意取整预期。

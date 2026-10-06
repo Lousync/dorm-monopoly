@@ -4,6 +4,42 @@ extends SceneTree
 
 var fails := 0
 
+# ---------------- 阈值常量（一期 Task 8 新增；与光照 / 材质那几条断言同源） ----------------
+#
+# **写法照批次 13 ⑦⑧ 那条**（"1.4 是设计给的界；本档实测 1.27"）：先实测、再定档，
+# 实测过程与实测值写在这里 —— 光写一个数、不写它是怎么来的，下一个人只能猜。
+
+## 补光对**桌面采样点**的照度贡献上限（照度代理式口径，`_mat_sample_irradiance`）。
+##
+## 这是 Task 8 的**新增断言**用到的阈值，设计稿 §十二 待核 #4 只写了"照度代理式实测后定"，
+## 没写数 —— 所以这里是**实测定的档**：
+##   * 补光 = `room.gd.FILL_LIGHT_POS`（`22×0.36, 0.5, 18×0.28`）、能量 0.45、射程 30、指数 0；
+##   * 桌面采样点 = 桌垫四角 + 中心（与上面"桌面均匀"那条**同一组点**、**同一把尺子**）；
+##   * **本档实测 fill_max = 0.0494**（最亮那一点是近右侧那个桌角 —— 补光在近侧偏右）。
+## 取 **0.08**（≈ 实测的 1.6 倍，留一点余量给"补光颜色 / 色温微调"这类不改变落点的改动）。
+##
+## **它防的是什么**：补光一旦被调强 / 调高，桌面会被**第二盏灯**一起打 ——
+## 而桌面那亮度是用户签过字的（批次 13 ⑧「桌面各位置亮度一致」）。
+## 对照：把 `FILL_ENERGY` 从 0.45 提到 1.0 ⇒ 实测 0.110 > 0.08 **立刻红**（见 task-8-report 的
+## 变红验证表）。**别拿它当"补光总能量上限"读**：它量的是**落在桌面上**的那一份，
+## 补光挪远 / 压低都能在"总能量更大"的同时把这一份压小（这正是 `FILL_LIGHT_POS.y = 0.5` 干的事）。
+const FILL_ON_TABLE_MAX := 0.08
+
+## 家具的"被照亮的 albedo"相对**桌面最暗那个采样点**的比值上限。
+##
+## 判据的由来（Task 8 Step 0）：家具必须是屋里**不再是画面里最亮的东西**。
+## **同一把照度代理式**（设计 §五）：`albedo 亮度 × 照度(家具形心)` 对
+## `木桌 albedo 亮度 × 照度(桌面最暗那个角)` —— 拿桌面的**最暗**处去比，是**故意从严**。
+##   * 换材质**之前**（Kenney 自带的纯平奶白 `0.896, 0.602, 0.393`，albedo 亮度 **0.649**）：
+##     实测比值 **1.49** ⇒ 家具确实比被照亮的桌面更亮（这就是出图上那些"发亮的积木"）；
+##   * 换成暗木调（`room.gd.FURN_ALBEDO`，albedo 亮度 **0.281**；木桌 albedo 亮度 0.558）之后：
+##     实测 **0.644**（最亮那一件是左近那把椅子，0.372 —— 它离灯最近）。
+## 取 **0.85**（比实测松 1.3 倍，比"换回奶白"那一档紧 1.8 倍 —— 两头都留了余量，
+## 而它**真会红**：把 `FURN_ALBEDO` 改回 `Color(0.896, 0.602, 0.393)`，这条立刻红）。
+## **别再把它收紧回 0.70**：一度取过 0.70（当时家具更暗、实测 0.482），但更暗那档在出图上
+## 家具与地板糊成一片 —— 放宽到这里是为了给"看得清是件家具"留位置（见 `FURN_ALBEDO` 那段）。
+const FURN_LIT_RATIO_MAX := 0.85
+
 func _initialize() -> void:
 	create_timer(0.1).timeout.connect(_run)
 
@@ -76,9 +112,80 @@ func _mat_sample_irradiance(light: OmniLight3D, p: Vector3, ambient: float) -> f
 	var cos_i: float = clampf((light.global_position.y - p.y) / d, 0.0, 1.0)  # N·L（N = 桌面法线 +Y）
 	return light.light_energy * shape * decay * cos_i + ambient
 
+## 一棵子树里**所有几何实例的材质 albedo 亮度中最亮的那个**（一件材质都找不到给 -1）。
+##
+## 为什么从材质上读、不读 `GameRoom.FURN_ALBEDO`：读常量等于把实现重述一遍 ——
+## 材质改成什么颜色都照样过，那正是本文件反复警告的"永真断言"。
+## **`material_override` 优先**（`room.gd._paint()` 就是往那儿刷的）；没有就退回面 0 的实际材质。
+func _subtree_albedo_lum(root: Node) -> float:
+	var mx := -1.0
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var g := n as MeshInstance3D
+		if g == null:
+			continue
+		var m := g.material_override as StandardMaterial3D
+		if m == null and g.mesh != null and g.mesh.get_surface_count() > 0:
+			m = g.get_active_material(0) as StandardMaterial3D
+		if m == null:
+			continue
+		mx = maxf(mx, m.albedo_color.get_luminance())
+	return mx
+
+## 一棵子树里所有几何实例的世界 AABB 的并集（一件都量不到给**空 AABB** —— `size == (0,0,0)`）。
+## 口径与"家具整体落在房间里 / 家具与椅子都站在地板上"那几条**同一条**（逐个
+## `GeometryInstance3D` 的 AABB 过自己的世界变换再并起来），不另立一套。
+##
+## 【终审 F4】这三处（家具的"整体落在房间里"、"站在地板上"、地毯）此前各写一份内联循环，
+## 口径一改就会**只改一处**（助手改了、内联那两处静默留在旧口径上）⇒ 现在全部走这里。
+## **"量不到几何"按 `size == Vector3.ZERO` 判**（旧内联版那个 `got_mesh` 旗标的等价写法：
+## 一件几何都没量到时返回的正是空盒）—— 房间里的物件都是 `PlaneMesh` / `.glb`，没有退化 AABB。
+func _subtree_world_aabb(root: Node) -> AABB:
+	var out := AABB()
+	var got := false
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var g := n as MeshInstance3D
+		if g == null or g.mesh == null:
+			continue
+		var a: AABB = g.global_transform * g.mesh.get_aabb()
+		out = a if not got else out.merge(a)
+		got = true
+	return out
+
+## **单个**几何节点（连同它自己）的世界 AABB —— `_subtree_world_aabb` 只扫**子孙**，
+## 量不到"传进来那一个节点自己"。桌子的三块（`TableBase` / 桌垫 `table_mesh` / 木纹外框
+## `wood_mesh`）都是**叶子** `MeshInstance3D` ⇒ 用 `_subtree_world_aabb` 量它们会拿到空盒
+##（与"量不到"分不开），于是桌子那一条会**恒真**。传 `null` 给空盒（调用方按空盒判）。
+func _self_world_aabb(n: Node) -> AABB:
+	var g := n as MeshInstance3D
+	if g == null or g.mesh == null:
+		return AABB()
+	return g.global_transform * g.mesh.get_aabb()
+
 ## 【批次 12 A1 删除】原先这里有个 `_shade_screen_bbox(t3, shade)`：把灯罩当成"底口半径 × 罩高"
 ## 的盒子投影到屏幕，用来判"台灯还看得见吗"。灯罩已随 A1 整体删除（`Lamp` 节点不存在了），
 ## 这个助手也跟着删掉 —— 留着只会在下一个读它的人那里暗示"还有灯罩可量"。
+
+## 木桌**远边**（`z = -WOOD_HALF_D` 那条边、两角取屏幕上**更高**的那条）的屏幕 y。
+##
+## 【终审 F4】"默认档房间带"与"拉远端把远墙拉进画"两处量的是**同一条线**（此前各写一遍）——
+## 抽成一处，改口径时不会只改一处。
+func _wood_far_edge_y(t3) -> float:
+	var y := INF
+	for sx in [-t3.WOOD_HALF_W, t3.WOOD_HALF_W]:
+		y = minf(y, (t3.camera.unproject_position(
+			Vector3(sx, 0.0, -t3.WOOD_HALF_D)) as Vector2).y)
+	return y
+
+## 远墙**墙脚**三点（`y = FLOOR_Y`、`z = -ROOM_D/2`、x = −半宽 / 0 / +半宽）投影到屏幕。
+##
+## 【终审 F4】这三点的投影此前写了**三遍**（入画计数 / 拉远端的墙脚线 / 默认档的墙脚线）——
+## 抽成一处。返回 `Array[Vector2]`，调用方各取所需（计数或取 `.y` 的最高那条）。
+func _far_wall_base_screen(t3) -> Array:
+	var out: Array = []
+	var fz: float = -GameRoom.ROOM_D * 0.5
+	for sx in [-GameRoom.ROOM_W * 0.5, 0.0, GameRoom.ROOM_W * 0.5]:
+		out.append(t3.camera.unproject_position(Vector3(sx, GameRoom.FLOOR_Y, fz)))
+	return out
 
 ## 一格在**屏幕**上的包围盒宽度（批次 10 T2 的"字更大"判据）。
 ##
@@ -166,6 +273,433 @@ func _run() -> void:
 	_check(absf(tilt - t3.CAM_TILT_DEG) < 8.0,
 		"俯角接近配置值 %.0f°（实得 %.1f°）" % [t3.CAM_TILT_DEG, tilt])
 
+	# ---- 3D 房间（一期）：总开关 + 房间一律不投影 ----
+	# 契约：ROOM_ENABLED 为 true 时房间里必须有墙/地/天花板/家具；为 false 时
+	# 房间里一个节点都不许留（退回到"只有桌子"的样子）—— 这是本期唯一的保命开关。
+	# 写明 `: Node` 而不是 `:=`：`t3` 是 `load(...).new()`（Variant），动态调用的返回值推不出类型，
+	# `:=` 会直接 Parse Error（本文件里取 t3 的东西一律不靠推断，见 `var lamp_l = t3.get(...)`）。
+	var room: Node = t3.get_node_or_null("Room")
+	_check((room != null) == GameRoom.ROOM_ENABLED,
+		"ROOM_ENABLED=%s 时房间节点%s存在" % [GameRoom.ROOM_ENABLED, "" if room != null else "不"])
+	if room != null:
+		# 房间物件**一律不投影**：吊灯是唯一投影源，多一个投影物件 = 多一张阴影图。
+		var shadow_casters: Array = []
+		for n in room.find_children("*", "GeometryInstance3D", true, false):
+			if (n as GeometryInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				shadow_casters.append(n)
+		_check(shadow_casters.is_empty(),
+			"房间物件一律不投影（违规 %d 个）" % shadow_casters.size())
+		# 外壳必须齐：四面墙 + 一地板 + 一天花板。
+		_check(room.get_node_or_null("Ceiling") != null, "房间有天花板（吊灯要挂得住）")
+		_check(room.get_node_or_null("Floor") != null, "房间有地板")
+		var walls: Node = room.get_node_or_null("Walls")
+		_check(walls != null and walls.get_child_count() == 4, "房间有四面墙")
+
+		# ---- 一期 Task 4 起：家具摆位（**v0.8.0 三期按"铺满整间屋"重写**）----
+		#
+		# 【三期改版：删掉的两条 + 换成的是什么】用户 2026-10-06：「整个屋子的建模还是太粗糙了…
+		# 把能塞的都塞进去」。摆位从"远墙左半侧三件"变成"三面墙 + 两侧带铺满的 17 件"，于是
+		# 当年那两条**挡的就是新设计本身**，必须换掉：
+		#
+		#   ① 删「家具落在**左半侧**（x < 0，光域内）」。
+		#      **它当年守的是**："家具别掉出吊灯的光域、退化成一块暗剪影"。屋子铺满之后
+		#      左右两侧**都必须**有东西（用户原话），这条直接判设计违规。
+		#      ⇒ **换成**「**每件家具都落在吊灯的射程之内**」（`距离(灯, 家具形心) ≤ 射程`）：
+		#      同一条意图、同一个对象，只是把"左半侧"这个**当年的充分条件**换成了真正要守的
+		#      **充要条件**。它拦得住同一类错：把家具搬到射程外的角落（或把 `LAMP_RANGE` 收小
+		#      到够不着）—— 那时家具就是一块暗剪影，这条先红。
+		#
+		#   ② 删「家具都在**木桌远边之外**（z ≤ −3.6）」。
+		#      **它当年守的是**："家具别叠到桌子上"，附带一句"z 是从 `ROOM_D` 推导的，
+		#      `ROOM_D` 一收小家具会跟着往近端跑"。
+		#      ⇒ **换成**「**家具与桌子（底座 + 桌面 + 木纹外框的合并 AABB）不相交**」，并**新增**
+		#      一条「**家具与四把椅子不相交**」。新口径**更严也更对**：老那条只量**站位点**的 z、
+		#      而"叠没叠上"是**体**的事（一件 5.34 长的边柜站在 z = −3.9 上照样能把桌子压住）；
+		#      而且它只认桌子、不认椅子 —— 铺满之后家具最先撞上的其实是**四把椅子**。
+		#      它拦得住同一类错，还多拦一类：桌子 / 椅子跟着 `WOOD_FRAME` / `TABLE_D` 长大、
+		#      或家具跟着 `ROOM_D` 往近端跑，都会在这里现形。
+		#
+		# **保留**：两两不相交（17 件之后它比从前更值钱）、整体落在房间里、站在地板上、
+		# `FURNITURE_ANCHORS` 与摆出来的逐条对得上、一律不投影（在上一节）。
+		# **计数下限（v0.8.0 三期减负后：17 → 10 件，下限跟着 12 → 9）**：
+		# 它**拦的是"摆位表被清空 / 被误删一大片"**，不是"删到 N 件" —— 用户 2026-10-06 第二条
+		# 明确要求**去掉一批**（"桌子旁太挤"），下限若还钉在 12 就把那条设计变更判成违规。
+		# 取"实际件数 − 1"（今天 10 件 ⇒ 9）：**再多删一件就红**，逼下一个人回来重议一次，
+		# 而不是悄悄把屋子删空。**别把它读成"至少要摆 9 件"那种许愿值。**
+		var furn: Node = room.get_node_or_null("Furniture")
+		_check(furn != null and furn.get_child_count() >= 9,
+			"房间里至少摆了 9 件家具（下限 = 实际件数 − 1；拦「摆位表被清空」，不是拦「删到 N 件」）")
+		if furn == null:
+			_check(false, "Furniture 节点缺了，家具那几条断言整段跳过")
+		else:
+			# 家具整体落在房间里 与 光域 两条共用的两个量：房间半宽 / 半深、吊灯的射程。
+			var hw: float = GameRoom.ROOM_W * 0.5
+			var hd: float = GameRoom.ROOM_D * 0.5
+			# 计划 Interfaces 承诺过的 `FURNITURE_ANCHORS`：今天没有下游消费，但它是"摆在哪"的唯一
+			# 记录（摆位表在 `room.gd` 里是常量，读它就等于把坐标再抄一遍）。钉它与摆出来的家具同源。
+			_check(GameRoom.FURNITURE_ANCHORS.size() == furn.get_child_count(),
+				"FURNITURE_ANCHORS 与摆出来的家具逐条对得上（%d / %d 件）"
+					% [GameRoom.FURNITURE_ANCHORS.size(), furn.get_child_count()])
+			# **每件家具的世界 AABB 必须整个落在房间里** —— 这条才拦得住"整体缩放定错档"：
+			# 定小了（1:1 的米制模型）与定大了（50×）在"位置对不对"上**完全看不出来**，
+			# 只有量尺寸才现形。尺寸取自**节点自己的 mesh**（逐个 GeometryInstance3D 的 AABB
+			# 过自己的世界变换再并起来）—— **不读 `GameRoom.FURNITURE_SCALE`**：读常量等于把
+			# 实现重述一遍，缩放改成什么值都照样过，正是本文件反复警告的那类永真断言。
+			var boxes := {}
+			for n in furn.get_children():
+				# 走公共助手（终审 F4；"量到没量到"按空盒判，见 `_subtree_world_aabb` 的注释）
+				var wb := _subtree_world_aabb(n)
+				var got_mesh := wb.size != Vector3.ZERO
+				boxes[n.name] = wb
+				# 前提：真量到了几何。空盒（一个几何实例都没有）会让下面那条**恒真**。
+				_check(got_mesh, "%s 有可量的几何实例（否则它的 AABB 是空盒、下面那条恒真）" % n.name)
+				if not got_mesh:
+					continue
+				# **竖直下界是地板**（一期 Task 5 Step 0：地板从"桌面那一层"降到 `FLOOR_Y`）。
+				# 这里原写 −0.02 —— 那是地板在桌面那一层的年代；不跟着改的话，家具悬在地板上方
+				# 或陷进地板都照样绿。
+				_check(wb.position.x >= -hw and wb.end.x <= hw
+						and wb.position.z >= -hd and wb.end.z <= hd
+						and wb.position.y >= GameRoom.FLOOR_Y - 0.05 and wb.end.y <= GameRoom.ROOM_CEIL_Y,
+					"%s 整体落在房间里（世界 AABB %s..%s，尺寸 %s；房间 |x| ≤ %.1f / |z| ≤ %.1f / y ∈ [%.2f, %.1f]）"
+						% [n.name, wb.position, wb.end, wb.size, hw, hd, GameRoom.FLOOR_Y, GameRoom.ROOM_CEIL_Y])
+				# **每件家具都落在吊灯的射程之内**（= 删掉的那条"左半侧（光域内）"的替身，
+				# 理由见上面那一段）。量的是**射程**（`omni_range`）而不是"x < 0"：
+				# 射程之外 `(1 − (d/range)^4)^2` 归零 ⇒ 那件家具**一点灯都吃不到**，
+				# 在暗屋子里就是一块纯黑剪影 —— 正是当年那条要防的东西。
+				var lamp_l2 = t3.get("lamp_light")
+				if lamp_l2 != null:
+					var d_lamp: float = (lamp_l2 as OmniLight3D).global_position.distance_to(wb.get_center())
+					_check(d_lamp <= (lamp_l2 as OmniLight3D).omni_range,
+						"%s 落在吊灯射程内（形心离灯 %.2f ≤ 射程 %.1f —— 射程外一点灯都吃不到、是块黑剪影）"
+							% [n.name, d_lamp, (lamp_l2 as OmniLight3D).omni_range])
+			# **17 件两两不相交**（AABB 口径 —— 比几何口径严）。家具一铺满，最先撞上的就是彼此；
+			# 摆位表动一个数就可能让两件叠在一起，而"在房间里 / 站在地板上"两条都拦不住它。
+			var fnames: Array = boxes.keys()
+			for i_f in fnames.size():
+				for j_f in range(i_f + 1, fnames.size()):
+					var a_f: AABB = boxes[fnames[i_f]]
+					var b_f: AABB = boxes[fnames[j_f]]
+					_check(not a_f.intersects(b_f),
+						"%s 与 %s 不相交（%s..%s / %s..%s）"
+							% [fnames[i_f], fnames[j_f], a_f.position, a_f.end, b_f.position, b_f.end])
+			# **家具不许压在桌子 / 椅子上**（= 删掉的那条"都在木桌远边之外"的替身 + 一条新增的
+			# 椅子版，理由见上面那段）。**对象全部量出来、不写死尺寸**：
+			#   * 桌子 = `TableBase`（裙板）+ 桌垫（`table_mesh`）+ 木纹外框（`wood_mesh`）三块的
+			#     合并世界 AABB —— 这才是"那张桌子"占的地方（老那条只量"木桌远边那一刀"的 z）；
+			#   * 椅子 = 四把各自的世界 AABB（`_subtree_world_aabb` 与上面"站在地板上"同一条口径）。
+			# ⚠ **`_subtree_world_aabb` 量不到"传进来那个节点自己"**（它扫的是子孙）——
+			# 这三块都是 `MeshInstance3D` 叶子，所以要走 `_self_world_aabb`（带上自己那一块）。
+			var table_box := _self_world_aabb(t3.table_mesh)
+			table_box = table_box.merge(_self_world_aabb(t3.wood_mesh))
+			table_box = table_box.merge(_self_world_aabb(t3.get_node_or_null("TableBase")))
+			var solid: Array = [["桌子", table_box]]
+			var seats_f: Node = room.get_node_or_null("Seats")
+			if seats_f != null:
+				for ch in seats_f.get_children():
+					solid.append([ch.name, _subtree_world_aabb(ch)])
+			var on_top := 0
+			var on_top_log := ""
+			for nm in fnames:
+				for sl in solid:
+					if (boxes[nm] as AABB).intersects(sl[1] as AABB):
+						on_top += 1
+						on_top_log += "%s×%s " % [nm, sl[0]]
+			_check(on_top == 0,
+				"家具不压在桌子 / 椅子上（压上的 %d 处：%s —— 三期「铺满三面墙 + 两侧带」之后"
+					% [on_top, on_top_log]
+					+ "**又减负删过一批**，这条比当年那条「远边之外」更严：它量的是**体**，不是站位点）")
+
+		# ---- 一期 Task 5 Step 0：地板落到真实桌高（2026-10-05 用户拍板）----
+		# 地板原先在**桌面那一层**（y = −0.02）⇒ 桌子读作"平铺在地板上的一块板"，按人体比例
+		# 摆出来的椅子 / 家具"站不对"。降到 `FLOOR_Y`（= 3.70 / 5 = 0.74 m，真实桌高）之后整套
+		# 比例才立得住。三条一起钉：① 地板就在 `FLOOR_Y`；② 四面墙跟着一起长（墙脚不许悬空）；
+		# ③ 家具与椅子**站在地板上**（这一条才是"地板改了、站立点没跟着改"的守卫）。
+		var floor_node: Node3D = room.get_node_or_null("Floor")
+		_check(GameRoom.FLOOR_Y < 0.0 and floor_node != null \
+				and absf(floor_node.position.y - GameRoom.FLOOR_Y) < 0.001,
+			"地板落在 FLOOR_Y=%.2f（实得 %.3f —— 桌面仍在 y=0，地板在它下面 0.74 m）"
+				% [GameRoom.FLOOR_Y, floor_node.position.y if floor_node != null else 999.0])
+		var walls_node: Node = room.get_node_or_null("Walls")
+		var wall_ok := walls_node != null and walls_node.get_child_count() == 4
+		var wall_log := ""
+		if walls_node != null:
+			var want_h: float = GameRoom.ROOM_CEIL_Y - GameRoom.FLOOR_Y
+			for ch in walls_node.get_children():
+				var wm := ch as MeshInstance3D
+				var wpm := wm.mesh as PlaneMesh if wm != null else null
+				if wpm == null:
+					wall_ok = false
+					continue
+				# 墙是绕 X 转 90° 立起来的 PlaneMesh ⇒ 它的 `size.y` 就是**世界高度**，
+				# 墙心 `position.y ± 半高` 即墙顶 / 墙脚。
+				var foot: float = wm.position.y - wpm.size.y * 0.5
+				var head: float = wm.position.y + wpm.size.y * 0.5
+				wall_log += "%s:[%.2f,%.2f] " % [ch.name, foot, head]
+				if absf(foot - GameRoom.FLOOR_Y) > 0.05 or absf(head - GameRoom.ROOM_CEIL_Y) > 0.05 \
+						or absf(wpm.size.y - want_h) > 0.05:
+					wall_ok = false
+		_check(wall_ok,
+			"四面墙跟着地板一起长（墙脚落在地板上、墙顶够到天花板，高 %.1f；实得 %s）"
+				% [GameRoom.ROOM_CEIL_Y - GameRoom.FLOOR_Y, wall_log])
+		# 桌子底座（`table_3d` 侧的新几何）：地板一降，只有"桌垫 + 一圈木纹"的桌子就是悬在屋里
+		# 的一块板 ⇒ 补一块从地板顶到木纹外框**底面**的裙板。三条：位置（不许与木纹共面、
+		# 也不许悬空）、尺寸（= 木纹外框那两维）、不投影（房间的纪律）。
+		var tbase: MeshInstance3D = t3.get_node_or_null("TableBase")
+		_check(tbase != null and tbase.mesh is BoxMesh, "桌子有底座（TableBase 是 BoxMesh）")
+		if tbase != null and tbase.mesh is BoxMesh:
+			var tbm := tbase.mesh as BoxMesh
+			var bb_bottom: float = tbase.position.y - tbm.size.y * 0.5
+			var bb_top: float = tbase.position.y + tbm.size.y * 0.5
+			_check(absf(bb_bottom - GameRoom.FLOOR_Y) < 0.001 and absf(bb_top + 0.012) < 0.001,
+				"底座从地板顶到木纹外框底面（y ∈ [%.3f, %.3f]；地板 %.2f / 木纹底面 -0.012）"
+					% [bb_bottom, bb_top, GameRoom.FLOOR_Y])
+			_check(absf(tbm.size.x - (t3.TABLE_SIZE.x + t3.WOOD_FRAME * 2.0)) < 0.001 \
+					and absf(tbm.size.z - (t3.TABLE_SIZE.y + t3.WOOD_FRAME * 2.0)) < 0.001,
+				"底座尺寸 = 木纹外框那两维（实得 %.2f × %.2f，期望 %.2f × %.2f）"
+					% [tbm.size.x, tbm.size.z, t3.TABLE_SIZE.x + t3.WOOD_FRAME * 2.0,
+						t3.TABLE_SIZE.y + t3.WOOD_FRAME * 2.0])
+			_check(tbase.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+				"底座不投影（全场唯一投影源仍是那盏吊灯）")
+
+		# ---- 一期 Task 5 Step 0：家具与椅子**站在地板上** ----
+		# 判据 = 各件**世界 AABB 的底面**贴合 `FLOOR_Y`（容差 0.05）。这条挡的是"地板降了、
+		# 站立点没跟着改"（家具 / 椅子悬在半空或陷进地板）—— 那是"看位置对不对"永远看不出来的错。
+		# 椅子也一并量：Task 5 的四把椅子必须自己站到新地板上（座位框摆在 `FLOOR_Y`）。
+		# 变红验证：把某一件的 y 抬 1.0 ⇒ 这一条必须红（见 task-5-report）。
+		var seat_root: Node = room.get_node_or_null("Seats")
+		var stand: Array = []
+		if furn != null:
+			stand.append_array(furn.get_children())
+		if seat_root != null:
+			stand.append_array(seat_root.get_children())
+		var lifted := 0
+		var sunk := 0
+		var unmeasured := 0
+		var stand_log := ""
+		var stand_boxes := {}
+		for n in stand:
+			# 走公共助手（终审 F4；"量到没量到"按空盒判，见 `_subtree_world_aabb` 的注释）
+			var wb := _subtree_world_aabb(n as Node)
+			var got_mesh := wb.size != Vector3.ZERO
+			if not got_mesh:
+				unmeasured += 1
+				continue
+			stand_boxes[n.name] = wb
+			var off: float = wb.position.y - GameRoom.FLOOR_Y
+			stand_log += "%s:%.3f " % [n.name, off]
+			if off > 0.05:
+				lifted += 1
+			elif off < -0.05:
+				sunk += 1
+		_check(stand.size() > 0 and unmeasured == 0,
+			"（前提）家具与椅子都量得到几何（%d 件、量不到 %d 件）" % [stand.size(), unmeasured])
+		_check(lifted == 0 and sunk == 0,
+			"家具与椅子都站在地板上（底面 == FLOOR_Y=%.2f 容差 0.05；悬空 %d / 陷入 %d；逐件偏差 %s）"
+				% [GameRoom.FLOOR_Y, lifted, sunk, stand_log])
+
+		# ---- 一期 Task 5 Fix round 1：spec §六 的比例（**能自动逮住"缩放定错档"的那条**）----
+		# §六 那张用户拍过板的比例表有两个可执行判据，两个都从**实测 AABB**（= 节点的世界 AABB，
+		# 也就是 `FURNITURE_SCALE` 已经乘进去之后的尺寸）算 —— **不写死任何米数**，缩放改档它跟着变：
+		#   ① **书桌顶面与桌面齐平**（桌面在 y = 0）。实得 `FLOOR_Y + 3.84 = +0.14`，容差 ±0.35。
+		#   ② **椅背顶高出桌面**，正余量。实得 `+1.00`，下界 +0.2。
+		# **变红验证**（Fix round 1 做过）：把 `FURNITURE_SCALE` 临时改回 5.0 ⇒ 两条同时红
+		#（书桌顶面 −1.78、椅背顶 −0.66），其余断言不受影响 —— 这正是 ×5 那档的病：
+		# 家具只有真实家具的一半大，§六 要的"椅背挂名牌"摆不出来。
+		var desk_top := INF
+		if stand_boxes.has("desk"):
+			desk_top = (stand_boxes["desk"] as AABB).end.y
+		_check(absf(desk_top) <= 0.35,
+			"书桌顶面与桌面齐平（顶面 y=%.2f，|y| ≤ 0.35；桌面在 y=0 —— spec §六）" % desk_top)
+		# 椅背顶 = 座位框里那部分几何的 AABB 顶。
+		# （v0.8.0 改版：原先这里要**剔掉 `Nameplate`** —— 椅背名牌挂在椅背顶上、会把它再抬 0.2。
+		#  那块牌子已整段删除（用户 2026-10-06：「去掉椅子上的铭牌」），这道剔除也就跟着没了。）
+		var back_top := -INF
+		if seat_root != null:
+			var s0: Node3D = seat_root.get_child(0)
+			for ch in s0.get_children():
+				for m in (ch as Node).find_children("*", "GeometryInstance3D", true, false):
+					var g2 := m as MeshInstance3D
+					if g2 == null or g2.mesh == null:
+						continue
+					back_top = maxf(back_top, (g2.global_transform * g2.mesh.get_aabb()).end.y)
+		_check(back_top >= 0.2,
+			"椅背顶高出桌面（顶面 y=%.2f ≥ 0.2；桌面在 y=0 —— spec §六「椅背挂名牌」那条）" % back_top)
+
+		# ---- 一期 Task 5：四把椅子 + 椅背名牌 + 座位锚点 ↔ peer 映射 ----
+		# **这一节是二期的接口**（spec §十：每把椅子定死「位置 + 朝向」、并挂一个名牌挂点，
+		# 二期"把人放上去"只改这一处）。这里量两件：
+		#   ① 四把椅子在，且座位序**收得下、原样保留**（"椅子顺序 == `game._seat_peers()`"那条
+		#      在 `hud_test` —— 本文件没有 game 实例、没有 `g`，喂进去的就只能是测试自己编的）；
+		#   ② 名牌按**各家的棋子色**上色（喂 `color` 0..3，就要看到 `PLAYER_COLORS[0..3]`）。
+		_check(seat_root != null and seat_root.get_child_count() == 4,
+			"围桌四把椅子（实得 %d）" % (0 if seat_root == null else seat_root.get_child_count()))
+		if seat_root != null and seat_root.get_child_count() == 4:
+			room.set_seats([
+				{"peer": 10, "color": 0, "name": "甲"},
+				{"peer": 11, "color": 1, "name": "乙"},
+				{"peer": 12, "color": 2, "name": "丙"},
+				{"peer": 13, "color": 3, "name": "丁"},
+			])
+			var mapped: Array = room.seat_peers()
+			_check(mapped.size() == 4, "四把椅子都映射到了 peer（实得 %d）" % mapped.size())
+			_check(mapped == [10, 11, 12, 13],
+				"`seat_peers()` 原样保留喂进来的顺序（实得 %s —— 顺序就是 peer 的映射，不许在这里重排）"
+					% str(mapped))
+			# **v0.8.0 改版：椅背名牌整段删除**（用户 2026-10-06：「去掉椅子上的铭牌」）。
+			# 本节原先在这里查四件事 —— `NAMEPLATE_ANCHORS` 四份、牌色 = 各家棋子色、
+			# 四块牌各有一份材质、牌挂在椅背顶上。**那四件事现在都不存在了**：
+			#   * 认人的职责整体搬到 `chars.gd` 的**头顶名牌**（`Chars/Tags/Tag{i}`），
+			#     牌色 / 昵称 / billboard / 行动者金边由 `chars_test` ⑰ 逐条钉；
+			#   * "色随 `p.color` 走、不随座位序号走"那一条由 `hud_test` 改指头顶名牌后继续守着；
+			#   * `NAMEPLATE_ANCHORS` 那个"二期接口"**从未被消费**（二期取座位坐标一直走 `seat_anchor`）。
+			# ⇒ 这里只留座位锚点那一段（二期真正的入口）。
+			# 座位锚点（**二期唯一入口**）：位置 + 朝向。四条边各一把，四把**都面朝桌心**。
+			# 朝向 = 座位框自己的 +z（模型朝 +z 长、背在 −z，实测顶点）⇒ 它应当指向桌心。
+			var anchor_ok := true
+			var anchor_log := ""
+			var pos := []
+			for i in 4:
+				var an: Transform3D = room.seat_anchor(i)
+				pos.append(an.origin)
+				anchor_log += "%d:(%.2f,%.2f,%.2f) " % [i, an.origin.x, an.origin.y, an.origin.z]
+				if absf(an.origin.y - GameRoom.FLOOR_Y) > 0.001:
+					anchor_ok = false
+				# 朝向 = 座位框自己的 +z（模型朝 +z 长、背在 −z，实测顶点）⇒ 它应当指向桌心
+				var to_center := Vector3(-an.origin.x, 0.0, -an.origin.z).normalized()
+				if (an.basis * Vector3(0.0, 0.0, 1.0)).normalized().dot(to_center) < 0.95:
+					anchor_ok = false
+			_check(anchor_ok,
+				"四个座位锚点都立在地板上、且**四把椅子都面朝桌心**（%s）" % anchor_log)
+			_check((pos[0] as Vector3).z > 0.0 and (pos[2] as Vector3).z < 0.0 \
+					and (pos[1] as Vector3).x > 0.0 and (pos[3] as Vector3).x < 0.0,
+				"一辺一把：slot0 近（+z，镜头这一侧＝「我」）/ slot1 右（+x）/ slot2 远（−z）/ slot3 左（−x）")
+			_check(absf((pos[0] as Vector3).x) < 0.001 and absf((pos[2] as Vector3).x) < 0.001 \
+					and absf((pos[1] as Vector3).z) < 0.001 and absf((pos[3] as Vector3).z) < 0.001,
+				"四把椅子都摆在各自那条边的中线上（不在角上）")
+			_check(absf((pos[0] as Vector3).z + (pos[2] as Vector3).z) < 0.001 \
+					and absf((pos[1] as Vector3).x + (pos[3] as Vector3).x) < 0.001,
+				"近/远、左/右两两对称（桌子摆正 ⇒ 椅子也摆正）")
+			# **椅子不许埋进桌子**：木桌（桌垫 + 一圈木纹）那两维之内不许有椅子的脚印。
+			# 摆位全由 `_table_size` 推导，Task 7 一改桌子进深，这条就是"椅子压到桌上"的守卫。
+			var wood_hw: float = t3.WOOD_FRAME + t3.TABLE_SIZE.x * 0.5
+			var wood_hd: float = t3.WOOD_FRAME + t3.TABLE_SIZE.y * 0.5
+			var inside := 0
+			for i in 4:
+				var bn: Node3D = seat_root.get_child(i)
+				var cb: AABB = stand_boxes.get(bn.name, AABB())
+				if cb.position.x < wood_hw and cb.end.x > -wood_hw \
+						and cb.position.z < wood_hd and cb.end.z > -wood_hd:
+					inside += 1
+			_check(inside == 0, "四把椅子都在木桌之外（埋进桌子里的是 %d 把；木桌半宽 %.2f / 半深 %.2f）"
+				% [inside, wood_hw, wood_hd])
+
+			# ---- 一期 Task 8 Step 0：桌下那块地毯 ----
+			# 四条一起钉（brief Step 0 第 3 条要求"铺在桌子底下、盖住桌子足迹、**不压到椅子的座位区**"）：
+			#   ① 它**不挂在 `Room/Furniture` 下** —— 那是"靠墙家具"那张表，三条断言按它逐件量
+			#      （左半侧 / 木桌远边之外 / 两两不相交），居中的地毯三条全违。谁把它挪回去，这几条先红；
+			#   ② 躺在 `FLOOR_Y` 上、且是**一块薄片**（不是一堵墙）；
+			#   ③ **盖住木桌那两维**（`WOOD_HALF_W/D`）—— 少了它，地毯缩到桌子底下就"看不见"了
+			#      （而"把桌子锚在地上"正是要它露出来那一圈）；
+			#   ④ **一寸都不许压到椅子** —— 用**量的**椅子 AABB（`stand_boxes`，同上一段那四块），
+			#      不读 `SEAT_INSET`：读常量等于把摆位实现重述一遍（摆位一改就静默失效）。
+			# **变红验证**：把 `room.RUG_MARGIN` 从 0.10 提到 0.30 ⇒ ④ 立刻红（地毯伸进椅子脚印）。
+			var rug: Node3D = room.get_node_or_null("Rug") as Node3D
+			var rb: AABB = _subtree_world_aabb(rug) if rug != null else AABB()
+			_check(rug != null and rug.get_parent() == room,
+				"地毯挂在 `Room/Rug` 下（不在 `Furniture` 里 —— 那张表是「靠墙家具」，居中的地毯会违三条断言）")
+			_check(rug != null and absf(rb.position.y - GameRoom.FLOOR_Y) < 0.01 and rb.size.y < 0.5,
+				"地毯铺在 FLOOR_Y=%.2f 上、且是一块薄片（底面 y=%.3f / 厚 %.3f）"
+					% [GameRoom.FLOOR_Y, rb.position.y, rb.size.y])
+			_check(rb.position.x <= -t3.WOOD_HALF_W and rb.end.x >= t3.WOOD_HALF_W \
+					and rb.position.z <= -t3.WOOD_HALF_D and rb.end.z >= t3.WOOD_HALF_D,
+				"地毯盖住木桌那两维（地毯 x ∈ [%.2f, %.2f] / z ∈ [%.2f, %.2f] ⊇ 木桌半宽 %.2f / 半深 %.2f）"
+					% [rb.position.x, rb.end.x, rb.position.z, rb.end.z,
+						t3.WOOD_HALF_W, t3.WOOD_HALF_D])
+			var rug_hit := 0
+			var rug_log := ""
+			if seat_root != null:
+				for i_r in 4:
+					var bn_r: Node3D = seat_root.get_child(i_r)
+					var cb_r: AABB = stand_boxes.get(bn_r.name, AABB())
+					if cb_r.size != Vector3.ZERO and rb.intersects(cb_r):
+						rug_hit += 1
+						rug_log += "%s " % bn_r.name
+			_check(rug_hit == 0,
+				"地毯不压到任何一把椅子（压到 %d 把：%s —— 地毯大一圈就「坐到地毯上」了）" % [rug_hit, rug_log])
+
+			# ---- 三期：吊灯的**可见几何**（`Room/Pendant`）----
+			# 三条一起钉。它对应的是简报里那三条要求（"一盏看得见的吊灯 / 挂在光的位置附近 /
+			# **别改光本身**"），而**光**那一边由上面「唯一主光源 + 桌面照度均匀」那一整段守着
+			#（`LAMP_*` 一个数都不许动 ⇒ 这一段只量**新加的几何**，两者互不重叠）。
+			#
+			#   ① **吊杆顶到天花板**（`ROOM_CEIL_Y`）—— 少了它，灯就是"浮在桌上方的半截"。
+			#   ② **灯罩在桌上方的光位附近**：平面落点 = `LAMP_LIGHT_POS` 的 (x, z)（容差 0.05）。
+			#      这条挡的是"把灯挪到桌子正中 / 挪到墙角"——那种改法一眼看过去"也挺好看"，
+			#      而它已经不是"挂在光的位置上"了。
+			#   ③ **灯罩的屏幕脚印不压在桌垫窗口上**（协调者给的判据："默认档下它不许压到棋盘"）。
+			#      量法：把灯罩世界 AABB 的八个角过 `world_to_canvas_px` 投影成画布矩形，
+			#      与 `TEX_WINDOW_PX`（= 桌垫在画布上的那一块）比相交。**同一把尺子**：
+			#      下面"光源不在桌垫窗口内"那条量的是**光点**，这条量的是**罩子的体**。
+			#      **变红验证**：把 `room.gd.PENDANT_SHADE_BOTTOM` 从 2.6 降到 1.6 ⇒ 罩子沉下来、
+			#      立刻压到左边那一列格子 ⇒ 这条先红（出图 `shots/room_c_bad_*` 那种）。
+			var pend: Node = room.get_node_or_null("Pendant")
+			_check(pend != null, "房间挂着吊灯（`Room/Pendant` —— 光有可见载体了）")
+			if pend != null:
+				var pend_box := _subtree_world_aabb(pend)
+				_check(absf(pend_box.end.y - GameRoom.ROOM_CEIL_Y) < 0.05,
+					"吊灯一路够到天花板（整盏顶面 y=%.2f == ROOM_CEIL_Y=%.2f —— 杆不够长就是浮着的一截）"
+						% [pend_box.end.y, GameRoom.ROOM_CEIL_Y])
+				var sh: Node = pend.get_node_or_null("Shade")
+				var sb := _self_world_aabb(sh)
+				_check(sb.size != Vector3.ZERO, "吊灯有灯罩（`Pendant/Shade` 量得到几何）")
+				if sb.size != Vector3.ZERO:
+					var sc: Vector3 = sb.get_center()
+					_check(absf(sc.x - t3.LAMP_LIGHT_POS.x) < 0.05 and absf(sc.z - t3.LAMP_LIGHT_POS.z) < 0.05,
+						"灯罩挂在吊灯光位附近（罩心 (%.2f, %.2f) vs LAMP_LIGHT_POS (%.2f, %.2f)）"
+							% [sc.x, sc.z, t3.LAMP_LIGHT_POS.x, t3.LAMP_LIGHT_POS.z])
+					# ③-a **平面落点**（协调者给的判据原话）：罩心的平面落点要在桌垫窗口之外。
+					#     **与"光源不在桌垫窗口内"那条同一把尺子**（`world_to_canvas_px`
+					#     + `TEX_WINDOW_PX`）—— 灯罩挂的就是光那一点，所以这两条本来就该同结论。
+					var cpx: Vector2 = t3.world_to_canvas_px(sc)
+					_check(not t3.TEX_WINDOW_PX.has_point(cpx),
+						"灯罩的平面落点在桌垫窗口之外（罩心画布 %s —— 与那条「光源不在桌垫窗口内」同一把尺子）" % cpx)
+					# ③-b **屏幕上不遮住桌垫** —— ③-a 只是**平面落点**这一点，而"压没压到棋盘"
+					#     说的是**遮挡**，两者在"灯吊在桌面上方"时并不等价（罩子在 2.6~4.0 高处，
+					#     它挡住的是**更远**那一块桌面，不是它正下方那一块）。
+					#     ⇒ 真正要钉的是**相机投影下**的遮挡，量法：
+					#       ① 罩子上下两圈口沿各取 16 点，投影到屏幕，取**凸包**（罩子是圆台、
+					#          它的轮廓就是这两圈的凸包 ⇒ 这是**精确**轮廓，不是包络）；
+					#       ② 桌垫四角走 `table_mesh.global_transform * uv_to_world` 投影成四边形；
+					#       ③ `Geometry2D.intersect_polygons`——**空 = 不遮住**。
+					#     **为什么不是"两个包围盒比相交"**：那是拿**矩形**替**圆台 / 斜四边形**，
+					#     虚大的那一圈会把"其实一格没盖"报成盖住（这一条第一次跑就是这么假红的，
+					#     实测两个包围盒交 103×85px，而轮廓多边形不相交）。
+					#     两个半径**从 mesh 上读**（`CylinderMesh.bottom_radius` / `top_radius`），
+					#     不抄 `room.gd` 的常量 —— 与全文件"不把实现重述一遍"同一条纪律。
+					var scm := (sh as MeshInstance3D).mesh as CylinderMesh
+					var rim: Array = []
+					if scm != null:
+						rim = [[scm.bottom_radius, sb.position.y], [scm.top_radius, sb.end.y]]
+					_check(rim.size() == 2,
+						"（前提）灯罩是圆台、量得到上下两个半径（否则下面那条恒真）")
+					var sh_pts := PackedVector2Array()
+					for ring in rim:
+						for i_k in 16:
+							var ang: float = TAU * float(i_k) / 16.0
+							var r_k: float = float(ring[0])
+							sh_pts.append(t3.camera.unproject_position(Vector3(
+								sc.x + cos(ang) * r_k, float(ring[1]), sc.z + sin(ang) * r_k)))
+					var mat_quad := PackedVector2Array()
+					for uv in [Vector2(0.0, 0.0), Vector2(1.0, 0.0), Vector2(1.0, 1.0), Vector2(0.0, 1.0)]:
+						mat_quad.append(t3.camera.unproject_position(
+							t3.table_mesh.global_transform * TableGeometry.uv_to_world(uv, t3.TABLE_SIZE)))
+					var hull := Geometry2D.convex_hull(sh_pts)
+					var inter := Geometry2D.intersect_polygons(hull, mat_quad)
+					_check(inter.is_empty(),
+						"吊灯罩在屏幕上不遮住桌垫（罩轮廓 %d 点 ⊗ 桌垫四边形 = %d 块交 —— 默认档）"
+							% [hull.size(), inter.size()])
+
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
 	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：
@@ -203,12 +737,23 @@ func _run() -> void:
 	if lamp_l == null:
 		_check(false, "光源缺了，下面那组断言整段跳过")
 	else:
-		# 全场唯一的 Light3D：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
+		# 全场唯一的光源：**别留下第二盏会投影的灯**（第二盏 = 多一张阴影图 + 氛围被拆开）
 		var lights: Array = []
 		for n in t3.find_children("*", "Light3D", true, false):
 			lights.append(n)
-		_check(lights.size() == 1 and lights[0] == lamp_l,
-			"全场只有台灯这一盏灯（实得 %d 盏）" % lights.size())
+		# 【一期 Task 8】从"只有一盏灯"改成"**只有一处投影源**" —— 房间需要补光（`Room/FillLight`，
+		# 见 `room.gd.FILL_LIGHT_POS`），但**投影必须仍然唯一**：第二张阴影图 = 性能与氛围
+		# 两头不讨好（那盏吊灯仍是手牌 / 牌堆 / 转盘 / 棋子 / 房子所有影子的唯一来源）。
+		# ⚠ **这不是放宽**：原来那条"只有一盏灯"守的有一半是这件事，另一半（**灯共几盏**）
+		# 由下面「补光恰好一盏」那组断言守着 —— 原注释在这里写"它被下面那条『补光不碰桌面』
+		# 接住了"，**那句是错的**（终审 F2 改正）：补光**缺席**时"不碰桌面"恰恰是最松的一条
+		#（`0.0 <= 0.08` 恒真），两条一起才拦得住。见下面那段。
+		var casters: Array = []
+		for n in lights:
+			if (n as Light3D).shadow_enabled:
+				casters.append(n)
+		_check(casters.size() == 1 and casters[0] == lamp_l,
+			"全场只有一处投影源（实得 %d 处；灯共 %d 盏）" % [casters.size(), lights.size()])
 		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 牌堆才投得出影子）")
 		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
 		var lp: Vector3 = lamp_l.global_position
@@ -271,6 +816,12 @@ func _run() -> void:
 		_check(i_max / i_min <= 1.4,
 			"桌面各位置亮度一致（最高 %.3f / 最低 %.3f = %.2f ≤ 1.4，含环境光 %.3f —— 用户 ⑧）"
 				% [i_max, i_min, i_max / i_min, amb_irr])
+		# 【一期 Task 8 注】本条的求和**只有吊灯 + 环境光两项**（`lamp_l` 的直射 + 与位置无关的
+		# 环境光那一份）——**没有把房间那盏补光算进来**。补光是本批新加的，本条是用户签过字的
+		# 契约、语义不动；**补光落在桌面上的那一小份由下面那条"补光对桌面的照度贡献 ≤
+		# `FILL_ON_TABLE_MAX`"单独封顶**（实测 0.0494，只有吊灯直射那份 0.79~1.12 的 6%）。
+		# 两条合起来才等于"桌面亮度不许被偷改"：**改补光时别只看这一条**
+		#（把 `FILL_ENERGY` 提到 1.0 ⇒ 本条仍绿 1.27、下面那条红 —— 实跑验证过）。
 		# ② **灯仍是主角、且够亮**（把 ① 里与位置无关的环境光那一份摘掉，单看直射）。
 		#    少了这条，"环境光抬到 0.75 + 灯只给一点点"也能把 ① 糊过去（而那不是"一盏灯照亮桌面"）。
 		#    本档实测 **0.85 ~ 1.12**：下界 0.5 挡"能量塌掉 / 射程被收小 / 光被挪远"，
@@ -279,6 +830,116 @@ func _run() -> void:
 			"灯的直射照度在采用档位附近（最低 %.3f ≥ 0.5、最高 %.3f ≤ 1.8 —— 能量 %.2f / 射程 %.1f / 指数 %.2f）"
 				% [i_light_min, i_light_max, lamp_l.light_energy, lamp_l.omni_range,
 					lamp_l.omni_attenuation])
+
+		# ---- 一期 Task 8 新增 ①：**补光存在、且不许改掉桌面** ----
+		# 房间那一盏补光（`Room/FillLight`，不投影）是为了给墙 / 家具方向感与明暗；它**不许**
+		# 顺手把批次 13 ⑧ 那条"桌面各位置亮度一致"改掉（那是用户签过字的）。用**同一把照度代理式**
+		# 量它落在桌面采样点上的那一点贡献（设计 §五「尺子只能用一把」—— 这里**不许**改成
+		# "屏幕取像素"，那会变成第二把尺子）。
+		# 阈值 `FILL_ON_TABLE_MAX` 的取值口径见它的声明处（先实测、再定档）。
+		#
+		# 【终审 F2 修：这三条**必须都要求补光真存在**】改前这里是 `fill_max := 0.0` 与
+		# `fill_non_omni := ""` 两条 —— 它们**只在"存在非吊灯的灯"时才被写**：一盏非吊灯都没有时
+		# 循环体一次都不跑 ⇒ `"" == ""` 与 `0.0 <= 0.08` **双双恒真**（把 `Room/FillLight` 删掉 /
+		# 改名 / 挪出 `FILL_RANGE`，十五套件全绿而无人在守这盏灯 —— 正是 Task 8 的整件事）。
+		# 消息那头也退化回 Task 9 Step 0 ③ 点名要修的 `实得「」` 空插值（"消息修好了"只修在
+		# "补光存在"那条路上）。⇒ 现在每条都带 `fill_lights.size() == 1`、消息一律印**真值**
+		#（灯共几盏 / 非吊灯几盏 / 每一盏的类名）。
+		var fill_lights: Array = []
+		var fill_kinds := ""
+		var fill_max := 0.0
+		for n in lights:
+			if n == lamp_l:
+				continue
+			fill_lights.append(n)
+			# 照度代理式是按 **omni** 写的（射程形状 + 距离衰减 + 桌面法线朝上的 N·L）——
+			# 补光换成平行光，这把尺子就量不了它，"不碰桌面"只剩肉眼（那正是要避免的）。
+			# 「实得」那一栏报的是**每一盏非吊灯的类名**（非 omni 的另外点名）—— 通过时印
+			# `OmniLight3D`、不通过时印 `DirectionalLight3D（非 omni）`，两头都读得懂。
+			var nl := n as OmniLight3D
+			if nl == null:
+				fill_kinds += "%s（非 omni） " % (n as Node).get_class()
+				continue
+			fill_kinds += "%s " % (n as Node).get_class()
+			for p in samples:
+				fill_max = maxf(fill_max, _mat_sample_irradiance(nl, p, 0.0))
+		# ①-a **补光恰好一盏**（存在性 —— 这条是终审 F2 补回来的；原 `lights.size() == 1` 的那一半
+		#     被降级成了读数，见上面 :621 那段改正的注释）。
+		#     变红验证（实跑过）：把 `room.gd._build_shell` 里那一句 `_build_fill_light()` 注掉
+		#     （补光整盏不存在）⇒ 本条与下面两条一起红（layout_test 3 FAILURES）。
+		#     **改名不算**：这条数的是"非吊灯的灯有几盏"，与节点名无关（改名不动运行时、也不该红）。
+		#     下面三条的"实得"都印**真值**：一盏非吊灯都没有时印 `（没有非吊灯的灯）`，
+		#     不再退回 Task 9 Step 0 ③ 那个 `实得「」` 空插值。
+		var fill_kinds_s: String = fill_kinds.strip_edges()
+		if fill_kinds_s == "":
+			fill_kinds_s = "（没有非吊灯的灯）"
+		_check(fill_lights.size() == 1,
+			"补光恰好一盏（灯共 %d 盏 ⇒ 非吊灯 %d 盏；实得「%s」—— 一盏都没有时下面两条恒真）"
+				% [lights.size(), fill_lights.size(), fill_kinds_s])
+		# ①-b **是 omni**（照度代理式只认 omni）。
+		_check(fill_lights.size() == 1 and fill_lights[0] is OmniLight3D,
+			"补光是 OmniLight3D（照度代理式只认 omni；实得 %d 盏非吊灯「%s」—— 换平行光就没人量得动它了）"
+				% [fill_lights.size(), fill_kinds_s])
+		# ①-c **不碰桌面**（`FILL_ON_TABLE_MAX` 封顶）。`fill_lights.size() == 1` 这一半不能省：
+		#     少了它，补光缺席时 `fill_max` 是 0.0 ⇒ 这条断言恒真。
+		_check(fill_lights.size() == 1 and fill_max <= FILL_ON_TABLE_MAX,
+			"补光对桌面的照度贡献 ≤ %.2f（实得 %.4f，量到 %d 盏非吊灯 —— 超了就是把批次 13 ⑧ 的"
+				% [FILL_ON_TABLE_MAX, fill_max, fill_lights.size()]
+				+ "「桌面均匀」偷偷改掉了）")
+
+		# ---- 一期 Task 8 新增 ②：**家具不再是画面里最亮的东西** ----
+		# 病（Task 7 出图实证）：Kenney 那批 `.glb` 是**零贴图的纯平奶白**，而屋子是暗木 + 灰墙、
+		# 桌面那圈木纹还**带贴图** ⇒ 家具成了画面里最亮、最没质感的东西，读作"没上材质的占位块"。
+		# 判据 = **"被照亮的 albedo"**：每件家具的 albedo 亮度 × 它自己那点照度，必须比
+		# **桌面最暗那个采样点**的同一笔更暗 —— 也就是"家具连桌面最暗的那一角都比不过"，
+		# 这正是"不再是画面里最亮的东西"的保守写法（拿桌面的**最暗**处去比，是故意从严）。
+		# albedo **从材质上读**（不读 `GameRoom.FURN_ALBEDO`：读常量等于把实现重述一遍，
+		# 材质改成什么色都照样过 —— 本文件反复警告的那类永真断言）。
+		var fur_lit := 0.0
+		var fur_lum := -1.0
+		var fur_n := 0
+		var fur_log := ""
+		var fur_roots: Array = []
+		if room != null:
+			var furn8: Node = room.get_node_or_null("Furniture")
+			if furn8 != null:
+				fur_roots.append_array(furn8.get_children())
+			var seats8: Node = room.get_node_or_null("Seats")
+			if seats8 != null:
+				for s in seats8.get_children():
+					for ch in (s as Node).get_children():
+						# （v0.8.0 改版：原先这里要跳过 `Nameplate` —— 它是棋子色、故意的亮。
+						#  椅背名牌已整段删除，椅子那一支现在只剩椅子自己。）
+							fur_roots.append(ch)
+		var wood_lum := 0.0
+		var wm8 := t3.wood_mesh.material_override as StandardMaterial3D
+		if wm8 != null:
+			wood_lum = wm8.albedo_color.get_luminance()
+		for n in fur_roots:
+			var lum := _subtree_albedo_lum(n)
+			if lum < 0.0:
+				continue
+			fur_n += 1
+			fur_lum = maxf(fur_lum, lum)
+			# 采样点 = 这一件**世界 AABB 的形心**（形心随家具怎么摆怎么变，不另立一套坐标）
+			var wb8 := _subtree_world_aabb(n)
+			if wb8.size == Vector3.ZERO:
+				continue
+			var lit8: float = lum * _mat_sample_irradiance(lamp_l, wb8.get_center(), amb_irr)
+			fur_log += "%s:%.3f " % [n.name, lit8]
+			fur_lit = maxf(fur_lit, lit8)
+		# 桌面那一笔 = **最暗的那个采样点**（同一把代理式、同一组采样点）
+		var tab_lit := INF
+		for p in samples:
+			tab_lit = minf(tab_lit, wood_lum * _mat_sample_irradiance(lamp_l, p, amb_irr))
+		_check(fur_n >= 7 and wood_lum > 0.0,
+			"（前提）家具与椅子都量得到材质与尺寸（%d 件；木桌 albedo 亮度 %.3f）" % [fur_n, wood_lum])
+		var lit_ratio: float = fur_lit / maxf(tab_lit, 0.0001)
+		_check(lit_ratio <= FURN_LIT_RATIO_MAX,
+			"家具不再是画面里最亮的东西：最亮的家具 albedo × 照度 %.4f ≤ %.2f × 桌面最暗那个角 %.4f"
+				% [fur_lit, FURN_LIT_RATIO_MAX, tab_lit]
+				+ "（实得比值 %.3f，家具 albedo 亮度 %.3f ≤ 木桌 %.3f；逐件 %s）"
+				% [lit_ratio, fur_lum, wood_lum, fur_log])
 		# 光**不许压在棋盘上**：它的平面落点要在**桌垫窗口之外**
 		#（窗口 = 棋盘 + 一圈留白；压在窗口里就成了"棋盘上方的灯"）。
 		# **批次 12 A1**：原先这里查的是"灯杆 / 灯罩 / 光源三个都不在窗口内"（实物已删），
@@ -450,14 +1111,24 @@ func _run() -> void:
 	var min_margin := INF
 	var min_margin_wt := -1.0
 	var margin_log := ""
-	# 四角一律从**桌垫**（TABLE_SIZE）现取，不写死 ±4：桌面不再是正方形（进深由窗口比例定）。
-	# 为什么是桌垫而不是外圈木纹：木纹是"桌子本身"，第一人称下桌子伸出画面是自然的；
-	# 要全程入画的是**看得见的棋面**（桌垫）。
-	var hw: float = t3.TABLE_SIZE.x * 0.5
-	var hd: float = t3.TABLE_SIZE.y * 0.5
+	# 【一期 Task 7】判据按 `view_t` 插值：3D 端（wt=0）= **木桌四角**、2D 端（wt=1）= **桌垫四角**。
+	# 方向容易搞反：**木桌比桌垫大** ⇒ 3D 端是**收紧**、不是放宽（设计 §四）。
+	# 为什么 3D 端要收紧回木桌：房间里要有"上缘那条带子"，**木桌远边必须进画** ——
+	# 只认桌垫的话木纹可以整条出画，上缘就永远只剩桌垫自己的边缘（批次 10 松掉的那条，
+	# 现在按用户 2026-10-05 的拍板收回来）。
+	# 四角一律从**两个现成的常量**取，不写死数字：桌面不是正方形（进深由窗口比例定）。
+	var hw_mat: float = t3.TABLE_SIZE.x * 0.5
+	var hd_mat: float = t3.TABLE_SIZE.y * 0.5
+	var hw_wood: float = t3.WOOD_HALF_W        # Step 0 刚加的（= TABLE_W/2 + WOOD_FRAME）
+	var hd_wood: float = t3.WOOD_HALF_D
+	# **推拉只扫默认档**（`dolly == 1.0`）：这条契约是"默认取景"的契约，推拉值漏进来
+	# 就不是同一条合同了（那条轴由下面那组推拉断言管）。
+	t3.snap_dolly(1.0)
 	for i in 21:
 		var wt := i * 0.05
 		t3.snap_view(wt)
+		var hw: float = lerpf(hw_wood, hw_mat, wt)
+		var hd: float = lerpf(hd_wood, hd_mat, wt)
 		var m := INF
 		for sx in [-hw, hw]:
 			for sz in [-hd, hd]:
@@ -470,25 +1141,49 @@ func _run() -> void:
 	_check(min_margin > 5.0,
 		"整条轨道 21 档都留有余量（最小 %.1f px @ view_t=%.2f，须 > 5px；每档余量 %s）"
 			% [min_margin, min_margin_wt, margin_log])
+
+	# 【一期 Task 7 新增】上缘必须留出房间带 —— 木桌远边不得贴到视口顶端，否则"房间"根本没露头。
+	# ⚠ **这里不再钉死 32%**（2026-10-05 改）：32% 与"格子 ≥32px"数学上互斥（spec §四 追加一节），
+	# 解结的办法是加推拉轴、把二选一交给玩家现场掌控 ⇒ 默认档的**硬门是格子 ≥32px**（下面那条），
+	# 房间带取"32px 还能撑住的**最外**取景"、实测值打印出来（**不许静默取值**）。
+	t3.snap_view(0.0)
+	var top_edge_y := _wood_far_edge_y(t3)      # 【终审 F4】与 ④ 那条共用同一处投影
+	print("  [实测] 默认档房间带 = 视口高 %.1f%%（木桌远边 y=%.1f / 视口 %.0f）"
+		% [100.0 * top_edge_y / vr.size.y, top_edge_y, vr.size.y])
+	_check(top_edge_y >= vr.size.y * 0.03,
+		"3D 端上缘留出房间带（木桌远边 y=%.1f ≥ 视口高 3%% = %.1f）"
+			% [top_edge_y, vr.size.y * 0.03])
 	# 【R42】只钉「四个角都在画面内」是能被骗过去的：把 VIEW_DIST_2D 调大让桌面整体变小，
 	# 四角照样落在画面内，而 2D 端就成了一张小图 —— 验收要求是「始终在画面内**且大小接近**」。
 	# 所以再钉一条：两端桌面投影**包围盒的面积比**必须落在 [0.6, 1.6]（用 unproject_position
 	# 把四角投影出来算包围盒）。少了这条，"把桌面缩小"这种退化会全绿通过。
 	var boxes: Array = []
-	for wt in [0.0, 1.0]:
-		t3.snap_view(wt)
+	# 【一期 Task 7 改】"两端大小接近"这一对**换了对象**：原来比的是「3D 默认档 ↔ 2D 端」，
+	# 那时两端都是"读棋盘"的档。用户拍板"默认看屋子"之后，3D 默认档**有意**缩到 32px 硬底线
+	# （面积只有 2D 端的 ~2.6 分之一）—— 这时再拿它对 2D 端比"大小接近"就**前提不成立**了。
+	# **不是放宽、是换对比对象**：仍然比"两张**读棋盘**的视图"，即 **2D 端 ↔ 3D 推近端**
+	# （`DOLLY_MIN`，实测 44.5px 对 53.2px —— 正是这条断言要的"大小接近"）；
+	# 默认档与 2D 端的面积比仍按实测打印出来（读数、不当门槛）。**区间 [0.6,1.6] 一个字没动。**
+	for spec in [[0.0, t3.DOLLY_MIN], [0.0, 1.0], [1.0, 1.0]]:
+		t3.snap_dolly(spec[1])
+		t3.snap_view(spec[0])
 		var mn := Vector2(INF, INF)
 		var mx := Vector2(-INF, -INF)
-		for sx in [-hw, hw]:
-			for sz in [-hd, hd]:
+		for sx in [-hw_mat, hw_mat]:
+			for sz in [-hd_mat, hd_mat]:
 				var sp: Vector2 = t3.camera.unproject_position(Vector3(sx, 0.0, sz))
 				mn = mn.min(sp)
 				mx = mx.max(sp)
 		boxes.append(Rect2(mn, mx - mn))
-	var area_ratio: float = (boxes[1] as Rect2).get_area() / (boxes[0] as Rect2).get_area()
-	_check(area_ratio > 0.6 and area_ratio < 1.6,
-		"两端桌面投影大小接近（面积比 %.2f，须在 [0.6,1.6]；3D 端 %s / 2D 端 %s）"
-			% [area_ratio, boxes[0], boxes[1]])
+	var area_near: float = (boxes[2] as Rect2).get_area() / (boxes[0] as Rect2).get_area()
+	var area_def: float = (boxes[2] as Rect2).get_area() / (boxes[1] as Rect2).get_area()
+	print("  [实测] 桌面投影面积比：2D端/3D推近端 = %.2f（门槛 [0.6,1.6]）；2D端/3D默认档 = %.2f"
+		% [area_near, area_def]
+		+ "（**读数**：默认档是「看屋子」那一档，有意比 2D 端小，不当门槛）")
+	_check(area_near > 0.6 and area_near < 1.6,
+		"两端**读棋盘**的视图投影大小接近（2D端 / 3D推近端 面积比 %.2f，须在 [0.6,1.6]；3D 推近端 %s / 2D 端 %s）"
+			% [area_near, boxes[0], boxes[2]])
+	t3.snap_dolly(1.0)
 	# ---- 批次 10 T2：钉住"字更大"的可执行判据 = 一格的**屏幕宽度** ----
 	# 前面两条（余量 / 面积比）只保证「整块桌垫在画面里、两端大小接近」——**只把相机往后退**
 	# 就照样全绿，而桌子在屏幕里整体缩小、"字更大"这个本批目标恰恰落空。
@@ -496,18 +1191,26 @@ func _run() -> void:
 	#  都不会变 —— 那种挪法说明不了任何事。这条拦的是**只动相机**那一档。）
 	# 补一条**绝对尺寸**：
 	# 取**最不利**的一格（远端正中：50° 俯角下它被透视压得最扁），量它四角投影的包围盒宽。
+	t3.snap_dolly(1.0)
 	t3.snap_view(0.0)
 	await process_frame
 	t3.board.fit_overview(true)      # 量格宽要 BoardView 的取景变换（_view_from_world）是当前态
 	await process_frame
 	var probe_idx: int = t3.board.grid_to_index(GameData.BOARD_COLS / 2, 0)   # 远端正中那格
 	var probe_w3: float = _tile_screen_w(t3, probe_idx)
+	t3.snap_dolly(t3.DOLLY_MIN)
+	await process_frame
+	var probe_w_near: float = _tile_screen_w(t3, probe_idx)
+	t3.snap_dolly(t3.DOLLY_MAX)
+	await process_frame
+	var probe_w_far: float = _tile_screen_w(t3, probe_idx)
+	t3.snap_dolly(1.0)
 	t3.snap_view(1.0)
 	await process_frame
 	var probe_w2: float = _tile_screen_w(t3, probe_idx)
 	t3.snap_view(0.0)
-	print("    格子屏幕宽（批次 12 A2b）：3D 端 %.1fpx / 2D 端 %.1fpx（批次 12 A2 是 41.2 / 50.0）"
-		% [probe_w3, probe_w2])
+	print("    格子屏幕宽（一期 Task 7）：3D 默认档 %.1fpx / 推近端(%.1f) %.1fpx / 拉远端(%.1f) %.1fpx / 2D 端 %.1fpx"
+		% [probe_w3, t3.DOLLY_MIN, probe_w_near, t3.DOLLY_MAX, probe_w_far, probe_w2])
 	# **下限按实测基线修正，不是许愿值**（计划 Step 1 的注 + Ruling R3）：计划初稿写的 70px
 	# 是"许愿值"（作者估的基线 ~63px 并未实测）。量出来的起点是 **34.5px（3D）/ 37.9px（2D）**
 	# ⚠ **这一对是【几何改完、相机还没动】时的值**（T2 的 BASE = T1 之后），**不是批次 9 的基线**；
@@ -560,11 +1263,142 @@ func _run() -> void:
 	#      不溢出"**（22px 下 4 字名 ≈ 88px < 盒宽 92）；`TILE` 仍是 112.0 未动；
 	#   ② 探针只守**远端正中**那一格（`probe_idx = grid_to_index(BOARD_COLS/2, 0)`）—— **远端
 	#      【角】格没被覆盖**（角格通常投影更宽 ⇒ 这条偏保守，宁可漏也不误红）。
-	_check(probe_w3 >= 47.0,
-		"3D 端格子屏幕宽 ≥ 47.0px（实得 %.1f；批次 12 A2 是 41.2，本批换镜头 CAM_FOV 55→39 拿到）"
-			% probe_w3)
+	#
+	# ---- **一期 Task 7：3D 端那条下限换了判据（47.0 → 32.0）** ----
+	# 批次 12 A2b 那条 47.0 钉的是"3D 端格子变大"（用户当时要"棋盘比例放大"）。
+	# 用户 2026-10-05 拍板"**默认看屋子**"之后，3D 默认档**有意**后退到**格子 32px 的硬底线**
+	#（spec §九 的回退触发器）：默认那档归"看屋子"，"读棋盘"改由 **Ctrl+滚轮推近端**（44.5px）
+	# 与 **2D 端**（53.2px）承担 ⇒ 47.0 这条**前提反转**，不是放宽。
+	# 三条一起钉住那个取舍（缺一条就能靠"悄悄改一个端点"骗过去）：
+	#   ① 默认档 ≥ 32px（硬底线，**再往外推一点点就红** —— 这条与"房间带尽量大"共同定档）；
+	#   ② 推近端 ≥ 默认档（"读棋盘"的退路不许丢，spec §九 后半句）；
+	#   ③ 2D 端下限 52.6 **一个字没动**（那条契约本期不许碰）。
+	_check(probe_w3 >= 32.0,
+		"**默认档**格子屏幕宽 ≥ 32.0px（spec §九 硬底线；实得 %.1f —— 批次 12 A2b 是 47.3，" \
+			% probe_w3 + "本档为「看屋子」有意后退到 32px 上沿）")
+	_check(probe_w_near >= probe_w3,
+		"**推近端**格子屏幕宽 ≥ 默认档（实得 %.1f ≥ %.1f —— 「读棋盘」那条退路不许丢）"
+			% [probe_w_near, probe_w3])
+	_check(probe_w_far > 0.0,
+		"拉远端格子屏幕宽 > 0（实得 %.1f —— 那一端是「看屋子」用的，**不设下限**，只钉" \
+			% probe_w_far + "它还看得见棋盘）")
 	_check(probe_w2 >= 52.6,
-		"2D 端格子屏幕宽 ≥ 52.6px（实得 %.1f；批次 12 A2 是 50.0）" % probe_w2)
+		"2D 端格子屏幕宽 ≥ 52.6px（实得 %.1f；那条契约本期一字未动）" % probe_w2)
+
+	# ---- 一期 Task 7：推拉轴的两条专属断言（③ 不改 2D 端 / ④ 拉远端把远墙拉进画）----
+	print("== 一期 Task 7：Ctrl+滚轮推拉（第二条轴）==")
+	# ③ **推拉不改 2D 端**：`view_t = 1` 时推拉的权重为 0 ⇒ 推拉前后 2D 端的取景与格宽
+	# **逐字节相同**。这条是本期唯一不许碰的契约（2D 端"桌垫四角入画"），
+	# 而推拉是一个**新加的自由度** —— 它最容易的翻车方式就是"顺手把 2D 端也乘了一下"。
+	# 量法：三个推拉档各摆一次 2D 端，比 `camera.global_transform`（精确 `==`，不是近似）
+	# 与格子屏幕宽。基准取推拉默认档。
+	var ref_xf := Transform3D()
+	var ref_tw := 0.0
+	var dolly_2d_ok := true
+	var dolly_2d_log := ""
+	for dv in [1.0, t3.DOLLY_MIN, t3.DOLLY_MAX]:
+		t3.snap_dolly(dv)
+		t3.snap_view(1.0)
+		await process_frame
+		var xf: Transform3D = t3.camera.global_transform
+		var tw := _tile_screen_w(t3, probe_idx)
+		dolly_2d_log += "dolly%.1f:pos%s/w%.3f " % [dv, xf.origin, tw]
+		if dv == 1.0:
+			ref_xf = xf
+			ref_tw = tw
+		elif xf != ref_xf or tw != ref_tw:
+			dolly_2d_ok = false
+	_check(dolly_2d_ok,
+		"推拉不改 2D 端（`view_t = 1` 时推拉权重为 0：相机变换与格宽逐字节相同；%s）" % dolly_2d_log)
+
+	# ④ **拉远端把远墙拉进画** —— 否则"看屋子"那一端形同虚设。
+	# 远墙在 `z = -ROOM_D * 0.5`；判据三条一起（缺一条就能骗过去）：
+	#   * 墙脚线（`y = FLOOR_Y` 那一圈）**落在视口内** —— 墙脚在画内 ⇒ 墙脚之上那一片就是远墙；
+	#   * 它比**木桌远边**更靠上（屏幕 y 更小）—— 否则那条线可能是被桌子挡住的/看错成地板缝；
+	#   * ⚠ **并且必须比默认档看得更多**（墙脚线在屏幕上更靠下 = 露出更多墙）。
+	#     这第三条是**实测补上的**：地板降到 `FLOOR_Y` 之后，**默认档的上缘本来就能打到远墙**
+	#     （实测墙脚 y=143 就在画内，spec §六 记着这件事）⇒ 只钉"入画"那两条**恒真**，
+	#     等于一条什么都没断言的断言。加一条"远墙带必须比默认档大出一档"（实测 **+54px**），
+	#     "看屋子"那一端才真的被钉住（**不许静默留一条恒真的断言**）。
+	#   * ⚠ **还有一件投影量不出来的事**（Task 7 实施时踩的坑）：远端**必须在屋里** ——
+	#     相机一过近墙 / 天花板就窜到屋外，而它们是**双面**的 ⇒ **整张摆拍全黑**，
+	#     上面这三条**全是绿的**。`DOLLY_MAX` 的上限因此由 `room.gd` 的
+	#     `ROOM_NEAR_EXTRA` / `ROOM_CEIL_Y` 订（见那两段与 `table_3d.DOLLY_MAX` 段）；
+	#     这条投影断言拦不住它 —— 【终审 F3 起不再"只能靠出图核"】：下面新增了一条
+	#     "相机全程在屋里"的断言（扫 `DOLLY_MIN/中点/DOLLY_MAX` × `view_t 0/0.5/1`，留 0.5 余量），
+	#     它是这件事的可执行合同（出图核仍照旧做：`shots/t7b_dollyfar_table_plain.png`）。
+	t3.snap_dolly(t3.DOLLY_MAX)
+	t3.snap_view(0.0)
+	await process_frame
+	# 墙脚三点与木桌远边都走公共投影（终审 F4：这三点此前写了三遍、木桌远边写了两遍）
+	var wall_pts: Array = _far_wall_base_screen(t3)
+	var wall_in := 0
+	var wall_log := ""
+	for sp in wall_pts:
+		wall_log += "(%.0f,%.0f) " % [sp.x, sp.y]
+		if sp.x >= vr.position.x and sp.x <= vr.position.x + vr.size.x \
+				and sp.y >= vr.position.y and sp.y <= vr.position.y + vr.size.y:
+			wall_in += 1
+	var wood_edge_y := _wood_far_edge_y(t3)
+	var wall_y := INF
+	for sp in wall_pts:
+		wall_y = minf(wall_y, sp.y)
+	# 默认档的墙脚线（同样三点取最高那条）—— "拉远端比默认档多看多少"
+	t3.snap_dolly(1.0)
+	t3.snap_view(0.0)
+	await process_frame
+	var wall_y_def := INF
+	for sp in _far_wall_base_screen(t3):
+		wall_y_def = minf(wall_y_def, sp.y)
+	print("  [实测] 拉远端（dolly %.1f）：远墙墙脚 %s/ 木桌远边 y=%.0f（视口 %.0f 高）"
+		% [t3.DOLLY_MAX, wall_log, wood_edge_y, vr.size.y])
+	print("  [实测] 远墙带：默认档墙脚 y=%.0f → 拉远端 y=%.0f（露出多 %.0fpx = 视口高 %.1f%%）"
+		% [wall_y_def, wall_y, wall_y - wall_y_def, 100.0 * (wall_y - wall_y_def) / vr.size.y])
+	_check(wall_in == 3 and wall_y < wood_edge_y,
+		"拉远端把远墙拉进画（墙脚三点入画 %d/3、且都在木桌远边之上：墙脚 y=%.0f < 木桌远边 y=%.0f）"
+			% [wall_in, wall_y, wood_edge_y])
+	_check(wall_y - wall_y_def >= vr.size.y * 0.05,
+		"拉远端比默认档**多看一截屋子**（远墙带 %.0fpx ≥ 视口高 5%% = %.0fpx：默认档 y=%.0f → 拉远端 y=%.0f）"
+			% [wall_y - wall_y_def, vr.size.y * 0.05, wall_y_def, wall_y])
+
+	# ---- 【终审 F3 新增】相机**全程在屋里** ----
+	# 这是"全黑摆拍而断言全绿"的那条盲区（Task 7 真踩过：`dolly = 1.15` 时相机穿到近墙外，
+	# 而近墙与天花板都是**双面**的 ⇒ 整张出图全黑，见 `shots/t7_dollyfar_table_plain.png` 那张
+	# 77 KB 全黑图）。上面 ④ 那三条**只量投影**、量不出遮挡（原注释就写着"这条投影断言拦不住它，
+	# **靠出图核**"）—— 相机位置是 `dolly` 与 `view_t` 的**确定函数**
+	#（`table_3d._apply_camera`：`pos = (0, d3d·sin, d3d·cos)`）⇒ 可以直接扫成可执行的合同，
+	# 把"天花板 / 近墙还剩多少余量"从注释里的两个数变成断言。
+	# 房间盒取 `room.gd` 的**公开常量**（不写死）：`|x| ≤ ROOM_W/2`、`y ∈ [FLOOR_Y, ROOM_CEIL_Y]`、
+	# `z ∈ [−ROOM_D/2, +ROOM_D/2 + ROOM_NEAR_EXTRA]`。**留 0.5 的余量**：余量 > 0 只说明"还没出屋"，
+	# 相机**贴着**天花板 / 近墙时画面已经全黑（透视被挡在面外）⇒ 要它**在贴面之前**先红。
+	# 实测最小余量 **1.15**（天花板，`dolly = DOLLY_MAX`、`view_t = 0`）。
+	# 变红验证：把 `table_3d.DOLLY_MAX` 临时改成 1.5（相机 `y = 15.91`、离天花板只剩 0.09）⇒ 本条红。
+	# 三档 × 三段视角都扫：3D 端那一段（`view_t = 0`）是推拉的权重所在，中段与 2D 端一并钉住
+	#（`view_t` 越大相机越收回桌心，两端都不是最险的档，但多扫两行换"整条轨道"这句话）。
+	var cam_bad := 0
+	var cam_worst := INF
+	var cam_log := ""
+	for dv in [t3.DOLLY_MIN, (t3.DOLLY_MIN + t3.DOLLY_MAX) * 0.5, t3.DOLLY_MAX]:
+		for wt in [0.0, 0.5, 1.0]:
+			t3.snap_dolly(dv)
+			t3.snap_view(wt)
+			await process_frame
+			var cp: Vector3 = t3.camera.global_position
+			# 五个面各自到相机的余量（x 对称，取一次绝对值）
+			var m_cam: float = minf(minf(GameRoom.ROOM_W * 0.5 - absf(cp.x), cp.y - GameRoom.FLOOR_Y),
+				minf(minf(GameRoom.ROOM_CEIL_Y - cp.y,
+					GameRoom.ROOM_D * 0.5 + GameRoom.ROOM_NEAR_EXTRA - cp.z),
+					cp.z + GameRoom.ROOM_D * 0.5))
+			cam_worst = minf(cam_worst, m_cam)
+			cam_log += "d%.2f/w%.1f:%s(余%.2f) " % [dv, wt, cp, m_cam]
+			if m_cam < 0.5:
+				cam_bad += 1
+	_check(cam_bad == 0,
+		"相机全程在屋里、且离每个面都留有余量（越界 %d 档，最小余量须 ≥ 0.5；实得最小 %.2f；%s）"
+			% [cam_bad, cam_worst, cam_log])
+
+	t3.snap_dolly(1.0)
+	t3.snap_view(0.0)
 	# 滚轮改的是目标值，不是硬切
 	t3.snap_view(0.0)
 	t3.set_view(1.0)
@@ -629,6 +1463,53 @@ func _run() -> void:
 	_check(is_equal_approx(t3.view_target, 0.0) and t3.view_t >= -0.0001,
 		"连推 10 格到 3D 端 ⇒ 目标夹在 0.0 不过冲（实得目标 %.2f / 当前 %.3f）"
 			% [t3.view_target, t3.view_t])
+
+	# ---- 一期 Task 7：`Ctrl` + 滚轮 = 推拉（**同一条件，两种语义**）----
+	# 这条必须走**真输入链路**：`Ctrl` 那条判断若接反（或干脆漏了），功能静默变成"切视角"，
+	# 而**看代码很难发现**。三条一起钉：
+	#   ① 带 Ctrl 的一滚只改 `dolly_target`、`view_target` 一动不动（不抢滚轮原来的活）；
+	#   ② 不带 Ctrl 的一滚仍走视角推移、且**推拉目标一动不动**（两维互不串）；
+	#   ③ 两端夹在 [`DOLLY_MIN`, `DOLLY_MAX`]（同 `view_target` 那条 clamp 的道理）。
+	t3.snap_view(0.0)
+	t3.snap_dolly(1.0)
+	var ctrl_up := InputEventMouseButton.new()
+	ctrl_up.button_index = MOUSE_BUTTON_WHEEL_UP
+	ctrl_up.pressed = true
+	ctrl_up.ctrl_pressed = true
+	root.push_input(ctrl_up)
+	_check(is_equal_approx(t3.dolly_target, 1.0 + t3.DOLLY_STEP) and is_equal_approx(t3.view_target, 0.0),
+		"Ctrl+滚轮向前一格 ⇒ 只改推拉目标（实得 %.2f），视角目标仍 0（实得 %.2f）"
+			% [t3.dolly_target, t3.view_target])
+	await process_frame
+	_check(t3.dolly > 1.0 and t3.dolly <= 1.0 + t3.DOLLY_STEP + 0.0001,
+		"注入后推拉当前值朝目标走且不过冲（实得 %.3f，目标 %.2f）" % [t3.dolly, t3.dolly_target])
+	var ctrl_down := InputEventMouseButton.new()
+	ctrl_down.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	ctrl_down.pressed = true
+	ctrl_down.ctrl_pressed = true
+	root.push_input(ctrl_down)
+	_check(is_equal_approx(t3.dolly_target, 1.0),
+		"Ctrl+滚轮向后一格 ⇒ 推拉目标减回默认档（实得 %.2f）" % t3.dolly_target)
+	await process_frame
+	t3.snap_dolly(1.0)
+	for i in 20:
+		root.push_input(ctrl_up)
+		await process_frame
+	_check(is_equal_approx(t3.dolly_target, t3.DOLLY_MAX),
+		"连拉 20 格 ⇒ 推拉目标夹在 DOLLY_MAX（实得 %.2f / 上限 %.2f）"
+			% [t3.dolly_target, t3.DOLLY_MAX])
+	for i in 20:
+		root.push_input(ctrl_down)
+		await process_frame
+	_check(is_equal_approx(t3.dolly_target, t3.DOLLY_MIN),
+		"连推 20 格 ⇒ 推拉目标夹在 DOLLY_MIN（实得 %.2f / 下限 %.2f）"
+			% [t3.dolly_target, t3.DOLLY_MIN])
+	# 不带 Ctrl：回到视角推移，且推拉目标**一动不动**（留在刚夹到的下限）
+	root.push_input(wheel_up)
+	_check(is_equal_approx(t3.view_target, t3.VIEW_STEP) and is_equal_approx(t3.dolly_target, t3.DOLLY_MIN),
+		"不按 Ctrl 的一滚 ⇒ 仍走视角推移（实得 %.2f），推拉目标纹丝不动（实得 %.2f）"
+			% [t3.view_target, t3.dolly_target])
+	t3.snap_dolly(1.0)
 	t3.snap_view(0.0)
 
 	print("== 事件注入端到端：屏幕点 → 3D 映射 → SubViewport 内的 2D 控件 ==")
