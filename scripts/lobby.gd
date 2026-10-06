@@ -12,12 +12,38 @@ var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
 var _room_label: Label
 
-# 房主开局设置弹窗（见 doc/game-design/开局设置.md §三之一）
+# 房主开局设置弹窗（见 doc/game-design/开局设置.md）
 var _set_wrap: Control
-var _set_chips: HBoxContainer
-var _set_tech_chips: HBoxContainer
+var _set_scroll: ScrollContainer
+var _set_chips: HBoxContainer            # 操作限时挡位
+var _set_tech_chips: HBoxContainer       # 开局科技开关
+var _set_liq_chips: HBoxContainer        # 破产变卖保底
+var _set_rounds_chips: HBoxContainer     # 回合上限档位
+var _set_win_chips: HBoxContainer        # 胜利条件
+var _set_shop_chips: HBoxContainer       # 小卖部开关
+var _set_black_chips: HBoxContainer      # 黑市开关
+var _set_casino_chips: HBoxContainer     # 赌场开关
+var _set_ab_chips: HBoxContainer         # 畸变频率
+var _set_ab_dur_chips: HBoxContainer     # 畸变持续回合
+var _set_ab_cond_chips: HBoxContainer    # 畸变条件触发
+var _set_preset_chips: HBoxContainer     # 预设方案
+var _set_cash_edit: LineEdit             # 起始资金
+var _set_salary_edit: LineEdit           # 起点补贴
+var _set_wincash_edit: LineEdit          # 目标现金金额
 var _set_tier := GameSettings.TIER_CURRENT
 var _set_tech := false   # 开局科技开关（发车前配置；对局内不可改）
+var _set_liq := true
+var _set_rounds := 30
+var _set_win := "rounds"
+var _set_shop := true
+var _set_black := true
+var _set_casino := true
+var _set_ab_freq := "关"
+var _set_ab_dur := 2
+var _set_ab_cond := true
+
+# 预设方案（开局设置.md §九；原表里的「计时 ×0.6」等倍率口径已作废，按现行字段适配）
+const PRESETS: Array[String] = ["标准局", "快节奏", "大富翁", "大乱斗", "新手局"]
 
 var _at_mode := ""
 var _shot_path := ""
@@ -242,7 +268,7 @@ func _i_am_ready() -> bool:
 			return bool(p.ready)
 	return false
 
-## 房主「游戏设置」弹窗：只放「操作限时」一排 chips
+## 房主「游戏设置」弹窗：经济 / 节奏 / 胜利条件 / 各系统开关（开局设置.md 定稿项 + 开关先行项）
 func _build_settings_dialog() -> void:
 	_set_wrap = Control.new()
 	_set_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -259,27 +285,124 @@ func _build_settings_dialog() -> void:
 	_set_wrap.add_child(center)
 	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 12)
-	panel.custom_minimum_size = Vector2(420, 0)
+	panel.custom_minimum_size = Vector2(660, 0)
 	center.add_child(panel)
-	var m := UIKit.margins(20, 20, 16, 14)
+	var m := UIKit.margins(18, 18, 14, 12)
 	panel.add_child(m)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
+	v.add_theme_constant_override("separation", 8)
 	m.add_child(v)
 	v.add_child(UIKit.title_label("游戏设置", 20))
-	v.add_child(UIKit.label("操作限时：轮到你时超过该时间没操作，就由系统托管", 13, UIKit.TEXT_DIM))
+	v.add_child(UIKit.label("默认值 = 现状常量，不配置即原样；确认后随开局下发全体（客户端只读）", 12, UIKit.TEXT_DIM))
+	_set_cash_edit = UIKit.line_edit("20000")
+	_set_salary_edit = UIKit.line_edit("4500")
+	_set_wincash_edit = UIKit.line_edit("50000")
+
+	# 预设方案一键填（§九）
+	_set_preset_chips = UIKit.chip_row(PRESETS, {}, func(id: String) -> void:
+		_apply_preset(id)
+		_sync_panel())
+	v.add_child(_set_preset_chips)
+
+	_set_scroll = ScrollContainer.new()
+	_set_scroll.custom_minimum_size = Vector2(0, 430)
+	_set_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(_set_scroll)
+	var sv := VBoxContainer.new()
+	sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sv.add_theme_constant_override("separation", 7)
+	_set_scroll.add_child(sv)
+
+	# —— A · 经济 ——
+	sv.add_child(_sect_title("经济"))
+	sv.add_child(_num_row("起始资金（每人开局现金）", _set_cash_edit))
+	sv.add_child(_num_row("起点补贴（踏过 / 停在起点的工资）", _set_salary_edit))
+	_set_liq_chips = UIKit.chip_row(GameSettings.SW, GameSettings.SW_LABELS,
+		func(id: String) -> void:
+			_set_liq = id == "on"
+			UIKit.chip_select(_set_liq_chips, id))
+	sv.add_child(_sw_row("破产变卖保底：付不起时限时变卖地皮凑差价（投入 × 30%）", _set_liq_chips))
+
+	# —— B · 回合与节奏 ——
+	sv.add_child(_sect_title("回合与节奏"))
+	sv.add_child(UIKit.label("操作限时：轮到你时超过该时间没操作，就由系统托管", 13, UIKit.TEXT_DIM))
 	_set_chips = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
 		func(id: String) -> void:
 			_set_tier = id
 			UIKit.chip_select(_set_chips, id))
-	v.add_child(_set_chips)
+	sv.add_child(_set_chips)
+	sv.add_child(UIKit.label("回合上限：到轮未分胜负则按身家结算", 13, UIKit.TEXT_DIM))
+	_set_rounds_chips = UIKit.chip_row(GameSettings.ROUNDS_SW, GameSettings.ROUNDS_LABELS,
+		func(id: String) -> void:
+			_set_rounds = 0 if id == "none" else int(id)
+			UIKit.chip_select(_set_rounds_chips, id))
+	sv.add_child(_set_rounds_chips)
+
+	# —— C · 胜利条件 ——
+	sv.add_child(_sect_title("胜利条件"))
+	_set_win_chips = UIKit.chip_row(GameSettings.WIN_MODES, GameSettings.WIN_LABELS,
+		func(id: String) -> void:
+			_set_win = id
+			UIKit.chip_select(_set_win_chips, id))
+	sv.add_child(_set_win_chips)
+	sv.add_child(_num_row("目标现金（先到立即获胜，仅「目标现金」模式生效）", _set_wincash_edit))
+
+	# —— 道具与赌场开关 ——
+	sv.add_child(_sect_title("道具 / 商店 / 赌场"))
+	_set_shop_chips = UIKit.chip_row(GameSettings.SW, GameSettings.SW_LABELS,
+		func(id: String) -> void:
+			_set_shop = id == "on"
+			UIKit.chip_select(_set_shop_chips, id))
+	sv.add_child(_sw_row("小卖部（关 = 店面歇业，机会卡「进店」也不发）", _set_shop_chips))
+	_set_black_chips = UIKit.chip_row(GameSettings.SW, GameSettings.SW_LABELS,
+		func(id: String) -> void:
+			_set_black = id == "on"
+			UIKit.chip_select(_set_black_chips, id))
+	sv.add_child(_sw_row("黑市（关 = 机会卡「黑市开张」不发）", _set_black_chips))
+	_set_casino_chips = UIKit.chip_row(GameSettings.SW, GameSettings.SW_LABELS,
+		func(id: String) -> void:
+			_set_casino = id == "on"
+			UIKit.chip_select(_set_casino_chips, id))
+	sv.add_child(_sw_row("宿舍赌场（关 = 赌场格歇业）", _set_casino_chips))
+
+	# —— 特殊机制 ——
+	sv.add_child(_sect_title("特殊机制"))
 	# 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡
-	v.add_child(UIKit.label("开局科技：每人三选一（黄金/钻石池定稿前暂只开放白银池）", 13, UIKit.TEXT_DIM))
+	sv.add_child(UIKit.label("开局科技：每人三选一（黄金/钻石池定稿前暂只开放白银池）", 13, UIKit.TEXT_DIM))
 	_set_tech_chips = UIKit.chip_row(GameSettings.TECH_SW, GameSettings.TECH_SW_LABELS,
 		func(id: String) -> void:
 			_set_tech = id == "on"
 			UIKit.chip_select(_set_tech_chips, id))
-	v.add_child(_set_tech_chips)
+	sv.add_child(_set_tech_chips)
+	sv.add_child(UIKit.label("畸变：回合开始时可能触发的全场事件", 13, UIKit.TEXT_DIM))
+	var abr := HBoxContainer.new()
+	abr.add_theme_constant_override("separation", 10)
+	sv.add_child(abr)
+	abr.add_child(UIKit.label("频率", 13, UIKit.TEXT_DIM))
+	_set_ab_chips = UIKit.chip_row(GameSettings.AB_FREQS, GameSettings.AB_FREQ_LABELS,
+		func(id: String) -> void:
+			_set_ab_freq = id
+			UIKit.chip_select(_set_ab_chips, id))
+	abr.add_child(_set_ab_chips)
+	var abr2 := HBoxContainer.new()
+	abr2.add_theme_constant_override("separation", 10)
+	sv.add_child(abr2)
+	abr2.add_child(UIKit.label("持续", 13, UIKit.TEXT_DIM))
+	_set_ab_dur_chips = UIKit.chip_row(GameSettings.AB_DURS, GameSettings.AB_DUR_LABELS,
+		func(id: String) -> void:
+			_set_ab_dur = int(id)
+			UIKit.chip_select(_set_ab_dur_chips, id))
+	abr2.add_child(_set_ab_dur_chips)
+	var abr3 := HBoxContainer.new()
+	abr3.add_theme_constant_override("separation", 10)
+	sv.add_child(abr3)
+	abr3.add_child(UIKit.label("条件", 13, UIKit.TEXT_DIM))
+	_set_ab_cond_chips = UIKit.chip_row(GameSettings.AB_COND_SW, GameSettings.AB_COND_LABELS,
+		func(id: String) -> void:
+			_set_ab_cond = id == "on"
+			UIKit.chip_select(_set_ab_cond_chips, id))
+	abr3.add_child(_set_ab_cond_chips)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	v.add_child(row)
@@ -292,6 +415,95 @@ func _build_settings_dialog() -> void:
 	ok.pressed.connect(_on_settings_save)
 	row.add_child(ok)
 
+## 小节标题
+func _sect_title(text: String) -> Label:
+	return UIKit.label("── %s ──" % text, 14, UIKit.ACCENT)
+
+## 「说明 + 数字输入」一行（只收数字，越界在保存时钳制）
+func _num_row(text: String, edit: LineEdit) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var l := UIKit.label(text, 13, UIKit.TEXT_DIM)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(l)
+	row.add_child(edit)
+	return row
+
+## 「说明 + 开/关 chips」一行
+func _sw_row(text: String, chips: HBoxContainer) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var l := UIKit.label(text, 13, UIKit.TEXT_DIM)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.add_child(l)
+	row.add_child(chips)
+	return row
+
+## 预设方案：按 §九 取向适配到现行字段（原表「计时 ×0.6」倍率口径已作废）
+func _apply_preset(name: String) -> void:
+	match name:
+		"标准局":
+			_set_cash_edit.text = str(GameData.START_MONEY)
+			_set_salary_edit.text = str(GameData.SALARY)
+			_set_liq = true
+			_set_tier = GameSettings.TIER_CURRENT
+			_set_rounds = 30
+			_set_win = "rounds"
+			_set_wincash_edit.text = "50000"
+			_set_shop = true
+			_set_black = true
+			_set_casino = true
+			_set_tech = false
+			_set_ab_freq = "关"
+			_set_ab_dur = 2
+			_set_ab_cond = true
+		"快节奏":
+			_set_salary_edit.text = "6000"
+			_set_tier = "15"
+			_set_rounds = 30
+		"大富翁":
+			_set_cash_edit.text = "40000"
+			_set_rounds = 60
+		"大乱斗":
+			_set_tech = true
+			_set_casino = true
+			_set_black = true
+			_set_shop = true
+			_set_liq = true
+			_set_ab_freq = "高"
+			_set_ab_cond = true
+		"新手局":
+			_set_salary_edit.text = "8000"
+			_set_tier = "60"
+			_set_tech = false
+			_set_ab_freq = "关"
+
+## 打开弹窗 / 预设后：把全部控件刷成当前 _set_* 值
+func _sync_panel() -> void:
+	_set_cash_edit.text = str(_read_num(_set_cash_edit))
+	_set_salary_edit.text = str(_read_num(_set_salary_edit))
+	_set_wincash_edit.text = str(_read_num(_set_wincash_edit))
+	UIKit.chip_select(_set_liq_chips, "on" if _set_liq else "off")
+	UIKit.chip_select(_set_rounds_chips, "none" if _set_rounds == 0 else str(_set_rounds))
+	UIKit.chip_select(_set_win_chips, _set_win)
+	UIKit.chip_select(_set_shop_chips, "on" if _set_shop else "off")
+	UIKit.chip_select(_set_black_chips, "on" if _set_black else "off")
+	UIKit.chip_select(_set_casino_chips, "on" if _set_casino else "off")
+	UIKit.chip_select(_set_tech_chips, "on" if _set_tech else "off")
+	UIKit.chip_select(_set_chips, _set_tier)
+	UIKit.chip_select(_set_ab_chips, _set_ab_freq)
+	UIKit.chip_select(_set_ab_dur_chips, str(_set_ab_dur))
+	UIKit.chip_select(_set_ab_cond_chips, "on" if _set_ab_cond else "off")
+
+## LineEdit 只留数字（防空串 / 杂字符进 int 解析）
+func _read_num(edit: LineEdit) -> int:
+	var s := ""
+	for c in edit.text:
+		if c >= "0" and c <= "9":
+			s += c
+	return int(s) if s != "" else 0
+
 ## 「开始游戏！」：直接开局。设置改由旁边的「游戏设置」按钮负责
 func _on_start() -> void:
 	if not multiplayer.is_server():
@@ -302,16 +514,42 @@ func _on_start() -> void:
 func _on_open_settings() -> void:
 	if not multiplayer.is_server():
 		return
-	_set_tier = Net.game_settings.timeout_tier
-	_set_tech = Net.game_settings.tech_on
-	UIKit.chip_select(_set_chips, _set_tier)
-	UIKit.chip_select(_set_tech_chips, "on" if _set_tech else "off")
+	var gs := Net.game_settings
+	_set_tier = gs.timeout_tier
+	_set_tech = gs.tech_on
+	_set_liq = gs.liq_on
+	_set_rounds = gs.max_rounds
+	_set_win = gs.win_mode
+	_set_shop = gs.shop_on
+	_set_black = gs.black_on
+	_set_casino = gs.casino_on
+	_set_ab_freq = gs.ab_freq
+	_set_ab_dur = gs.ab_dur
+	_set_ab_cond = gs.ab_cond
+	_set_cash_edit.text = str(gs.start_cash)
+	_set_salary_edit.text = str(gs.start_salary)
+	_set_wincash_edit.text = str(gs.win_cash)
+	_sync_panel()
 	_set_wrap.visible = true
 
-## 弹窗「确定」：只保存并关闭，不再顺带开局
+## 弹窗「确定」：写回 + 钳制 + 关闭
 func _on_settings_save() -> void:
-	Net.game_settings.timeout_tier = _set_tier
-	Net.game_settings.tech_on = _set_tech
+	var gs := Net.game_settings
+	gs.timeout_tier = _set_tier
+	gs.tech_on = _set_tech
+	gs.liq_on = _set_liq
+	gs.max_rounds = _set_rounds
+	gs.win_mode = _set_win
+	gs.shop_on = _set_shop
+	gs.black_on = _set_black
+	gs.casino_on = _set_casino
+	gs.ab_freq = _set_ab_freq
+	gs.ab_dur = _set_ab_dur
+	gs.ab_cond = _set_ab_cond
+	gs.start_cash = _read_num(_set_cash_edit)
+	gs.start_salary = _read_num(_set_salary_edit)
+	gs.win_cash = _read_num(_set_wincash_edit)
+	gs.clamp_all()
 	_set_wrap.visible = false
 
 func _on_leave() -> void:

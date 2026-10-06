@@ -18,10 +18,12 @@ func _run() -> void:
 	print("== 操作限时挡位 ==")
 	_test_mapping()
 	_test_rules_text()     # 纯静态，无引擎依赖
+	_test_object()         # 设置对象：默认值 / copy / 钳制
 	_test_broadcast()
 	_test_in_game_tier()   # 无 await，直接调
 	await _test_window()   # 协程：不等它跑完 quit() 会先执行，断言全部落空（假绿）
 	await _test_save_cfg_keeps_sections()   # 同为协程：不 await 会假绿（见上）
+	await _test_economy_and_liq()           # 经济设置 + 变卖保底（协程）
 	print("SETTINGS TEST: %s" % ("PASS" if fails == 0 else "%d FAILURES" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -29,6 +31,158 @@ func _mk_player(peer: int, nm: String) -> Dictionary:
 	return {"peer": peer, "name": nm, "color": peer - 1, "bot": false, "money": 5000,
 		"pos": 0, "alive": true, "skip": 0, "sleep": 0, "stamina": 3, "items": [],
 		"item_used": false, "cheat_roll": -1}
+
+## 设置对象本体：默认值 = 现状常量（硬约定）；copy 全量；越界钳制
+func _test_object() -> void:
+	var s := GameSettings.new()
+	_check(s.start_cash == GameData.START_MONEY, "起始资金默认 = START_MONEY")
+	_check(s.start_salary == GameData.SALARY, "起点补贴默认 = SALARY")
+	_check(s.liq_on, "破产变卖保底默认开（唯一的「默认 ≠ 现状」例外）")
+	_check(s.max_rounds == 30 and s.win_mode == "rounds" and s.win_cash == 50000,
+		"回合上限 30 / 胜利条件到轮结算 / 目标现金 5 万 默认")
+	_check(s.shop_on and s.black_on and s.casino_on, "小卖部 / 黑市 / 赌场默认开")
+	var c := s.copy()
+	c.start_cash = 40000
+	c.win_mode = "cash"
+	c.shop_on = false
+	_check(s.start_cash == GameData.START_MONEY and s.win_mode == "rounds" and s.shop_on,
+		"copy() 是深拷贝语义：改副本不动本体")
+	c.clamp_all()
+	_check(c.start_cash == 40000 and c.win_mode == "cash" and not c.shop_on, "合法值原样通过钳制")
+	var b := GameSettings.new()
+	b.start_cash = -5
+	b.start_salary = 999999
+	b.max_rounds = 45
+	b.win_mode = "bogus"
+	b.win_cash = 99999999
+	b.clamp_all()
+	_check(b.start_cash == 0, "起始资金负数钳到 0")
+	_check(b.start_salary == GameSettings.SALARY_MAX, "起点补贴越界钳到上限")
+	_check(b.max_rounds == 30, "回合上限非法档位（45）回落 30")
+	_check(b.win_mode == "rounds", "胜利条件非法值回落 rounds")
+	_check(b.win_cash == GameSettings.WIN_CASH_MAX, "目标现金越界钳到上限")
+
+## 经济设置生效 + 变卖保底（房间口径见 doc/game-design/经济与胜负.md §三/§四）
+func _test_economy_and_liq() -> void:
+	print("== 经济设置与破产变卖保底 ==")
+	var g := _host_game(7801)
+	if g == null:
+		return
+	# 让 _host_setup 的 1.5 秒余波彻底死透再开 running（口径同 _test_window 的守门注释）
+	g.running = false
+	await create_timer(1.9).timeout
+	g.running = true
+
+	# 回合上限档位：0 = 不限（_rounds_exhausted 永不触发）；30 = 到轮触发
+	g._settings.max_rounds = 0
+	g.round_no = 999
+	_check(not g._rounds_exhausted(), "回合上限 0（不限）：round 999 也不结算")
+	g._settings.max_rounds = 30
+	g.round_no = 31
+	_check(g._rounds_exhausted(), "回合上限 30：round 31 触发结算")
+	_check(not g.running, "到轮结算后对局结束")
+	g.running = true
+	g._settings.max_rounds = 30
+	g.round_no = 1
+	_check(not g._rounds_exhausted(), "round 1 不触发结算（running 已恢复）")
+
+	# 目标现金：先到设定金额者立即胜
+	g._settings.win_mode = "cash"
+	g._settings.win_cash = 8000
+	var rich := _mk_player(1, "甲")
+	var poor := _mk_player(-1, "机器人乙")
+	rich.money = 8000
+	poor.money = 100
+	poor.bot = true
+	g.hp = [rich, poor]
+	g._check_end()
+	_check(not g.running and int(g.winner) == 1, "目标现金模式：达到 8000 立即获胜")
+	g.running = true
+	rich.money = 7999
+	g._check_end()
+	_check(g.running, "差 1 块没到目标：不结束（与最后存活判据并存）")
+
+	# 变卖保底·成功：机器人玩家欠 1000，名下两块 Lv1 地 → 卖两块凑足保命
+	# （回收价按真实格数据现算：投入 = 地价 + 等级 × 升级费，回收 = 投入 × 30%）
+	g._settings.win_mode = "rounds"   # 关掉目标现金，别让变卖中途触发胜利
+	g.running = true
+	g._settings.liq_on = true
+	var seller := _mk_player(1, "甲")
+	seller.bot = true
+	seller.money = 0
+	var payee := _mk_player(-1, "机器人丙")
+	payee.bot = true
+	payee.money = 0
+	g.hp = [seller, payee]
+	g.htiles = _fresh_tiles()
+	var i1 := _prop_idx(0)
+	var i2 := _prop_idx(1)
+	g.htiles[i1] = {"owner": 1, "level": 1}
+	g.htiles[i2] = {"owner": 1, "level": 1}
+	var v1 := int(round(float(int(GameData.TILES[i1].price) + GameData.upgrade_cost(i1)) * 0.30))
+	var v2 := int(round(float(int(GameData.TILES[i2].price) + GameData.upgrade_cost(i2)) * 0.30))
+	_check(mini(v1, v2) >= 1000, "前置：最便宜一块的回收价已够覆盖 1000 应付款（%d / %d）" % [v1, v2])
+	await g._pay(seller, 1000, payee)
+	_check(bool(seller.alive), "变卖保底：凑足应付款后不出局")
+	# 凑足即停：只卖投入最低的那块（回收已 ≥ 应付款），另一块保留
+	var cheap := i2 if v2 < v1 else i1
+	var dear := i1 if cheap == i2 else i2
+	var vcheap := mini(v1, v2)
+	_check(int(seller.money) == vcheap - 1000, "变卖保底：只卖到凑足为止，余款保留（%d − 1000）" % vcheap)
+	_check(int(payee.money) == 1000, "收款方收到足额应付款")
+	_check(int(g.htiles[cheap].owner) == GameData.NO_OWNER and int(g.htiles[cheap].level) == 0,
+		"变卖后的地皮无主、等级清零")
+	_check(int(g.htiles[dear].owner) == 1, "凑足即停：没卖的那块仍是卖家名下")
+
+	# 变卖保底·失败：欠 10 万，全部卖光也凑不足 → 原破产流程出局
+	seller.money = 0
+	seller.alive = true
+	payee.money = 0
+	g.htiles = _fresh_tiles()
+	g.htiles[i1] = {"owner": 1, "level": 1}
+	g.htiles[i2] = {"owner": 1, "level": 1}
+	await g._pay(seller, 100000, payee)
+	_check(not bool(seller.alive), "凑不足：变卖保底救不回 → 按原破产流程出局")
+	_check(int(seller.money) == 0 and int(g.htiles[i1].owner) == GameData.NO_OWNER,
+		"破产清算照旧：现金清零、地皮收归学校")
+
+	# 变卖保底·关闭：开关关掉时直接走破产（不进变卖会话）
+	g._settings.liq_on = false
+	seller.alive = true
+	seller.money = 0
+	g.htiles = _fresh_tiles()
+	g.htiles[i1] = {"owner": 1, "level": 1}
+	var epoch_before: int = g._liq_epoch
+	await g._pay(seller, 1000, {})
+	_check(not bool(seller.alive), "开关关 = 不变卖，付不起直接出局")
+	_check(int(g._liq_epoch) == epoch_before, "关闭开关时不开启变卖会话")
+
+	# 付完恰好归零不算破产（付得起就不该碰变卖）
+	g._settings.liq_on = true
+	seller.alive = true
+	seller.money = 1000
+	g.htiles = _fresh_tiles()
+	g.htiles[i1] = {"owner": 1, "level": 1}
+	epoch_before = g._liq_epoch
+	await g._pay(seller, 1000, {})
+	_check(bool(seller.alive) and int(seller.money) == 0, "付得起、付完归零：不算破产、不触发变卖")
+	_check(int(g._liq_epoch) == epoch_before, "付得起时不开启变卖会话")
+	g.queue_free()
+
+func _fresh_tiles() -> Array:
+	var out := []
+	for i in GameData.TILES.size():
+		out.append({"owner": GameData.NO_OWNER, "level": 0})
+	return out
+
+func _prop_idx(offset: int) -> int:
+	var n := 0
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "property":
+			if n == offset:
+				return i
+			n += 1
+	return -1
 
 ## 起一个房主对局实例；running 关掉，只测状态快照（不跑自动回合循环）。
 ## 顺序照抄 tests/shop_test.gd：先起服务器再挂节点，_host_setup() 里的

@@ -16,6 +16,18 @@ static func build(g: Node) -> void:
 	_build_panel(g)
 	select_tab(g, "basic")
 
+## 房主开局带自定义设置 / 客户端收到首份快照后：设置对象内容可能变（经济 / 胜负 / 变卖保底），
+## 规则文案随之重建。按原来的收起态重建，本来就展开着的保持展开。
+static func refresh(g: Node) -> void:
+	if is_instance_valid(g.rules_btn):
+		g.rules_btn.queue_free()
+	if is_instance_valid(g.rules_panel):
+		g.rules_panel.queue_free()
+	var was_open: bool = bool(g.rules_open)
+	build(g)
+	if was_open:
+		g._set_rules_open(true)
+
 ## 收起态：**右上角**一枚按钮（批次 12 D2 / 设计 §⑩4：从左上角搬到右上、与「战报」并列）。
 ## 位置是照着「战报」按钮（`table_hud` 里 -106..-12 / 12..40）排的：同一条 y、再往左让开 12 像素。
 ## **批次 13 ① 起展开的面板也在右上**（贴在按钮之下）——按钮与面板终于落在同一侧，
@@ -78,7 +90,7 @@ static func _build_panel(g: Node) -> void:
 	flow.add_theme_constant_override("v_separation", 5)
 	v.add_child(flow)
 	g.rules_tabs = {}
-	for p in RulesText.pages(g._settings.timeout_tier):
+	for p in RulesText.pages(g._settings.timeout_tier, g._settings):
 		var key := String(p.key)
 		var b := UIKit.button(String(p.title), 12)
 		b.custom_minimum_size = Vector2(0, 26)
@@ -108,7 +120,7 @@ static func select_tab(g: Node, key: String) -> void:
 	for k in g.rules_tabs:
 		var b: Button = g.rules_tabs[k]
 		UIKit.restyle_button(b, "primary" if k == key else "normal")
-	for p in RulesText.pages(g._settings.timeout_tier):
+	for p in RulesText.pages(g._settings.timeout_tier, g._settings):
 		if String(p.key) == key:
 			g.rules_body.text = String(p.body)
 			# 换页淡入：正文整块换掉太生硬（一次性过渡，用 Tween）

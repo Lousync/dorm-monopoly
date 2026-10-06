@@ -123,6 +123,7 @@ func run(p: Dictionary, split_for: int = -1) -> void:
 		_log("%d 人并列 %d 点，平分奖池 %s" % [
 			winners.size(), maxv, GameData.fmt_money(pot)], "#f0a0c0")
 	_broadcast_state()
+	g._check_end()   # 目标现金（开局设置 §四）：赢家可能当场达标，结算后即查
 	await _wait(2.8)
 
 @rpc("authority", "call_local", "reliable")

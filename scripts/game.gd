@@ -38,6 +38,7 @@ const _BAR_LEAD := 1.0               # 弹窗倒计时条比窗口早这么多�
                                      # 条子归零即提交「拒绝」，见 _prompt_bar_arm）
 var _settings: GameSettings          # 房主：来自大厅配置；客户端：从状态快照同步
 var _timeout_rev := 0                # 挡位变化计数：等待中的环节据此重计时
+var _rules_sig := ""                 # 规则面板上次构建时的设置签名（变了才重建）
 
 # 操作窗口 kind → 倒计时条上的名称（与 GameSettings.turn_seconds 的 kind 一致）
 const OP_KIND_LABELS := {
@@ -108,6 +109,12 @@ var shop_timer_track: ColorRect
 var shop_timer_fill: ColorRect
 var shop_timer_left: Label
 var _shop_btn_sig := ""          # 小卖部界面刷新签名（避免每帧重建）
+var liq_layer: Control           # 破产变卖保底：卖家自选面板（脚手架在 table_hud，行内容此处填）
+var liq_dim: ColorRect
+var liq_panel: PanelContainer
+var liq_status_l: Label
+var liq_rows: VBoxContainer
+var liq_watch: Label             # 旁观者横幅（非卖家可见）
 var card_gallery: Control
 var card_gallery_flag := false
 
@@ -153,11 +160,28 @@ var _tech_tier := ""          # 本局科技等级（掷骰定档，空 = 未开
 var _tech_wait_token := -1    # 当前等待选卡的 token（-1 = 无）
 var _tech_pick := {}          # {"token", "name"}：选卡应答
 var _awaiting_tech_peer := 0  # 正在选科技的玩家（0 = 无，进快照 await 状态）
+var _awaiting_discover_peer := 0  # 正在「发现」三选一挑卡的玩家（0 = 无，进快照 await 状态）
+
+# ---------------- 破产变卖保底（经济与胜负.md §三；开局设置「破产变卖保底」默认开） ----------------
+var _liq_peer := 0        # 正在变卖的玩家（0 = 无；进快照 await 状态 "liq"）
+var _liq_epoch := 0       # 变卖会话计数（结束 / 换人会话都靠它失效）
+var _liq_need := 0        # 还需凑齐的应付款（卖出即 p.money 增，凑足 = money ≥ need）
+var _liq_receiver := {}   # 收款方字典（空 = 交给学校，如缴费 / 罚款）
+var _liq_ok := false      # 本次变卖会话的结果（true = 凑足已付款；_run_liquidation 读它返回）
 var _tech_offered: Array = [] # 当前给该玩家的 3 个候选（校验回包用）
 var _tech_offer_layer: Control  # 选卡弹层（临时全屏层，答完即毁）
 var _tech_cards: Array = []     # 弹层里的三张卡（选中态刷新 / 摆拍程序化选中用）
 var _tech_picked: Array = [-1]  # 选中下标（-1 = 未选；数组形式便于跨闭包读写）
 var _tech_ok: Button            # 弹层的「确定」按钮（选中前置灰）
+
+# ---------------- 「发现」三选一（术语表.md；载体 = 失物招领格） ----------------
+var _discover_pick := {}        # {"token", "id"}：挑卡应答
+var _discover_wait_token := -1  # 当前等待挑卡的 token（-1 = 无）
+var _discover_offered: Array = []  # 当前给该玩家的候选（校验回包用）
+var _discover_layer: Control    # 挑卡弹层（临时全屏层，答完即毁；结构与科技选卡同款）
+var _discover_cards: Array = []
+var _discover_picked: Array = [-1]
+var _discover_ok: Button
 
 # ---------------- 格详情卡 / 规则说明（**右上角**，见 rules_panel.gd） ----------------
 var info_panel: PanelContainer
@@ -330,7 +354,10 @@ func _ready() -> void:
 		elif a.begins_with("--rounds="):
 			at_rounds = maxi(1, int(a.substr(9)))
 		elif a.begins_with("--max-rounds="):
+			# 自动化开关照旧落 GameData（测试直读）；对局实际读设置对象，这里一并写入
 			GameData.MAX_ROUNDS = maxi(1, int(a.substr(13)))
+			if Net.game_settings != null:
+				Net.game_settings.max_rounds = GameData.MAX_ROUNDS
 		elif a.begins_with("--tier="):
 			# 自动回归用：把挡位写进大厅配置，下面的 _settings 副本因此取到它。
 			# 必须早于 _build_ui（规则面板按挡位取秒数）与 _host_setup（房主开局读挡位）。
@@ -359,6 +386,7 @@ func _ready() -> void:
 	_settings = Net.game_settings.copy() if Net.game_settings != null else GameSettings.new()
 
 	_build_ui()
+	board.start_salary = _settings.start_salary   # 起点格上的「+工资」随设置走
 
 	# 赌桌小游戏独立成子节点：两端都在这里建同名节点，保证 s_casino_* 的 RPC 路径一致
 	# （它自带全屏演出层，触发时自己挂到 g 上，与 board / HUD 没有先后依赖）
@@ -489,7 +517,7 @@ func _build_hp() -> Array:
 		var gone: bool = peer != 1 and not live.has(peer)
 		out.append({
 			"peer": peer, "name": String(p.name), "color": int(p.color),
-			"bot": bool(p.bot) or gone, "money": GameData.START_MONEY,
+			"bot": bool(p.bot) or gone, "money": _settings.start_cash,
 			"pos": 0, "alive": true, "skip": 0, "sleep": 0,
 			"stamina": 3, "items": [], "item_used": false, "cheat_roll": -1,
 			"hot_chain": 0,
@@ -510,12 +538,14 @@ func _host_setup() -> void:
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
 	refresh_count = 0
+	blackshop_enabled = _settings.black_on   # 黑市开关：关 = 机会卡「黑市开张」不发
 	for i in GameData.TILES.size():
 		if String(GameData.TILES[i].get("type", "")) == "shop":
 			shops[i] = {"slots": ["", "", ""]}
-			_stock_shop(i)
+			if _settings.shop_on:
+				_stock_shop(i)   # 小卖部关 = 不铺货（货架在售会占用唯一性池，空架不占）
 	_log("游戏开始！每人初始资金 %s，踏上起点领工资 %s" % [
-		GameData.fmt_money(GameData.START_MONEY), GameData.fmt_money(GameData.SALARY)], "#f0c064")
+		GameData.fmt_money(_settings.start_cash), GameData.fmt_money(_settings.start_salary)], "#f0c064")
 	_log("转盘决定步数（0~12）：转到 12 满值再动一次，转到 0 就地再结算脚下格子；连续三次 10+ 会被查寝抓走哦")
 	await _wait(1.5)
 	if _settings.tech_on:
@@ -755,6 +785,201 @@ func _close_tech_offer() -> void:
 	_tech_picked = [-1]
 	_tech_ok = null
 
+# ================= 房主：「发现」三选一（术语表.md） =================
+# 触发载体 = 失物招领格：按招领权重定品质，翻出 3 件候选，只有本人看得到（私密 RPC），
+# 选中入包（受背包上限）；bot 按品质价自动选、超时随机兜底。「不限时」档不自动关。
+# 大卡复用 ItemCard.SIZE_LARGE（道具系统.md §十二：发现三选一用大卡）。
+
+## 「发现」三选一主流程：返回拿到的道具 id（"" = 没拿到：背包满 / 池空）
+func _run_discover(p: Dictionary, quality: String, src: String) -> String:
+	if (p.get("items", []) as Array).size() >= _bag_cap(p):
+		_log("%s 背包已满，与一次「发现」擦肩而过" % p.name, "#8a90a5")
+		return ""
+	# 目标品质凑不齐 3 件候选时自动向下降档（与失物招领旧口径一致）
+	var qi: int = ItemData.QUALITIES.find(quality)
+	while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).size() < 3:
+		qi -= 1
+	var pool := _item_pool(ItemData.QUALITIES[qi])
+	if pool.is_empty():
+		return ""
+	pool.shuffle()
+	var ids: Array = pool.slice(0, mini(3, pool.size()))
+	_pending_token += 1
+	var token := _pending_token
+	_discover_pick = {"token": -1, "id": ""}
+	_discover_wait_token = token
+	_discover_offered = ids.duplicate()
+	_awaiting_discover_peer = int(p.peer)
+	_log("%s 翻开失物招领箱，触发「发现」三选一（只有本人看得到候选）" % p.name, "#f0c064")
+	_broadcast_state()
+	if not bool(p.bot):
+		if int(p.peer) == 1:
+			_show_discover_offer(token, ids)
+		else:
+			s_discover.rpc_id(int(p.peer), token, ids)
+	var sec := GameSettings.turn_seconds(_settings.timeout_tier, "prompt")
+	var timed: bool = sec > 0.0
+	var deadline := Time.get_ticks_msec() + int(maxf(sec, 5.0) * 1000.0)
+	while running and int(_discover_pick.get("token", -1)) != token:
+		if bool(p.bot):
+			_discover_pick = {"token": token, "id": _discover_bot_pick(ids)}
+			break
+		if timed and Time.get_ticks_msec() >= deadline:
+			_discover_pick = {"token": token, "id": String(ids[randi_range(0, ids.size() - 1)])}
+			_log("%s 挑卡超时，随机拿了一张" % p.name, "#8a90a5")
+			break
+		await _wait(_WINDOW_TICK)
+	_awaiting_discover_peer = 0
+	var picked := String(_discover_pick.get("id", ""))
+	if picked == "":
+		picked = String(ids[randi_range(0, ids.size() - 1)])
+	_grant_item(p, picked)
+	_log("【发现】%s 从%s挑走了【%s】" % [p.name, src, picked], "#74d188")
+	_broadcast_state()
+	return picked
+
+## bot 挑卡策略（简单可预期）：品质售价高的优先
+func _discover_bot_pick(ids: Array) -> String:
+	var best := ""
+	var best_p := -1
+	for id in ids:
+		var pr := int(ItemData.price(String(ItemData.def(String(id)).quality)))
+		if pr > best_p:
+			best_p = pr
+			best = String(id)
+	return best
+
+## 私发挑卡弹层：房主本人本地调，客户端走 rpc_id；bot 不发
+@rpc("authority", "call_remote", "reliable")
+func s_discover(token: int, ids: Array) -> void:
+	_show_discover_offer(token, ids)
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_discover_pick(token: int, id: String) -> void:
+	if not multiplayer.is_server():
+		return
+	if int(token) != _discover_wait_token or not _discover_offered.has(String(id)):
+		return
+	_discover_pick = {"token": int(token), "id": String(id)}
+
+## 挑卡应答收口（本机直选与 RPC 回包共用）
+func _discover_answer(token: int, id: String) -> void:
+	if int(token) != _discover_wait_token or not _discover_offered.has(String(id)):
+		return
+	_discover_pick = {"token": int(token), "id": String(id)}
+	_close_discover()
+
+## 私密挑卡弹层：屏幕正中三张大卡，点选 + 「拿走」；倒计时与「决定」同挡位
+func _show_discover_offer(token: int, ids: Array) -> void:
+	_close_discover()
+	_discover_wait_token = token
+	_discover_offered = ids.duplicate()
+	_discover_layer = Control.new()
+	_discover_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_discover_layer.z_index = 60   # 与弹问层同带（table_hud 建层注释）
+	_discover_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_discover_layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.03, 0.05, 0.07, 0.72)
+	_discover_layer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_discover_layer.add_child(cc)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 18, UIKit.ACCENT_DEEP, 1, 16)
+	panel.custom_minimum_size = Vector2(860, 0)
+	cc.add_child(panel)
+	var m := UIKit.margins(26, 26, 22, 18)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	m.add_child(v)
+	var title := UIKit.title_label("发现 · 三选一", 24)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var hint := UIKit.label("只有你能看到这三件——点选一张拿进背包；超时将随机选择", 13, UIKit.TEXT_DIM)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(hint)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_discover_cards = []
+	_discover_picked = [-1]
+	var ok := UIKit.button("拿　走", 17, "good")
+	ok.disabled = true
+	_discover_ok = ok
+	ok.custom_minimum_size = Vector2(190, 44)
+	ok.pressed.connect(func() -> void:
+		if _discover_picked[0] == -1:
+			return
+		_discover_answer(token, String(ids[_discover_picked[0]])))
+	for i in ids.size():
+		var id := String(ids[i])
+		var card_wrap := PanelContainer.new()
+		card_wrap.custom_minimum_size = ItemCard.SIZE_LARGE + Vector2(24, 24)
+		card_wrap.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var cm := UIKit.margins(12, 12, 12, 12)
+		card_wrap.add_child(cm)
+		var holder := CenterContainer.new()
+		cm.add_child(holder)
+		holder.add_child(ItemCard.make(id, ItemCard.SIZE_LARGE))
+		card_wrap.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.pressed:
+				_discover_pick_card(i)
+				Fx.play("click", -6.0, randf_range(0.95, 1.05)))
+		_discover_cards.append(card_wrap)
+		row.add_child(card_wrap)
+	var cc_ok := CenterContainer.new()
+	cc_ok.add_child(ok)
+	v.add_child(row)
+	v.add_child(cc_ok)
+	# 倒计时条：与「回合操作限时」挡位同源（不限时则不倒计时、不自动关）
+	var tier_src := _settings.timeout_tier if multiplayer.is_server() \
+			else String(st.get("timeout_tier", GameSettings.TIER_CURRENT))
+	var total := GameSettings.turn_seconds(String(tier_src), "prompt")
+	var bar := UIKit.progress(UIKit.GOOD)
+	v.add_child(bar)
+	if total > 0.0:
+		var tw_bar := _discover_layer.create_tween()
+		tw_bar.tween_property(bar, "value", 0.0, maxf(total, 5.0))
+		tw_bar.tween_callback(_close_discover)
+	else:
+		bar.visible = false
+	_discover_refresh_cards(_discover_cards, -1)
+
+## 程序化选中一张候选卡（点卡与测试共用一条链）
+func _discover_pick_card(idx: int) -> void:
+	_discover_picked = [idx]
+	_discover_refresh_cards(_discover_cards, idx)
+	if _discover_ok != null and is_instance_valid(_discover_ok):
+		_discover_ok.disabled = false
+	if idx >= 0 and idx < _discover_cards.size():
+		var card: PanelContainer = _discover_cards[idx]
+		card.pivot_offset = card.size / 2.0
+		var tw := card.create_tween()
+		tw.tween_property(card, "scale", Vector2.ONE * 1.04, 0.08)
+		tw.tween_property(card, "scale", Vector2.ONE, 0.10)
+
+## 重刷候选卡选中态：选中金框 + 暗金底，其余恢复常态
+func _discover_refresh_cards(cards: Array, sel: int) -> void:
+	for i in cards.size():
+		var card: PanelContainer = cards[i]
+		if i == sel:
+			card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+				Color(0.16, 0.14, 0.07), 16, Color(1.0, 0.86, 0.4), 3, 12,
+				Color(1.0, 0.86, 0.4, 0.30)))
+		else:
+			card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+				UIKit.PANEL_LIGHT, 16, UIKit.BORDER, 1, 8))
+
+func _close_discover() -> void:
+	if _discover_layer != null and is_instance_valid(_discover_layer):
+		_discover_layer.queue_free()
+	_discover_layer = null
+	_discover_cards = []
+	_discover_picked = [-1]
+	_discover_ok = null
+
 ## 开疆拓土：名下地皮首达 5 / 10 / 15 块各 +¥800（获得地皮后调用）
 func _check_tech_milestone(p: Dictionary) -> void:
 	if not _has_tech(p, "开疆拓土"):
@@ -818,8 +1043,10 @@ func _run_game() -> void:
 			return
 
 ## 轮数用尽 → 按身家结算。回合计数已由 _advance_turn 按圈维护（见 fix/v0.0.2）。
+## 回合上限为档位制（30/60/90，0 = 不限——只能靠胜利条件或全员破产结束，见开局设置.md §三）。
 func _rounds_exhausted() -> bool:
-	if round_no <= GameData.MAX_ROUNDS:
+	var lim := _settings.max_rounds
+	if lim <= 0 or round_no <= lim:
 		return false
 	_end_by_wealth()
 	return true
@@ -868,9 +1095,9 @@ func _play_turn(p: Dictionary) -> void:
 	var sleeping := _is_sleeping(p)
 	if sleeping:
 		_log("%s 在小黑屋反省，本回合强制保守托管" % p.name, "#c9a6ff")
-	_item_turn_start(p)  # 休眠=保守托管：被动与自动结算照常（§1）
+	await _item_turn_start(p)  # 休眠=保守托管：被动与自动结算照常（§1）
 	_broadcast_state()
-	_aberration_window(p)   # 畸变窗口：回合开始结算后、掷轮前（畸变.md §二/§五）
+	await _aberration_window(p)   # 畸变窗口：回合开始结算后、掷轮前（畸变.md §二/§五）
 	while running:
 		if _ab_no_roll:   # 调休：本回合不能转盘（不移动、不结算落点，道具阶段照常）
 			_ab_no_roll = false
@@ -1016,7 +1243,7 @@ func _aberration_window(p: Dictionary) -> void:
 			_log("【调休】补班时间：%s 本回合可以连转两次！" % p.name, "#f0a0c0")
 	var pick := _ab_pick(_ab_candidates(p))
 	if pick != "":
-		_ab_trigger(p, pick)
+		await _ab_trigger(p, pick)
 	_check_end()
 	_broadcast_state()
 
@@ -1123,7 +1350,7 @@ func _ab_trigger(p: Dictionary, id: String) -> void:
 		_ab_apply_persistent_start(p, id)
 	else:
 		s_aberr.rpc(id, "start", 0)
-		_ab_apply_instant(p, id)
+		await _ab_apply_instant(p, id)
 
 ## 非持续型：触发瞬间结算（debuff 逐玩家独立被香皂/护盾免疫）
 func _ab_apply_instant(p: Dictionary, id: String) -> void:
@@ -1139,7 +1366,7 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 				if _immune_debuff(o):
 					_log("%s 的【空想者的香皂】挡下了强制捐款" % o.name, "#8fb7f2")
 				else:
-					_pay(o, 500, {})
+					await _pay(o, 500, {})
 		"集体感冒":
 			for o in hp:
 				if not bool(o.alive):
@@ -1160,7 +1387,7 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 					rate = AberrationData.FIN_RATE_C
 				var amt := int(int(o.get("money", 0)) * rate)
 				if amt > 0:
-					_pay(o, amt, {})
+					await _pay(o, amt, {})
 		"枪打出头鸟":
 			var cash_need := int(AberrationData.def(id).get("cond", {}).get("cash", 30000))
 			var rich: Array = hp.filter(func(o: Dictionary) -> bool:
@@ -1172,7 +1399,7 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 				if _immune_debuff(t):
 					_log("%s 的【空想者的香皂】挡下了强制捐款" % t.name, "#8fb7f2")
 				else:
-					_pay(t, int(int(t.money) * AberrationData.BIRD_RATE), {})
+					await _pay(t, int(int(t.money) * AberrationData.BIRD_RATE), {})
 		"拆迁":
 			var n := randi_range(1, 2)
 			for i in n:
@@ -1268,17 +1495,17 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 			await _await_card_confirm(p)
 			await _apply_card(p, card)
 		"item":
-			# 失物招领：按招领权重随机品质捡一件（品质缺货自动向下降档）
+			# 失物招领 = 「发现」三选一（术语表.md）：按招领权重定品质，翻出三件候选私密挑一件。
+			# 品质缺货向下降档（口径同旧版），背包满 / 池空则落空。
 			var q := _roll_quality(ItemData.FIND_WEIGHTS)
 			var qi: int = ItemData.QUALITIES.find(q)
 			while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).is_empty():
 				qi -= 1
-			var found := _grant_item_of_quality(p, ItemData.QUALITIES[qi], "失物招领")
+			var found := await _run_discover(p, ItemData.QUALITIES[qi], "失物招领")
 			if String(found) != "":
-				# 批次 12 C3：演**这张道具的卡面**，与机会/命运同一段演出、同一个「确定」、
-				# 同一条超时/托管（`card_item` 非空 ⇒ DeckReveal 走道具卡面那一路）。
-				_log("【失物招领】%s 捡到了【%s】！" % [p.name, found], "#74d188")
-				s_card.rpc("【失物招领】%s 捡到了【%s】！" % [p.name, found], "good", "失物招领", found)
+				# 结果全员公示（背包本就公开），演这张道具的卡面：与机会/命运同一段演出
+				_log("【失物招领】%s 发现了【%s】！" % [p.name, found], "#74d188")
+				s_card.rpc("【失物招领】%s 发现了【%s】！" % [p.name, found], "good", "失物招领", found)
 				await _await_card_confirm(p)
 			else:
 				s_card.rpc("【失物招领】%s 翻了半天，一无所获" % p.name, "info")
@@ -1289,16 +1516,23 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 			_extra_move = true
 			await _wait(0.4)
 		"shop":
-			if _ab_has("停电"):
+			if not _settings.shop_on:
+				_log("%s 落在【小卖部】——本局小卖部歇业，店主挥了挥手" % p.name, "#8a90a5")
+				await _wait(0.4)
+			elif _ab_has("停电"):
 				_log("【停电】%s 路过小卖部——店里黑着呢" % p.name, "#8a90a5")
 			else:
 				await _run_shop(p, idx)
 		"casino":
-			_log("%s 踏进【宿舍赌场】，全员开赌！" % p.name, "#f0a0c0")
-			if _has_tech(p, "赌场熟客"):
-				p.money = int(p.money) + 1000
-				_log("【赌场熟客】%s 凭熟脸拿 %s 出场费" % [p.name, GameData.fmt_money(1000)], "#74d188")
-			await casino.run(p)
+			if not _settings.casino_on:
+				_log("%s 推开【宿舍赌场】的门——本局歇业，灯都没开" % p.name, "#8a90a5")
+				await _wait(0.4)
+			else:
+				_log("%s 踏进【宿舍赌场】，全员开赌！" % p.name, "#f0a0c0")
+				if _has_tech(p, "赌场熟客"):
+					p.money = int(p.money) + 1000
+					_log("【赌场熟客】%s 凭熟脸拿 %s 出场费" % [p.name, GameData.fmt_money(1000)], "#74d188")
+				await casino.run(p)
 		"go_jail":
 			_log("%s 撞上查寝！被押送到宿委会（下一回合跳过）" % p.name, "#c9a6ff")
 			s_card.rpc("【查寝！】%s 被押送到宿委会（下一回合跳过）" % p.name, "jail")
@@ -1325,6 +1559,8 @@ func _new_event_deck(kind: String) -> Array:
 	var pool := GameData.events_for(kind)
 	if not blackshop_enabled:
 		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_blackshop"))
+	if not _settings.shop_on:
+		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_shop"))
 	if pool.is_empty():
 		pool = GameData.events_for(kind)
 	var d := pool.duplicate(true)
@@ -1412,10 +1648,10 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 			_log("%s 的【代课】被 %s 的香皂/护盾抵消，照常付租" % [p.name, op.name], "#8fb7f2")
 		else:
 			_log("%s 的【代课】生效：这笔租金改由房东 %s 付" % [p.name, op.name], "#8fb7f2")
-			_pay(op, rent, p)
+			await _pay(op, rent, p)
 			return
 	_log("%s 闯进【%s】，付租金 %s 给 %s" % [p.name, d.name, GameData.fmt_money(rent), op.name], "#ef7b74")
-	_pay(p, rent, op)
+	await _pay(p, rent, op)
 
 func _apply_card(p: Dictionary, card: Dictionary) -> void:
 	if card.has("money"):
@@ -1430,7 +1666,7 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 			p.wuyun_left = int(p.wuyun_left) - 1   # 厄运保单：抵消一次事件卡扣钱（4 次/局）
 			_log("【厄运保单】替 %s 报销了这笔扣款（剩 %d 次）" % [p.name, int(p.wuyun_left)], "#74d188")
 		else:
-			_pay(p, -m, {})
+			await _pay(p, -m, {})
 	if card.has("from_each"):
 		for o in hp:
 			if int(o.peer) != int(p.peer) and bool(o.alive):
@@ -1508,6 +1744,10 @@ func _grant_item_of_quality(p: Dictionary, q: String, src := "机会卡") -> Str
 	_log("%s 从%s获得道具【%s】" % [p.name, src, id], "#74d188")
 	return id
 
+const LIQ_RATE := 0.30   # 变卖回收比例（经济与胜负.md §三 定稿 30%；数值待复核时只改这里）
+
+## 支付一笔钱：能付多少付多少；差额先试应急基金，再试「变卖保底」（房主开关，默认开），
+## 都救不回来才破产出局。receiver 传空字典 = 交给学校（缴费 / 罚款 / 畸变）。
 func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 	var paid: int = mini(amount, maxi(int(p.money), 0))
 	p.money = int(p.money) - paid
@@ -1521,6 +1761,12 @@ func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 			if not receiver.is_empty():
 				receiver.money = int(receiver.money) + short
 			short = 0
+	# 变卖保底（经济与胜负.md §三）：付不足时先限时自选变卖名下地皮凑差价；
+	# 凑足即停、余款保留；付完恰好归零不算破产（不进这条分支）。
+	# 凑不足 / 无可变卖资产 → short 仍 > 0，落回下面的原破产流程。
+	if short > 0 and _settings.liq_on and not _own_props(int(p.peer)).is_empty():
+		if await _run_liquidation(p, short, receiver):
+			return
 	if short > 0:
 		p.alive = false
 		p.money = 0
@@ -1541,6 +1787,111 @@ func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
 			_log("%s 的 %d 件道具全部清空（唯一道具回池）" % [p.name, dropped], "#8a90a5")
 		_log("%s 无力支付 %s，宣告破产出局！名下地产收归学校" % [p.name, GameData.fmt_money(amount)], "#ef7b74")
 		s_card.rpc("%s 破产出局！" % p.name, "bust")
+
+# ---------------- 破产变卖保底（房主权威；开关 = 开局设置「破产变卖保底」） ----------------
+
+## 一块地皮的变卖回收价 = 累计投入（地价 + 等级 × 升级费）× LIQ_RATE
+func _liq_value(idx: int) -> int:
+	var invested := int(GameData.TILES[idx].price) + int(htiles[idx].get("level", 0)) * GameData.upgrade_cost(idx)
+	return int(round(float(invested) * LIQ_RATE))
+
+## 变卖保底主流程：开一个变卖会话，等待卖家自选（真人限时 / 机器人与超时自动兜底）。
+## 返回 true = 已凑足并付清（short 清零）；false = 凑不足 / 会话中断（调用方继续走破产）。
+## 真人的窗口与「买地决策」同一挡位（prompt）；「不限时」档不会自动兜底，会真的停住等。
+func _run_liquidation(p: Dictionary, short: int, receiver: Dictionary) -> bool:
+	_liq_peer = int(p.peer)
+	_liq_epoch += 1
+	var epoch := _liq_epoch
+	_liq_need = short
+	_liq_receiver = receiver
+	_liq_ok = false
+	_log("%s 现金不足，进入变卖保底：限时变卖名下地皮凑 %s" % [
+		p.name, GameData.fmt_money(short)], "#f0a0c0")
+	_broadcast_state()
+	if bool(p.bot):
+		while running and _liq_peer != 0 and _liq_epoch == epoch:
+			_liq_auto_sell(p)
+			if _liq_peer != 0 and _liq_epoch == epoch:
+				await _wait(0.5)   # 自动变卖的可见节拍（一拍卖一块）
+	else:
+		var timed_out: bool = await _await_turn_window("prompt",
+			func() -> bool: return _liq_peer != 0 and _liq_epoch == epoch)
+		if timed_out:
+			_log("%s 变卖超时，系统按投入从低到高自动变卖" % p.name, "#8a90a5")
+		while running and _liq_peer != 0 and _liq_epoch == epoch:
+			_liq_auto_sell(p)
+			if _liq_peer != 0 and _liq_epoch == epoch:
+				await _wait(0.5)
+	return _liq_ok
+
+## 自动兜底卖一块：按累计投入从低到高（顺序暂定，见经济与胜负.md §三「待定」复核）
+func _liq_auto_sell(p: Dictionary) -> void:
+	var best := -1
+	var best_v := 0
+	for idx in _own_props(int(p.peer)):
+		var v := _liq_value(idx)
+		if best == -1 or v < best_v:
+			best = idx
+			best_v = v
+	if best == -1:
+		_liq_finish(false)   # 名下已无可变卖资产
+	else:
+		_liq_sell_tile(p, best)
+
+## 变卖一块名下地皮：地皮无主、等级清零（之后可被任何人再购买），现金 += 回收价。
+## 凑足应付款即停（_liq_finish 结清款项、余款保留）；凑不足且已无可卖 → 会话失败收场。
+func _liq_sell_tile(p: Dictionary, idx: int) -> void:
+	if _liq_peer != int(p.peer):
+		return
+	if int(htiles[idx].get("owner", GameData.NO_OWNER)) != int(p.peer):
+		return
+	var v := _liq_value(idx)
+	htiles[idx].owner = GameData.NO_OWNER
+	htiles[idx].level = 0
+	p.money = int(p.money) + v
+	_log("%s 变卖了【%s】，回收 %s" % [p.name, String(GameData.TILES[idx].name), GameData.fmt_money(v)], "#f0a0c0")
+	if int(p.money) >= _liq_need:
+		_liq_finish(true)
+	elif _own_props(int(p.peer)).is_empty():
+		_liq_finish(false)
+	else:
+		_broadcast_state()
+
+## 结束一次变卖会话：ok = true 时当场把应付款付给 receiver，余款留在卖家手里
+func _liq_finish(ok: bool) -> void:
+	var p := _player_by_peer(_liq_peer)
+	var need := _liq_need
+	var receiver := _liq_receiver
+	_liq_peer = 0
+	_liq_need = 0
+	_liq_receiver = {}
+	_liq_epoch += 1
+	_liq_ok = ok
+	if p.is_empty():
+		return
+	if ok:
+		p.money = int(p.money) - need
+		if not receiver.is_empty():
+			receiver.money = int(receiver.money) + need
+		_log("%s 变卖凑足 %s，付清款项保住了（余款保留）" % [p.name, GameData.fmt_money(need)], "#74d188")
+	else:
+		_log("%s 变卖也凑不足应付款……" % p.name, "#ef7b74")
+	_broadcast_state()
+
+## 卖家本机点「变卖」：房主本地直结，客户端走 RPC（同 c_shop_buy 的分工）
+func _liq_click(idx: int) -> void:
+	if _liq_peer != my_peer:
+		return
+	if multiplayer.is_server():
+		_liq_sell_tile(_player_by_peer(my_peer), idx)
+	else:
+		c_liq_sell.rpc_id(1, idx)
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_liq_sell(idx: int) -> void:
+	if not multiplayer.is_server():
+		return
+	_liq_sell_tile(_player_by_peer(multiplayer.get_remote_sender_id()), idx)
 
 func _send_to_jail(p: Dictionary) -> void:
 	if _immune_debuff(p):
@@ -1577,6 +1928,14 @@ func _state_player(peer: int) -> Dictionary:
 
 func _check_end() -> void:
 	var alive := hp.filter(func(x) -> bool: return bool(x.alive))
+	# 目标现金（开局设置 §四；房主选「目标现金」时生效）：先到达设定金额者立即获胜。
+	# 在 `_check_end` 里查是因为它挂在每条动钱流程的出口（落格 / 事件卡 / 畸变 / 道具 / 赌场）。
+	if _settings.win_mode == "cash":
+		for p in alive:
+			if int(p.money) >= _settings.win_cash:
+				_end_game(int(p.peer), "%s 率先达成目标现金 %s！" % [
+					p.name, GameData.fmt_money(_settings.win_cash)])
+				return
 	if alive.size() <= 1:
 		if alive.size() == 1:
 			_end_game(int(alive[0].peer), "最后存活：%s！" % alive[0].name)
@@ -1590,7 +1949,7 @@ func _end_by_wealth() -> void:
 		return
 	alive.sort_custom(func(a, b) -> bool: return _net_worth(a) > _net_worth(b))
 	_end_game(int(alive[0].peer), "%d 轮结算！最富有的是 %s（总资产 %s）" % [
-		GameData.MAX_ROUNDS, alive[0].name, GameData.fmt_money(_net_worth(alive[0]))])
+		_settings.max_rounds, alive[0].name, GameData.fmt_money(_net_worth(alive[0]))])
 
 func _net_worth(p: Dictionary) -> int:
 	var v := int(p.money)
@@ -2052,6 +2411,56 @@ func _op_window_owner() -> int:
 		return _black_peer
 	return int(hp[turn_i].peer) if turn_i < hp.size() else -1
 
+## 变卖保底面板：卖家看自选行（名下地皮逐块「变卖」），旁观者只看横幅。
+## 数据全部来自快照（liq_peer / liq_need / tiles），客户端也准；由 s_state 每次广播末尾调用。
+func _refresh_liq_ui() -> void:
+	if liq_layer == null:
+		return
+	var peer := int(st.get("liq_peer", 0))
+	var need := int(st.get("liq_need", 0))
+	var mine := peer != 0 and peer == my_peer
+	var watching := peer != 0 and not mine
+	liq_layer.visible = peer != 0
+	liq_dim.visible = mine
+	liq_panel.visible = mine
+	liq_watch.visible = watching
+	if watching:
+		liq_watch.text = "%s 正在变卖地皮凑 %s（投入 × 30%%）……" % [
+			_name_by_peer(peer), GameData.fmt_money(need)]
+	if not mine:
+		return
+	var me := _state_player(my_peer)
+	var money := int(me.get("money", 0))
+	liq_status_l.text = "还需凑 %s · 当前现金 %s" % [
+		GameData.fmt_money(maxi(need - money, 0)), GameData.fmt_money(money)]
+	for c in liq_rows.get_children():
+		c.queue_free()
+	var tiles: Array = st.get("tiles", [])
+	for idx in tiles.size():
+		var t: Dictionary = tiles[idx]
+		if int(t.get("owner", GameData.NO_OWNER)) != my_peer:
+			continue
+		var invested := int(GameData.TILES[idx].price) + int(t.get("level", 0)) * GameData.upgrade_cost(idx)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		var nm := UIKit.label(String(GameData.TILES[idx].name), 14, UIKit.TEXT)
+		nm.custom_minimum_size = Vector2(110, 0)
+		row.add_child(nm)
+		var lv := UIKit.label("Lv%d · 累计投入 %s" % [int(t.get("level", 0)), GameData.fmt_money(invested)], 13, UIKit.TEXT_DIM)
+		lv.custom_minimum_size = Vector2(210, 0)
+		row.add_child(lv)
+		var val := int(round(float(invested) * LIQ_RATE))
+		var vv := UIKit.label("回收 %s" % GameData.fmt_money(val), 14, Color(0.98, 0.85, 0.6))
+		vv.custom_minimum_size = Vector2(120, 0)
+		row.add_child(vv)
+		var b := UIKit.button("变卖", 13)
+		var idx_c := idx
+		b.pressed.connect(func() -> void: _liq_click(idx_c))
+		row.add_child(b)
+		liq_rows.add_child(row)
+	if liq_rows.get_child_count() == 0:
+		liq_rows.add_child(UIKit.label("（名下已无可变卖的地皮）", 13, UIKit.TEXT_DIM))
+
 func _broadcast_state() -> void:
 	if not multiplayer.is_server():
 		return
@@ -2076,6 +2485,13 @@ func _broadcast_state() -> void:
 	elif _awaiting_tech_peer != 0:
 		await_state = "tech"
 		await_peer = _awaiting_tech_peer
+	elif _awaiting_discover_peer != 0:
+		await_state = "discover"
+		await_peer = _awaiting_discover_peer
+	elif _liq_peer != 0:
+		# 破产变卖保底（经济与胜负.md §三）：等待玩家自选变卖 / 系统自动兜底
+		await_state = "liq"
+		await_peer = _liq_peer
 	elif _awaiting_card != 0:
 		# 抽卡演出等「确定」（批次 12 C2）：await_peer = 该点确定的人（= 抽卡者）。
 		await_state = "card"
@@ -2091,7 +2507,7 @@ func _broadcast_state() -> void:
 		await_peer = _black_peer
 	s_state.rpc({
 		"phase": "playing" if (running or lab_mode) else "ended",
-		"round": round_no, "max_rounds": GameData.MAX_ROUNDS,
+		"round": round_no, "max_rounds": _settings.max_rounds,
 		"turn": int(hp[turn_i].peer),
 		"await": await_state, "await_peer": await_peer,
 		"players": plist, "tiles": htiles,
@@ -2106,6 +2522,10 @@ func _broadcast_state() -> void:
 		"ab_freq": _settings.ab_freq, "ab_dur": _settings.ab_dur, "ab_cond": _settings.ab_cond,
 		"tech_tier": _tech_tier,
 		"winner": winner, "roll_epoch": _roll_epoch,
+		# 开局设置（经济 / 胜利条件；客户端只读展示，见开局设置.md）
+		"win_mode": _settings.win_mode, "win_cash": _settings.win_cash,
+		"liq_on": _settings.liq_on,
+		"liq_peer": _liq_peer, "liq_need": _liq_need, "liq_epoch": _liq_epoch,
 	})
 
 func _log(line: String, color: String = "#dfe3ee") -> void:
@@ -2136,6 +2556,10 @@ func s_state(state: Dictionary) -> void:
 	if _tech_offer_layer != null and not (String(state.get("await", "")) == "tech" \
 			and int(state.get("await_peer", -1)) == my_peer):
 		_close_tech_offer()
+	# 「发现」挑卡层同款兜底（失物招领三选一）
+	if _discover_layer != null and not (String(state.get("await", "")) == "discover" \
+			and int(state.get("await_peer", -1)) == my_peer):
+		_close_discover()
 	var tier := String(state.get("timeout_tier", GameSettings.TIER_CURRENT))
 	if tier != _settings.timeout_tier:
 		_settings.timeout_tier = tier
@@ -2150,8 +2574,27 @@ func s_state(state: Dictionary) -> void:
 		_settings.ab_cond = bool(state.get("ab_cond", true))
 		_refresh_ab_settings_ui()
 	_refresh_ab_ui()
+	_refresh_liq_ui()
+	# 经济 / 胜负设置（开局设置.md）：客户端从快照同步进本地副本（房主本来就是自己那份）。
+	# 规则文案跟着这些值走 —— 变了就按新值重建规则面板（客户端首份快照必然触发一次）。
+	var win_mode := String(state.get("win_mode", "rounds"))
+	var win_cash := int(state.get("win_cash", 50000))
+	var max_rounds := int(state.get("max_rounds", 30))
+	var liq_on := bool(state.get("liq_on", true))
+	var econ_sig := "%s|%d|%s|%d|%d" % [win_mode, win_cash,
+		String(state.get("timeout_tier", "")), max_rounds, 1 if liq_on else 0]
+	if econ_sig != _rules_sig:
+		_rules_sig = econ_sig
+		_settings.win_mode = win_mode
+		_settings.win_cash = win_cash
+		_settings.max_rounds = max_rounds
+		_settings.liq_on = liq_on
+		if rules_btn != null:
+			RulesPanel.refresh(self)
 	board.render(state)
-	log_head.text = "第 %d/%d 轮 · 战报" % [int(state.round), int(state.max_rounds)]
+	var mr: int = int(state.get("max_rounds", 30))
+	log_head.text = ("第 %d 轮 · 战报" % int(state.round)) if mr <= 0 \
+		else ("第 %d/%d 轮 · 战报" % [int(state.round), mr])
 	_refresh_players()
 	_refresh_actions()
 	_refresh_chat()
@@ -3456,7 +3899,7 @@ func _stamina_cap(p: Dictionary) -> int:
 	return 5 + (1 if _has_item(p, "充电宝") else 0) + (1 if _has_tech(p, "精力充沛") else 0)
 
 func _salary_amount(p: Dictionary) -> int:
-	return GameData.SALARY + (1000 if _has_item(p, "校园卡") else 0)
+	return _settings.start_salary + (1000 if _has_item(p, "校园卡") else 0)
 
 func _buy_price(p: Dictionary, price: int) -> int:
 	return maxi(0, price - (300 if _has_item(p, "砍价高手") else 0))
@@ -3629,7 +4072,7 @@ func _item_turn_start(p: Dictionary) -> void:
 		if _immune_debuff(p):
 			_log("%s 的护盾/香皂免除了助学贷款还款" % p.name, "#8fb7f2")
 		else:
-			_pay(p, 600, {})
+			await _pay(p, 600, {})
 	if _has_item(p, "信托基金"):
 		p.money = int(p.money) + 200
 		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(200)], "#74d188")
@@ -3782,6 +4225,7 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 				_log("%s 的【重修卡】用尽三次，作废回池" % p.name, "#c9a6ff")
 	_item_action = {"epoch": _item_epoch, "action": "used"}
 	_broadcast_state()
+	_check_end()   # 目标现金：道具效果可能让人达标（招财猫 / 刮刮乐……），用后即查
 
 ## 某玩家名下的地产序号
 func _own_props(peer: int) -> Array:

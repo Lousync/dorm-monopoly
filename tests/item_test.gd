@@ -56,6 +56,7 @@ func _run() -> void:
 	_test_egg(g)
 	_test_coco(g)
 	await _test_soil(g)
+	await _test_discover(g)
 	if fails == 0:
 		print("ITEM TEST: ALL PASS")
 		quit(0)
@@ -130,6 +131,41 @@ func _test_coco(g) -> void:
 			soil_n += 1
 	_check(soil_n == 2, "每人至多一块地化焦土（实得 %d）" % soil_n)
 	g._broadcast_state()  # 贯通渲染层：焦土配色/进度文本不应报错
+
+## 「发现」三选一（术语表.md）：失物招领格改版后的载体。bot / 回退路径 + 私密候选结构
+func _test_discover(g) -> void:
+	print("== 发现三选一 ==")
+	var p := _mk_player(1, "甲")
+	var other := _mk_player(2, "乙")
+	g.hp = [p, other]
+	p.items = []
+	# 正常流程：返回一件候选内的道具、进包、候选结构合法（≤3 件、彼此不同、全在白池内）。
+	# 池子先快照：拿到手后唯一道具会立刻退出可获取池，事后查会对不上。
+	var pool_before: Array = g._item_pool("白").duplicate()
+	var id: String = await g._run_discover(p, "白", "失物招领")
+	_check(id != "", "「发现」拿到了一件道具")
+	_check(g._discover_offered.size() >= 2 and g._discover_offered.size() <= 3,
+		"候选 2~3 件（池子不足 3 件时给几件算几件）")
+	var seen := {}
+	var in_pool := true
+	for oid in g._discover_offered:
+		seen[String(oid)] = true
+		if not pool_before.has(String(oid)):
+			in_pool = false
+	_check(seen.size() == g._discover_offered.size(), "候选彼此不同")
+	_check(in_pool, "候选全部来自目标品质的可获取池")
+	_check(g._discover_offered.has(id), "拿到的是候选之一")
+	_check(p.items.size() == 1 and String(p.items[0].id) == id, "选中的道具进了背包")
+	# 背包满：不再触发，返回空串
+	p.items = []
+	for i in 5:
+		p.items.append({"id": "招财猫" if i == 0 else "黑卡", "cd": 0})
+	var full: int = g._bag_cap(p)   # g 是 Node：动态调用推不出类型，显式标 int
+	while p.items.size() < full:
+		p.items.append({"id": "校园卡", "cd": 0})
+	var none: String = await g._run_discover(p, "白", "失物招领")
+	_check(none == "" and p.items.size() == full, "背包满：不触发发现、背包不变")
+	g.hp = []
 
 func _test_soil(g) -> void:
 	print("== 焦土捐款与恢复 ==")
