@@ -835,74 +835,16 @@ func _run() -> void:
 	for k in frames:
 		await process_frame
 
-	# ⑰ **头顶名牌**（本改版新增）：牌色 = 那一家的棋子色、牌上写着昵称、整块 **billboard
-	#    朝向镜头**、**立在头顶之上**。**当前行动者靠牌上一圈金边**表达 —— 原先那条"同一条
-	#    `idle` 提速"随"完全静止"一起退场，辨认线索改由名牌承担（用户 2026-10-06 判图后拍板）。
-	#
-	#    位置与颜色的**唯一来源**仍是喂进来的那份座位序（`set_chars` 的入参）——
-	#    测试自己不去算坐标，只核"牌上写的就是喂进去的那一家"。
-	var tag_bad: Array = []
-	var tag_log := ""
-	for i in CHAR_SLOTS:
-		var s: Dictionary = seats[i]
-		var color := clampi(int(s.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)
-		var want: Color = GameData.PLAYER_COLORS[color]
-		var tg = chars.char_tag(i)
-		if tg == null:
-			tag_bad.append("slot%d 没有名牌" % i)
-			continue
-		var plate := tg.get_node_or_null("Plate") as MeshInstance3D
-		var lab := tg.get_node_or_null("Label") as Label3D
-		var plate_mat: StandardMaterial3D = plate.material_override as StandardMaterial3D if plate != null else null
-		var got_col: Color = plate_mat.albedo_color if plate_mat != null else Color.BLACK
-		var col_ok: bool = plate_mat != null and is_equal_approx(got_col.r, want.r) \
-			and is_equal_approx(got_col.g, want.g) and is_equal_approx(got_col.b, want.b)
-		var name_ok: bool = lab != null and lab.text == String(s.get("name", ""))
-		# 牌底 y 要在**模型世界 AABB 的顶**之上（「立在头顶之上」，不是插在脸上）
-		var model_top: float = _subtree_world_aabb(t[i]).end.y
-		var plate_half: float = 0.0
-		if plate != null and plate.mesh is QuadMesh:
-			plate_half = (plate.mesh as QuadMesh).size.y * 0.5
-		var above_ok: bool = tg.global_position.y - plate_half >= model_top
-		# 朝向镜头：牌与字**都**得是 billboard（只设一处的话另一处会随镜头侧过去）
-		var bb_ok: bool = plate_mat != null and plate_mat.billboard_mode == BaseMaterial3D.BILLBOARD_ENABLED \
-			and lab != null and lab.billboard == BaseMaterial3D.BILLBOARD_ENABLED
-		if not (col_ok and name_ok and above_ok and bb_ok):
-			tag_bad.append("slot%d(色%s/名%s/头上%s/朝向%s)" % [i, str(col_ok), str(name_ok),
-				str(above_ok), str(bb_ok)])
-		tag_log += "slot%d 色%s/名「%s」/牌心y%.2f vs 模型顶%.2f/朝向%s | " % [i, str(got_col),
-			(lab.text if lab != null else "<无>"), tg.global_position.y, model_top, str(bb_ok)]
-	print("  [实测] 头顶名牌：%s" % tag_log)
-	_check(tag_bad.is_empty(),
-		"**头顶名牌：棋子色对、昵称对、立在头顶之上、整块朝向镜头**（不对的 %s）" % str(tag_bad))
-	_check(chars.char_tag(MY_SLOT) == null,
-		"`slot %d`（近侧 =「我」）**没有名牌** —— 与「那个人不渲染」同一条（相机就在那儿）" % MY_SLOT)
-
-	# ⑰-b **当前行动者 = 牌上一圈金边**（静止的，不闪）
-	var actor_peer := int((seats[CHAR_SLOTS[0]] as Dictionary).get("peer", 0))
-	chars.set_actor(actor_peer)
-	var a0: Array = []
-	for i in CHAR_SLOTS:
-		var bd0 = chars.char_tag(i).get_node_or_null("Border") as Node3D
-		a0.append(bd0 != null and bd0.visible)
-	_check(actor_peer == chars.actor_peer() and a0[0] and not a0[1] and not a0[2],
-		"**行动者的名牌上有金边、其余两家的没有**（行动者 peer %d 在 slot%d：%s）"
-			% [actor_peer, CHAR_SLOTS[0], str(a0)])
-	# 换一个行动者：**金边跟着换**（不能只往上加、不把旧的撤掉）
-	chars.set_actor(int((seats[CHAR_SLOTS[1]] as Dictionary).get("peer", 0)))
-	var a1: Array = []
-	for i in CHAR_SLOTS:
-		var bd1 = chars.char_tag(i).get_node_or_null("Border") as Node3D
-		a1.append(bd1 != null and bd1.visible)
-	_check(not a1[0] and a1[1] and not a1[2],
-		"换一个行动者之后**金边跟着换**（实得 %s —— 只在新的那家上做加法、不撤掉旧的，这条会红）" % str(a1))
-	chars.set_actor(GameData.NO_PEER)
-	var a2: Array = []
-	for i in CHAR_SLOTS:
-		var bd2 = chars.char_tag(i).get_node_or_null("Border") as Node3D
-		a2.append(bd2 != null and bd2.visible)
-	_check(a2.all(func(x): return not x),
-		"没有行动者时**三块牌都没有金边**（实得 %s）" % str(a2))
+	# ⑰ **头顶名牌：v0.8.0 第四次改版已整体删除**（用户 2026-10-06：「人物顶部铭牌去掉」）。
+	# 它守的三件事现在各有归处，**一条都没丢**：
+	#   * **"色随 `p.color` 走、不随座位序号走"** ⇒ 桌面立牌（`tests/placard_test.gd` ② 与
+	#     `hud_test` 那条"牌面按各家的棋子色上色"，两处都是拿**真状态**喂的）；
+	#   * **"当前行动者"** ⇒ 桌面立牌那块牌面上的一圈金边（`placard_test` ⑥ +
+	#     `hud_test` 的选目标段）—— 角色层**不再有行动者这个概念**（`set_actor` 一并删了）；
+	#   * **"名牌挂在角色之上、随角色一起动"** ⇒ 随载体一起消失（它本来就是为"头顶挂一块"
+	#     这件事存在的）。
+	# ⚠ **别把它加回来**：`chars.gd` 里 `Tags/Tag{i}`、`char_tag()`、`_make_tag()` 都已删除，
+	# 加回来就等于"人物头顶又冒出铭牌"。
 
 	# ================= 二期 Task 4：四个玩法事件的反应 =================
 	#

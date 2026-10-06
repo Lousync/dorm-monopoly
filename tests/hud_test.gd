@@ -1,6 +1,16 @@
 extends SceneTree
 ## HUD 回归：右栏名册 + 底部操作坞**已拆**的反向契约 + 桌上实体入口（含「客户端视角」这一段）
 ##
+## **v0.8.0 第三次改版**：**名册条（`game.roster_strip` / `game.roster_strip_rows`）整体删除**，
+## 它承载的四件事搬到**桌面立牌**（"立在每名对手那一侧木纹带上、正对相机"的小方牌）。
+## ⚠ **那一格 Control 本身没消失**：它改叫 `TableHud.make_chip`，由 `game._refresh_placards`
+## 装进**离屏 `SubViewport`** 烘成贴图（`game.placard_chips` / `PLACARD_BAKE_SCALE`），再交给
+## `table_props.set_placard_faces` 贴上去 ⇒ **高亮 / 倒计时仍是同一份 `_hl_bars()` + 同一批
+## `game._fill_peer_bar / _apply_corner_style / _refresh_corner_timer`**，判据一个字没改。
+## ⇒ 本文件里**一切"量名册条在屏幕上怎么摆"的断言整段删除**（`roster_strip` 已经不是成员，
+## 留着就是恒假的红条）；那部分覆盖新建在 **`tests/placard_test.gd`**（①~⑩）。
+## 本文件从此只钉「我」那一条身家条（`corner_bars` 就剩它一条）。
+##
 ## 为什么要有「客户端视角」：`s_state` 是 call_local，房主与客户端跑的是同一个处理函数，
 ## 差别只在「谁算出的状态」和 `my_peer`。所以喂一份状态、把 my_peer 设成客户端，
 ## 走的就是客户端那条路——比在本机拉两个实例更可靠（本机 UDP 端口常被环境拦掉）。
@@ -116,20 +126,18 @@ func _host_roster() -> Array:
 		})
 	return out
 
-## 按 peer 找"身家条 / 名册行"（批次 12 D 起两处都算：`corner_bars` 只剩「我」那一条，
-## 其余人在 `roster_strip_rows` 里）。**不能按下标找**：名册按身家倒序、条数会随人数重排。
-## 有意**分别遍历这两份数组、不走 `game._hl_bars()`** —— 用生产代码那份清单来找，
-## "高亮贴到了别的树上"这种错就查不出来了。
+## 按 peer 找**「我」那条身家条**。**v0.8.0 第三次改版起 `corner_bars` 只剩这一条**
+##（左/右/上三条四角条与后来的名册条都已删；其余人的信息搬上桌 ⇒ 桌面立牌，见
+## `tests/placard_test.gd`）⇒ 这里只遍历 `corner_bars`。**不能按下标找**：条挂的是
+## `_seat_peers()[0]`，自己不在名册里时会轮转到别人身上。
+## 有意**不走 `game._hl_bars()`** —— 用生产代码那份清单来找，"高亮贴到了别的树上"这种错就查不出来了。
 func _bar_of(g, peer: int) -> Dictionary:
 	for b in g.corner_bars:
 		if int((b as Dictionary).get("peer", GameData.NO_PEER)) == peer:
 			return b
-	for r in g.roster_strip_rows:
-		if int((r as Dictionary).get("peer", GameData.NO_PEER)) == peer:
-			return r
 	return {}
 
-## 某条身家条 / 名册行此刻"亮着"（可被选中）吗：读它**真的贴上去的那张样式盒**，判据是
+## 某条身家条此刻"亮着"（可被选中）吗：读它**真的贴上去的那张样式盒**，判据是
 ## "这张描边图是不是 UIKit 按『可选中』那套参数（2px 金边 + 底色提亮一档）生成的那张"。
 ## `UIKit._rounded_tex` 按**参数**缓存 ⇒ 同参必得**同一个 Texture2D 实例**，所以身份比较成立。
 ## **不读任何内部标志**（那会在"高亮坏了但标志还对"时骗过断言），也不按文字 / 位置反推 ——
@@ -170,13 +178,12 @@ func _run() -> void:
 		await process_frame
 	await create_timer(0.4).timeout
 
-	print("== 「我」的身家条（左下角）+ 名册条（批次 13 ② 起在左上角「暂停」旁）==")
-	# ⑩ 改结构：他人的**四角**身家条全删，只剩「我」这一条（左下角）；其余人改由**名册条**
-	# 承担。**批次 13 ② 又把它从右上角「战报」下方搬到左上角「暂停」旁**（用户 ②：
-	# "改在左上角暂停按钮旁，只显示排名、小人、昵称即可"）；**批次 13 辛 ③ 改横排 + 做小**
-	#（用户 ③"横向排列，并且做小一点"），所以下面钉的是**左上一行**的落位。
-	# 名册条同时**接手选目标的落点**与**行动者的倒计时**
-	#（批次 9 起"选目标 = 点对手的身家条"；只删不搬的话选目标就没有落点了）。
+	print("== 「我」的身家条（左下角，`corner_bars` 就剩这一条）==")
+	# ⑩ 改结构：他人的**四角**身家条全删，只剩「我」这一条（左下角）。
+	# **v0.8.0 第三次改版**：接手的**名册条也整体删除** —— 姓名 / 名次 / 棋子色小片 / 倒计时
+	# 四件事搬到**桌面立牌**（3D 节点）。⇒ 本文件里"量名册条"的断言**整段删除**（那是恒假的红条），
+	# 覆盖新建在 **`tests/placard_test.gd`**（逐块立牌 / 牌色 / 昵称 / 名次 / 落点 / 躺平 / 金边 /
+	# 倒计时 / 命中链 / 点它开弹窗 / 幂等，见那边 ①~⑩）。**下面只钉「我」这一条**。
 	# UIKit 一律**运行时 load**：静态写 `UIKit.X` 会把 ui_kit.gd 拽进本脚本的静态依赖链，
 	# 而它引用了 autoload `Fx` —— 在 `--script` 入口下此时 autoload 还没注册，
 	# 整链会以「Identifier not found: Fx」编译失败（同 layout_test 顶部那段说明）。
@@ -196,48 +203,51 @@ func _run() -> void:
 	_check(seat_peers.size() > 0, "（前提）房主的座位序非空（实得 %d 项）" % seat_peers.size())
 	var room5: Node = g.table3d.get_node_or_null("Room") if g.table3d != null else null
 	_check(room5 != null, "桌面上挂着 3D 房间（Room 节点）")
-	# 角色层（二期）也在这里取一次：下面的"头顶名牌色"要读它（`Room/Chars/Tags/Tag{i}/Plate`）。
-	var chars5b: Node = room5.get_node_or_null("Chars") if room5 != null else null
+	# 牌面色取**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`），**不是按座位序号取色**。
+	# 这一份状态的 color 恰好等于 peer-1，而座位序是 [我, 下家, 对家, 上家] = [2,3,4,1]
+	# ⇒ 座位 1 是 peer 3（color 2 → 绿）；**按序号取色**的话那块会是 PLAYER_COLORS[1]（蓝）⇒ 必红。
+	# 【终审 F5】期望值必须**与实现同一条口径**：实现用的是 `clampi(color, 0, size-1)`，
+	# 这里原先写的是 `% size` —— 今天 `p.color ∈ 0..3` 两者同值，但色号一旦越界，
+	# 这条断言的期望色就与实现无关了（消息是给人看的，会误导下一个改色号的人）⇒ 照实现写钳位。
+	#
+	# **载体换过两次**：椅背名牌（一期）→ 头顶名牌（v0.8.0 三次改版）→ **桌面立牌**（四次改版；
+	# 用户「人物顶部铭牌去掉」+「将屏幕左上角的玩家信息块移到桌面上」）。守的那件事
+	# ——**色随 `p.color` 走、不随座位序号走**——**一次都没变**。今天它读的是
+	# **烘好的那块牌面**（`g.placard_chips`：字典形态与 `corner_bars` 同形，`chip_color`
+	# 与 `chip` 是 `_fill_peer_bar` 写的，与屏幕层同一条链）。
 	if room5 != null:
 		var in_room: Array = room5.seat_peers()
 		_check(in_room == seat_peers,
 			"椅子顺序 == game._seat_peers()（房间 %s / 房主 %s —— 各写一份就会在二期坐错位）"
 				% [str(in_room), str(seat_peers)])
-		# 名牌色取**各家的棋子色**（`p.color` → `GameData.PLAYER_COLORS`），**不是按座位序号取色**。
-		# 这一份状态的 color 恰好等于 peer-1，而座位序是 [我, 下家, 对家, 上家] = [2,3,4,1]
-		# ⇒ 座位 0 是 peer 2（color 1 → 蓝）；**按序号取色**的话这块会是 PLAYER_COLORS[0]（橙）⇒ 必红。
-		# 【终审 F5】期望值必须**与实现同一条口径**：实现用的是 `clampi(color, 0, size-1)`，
-		# 这里原先写的是 `% size` —— 今天 `p.color ∈ 0..3` 两者同值，但色号一旦越界，
-		# 这条断言的期望色就与实现无关了（消息是给人看的，会误导下一个改色号的人）⇒ 照实现写钳位。
-		#
-		# **v0.8.0 改版：这条断言从"椅背名牌"改指"头顶名牌"**（`Room/Chars/Tags/Tag{i}/Plate`）。
-		# 椅背那块牌子**整段删了**（用户 2026-10-06：「去掉椅子上的铭牌」），而它守的这件事
-		# ——**色随 `p.color` 走、不随座位序号走**——**一点没变**，只是换了个载体：
-		# 头顶名牌的牌色同样取自 `PLAYER_COLORS[color]`（`chars.gd._make_tag`）。
-		# 座位 ↔ 牌子的对应关系仍是"第 i 把椅子上那个人"，所以这一条原样成立，不必放宽。
 		var colors_ok := true
 		var got_colors: Array = []
+		var n_chips := 0
 		for i in seat_peers.size():
-			var pl: Dictionary = g._state_player(int(seat_peers[i]))
-			var want: Color = GameData.PLAYER_COLORS[
-				clampi(int(pl.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
-			var plate: MeshInstance3D = null
-			if i != 0 and chars5b != null:      # slot 0 =「我」⇒ 不渲染、没有名牌（同角色层）
-				var tg: Node = chars5b.get_node_or_null("Tags/Tag%d" % i)
-				if tg != null:
-					plate = tg.get_node_or_null("Plate") as MeshInstance3D
 			if i == 0:
-				continue                        # slot 0 的期望是"没有名牌"，由 chars_test 钉
-			var pm: StandardMaterial3D = null
-			if plate != null:
-				pm = plate.material_override as StandardMaterial3D
-			got_colors.append(pm.albedo_color if pm != null else Color.BLACK)
-			if pm == null or not pm.albedo_color.is_equal_approx(want):
+				continue                        # slot 0 =「我」⇒ 桌上没有我的牌（同"我那一侧不出人"）
+			var pl5: Dictionary = g._state_player(int(seat_peers[i]))
+			var want: Color = GameData.PLAYER_COLORS[
+				clampi(int(pl5.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
+			# ⚠ `bar.chip_color` 是**色号下标（int）**，不是 `Color`：真正那张小片是
+			# `UIKit.chip(PLAYER_COLORS[idx], …)` 造出来的 `TextureRect`（`game._fill_peer_bar`）。
+			# ⇒ 这里比下标，等价于比颜色，而且**读的是实现写进去的那一位**（不重算一遍颜色）。
+			var got := -1
+			var found := false
+			for chip in g.placard_chips:
+				if int(chip.get("peer", GameData.NO_PEER)) != int(seat_peers[i]):
+					continue
+				found = true
+				got = int(chip.get("chip_color", -1))
+			var want_idx := clampi(int(pl5.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)
+			got_colors.append(got)
+			n_chips += 1
+			if not found or got != want_idx:
 				colors_ok = false
-		_check(colors_ok,
-			"头顶名牌按**各家的棋子色**上色（座位 1..3 → 实得 %s，期望与 `p.color` 同源；"
+		_check(n_chips == 3 and colors_ok,
+			"桌面立牌的牌面按**各家的棋子色**上色（座位 1..3 → 实得色号 %s，期望与 `p.color` 同源；"
 				% str(got_colors)
-				+ "按座位序号取色的话座位 1 会是 PLAYER_COLORS[1]，这里是 PLAYER_COLORS[2]）")
+				+ "按座位序号取色的话座位 1 会是 1，这里是 2）")
 
 	# ---- 二期 Task 2：**角色顺序 == `game._seat_peers()`**（房间 ↔ 房主同一份顺序）----
 	# ① **必须在 `g.s_state(...)` 之后**（同上一条）：角色是 `_refresh_players()` 喂进房间的
@@ -279,29 +289,24 @@ func _run() -> void:
 	_check((bars[0].root as Control).visible, "我这条可见")
 	# 「只剩一条」本身就是"他人的三条已删"的可观察证据：条数写死 1 之后，谁把四角条加回四条这里立刻红。
 	# 批次 12 D 之前这条是 4（角位 = 桌位：自己打头、其余按行动序）—— 那是**别人的**信息，
-	# 现在改挂在名册条上（同一份 standing，见下）。
+	# 曾经改挂在名册条上，**v0.8.0 第三次改版起改挂桌面立牌**（见 `tests/placard_test.gd`）。
 	_check(int(bars[0].peer) == 2, "我这条挂的是我（乙，实得 %d）" % int(bars[0].peer))
-	# 反向契约：旧右侧名册栏必须从 game 上**删净**（同时留着就是重复：都挂"名次+名字+身家"）。
-	# 注意 `roster_strip_rows`（批次 12 D 新加的**名册条**的格数组；**批次 13 ② 起条在左上角、
-	# 批次 13 辛 ③ 起横排**，所以这里装的其实是"格"、名字沿用批次 12 的旧名）**不是**旧的 `roster_rows`，
-	# 两者名字像、东西完全不同 —— 这条钉的是旧的。
-	_check(g.get("roster_box") == null and g.get("roster_rows") == null,
-		"旧右侧名册栏已从 game 上删净（roster_box / roster_rows）")
+	# 反向契约：**三层载体**都必须从 game 上**删净**（同时留着就是重复：都挂"名次+名字+身家"）：
+	#   * `roster_box` / `roster_rows` —— 最早的右栏名册（批次 5 Task 3 删）；
+	#   * `roster_strip` / `roster_strip_rows` —— 后来的名册条（**v0.8.0 第三次改版删**，信息搬上桌）。
+	# 一律用 `g.get()` 读 —— 成员真删掉时它返回 null（直接写 `g.roster_strip` 会因标识符不存在而报错）。
+	_check(g.get("roster_box") == null and g.get("roster_rows") == null \
+			and g.get("roster_strip") == null and g.get("roster_strip_rows") == null,
+		"名册三层载体都已从 game 上删净（roster_box / roster_rows / roster_strip / roster_strip_rows）")
 
-	# ---- 名册条：其余三人，一格一位（**批次 13 ② 起在左上角「暂停」旁；辛 ③ 起横排一行**，按身家倒序）----
-	_check(g.roster_strip != null, "名册条已建（批次 13 ② 起落点在左上角）")
-	_check(g.roster_strip.get_parent() == g.hud_layer,
-		"名册条挂在**屏幕层容器**上（不随摄像机旋转）")
-	# 「常驻、不在可折叠的战报栏里」（⑩ 明写）：名册条与 log_panel 互不为祖先。
-	_check(not g.roster_strip.is_ancestor_of(g.log_panel) \
-			and not g.log_panel.is_ancestor_of(g.roster_strip),
-		"名册条**不在**可折叠的战报栏里（常驻）")
-	var rows: Array = g.roster_strip_rows
-	var row_peers: Array = []
-	for r in rows:
-		row_peers.append(int(r.peer))
-	_check(rows.size() == 3, "其余三人一格一位（实得 %d 格）" % rows.size())
-	_check(row_peers == [1, 3, 4], "名册条列出其余三人、按身家倒序（实得 %s）" % str(row_peers))
+	# ---- 桌面立牌（v0.8.0 第三次改版：**名册条整体删除**，信息搬上桌）----
+	# 立牌**可见的那一块**是 3D 节点、挂在 `table3d.table_props` 下（牌面是 `hud_layer` 下一个
+	# **离屏** `SubViewport` 烘出来的贴图，不上屏）⇒ 屏幕上再没有"一格名册行"可量。
+	# 那部分覆盖**整段搬去 `tests/placard_test.gd`**：
+	#   ① 三个人各一块立牌、没有「我」那块；② 牌色随 `p.color` 走（不随座位序号）；③ 昵称 / 名次；
+	#   ④ 落点在自己那一侧的木纹带里、不压地块；⑤ 随视角躺平（−25° / −90°）；⑥ 金边（选目标）；
+	#   ⑦ 行动者倒计时（`Track`/`Bar`）；⑧ 命中链（`placard_hit`）；⑨ 点它开弹窗；⑩ 幂等 / 收掉。
+	# 本文件只保留**与"我这条身家条"同源**的那几条（名次徽章 / 身家 / 现金 / 能量 / 高亮）。
 	# 名次徽章上的数字就是身家名次。身家 = 现金 + 地产；甲 12000 + 一号楼地价(3800) = 15800，
 	# 于是 乙(20000) > 甲(15800) > 丙(8000) > 丁(100)。
 	var rank_of := func(b: Dictionary) -> int:
@@ -324,25 +329,14 @@ func _run() -> void:
 		return v
 	_check(String(bars[0].worth_l.text) == GameData.fmt_money(worth_of.call(2, 20000)),
 		"我这条的身家 = 现金 + 地产（实得「%s」）" % String(bars[0].worth_l.text))
-	# **批次 13 ② 起名册格只画「名次徽章 + 小人 + 昵称」**：身家那一行删了 ——
-	# 别人什么身家看棋盘归属色条与玩家详情弹窗（点一格就开）。用户 ② 的原话就是"只显示排名、小人、昵称即可"。
-	_check(_bar_of(g, 1).get("worth_l") == null and _bar_of(g, 1).get("money_l") == null,
-		"名册格没有身家 / 现金行（批次 13 ② 瘦身）")
-	_check(_bar_of(g, 1).get("badge_slot") != null,
-		"名册格有名次徽章位（批次 13 ② 新加 —— 名次就画在这里，两处都有徽章位了）")
-	_check(rank_of.call(_bar_of(g, 1)) == 2,
-		"名册格里甲的名次徽章 = 2（实得 %d）" % rank_of.call(_bar_of(g, 1)))
+	# 名册格那几条（有没有身家 / 现金行、徽章位、不标「我」、破产字样、非行动者不变金）**随载体一起删**：
+	# 那些量的是一格已经不存在的 Control。名次徽章 / 昵称 / 棋子色小片现在长在**桌面立牌**上，
+	# 覆盖见 `tests/placard_test.gd` ②③（牌色 / 昵称 / 名次）与 ⑥（金边 = 选目标高亮）。
 	_check(String(bars[0].name_l.text).contains("乙") and String(bars[0].name_l.text).contains("（我）"),
 		"自己那条标「（我）」（实得「%s」）" % String(bars[0].name_l.text))
-	_check(not String(_bar_of(g, 1).name_l.text).contains("（我）"),
-		"名册格不标「我」（自己不在名册条里）")
-	_check(String(_bar_of(g, 4).name_l.text).contains("破产"), "名册格里破产那家标「破产」（实得「%s」）"
-		% String(_bar_of(g, 4).name_l.text))
-	# 轮到谁行动：那一条的名字变金（"该你了"提示，与倒计时行同一件事）
+	# 轮到谁行动：我这条的名字变金（"该你了"提示，与倒计时行同一件事）
 	_check((bars[0].name_l as Label).get_theme_color("font_color") == UK.ACCENT,
 		"行动者（我）那条名字变金")
-	_check((_bar_of(g, 1).name_l as Label).get_theme_color("font_color") != UK.ACCENT,
-		"非行动者那一行名字不变金")
 	# 现金那一行（修复波 B）：身家 = 现金 + 地产，只报身家时买卖 / 付租看不到自己有多少现金。
 	# 期望值同样按**数据表**算（写死金额会随起始资金调整假红）。
 	var cash_of := func(peer: int) -> int:
@@ -377,26 +371,29 @@ func _run() -> void:
 		% (bars[0].pips as Array).size())
 	g.s_state(_state(2, false))
 	await process_frame
-	# ---- 批次 13 ⑥ 回归：飞钞终点必须用**当帧**的行绑定（不是上一次广播的旧绑定）----
-	# 判据：喂一份"某位金额暴涨 ⇒ 名次也变了"的状态 ⇒ 名册整条重排。旧实现把飞钞播在
-	# `_refresh_corner_bars` **之前** ⇒ 终点取到的是**旧行位**的中心；修法挪到刷完之后 ⇒
-	# 终点 = 该 peer **当帧**那一行的中心。（`_money_fly_goal` 是 `_spawn_money_fly` 写的观测点。）
+	# ---- 批次 13 ⑥ 回归：飞钞终点必须用**当帧**的条绑定（不是上一次广播的旧绑定）----
+	# 判据：喂一份"我这条金额变了"的状态 ⇒ 终点 = 我这条**当帧**的中心。旧实现把飞钞播在
+	# `_refresh_corner_bars` **之前** ⇒ 终点取到的是**旧绑定**；修法挪到刷完之后 ⇒ 当帧。
+	#（`_money_fly_goal` 是 `_spawn_money_fly` 写的观测点。）
+	# **v0.8.0 第三次改版**：名册条删除后 `_corner_bar_screen_center` 只剩「我」这一条找得到
+	#（别人的落点退回棋子那一点）⇒ 这条判据从"名次重排后的丙那一行"改指**我这一条**，
+	# 接线本身（`_refresh_players` 里飞钞最后播）一个字没改。
 	var s_fly: Dictionary = _state(2, false)
 	for p in s_fly.players:
-		if int(p.peer) == 3:
-			p.money = 30000     # 丙 8000 → 30000：名次从第 3 蹿到第 1，名册整条重排
+		if int(p.peer) == 2:
+			p.money = 26000     # 我 20000 → 26000：金额变了 ⇒ 一次飞钞
 	g.s_state(s_fly)
 	await process_frame
-	var want_fly = g._corner_bar_screen_center(3)
-	_check(want_fly != null, "（前置）名次重排后丙仍在名册条里、那一行可见")
-	_check(g._money_fly_goal.has(3) and want_fly != null
-			and (g._money_fly_goal[3] as Vector2).is_equal_approx(want_fly as Vector2),
-		"飞钞终点 = 该 peer 当帧那一行的中心（实得 %s / 期望 %s）"
-			% [str(g._money_fly_goal.get(3)), str(want_fly)])
-	_check(int(_bar_of(g, 3).get("peer", 0)) == 3, "名册重排后按 peer 仍找得到丙那一行")
+	var want_fly = g._corner_bar_screen_center(2)
+	_check(want_fly != null, "（前置）我这条可见、拿得到它的中心")
+	_check(g._money_fly_goal.has(2) and want_fly != null
+			and (g._money_fly_goal[2] as Vector2).is_equal_approx(want_fly as Vector2),
+		"飞钞终点 = 我这条当帧的中心（实得 %s / 期望 %s）"
+			% [str(g._money_fly_goal.get(2)), str(want_fly)])
+	_check(int(_bar_of(g, 2).get("peer", 0)) == 2, "按 peer 仍找得到我这一条")
 	g.s_state(_state(2, false))
 	await process_frame
-	# 写死的条尺寸必须装得下内容：内容更大会把面板撑大（并把它朝上顶，与别人挤在一起）。
+	# 写死的条尺寸必须装得下内容：内容更大会把面板撑大（并把它朝上顶）。
 	# 常驻占位（倒计时行）保证条的行高恒定 —— 行动者换人时不会一开一合。
 	var TH = load("res://scripts/table_hud.gd")
 	var root_c: Control = bars[0].root
@@ -412,71 +409,26 @@ func _run() -> void:
 	print("    [实测] 我这条内容最小高 %.1f / CORNER_BAR_SIZE %s" % [content_max, str(TH.CORNER_BAR_SIZE)])
 	_check(content_max <= TH.CORNER_BAR_SIZE.y + 0.01,
 		"写死的高度装得下内容（内容最小高 %.1f ≤ %.1f）" % [content_max, TH.CORNER_BAR_SIZE.y])
-	# 名册行同理（行里那条倒计时行也是常驻占位）：量法同上面那条。
-	# **`ROSTER_ROW_SIZE.y` 是一个"改字号 / 徽章尺寸 / 倒计时行高就得重取"的数**（辛 ③ 刚调过），
-	# 所以这里把实测值打出来，下次调的人一眼看得到还差多少余量。
-	for r in rows:
-		var rr: Control = (r as Dictionary).root
-		var k2: Vector2 = rr.custom_minimum_size
-		rr.custom_minimum_size = Vector2.ZERO
-		var n2: float = rr.get_combined_minimum_size().y
-		rr.custom_minimum_size = k2
-		print("    [实测] 名册行内容最小高 %.1f / ROSTER_ROW_SIZE.y %.1f" % [n2, TH.ROSTER_ROW_SIZE.y])
-		_check(n2 <= TH.ROSTER_ROW_SIZE.y + 0.01,
-			"名册行装得下内容（%.1f ≤ %.1f）" % [n2, TH.ROSTER_ROW_SIZE.y])
-	# 身家条 + 名册行都不许挡住角按钮（左上暂停 / 右上战报 / 右上规则说明），也不许出屏。
+	# **名册行那一段整体删除**（逐行量最小高 / 行间不相交 / 与「暂停」同 y 带 / 整条在屏幕左半 /
+	# 每一格在按钮右侧 / 横排同 y —— 量的都是一格已经不存在的 Control）。立牌是世界单位的 3D 节点、
+	# 受木纹带宽度的几何约束（`table_props.PLACARD_SIZE` 那段），落点判据在
+	# `tests/placard_test.gd` ④（自己那一侧的木纹带里、不压地块）。
+	# 「我」这条不许挡住角按钮（左上暂停 / 右上战报 / 右上规则说明），也不许出屏。
 	var overlap_bad := 0
 	var off_screen := 0
-	var all_rects: Array = []
-	for b in [bars[0]] + rows:
-		var r: Rect2 = ((b as Dictionary).root as Control).get_global_rect()
-		all_rects.append(r)
-		if r.position.x < 0.0 or r.position.y < 0.0 \
-				or r.end.x > g.size.x or r.end.y > g.size.y:
-			off_screen += 1
-		for btn in [g.opt_btn, g.log_toggle, g.rules_btn]:
-			if btn != null and is_instance_valid(btn) and r.intersects((btn as Control).get_global_rect()):
-				overlap_bad += 1
-		print("    [实测] %s peer %d：%s（面板 %s）" % [
-			"身家条" if b == bars[0] else "名册行", int((b as Dictionary).peer), r,
-			((b as Dictionary).root as Control).size])
+	var r0: Rect2 = (bars[0].root as Control).get_global_rect()
+	if r0.position.x < 0.0 or r0.position.y < 0.0 \
+			or r0.end.x > g.size.x or r0.end.y > g.size.y:
+		off_screen += 1
+	for btn in [g.opt_btn, g.log_toggle, g.rules_btn]:
+		if btn != null and is_instance_valid(btn) and r0.intersects((btn as Control).get_global_rect()):
+			overlap_bad += 1
+	print("    [实测] 身家条 peer %d：%s（面板 %s）" % [int(bars[0].peer), r0, root_c.size])
 	print("    [实测] 角按钮：暂停 %s / 战报 %s / 规则 %s" % [
 		(g.opt_btn as Control).get_global_rect(), (g.log_toggle as Control).get_global_rect(),
 		(g.rules_btn as Control).get_global_rect()])
-	_check(off_screen == 0, "身家条与名册行都完整落在屏幕内（出屏 %d 条）" % off_screen)
-	_check(overlap_bad == 0, "都没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
-	# 两两不相交：它们都是"点它选人 / 开弹窗"的入口，叠在一起就有一条永远点不到。
-	var quad_cross := 0
-	for i in all_rects.size():
-		for j in range(i + 1, all_rects.size()):
-			if (all_rects[i] as Rect2).intersects(all_rects[j] as Rect2):
-				quad_cross += 1
-	_check(quad_cross == 0, "身家条与名册行两两不相交（相交 %d 对）" % quad_cross)
-	# **批次 13 ②：名册条钉在左上角「暂停」按钮右侧**（⑩ 时代它在右上「战报」之下）；
-	# **辛 ③ 起改横排** ⇒ 仍然只要求"每一格都在按钮右侧、整条在屏幕左半"
-	#（横排之后"整条在屏幕左半"这条比竖排时代更要紧：条宽了，右边的居中的横幅 / 战报气泡离得更近）。
-	var left_ok := true
-	var opt_r: Rect2 = (g.opt_btn as Control).get_global_rect()
-	for r in rows:
-		var rr2: Rect2 = ((r as Dictionary).root as Control).get_global_rect()
-		if rr2.position.x < opt_r.end.x:
-			left_ok = false
-	_check(left_ok, "名册条每一格都在「暂停」按钮右侧（实得暂停右缘 %.0f）" % opt_r.end.x)
-	# **朝向本身**：横排 = 每一格与前一格**同 y**、x **严格递增**。这是用户 ③「横向排列」那条的
-	# 可观察量（改回竖排这条立刻红）；容器的类名是实现细节，不钉。
-	var horiz_ok := rows.size() > 1
-	for i in range(1, rows.size()):
-		var pa: Rect2 = ((rows[i - 1] as Dictionary).root as Control).get_global_rect()
-		var pb: Rect2 = ((rows[i] as Dictionary).root as Control).get_global_rect()
-		if not is_equal_approx(pa.position.y, pb.position.y) or pb.position.x <= pa.position.x:
-			horiz_ok = false
-	_check(horiz_ok, "名册条**横排**：每格与前一方同 y、x 严格递增（批次 13 辛 ③）")
-	var strip_r: Rect2 = (g.roster_strip as Control).get_global_rect()
-	_check(strip_r.position.y <= opt_r.end.y and strip_r.end.y >= opt_r.position.y,
-		"名册条与「暂停」同一条 y 带（实得条 %.0f..%.0f / 暂停 %.0f..%.0f）"
-			% [strip_r.position.y, strip_r.end.y, opt_r.position.y, opt_r.end.y])
-	_check(strip_r.end.x <= g.size.x * 0.5,
-		"名册条整条在屏幕左半（右缘 %.0f ≤ 中线 %.0f）" % [strip_r.end.x, g.size.x * 0.5])
+	_check(off_screen == 0, "我这条完整落在屏幕内（出屏 %d 条）" % off_screen)
+	_check(overlap_bad == 0, "我这条没挡住角按钮（暂停/战报/规则说明，重叠 %d 处）" % overlap_bad)
 	# 「我」那条身家条的底边与右下角「转动转盘」按钮的底边平齐（用户 ② 明写）
 	_check(is_equal_approx((bars[0].root as Control).get_global_rect().end.y,
 			(g.action_btn as Control).get_global_rect().end.y),
@@ -495,16 +447,16 @@ func _run() -> void:
 		"与「战报」同一条水平线（并列，实得 y %.1f / %.1f）"
 			% [rb.get_center().y, g.log_toggle.get_global_rect().get_center().y])
 	_check(not rb.intersects(g.log_toggle.get_global_rect()), "两枚按钮不重叠")
-	# 展开战报栏 → 不许压住名册条（⑩ 明写「名册条与展开的战报栏不许打架」）
+	# 展开战报栏 → 不许压住「我」那条身家条（⑩ 明写「身家条与展开的战报栏不许打架」）。
+	# **名册条那半随载体退场**：立牌可见的那一块是 3D 节点（牌面是离屏烘图，不上屏）⇒ 与屏幕层的
+	# 战报栏天然不同层。立牌不压地块 / 不飘出桌子由 `tests/placard_test.gd` ④ 守。
 	g._toggle_log()
 	await process_frame
 	_check(g.log_panel.visible, "（前置）战报栏已展开")
 	var lp: Rect2 = (g.log_panel as Control).get_global_rect()
-	var hit_log := 0
-	for r in g.roster_strip_rows:
-		if lp.intersects(((r as Dictionary).root as Control).get_global_rect()):
-			hit_log += 1
-	_check(hit_log == 0, "展开的战报栏不压名册条（重叠 %d 行）" % hit_log)
+	_check(not lp.intersects((bars[0].root as Control).get_global_rect()),
+		"展开的战报栏不压「我」这条身家条（战报 %s / 条 %s）"
+			% [str(lp), str((bars[0].root as Control).get_global_rect())])
 	g._toggle_log()
 	await process_frame
 	_check(not g.log_panel.visible, "再点一次收起")
@@ -519,15 +471,13 @@ func _run() -> void:
 		"横幅**水平居中**（中心 x %.1f / 屏心 %.1f）" % [abr.get_center().x, g.size.x * 0.5])
 	_check(abr.position.y >= 0.0 and abr.end.y <= 52.0,
 		"横幅在屏幕上方、战报气泡（y 从 52 起）之上（实得 y %.1f..%.1f）" % [abr.position.y, abr.end.y])
+	# **名册条那两问随载体一起删**（`roster_strip` 不是成员了）：立牌可见的那一块是 3D 节点、
+	# 顶部横幅是屏幕层控件 —— 两者不同层，不存在"重叠"这件事可言。
 	var ab_hit := 0
-	for other in [g.roster_strip, g.log_toggle, g.opt_btn, g.rules_btn]:
+	for other in [g.log_toggle, g.opt_btn, g.rules_btn]:
 		if (other as Control).visible and abr.intersects((other as Control).get_global_rect()):
 			ab_hit += 1
-	# **名册条的每一行也要一起核**：条本身是容器，它的矩形比行的大（甚至可能为 0 宽）
-	for r in g.roster_strip_rows:
-		if abr.intersects(((r as Dictionary).root as Control).get_global_rect()):
-			ab_hit += 1
-	_check(ab_hit == 0, "横幅不与名册条 / 三个角按钮重叠（重叠 %d 处）" % ab_hit)
+	_check(ab_hit == 0, "横幅不与三个角按钮重叠（重叠 %d 处）" % ab_hit)
 	s_ab["aberrations"] = []
 	g.s_state(s_ab)
 	await process_frame
@@ -538,11 +488,10 @@ func _run() -> void:
 	g.s_state(_state(1, false))
 	await process_frame
 	_check((g.corner_bars[0].root as Control).visible, "自己不在名册里也不崩、我这条仍在")
+	# 「（我）」标记只挂在**自己那一条**上（`_fill_peer_bar` 的 `is_self`）：自己不在名册里时
+	# 那一条轮转成了别人 ⇒ 屏幕上不该有任何「（我）」。名册条已删 ⇒ 只剩这一处可查。
 	var marked: Array = ([g.corner_bars[0]] as Array).filter(
 		func(b) -> bool: return String(b.name_l.text).contains("（我）"))
-	for r in g.roster_strip_rows:
-		if String(r.name_l.text).contains("（我）"):
-			marked.append(r)
 	_check(marked.is_empty(), "自己不在名册时没人被误标「（我）」")
 	# 自己不在名册 ⇒ 从第 0 家起轮转：我这条挂甲
 	_check(int(g.corner_bars[0].peer) == 1,
@@ -550,7 +499,7 @@ func _run() -> void:
 	_check((g.corner_bars[0].name_l as Label).get_theme_color("font_color") == UK.ACCENT,
 		"轮到甲时他的名字变金")
 
-	print("== 身家条 / 名册条缓存：状态没变不重建 ==")
+	print("== 身家条缓存：状态没变不重建 ==")
 	var sig_before: String = g._corner_sig
 	g.s_state(_state(1, false))
 	await process_frame
@@ -579,13 +528,14 @@ func _run() -> void:
 			% ("无" if g.action_btn == null else String(g.action_btn.text)))
 	# 陷阱：`_process` 原有一句 `if mat_bar == null: return` 的**提前返回**。只删构建、不删守卫的话，
 	# `_process` 后半段（小卖部 / 黑市 / 操作倒计时 / 开发者面板）会**静默**不再执行。
-	# 这里用「倒计时仍被推进到身家条 / 名册行」把后半段钉住（簇的推送在 `_process` 最末）。
-	# peer 3（丙）此刻不是行动者 ⇒ 它的倒计时落在**名册条那一行**上（批次 12 D 起他人没有四角条）。
-	g.s_op_timer("roll", 30.0, 30.0, 3)
+	# 这里用「倒计时仍被推进到身家条」把后半段钉住（簇的推送在 `_process` 最末）。
+	# **v0.8.0 第三次改版**：`_op_owner` 换成**我**（peer 2）—— 倒计时在屏幕上只剩「我」这条身家条
+	# 一个落点（别人的那一条在**桌面立牌**上，判据见 `tests/placard_test.gd` ⑦）。
+	g.s_op_timer("roll", 30.0, 30.0, 2)
 	g._process(0.0)
 	await process_frame
-	var cb3g: Dictionary = _bar_of(g, 3)
-	_check(not cb3g.is_empty() and (cb3g.timer_kind as Label).visible,
+	var cbg2: Dictionary = _bar_of(g, 2)
+	_check(not cbg2.is_empty() and (cbg2.timer_kind as Label).visible,
 		"_process 的后半段仍在跑（倒计时没被提前返回吞掉）")
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
@@ -1014,9 +964,11 @@ func _run() -> void:
 	_check(strip_sb is StyleBoxTexture,
 		"色条挂着真正的卡样式（实得 %s）" % ("null" if strip_sb == null else strip_sb.get_class()))
 
-	print("== 操作倒计时（D 方案）：身家条 / 名册行是倒计时唯一的落点（立牌已于批次 9 退场）==")
-	# 倒计时簇原先立牌 / 四角条各一份；立牌随批次 9 退场 ⇒ 屏幕层那一条成了唯一落点（批次 12 D 起
-	# 都常驻"的性质本来就比立牌稳。数据链路一字未改（仍由 _refresh_op_timer 逐帧推）。
+	print("== 操作倒计时（D 方案）：屏幕上只剩「我」这条身家条一个落点（v0.8.0 第三次改版）==")
+	# 倒计时簇原先立牌 / 四角条各一份；立牌随批次 9 退场、四角条只剩「我」一条，
+	# **v0.8.0 第三次改版**名册条又删除 ⇒ 屏幕层只剩「我」这一条；**别人的那一份在桌面立牌上**
+	#（`table_props.set_placard_timer`，判据见 `tests/placard_test.gd` ⑦）。
+	# 数据链路一字未改（仍由 `_refresh_corner_timer` 逐帧推，同一份 `_op_left / _op_total`）。
 	g.my_peer = 2
 	g.s_state(_state(2, false))
 	g._refresh_actions()
@@ -1026,8 +978,7 @@ func _run() -> void:
 	g.s_op_timer("roll", 35.0, 35.0, 2)
 	g._process(0.0)
 	await process_frame
-	var cb2: Dictionary = _bar_of(g, 2)        # 乙 = 行动者（= 我那条）
-	var cb1: Dictionary = _bar_of(g, 1)        # 甲 = 非行动者（= 名册条那一格，批次 13 辛 ③ 起横排里的一格）
+	var cb2: Dictionary = _bar_of(g, 2)        # 乙 = 行动者 = 我（屏幕上唯一那条）
 	_check(not cb2.is_empty() and (cb2.timer_kind as Label).visible,
 		"行动者的那一条上出现倒计时（环节名可见）")
 	_check(String((cb2.timer_kind as Label).text) == "掷轮",
@@ -1038,19 +989,15 @@ func _run() -> void:
 	var cfl2: ColorRect = cb2.timer_fill
 	_check(ctk2.visible and cfl2.size.x > 0.9 * maxf(ctk2.size.x, 1.0),
 		"条上的细进度条接近满格（%.1f / %.1f）" % [cfl2.size.x, ctk2.size.x])
-	_check(not (cb1.timer_kind as Label).visible and not (cb1.timer_track as ColorRect).visible
-			and not (cb1.timer_left as Label).visible,
-		"其余各条不显示倒计时（只出现在行动者那一条上）")
-	# 行常驻占位：倒计时**出现之后**那一条不许变高（我这条变了会朝上顶到别人，
-	# 名册行变了名册条就会一开一合 —— 两种载体的写死尺寸都要守住）。
+	# 行常驻占位：倒计时**出现之后**那一条不许变高（我这条变了会朝上顶，与下面那条平齐的约束打架）。
+	# 名册行那一半随载体删除（立牌的尺寸是世界单位，见 `table_props.PLACARD_*`）。
 	var heights_ok := true
-	for b in [g.corner_bars[0]] + g.roster_strip_rows:
-		var want_h: float = TH.CORNER_BAR_SIZE.y if b == g.corner_bars[0] else TH.ROSTER_ROW_SIZE.y
-		if not is_equal_approx((b.root as Control).size.y, want_h):
-			heights_ok = false
-			print("    [实测] 倒计时出现后 peer %d 那条高 %.1f（应 %.1f）" % [
-				int(b.peer), (b.root as Control).size.y, want_h])
-	_check(heights_ok, "倒计时出现后每条仍各自一样高（身家条 = CORNER_BAR_SIZE.y / 名册行 = ROSTER_ROW_SIZE.y）")
+	var want_h: float = TH.CORNER_BAR_SIZE.y
+	if not is_equal_approx((g.corner_bars[0].root as Control).size.y, want_h):
+		heights_ok = false
+		print("    [实测] 倒计时出现后我这条高 %.1f（应 %.1f）"
+			% [(g.corner_bars[0].root as Control).size.y, want_h])
+	_check(heights_ok, "倒计时出现后我这条仍一样高（= CORNER_BAR_SIZE.y，行常驻占位）")
 	# 广播一秒一条，本机 _process 逐帧扣 delta 插值——喂剩 5 秒的道具窗口，
 	# 等 1.5 秒（自然帧累积扣减），进度条应明显缩水、环节名跟着窗口走
 	g.s_op_timer("item", 5.0, 12.0, 2)
@@ -1060,33 +1007,37 @@ func _run() -> void:
 	_check(frac2 < 0.45 and frac2 > 0.15, "一秒多后进度条平滑缩水到中段（实得 %.2f）" % frac2)
 	_check(String((cb2.timer_kind as Label).text).begins_with("道具"),
 		"环节名跟着窗口走（实得「%s」）" % String((cb2.timer_kind as Label).text))
-	# 窗口换人：倒计时跟到丙那一条（丙在名册条里 —— 批次 12 D 起他人没有四角条）
+	# **窗口换人 ⇒ 我这条收起**（倒计时只出现在 `_op_owner` 那一条上；此刻 owner = 丙 ≠ 我）。
+	# 「换人之后倒计时跟到新行动者那一块」那一半现在是**立牌**的事（`tests/placard_test.gd` ⑦）。
 	g.s_op_timer("black", 15.0, 20.0, 3)
 	g._process(0.0)
 	await process_frame
-	var cb3: Dictionary = _bar_of(g, 3)
-	_check((cb3.timer_kind as Label).visible and not (cb2.timer_kind as Label).visible,
-		"窗口换人时倒计时跟着行动者换到丙那一条（名册行）")
-	_check(String((cb3.timer_kind as Label).text) == "黑市",
-		"环节名「黑市」（实得「%s」）" % String((cb3.timer_kind as Label).text))
-	_check(String((cb3.timer_left as Label).text) == "15 秒",
-		"剩余秒数跟着换人（实得「%s」）" % String((cb3.timer_left as Label).text))
-	# 不限时：仍显示环节名，但不写"0 秒"、进度条整条收起（语义原在座位卡上："不限时"）
-	g.s_op_timer("roll", 0.0, 0.0, 3)
+	_check(not (cb2.timer_kind as Label).visible and not (cb2.timer_track as ColorRect).visible
+			and not (cb2.timer_left as Label).visible,
+		"窗口换到丙（≠ 我）⇒ 我这条的倒计时内容全部收起（只在行动者那一条上露面）")
+	# 换回我：环节名 / 秒数都跟着走（同一条上的两件事）
+	g.s_op_timer("black", 15.0, 20.0, 2)
 	g._process(0.0)
-	_check((cb3.timer_kind as Label).visible and String((cb3.timer_kind as Label).text) == "掷轮"
-			and not (cb3.timer_left as Label).visible and not (cb3.timer_track as ColorRect).visible,
+	_check((cb2.timer_kind as Label).visible and String((cb2.timer_kind as Label).text) == "黑市",
+		"环节名换到「黑市」（实得「%s」）" % String((cb2.timer_kind as Label).text))
+	_check(String((cb2.timer_left as Label).text) == "15 秒",
+		"剩余秒数跟着窗口走（实得「%s」）" % String((cb2.timer_left as Label).text))
+	# 不限时：仍显示环节名，但不写"0 秒"、进度条整条收起（语义原在座位卡上："不限时"）
+	g.s_op_timer("roll", 0.0, 0.0, 2)
+	g._process(0.0)
+	_check((cb2.timer_kind as Label).visible and String((cb2.timer_kind as Label).text) == "掷轮"
+			and not (cb2.timer_left as Label).visible and not (cb2.timer_track as ColorRect).visible,
 		"不限时窗口仍显示环节名但不写秒数、不画进度条")
 	# 窗口关闭：kind="" 全部一起收
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g._process(0.0)
 	await process_frame
 	var any_corner_timer := false
-	for b in [g.corner_bars[0]] + g.roster_strip_rows:
+	for b in g.corner_bars:
 		if (b.timer_kind as Label).visible or (b.timer_track as ColorRect).visible \
 				or (b.timer_left as Label).visible:
 			any_corner_timer = true
-	_check(not any_corner_timer, "窗口关闭后身家条与名册行的倒计时内容全部收起（一处都不显示）")
+	_check(not any_corner_timer, "窗口关闭后我这条的倒计时内容全部收起（一处都不显示）")
 
 	print("== 点转盘 = 掷轮入口（批次 3 Task 2）==")
 	# 为什么挑 roll_received 当证据：底栏那个「转动转盘」按钮已随 Task 6 拆除，`roll_btn.disabled`
@@ -1720,7 +1671,10 @@ func _run() -> void:
 	_check(g._tgt_stage == "", "该格被选中 → 选目标态收尾（实得「%s」）" % g._tgt_stage)
 	g._cancel_target()
 
-	print("== 立牌已退场（批次 9）：接口与节点都不在（不留空壳） ==")
+	print("== 老的「四块立牌」（批次 9 的 `Standees`）已退场：接口与节点都不在（不留空壳） ==")
+	# ⚠ 别与 v0.8.0 第三次改版那三块**桌面立牌**搞混：那是**另一样东西**
+	#（`table_props._placards` / `Placards/Placard{peer}`，见 `tests/placard_test.gd`）；这里钉的是
+	# 老 2D 版座位卡那一套（带公开背包 / 身家，批次 9 整体删除）。
 	var tpS = g.table3d.table_props
 	_check(tpS != null, "TableProps 在")
 	if tpS != null:
@@ -1737,7 +1691,7 @@ func _run() -> void:
 			and not tp_consts.has("BACKPACK_MAX"),
 		"立牌常量（STANDEE_* / BACKPACK_MAX）已删")
 
-	print("== 身家条 / 名册行可点 → 玩家道具弹窗（批次 9，批次 12 D 搬到名册条）==")
+	print("== 身家条 / 立牌可点 → 玩家道具弹窗（批次 9；落点批次 12 D 到名册条、v0.8.0 第三次改版到桌面立牌）==")
 	g.my_peer = 2
 	var s_cb: Dictionary = _state(2, false)
 	for p in s_cb.players:
@@ -1750,15 +1704,13 @@ func _run() -> void:
 	g._process(0.0)
 	_check(g.corner_bars[0].root.mouse_filter == Control.MOUSE_FILTER_STOP,
 		"我这条吃点击（STOP）")
-	# 名册行同样吃点击（⑩：点击一条 = 开该玩家的信息弹窗）—— 行内子控件全是 IGNORE，点击冒泡到行根。
-	_check(_bar_of(g, 1).root.mouse_filter == Control.MOUSE_FILTER_STOP, "名册行也吃点击（STOP）")
-	_check(_bar_of(g, 1).root.get_meta("peer", GameData.NO_PEER) == 1,
-		"名册行的 meta 写的是它挂的那个 peer")
-	# **按 peer 找那一行，别写下标假设**：名册按身家倒序、条数会随人数重排。
-	_check(not _bar_of(g, 1).is_empty(), "peer 1 那一行在名册条里")
+	# 名册行那三条（行根 STOP / 行根 meta / "peer 1 那一行在名册条里"）**随载体删除**：
+	# 别人那一条现在是**桌面立牌**，点击入口换成 `_on_table_click → placard_hit`（3D 命中盒，
+	# 没有 Control 根、也没有 meta）——见 `tests/placard_test.gd` ⑧⑨。
+	# 后果函数一字未改，所以下面仍走同一个 `_on_corner_bar_clicked`。
 	g._on_corner_bar_clicked(1)
 	await process_frame
-	_check(g.player_popup != null and g.player_popup.is_open(), "点名册行 → 道具弹窗打开")
+	_check(g.player_popup != null and g.player_popup.is_open(), "点 peer 1 → 道具弹窗打开")
 	_check(g.player_popup.item_count == 2, "弹窗里卡牌数与 st 一致（2 件，实得 %d）" % g.player_popup.item_count)
 	_check(g.player_popup.stamina_text == "4", "弹窗里能量（体力）值与 st 一致（实得「%s」）" % g.player_popup.stamina_text)
 	# 名次徽章（批次 12 D 的隐性回归点）：`_rank_of` 原先回头去 `corner_bars` 里翻 —— 四角条只剩
@@ -1772,27 +1724,10 @@ func _run() -> void:
 	# 反向：不存在的玩家不该开（人少了 / 自己不在名册时不崩）
 	g._on_corner_bar_clicked(999)
 	_check(not g.player_popup.is_open(), "点一个不存在的玩家：不开弹窗、也不崩")
-	# 真链路：**从行根发一次 gui_input**（走 `_make_roster_row` 那条 lambda + `get_meta("peer")`），
-	# 而不是直调 `_on_corner_bar_clicked` —— 谁哪天把 lambda 改成闭包捕获 peer（dispatch 里点名的
-	# 坑），直调那条路照样绿。这里**先换 my_peer 让名册条真重排**（自己从乙换成丙），
-	# 再点重排后的第 1 行 —— 若 lambda 捕获的是那一刻的旧 peer，就会点错人、这条红。
-	g.my_peer = 3
-	g.s_state(_state(3, false))
-	await process_frame
-	await process_frame
-	var ev := InputEventMouseButton.new()
-	ev.button_index = MOUSE_BUTTON_LEFT
-	ev.pressed = true
-	var bar1: Control = g.roster_strip_rows[1].root
-	bar1.gui_input.emit(ev)
-	await process_frame
-	_check(g.player_popup.is_open() and g.player_popup.open_peer() == int(g.roster_strip_rows[1].peer),
-		"经 gui_input 真链路：开在**该行当前挂的那个 peer** 上（meta 路径没被闭包捕获顶掉）")
-	# 支撑断言：行根 meta 与 row.peer 同源（meta 路径万一失效，上面那条会以"点错人"的形式红，
-	# 这条则直接指出是 meta 没跟上重排）。
-	_check(int(bar1.get_meta("peer", GameData.NO_PEER)) == int(g.roster_strip_rows[1].peer),
-		"行根 meta 与 row.peer 同源（实得 meta=%d / row=%d）"
-			% [int(bar1.get_meta("peer", GameData.NO_PEER)), int(g.roster_strip_rows[1].peer)])
+	# **真链路那条（从名册行根发一次 `gui_input`）随载体删除**：立牌没有 Control 根、没有 meta、
+	# 也没有"闭包捕获 peer"这个坑（peer 由 `placard_hit` 当场从节点上算出来）。
+	# 对应覆盖搬去 `tests/placard_test.gd` ⑧⑨：`placard_hit(px)` 返回该家的 peer，
+	# 且 `g._on_table_click(px, LEFT)` 真的开该玩家的道具弹窗。
 	g.player_popup.close()
 
 	print("== 弹窗关闭路径（终审 fix wave）==")
@@ -2021,13 +1956,12 @@ func _run() -> void:
 	g.player_popup.close()
 	await process_frame
 
-	print("== 选目标：高亮跟着搬到名册条、点它 = 选中（批次 9 落点在四角条，批次 12 D 搬名册条）==")
-	# 立牌随批次 9 退场 ⇒ "此刻可选中的对手"这份高亮改画在**屏幕层的条**上（2px 金边 + 底色提亮，
-	# 与行动者的 1px 金边分得开）；**批次 12 D 起"别人"那一格是名册条的一格**（四角条只剩"我"那条，
-	# 而目标从来不含自己）—— **批次 13 ② 起那一格在左上角「暂停」旁**（辛 ③ 起是**横排**里的
-	# 一格）：判据（`_hl_peers`）
-	# 一个字没改，换的只是贴到哪一棵控件、哪一处落点上。
-	# 这里既钉"哪几格亮着"，也钉"点亮的那格点下去真的选中"。
+	print("== 选目标：高亮跟着搬到桌面立牌、点它 = 选中（v0.8.0 第三次改版）==")
+	# 这段的**判据（`_hl_peers`）一个字没改**，换的只是"贴到哪一棵控件、哪一处落点上"：
+	#   批次 9 落在四角条 → 批次 12 D 搬名册条 → **v0.8.0 第三次改版搬桌面立牌**（3D 节点）。
+	# 「哪几块亮着」那半现在量的是立牌（`set_placard_hot`），**整段搬去 `tests/placard_test.gd` ⑥**。
+	# 这里保留的是**屏幕层那一半**：我这条身家条从不参与选目标高亮（目标从不含自己），
+	# 以及"点亮的那家被点 ⇒ 走既有 `_on_seat_clicked`"这条**载体无关的后果链**。
 	# 用**强拆令**（两段式：只能选"名下有地"的玩家）—— 它的目标过滤天然分得出"有的亮、有的不亮"。
 	g.my_peer = 2
 	var s_tg: Dictionary = _state(2, false)
@@ -2039,25 +1973,20 @@ func _run() -> void:
 	await process_frame
 	g._begin_peer_target(0, false, true)           # 直接走入口：进入选玩家态
 	await process_frame
-	var hot: Array = []
-	for b in g.roster_strip_rows:
-		if _corner_bar_hot(g, b):
-			hot.append(int((b as Dictionary).get("peer", GameData.NO_PEER)))
 	# fixture：`_state()` 的四家是 [1 甲(有一号楼) / 2 乙(我) / 3 丙(无地) / 4 丁(已出局)]，
 	# `then_prop=true` 只留下"名下有地"的 ⇒ 可选目标**只有 peer 1 一个**。
-	_check(hot.size() == 1 and hot[0] == 1,
-		"选目标态下**只有** peer 1 那一行亮着（实得 %s）" % str(hot))
+	_check(g._hl_peers == [1], "选目标态下 `_hl_peers` 只有 peer 1（目标过滤生效，实得 %s）" % str(g._hl_peers))
 	# 我那条四角条不在目标里（目标从不含自己）⇒ 它不该被点亮。
 	_check(not _corner_bar_hot(g, g.corner_bars[0]),
 		"我那条身家条不参与选目标高亮（目标从不含自己）")
-	# 点那行 → 真的进"选定后"的后果（走既有 _on_seat_clicked）
+	# 点亮的那家被点 → 真的进"选定后"的后果（走既有 _on_seat_clicked）
 	g._on_corner_bar_clicked(1)                    # 强拆令这类需要再选一块地 ⇒ 转进选地块段
 	_check(String(g._tgt_stage) == "tile" and int(g._tgt_peer) == 1,
-		"点亮的那行被点 → 走既有选目标链（tgt_stage=「%s」/ tgt_peer=%d）" % [g._tgt_stage, g._tgt_peer])
+		"点亮的那家被点 → 走既有选目标链（tgt_stage=「%s」/ tgt_peer=%d）" % [g._tgt_stage, g._tgt_peer])
 	g._cancel_target()
 	await process_frame
-	_check(hot.size() > 0 and not _corner_bar_hot(g, _bar_of(g, 1)),
-		"取消选目标后名册行高亮熄灭")
+	_check(not _corner_bar_hot(g, g.corner_bars[0]),
+		"取消选目标后我这条身家条仍是熄灭的（高亮只在可选中的那几家身上）")
 
 	print("== 棋子动画（批次 11 Task 1）：走子抬 y、传送淡到看不见 ==")
 	# 棋子那四样动作（逐格走 / 传送 / 弹入 / 光环）在 3D 里重写了（设计 §4.1）。走子与传送

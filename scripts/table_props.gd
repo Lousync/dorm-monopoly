@@ -1370,6 +1370,13 @@ func _plate_pos(a: Vector3, rad: float, half_h: float) -> Vector3:
 func _apply_prop_lean() -> void:
 	if _t3 == null or _t3.board == null:
 		return          # 棋盘还没就绪：落点算不出来（`_token_world` / `house_screen_pos` 都要它）
+	# 立牌：**不走 `_lean_rad` 那条后倾轨道**，改成整块朝相机（见 `_face_camera`）。
+	# 但**重贴的时机与棋子 / 房子同一处** —— 取景一变就得重算（相机的姿态变了）。
+	for pp in _placards:
+		var pl: Dictionary = _placards[pp]
+		if not is_instance_valid(pl.get("root")):
+			continue
+		_face_camera(pl, int(pl.get("slot", 2)))
 	var trad := _lean_rad(TOKEN_LEAN_DEG)
 	for peer in _tokens:
 		var tk: Dictionary = _tokens[peer]
@@ -2052,6 +2059,240 @@ class HouseIcon extends Control:
 		]), c)
 		# 门
 		draw_rect(Rect2(w * 0.42, h * 0.68, w * 0.16, h * 0.30), c.lightened(0.40), true)
+
+# ---------------- 桌面立牌（v0.8.0 第三次改版：名册条从屏幕搬上桌） ----------------
+#
+# **它是什么**：每名对手一块小方牌，立在**他自己座位那一侧的木纹带上**（**地块之外**），
+# **整块正对相机**（用户 2026-10-06：「改成 billboard 正对相机」）。
+#
+# ⚠ **牌面不是本文件画的** —— 它是**名册格那一块 Control 烘出来的贴图**
+#（`TableHud.make_chip` 放进离屏 `SubViewport`，由 `game._refresh_placards` 烘）。
+# ⇒ 观感与旧名册格**逐像素一致**（用户：「做成跟之前屏幕左上角相同的样式（一模一样）」），
+# 高亮与倒计时也**继续由屏幕层那套函数**刷（它们只认字典字段，不认挂在哪儿）
+# ⇒ 本文件里**没有**金边 / 倒计时那两套 3D 代码，"一样"这件事由**同一份代码**保证。
+#
+# ⚠ **与批次 9 退场的「四块立牌」（`Standees`）不是同一样东西**：那四块是老 2D 版的座位卡
+#（带公开背包 / 身家），已整体删除，`hud_test` 那条反向契约（`Standees` 必须是 null）**照旧有效**。
+#
+# ⚠⚠ **尺寸是几何硬约束、不是审美**：木纹带只有 **0.77 世界单位深**（地块环外沿 |x| ≤ 3.93 /
+# z ∈ [−2.71, 2.53]；木桌外沿 |x| ≤ 4.70 / |z| ≤ 3.48 ⇒ 左右两条边带只剩 0.77）。
+# **控制者 2026-10-06 在「三块小方牌」与「近侧一排宽牌」之间选了前者**（要"各自座位前"）。
+
+## 牌面宽度（世界单位）：卡在边带宽度以内（0.77），留一点余量。
+## **高度由贴图的宽高比推出来**（见 `_place_placard`）—— 名册格是 ≈120×42 的横条
+## ⇒ 高 ≈ 0.25 世界，同样在边带进深以内。
+## **1.15**（用户 2026-10-06 第二次复核：「通过减间距、减字号缩小一点，这样就可以减小桌面
+## 边缘宽度」）。
+##
+## **这个数是怎么定的**：名册格那块 Control 收了一档之后天然尺寸 ≈ **85×30 屏幕像素**
+##（`table_hud.ROSTER_ROW_SIZE` 等一串常量，见 `make_chip`）。要让它**在 3D 默认档按 1:1 显示**
+##（≈72.8 屏幕像素 / 世界单位），牌面就得 ≈ `85 / 72.8 = 1.17` 世界宽 ⇒ 取 **1.15**。
+##
+## ⚠ **它比木纹带（`WOOD_FRAME 0.85` ⇒ 带 ≈0.92 世界）宽** —— 也就是牌的外沿会**略微探出桌沿**。
+## 这是**故意的**：立牌本来就是一块悬在桌面外的 billboard 标牌（不参与物理），
+## 而"字读得出来"比"整块牌都压在木头上"要紧得多。桌沿那一圈也因此能按用户要求收窄。
+const PLACARD_W := 1.15
+## 牌面**下沿离地块环外沿的净空**（世界单位）。用户：「正前方的玩家的桌面铭牌离棋盘近些，
+## 不然 2D 视角都看不到了」⇒ 落点不再取"木纹带正中"，而是**贴着地块环往外排**
+##（`环外沿 + 牌面那一维的半宽 + 这个净空`，见 `_placard_anchor_px`）。
+## 这一改同时让**三块牌都离棋盘更近**：2D 端对面那块因此进了画框（原先在框外）。
+const PLACARD_GAP := 0.06
+## 牌面厚度（世界单位）。有厚度才像"一张牌"而不是一张贴纸（同 `TOKEN_SIZE` 那条）。
+const PLACARD_T := 0.028
+## 命中盒放宽（画布像素）：牌子只有 0.72×0.25 世界（≈ 88×30 画布像素），
+## 同 `TOKEN_HIT_SLACK` 那条"手指不容易点中"的理由，四面各放一圈。
+const PLACARD_HIT_SLACK := Vector2(10.0, 10.0)
+
+var _placards_root: Node3D
+## 节点池：peer -> `{root, face, face_mat, slot, w, h}`。**只建一次**，
+## 刷新只改贴图 / 落点 / 宽高比（照棋子那套幂等约定）。
+var _placards := {}
+var _placard_mesh: PlaneMesh
+
+## 按 `rows`（每项 `{peer, slot, tex: Texture2D, w, h}`）摆立牌。`tex` 是**名册格烘出来的那张图**
+##（`game._refresh_placards` 给的），`w`/`h` 是它的像素尺寸（用来定牌面的宽高比）。
+##
+## **`slot` 决定它立在哪一侧**（1 = 右 / 2 = 对面 / 3 = 左；0 = 「我」⇒ 不摆）。
+## **幂等**：节点池只建一次；状态里没有了的 peer ⇒ 收掉。
+func set_placard_faces(rows: Array) -> void:
+	if _t3 == null:
+		return
+	if _placards_root == null:
+		_placards_root = Node3D.new()
+		_placards_root.name = "Placards"
+		add_child(_placards_root)
+	var seen := {}
+	for row in rows:
+		var r: Dictionary = row
+		var peer := int(r.get("peer", GameData.NO_PEER))
+		if peer == GameData.NO_PEER:
+			continue
+		seen[peer] = true
+		var pl: Dictionary = _placards.get(peer, {})
+		if pl.is_empty():
+			pl = _make_placard(peer)
+			_placards[peer] = pl
+		pl["slot"] = int(r.get("slot", 2))
+		pl["w"] = maxf(1.0, float(r.get("w", 120.0)))
+		pl["h"] = maxf(1.0, float(r.get("h", 42.0)))
+		var tex = r.get("tex")
+		if tex != null:
+			(pl["face_mat"] as StandardMaterial3D).albedo_texture = tex
+		_place_placard(pl)
+	for peer in _placards.keys():
+		if seen.has(peer):
+			continue
+		var gone: Dictionary = _placards[peer]
+		var groot: Node3D = gone.get("root")
+		if groot != null and is_instance_valid(groot):
+			_placards_root.remove_child(groot)
+			groot.queue_free()
+		_placards.erase(peer)
+
+## 造一块立牌（**只建节点**；贴图与落点由 `set_placard_faces` 刷）。
+func _make_placard(peer: int) -> Dictionary:
+	if _placard_mesh == null:
+		_placard_mesh = PlaneMesh.new()
+		_placard_mesh.size = Vector2(PLACARD_W, PLACARD_W)     # 比例在 `_place_placard` 里按贴图改
+		# ⚠ **必须改成朝 +Z**：`PlaneMesh` 默认 `FACE_Y`（**平躺**、法线朝上）—— 直接用的话
+		# 牌面会与相机的 up 同向 ⇒ 从镜头看是**一条棱**（实测出图：三块牌都成了一道细线）。
+		# 牌面要的是"局部 +Z 是法线"（与棋子 / 房子那块的 `Face` 同一个朝向口径）。
+		_placard_mesh.orientation = PlaneMesh.FACE_Z
+	var root := Node3D.new()
+	root.name = "Placard%d" % peer
+	root.set_meta("peer", peer)
+	_placards_root.add_child(root)
+	var face := MeshInstance3D.new()
+	face.name = "Face"
+	face.mesh = _placard_mesh
+	var fmat := StandardMaterial3D.new()
+	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	fmat.roughness = 0.8
+	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA   # 名册格那张卡是半透明的（alpha 0.82）
+	fmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# **不加任何自发光**（用户 2026-10-06：「桌面铭牌颜色不对」）。
+	# 上一版为了让它在暗桌垫上浮出来加过一层"贴图当发光图"，实测**把那张卡冲淡成了灰白** ——
+	# 名册格那张卡的底是**半透明深蓝灰**，一旦发光就再也不是那个颜色了。
+	# ⇒ 牌面**原样**呈现烘出来的那张图，颜色与屏幕上那条名册格**逐像素一致**。
+	face.material_override = fmat
+	root.add_child(face)
+	return {"root": root, "face": face, "face_mat": fmat, "slot": 2, "w": 120.0, "h": 42.0}
+
+## 把落点 / 朝向 / 宽高比刷一遍（幂等）。
+##
+## **宽高比照贴图来**：牌面宽恒为 `PLACARD_W`，高 = `PLACARD_W × h / w` ——
+## 名册格是内容驱动的宽度、高恒 42 ⇒ 昵称一长，牌面就跟着变宽，而不是把字压扁。
+func _place_placard(pl: Dictionary) -> void:
+	var mesh: PlaneMesh = (pl["face"] as MeshInstance3D).mesh
+	var want := Vector2(PLACARD_W, PLACARD_W * float(pl["h"]) / float(pl["w"]))
+	if not mesh.size.is_equal_approx(want):
+		mesh.size = want
+	_face_camera(pl, int(pl.get("slot", 2)))
+
+## 把一块立牌**整块转成相机的姿态**（正对镜头），并摆到"下沿踩在桌面那一点"的高度。
+##
+## **朝向**：`root.basis = camera.basis` —— Godot 相机沿 **−Z** 看，所以相机的 **+Z 就是
+## 朝向观察者**那一维 ⇒ 牌面（局部 +Z 是法线）正好正对镜头，+Y 与相机同向（字朝上）。
+## **不用 `look_at()`**：2D 端相机近正俯视时"看向哪"与"上在哪"几乎共线，`look_at` 会退化
+##（它会自己挑一个 up，牌面绕视线轴的旋转量于是不可预期 ⇒ 2D 端那几块字的朝向会飘）。
+## 直接抄相机的完整姿态没有这个毛病，俯视 / 平视是同一个式子。
+##
+## **高度**：牌心抬 `半高 × 相机 up 的世界 Y 分量` —— 那一项恰好等于"牌下沿相对牌心的竖直
+## 偏移"（与 `_plate_pos` 同源，只是把"我们选的后倾角"换成"相机真实的俯角"）：
+##   * 3D 默认档（俯角 50°）⇒ `cos50° ≈ 0.64` ⇒ 抬起来，下沿踩桌；
+##   * 2D 端（正俯视）⇒ up 的 Y 分量 ≈ 0 ⇒ 牌心就在桌面上 ⇒ **平贴桌面**。
+## ⇒ **不必另写一条"随 view_t 插值"的轨道**，躺平是"正对相机"在正俯视下的必然结果。
+func _face_camera(pl: Dictionary, slot: int) -> void:
+	var root: Node3D = pl["root"]
+	if root == null or not is_instance_valid(root) or _t3 == null or _t3.camera == null:
+		return
+	var mesh: PlaneMesh = (pl["face"] as MeshInstance3D).mesh
+	var up_y: float = _t3.camera.global_transform.basis.y.y
+	var w := _placard_world(pl)
+	root.global_transform = Transform3D(_t3.camera.global_transform.basis,
+		Vector3(w.x, w.y + mesh.size.y * 0.5 * up_y, w.z))
+
+## 每块立牌立在**自己那一侧、紧贴地块环的木纹带上**（画布像素 → 世界，再抬 `PROPS_Y`）。
+func _placard_world(pl: Dictionary) -> Vector3:
+	var hw: float = PLACARD_W * 0.5
+	var hh: float = _placard_half_h(pl)
+	var w: Vector3 = _t3.canvas_px_to_world(
+		_placard_anchor_px(int(pl.get("slot", 2)), hw, hh))
+	w.y = _t3.table_mesh.global_position.y + PROPS_Y
+	return w
+
+## 一块立牌的**半高**（世界单位）：宽恒为 `PLACARD_W`、高照贴图的宽高比推。
+func _placard_half_h(pl: Dictionary) -> float:
+	return PLACARD_W * float(pl.get("h", 42.0)) / float(pl.get("w", 120.0)) * 0.5
+
+## 第 `slot` 把椅子那一侧的**木纹带中心**（画布像素）。
+##
+## **落点 = 地块环外沿 + 牌面那一维的半宽 + `PLACARD_GAP`**（用户：「离棋盘近些」）——
+## 不再取"木纹带正中"：那样三块牌都被推到桌子外沿，2D 端对面那块会掉出画框。
+##
+## 环外沿**实测**：扫全部 56 格格心取包围盒，再往外加**半个格距**（格心不是格边）。
+## `half_w` / `half_h` 是牌面在**世界**里的半宽 / 半高（由调用方按贴图宽高比算好）；
+## 朝外那一维用哪一个，取决于这一侧：
+##   * 左 / 右：牌面**宽度**沿世界 X ⇒ 往外推 `half_w`；
+##   * 对面：牌面**高度**在 2D 端沿世界 Z ⇒ 往外推 `half_h`（2D 端那份足迹才是要保进画框的）。
+## **不写死坐标**：取景（`_zoom` / `_center`）一变，这套值跟着变 —— 与棋子落点同一条链。
+func _placard_anchor_px(slot: int, half_w: float, half_h: float) -> Vector2:
+	if _t3 == null or _t3.board == null:
+		return Vector2.ZERO
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	for i in 56:
+		var p: Vector2 = _t3.board.tile_screen_pos(i)
+		mn = mn.min(p)
+		mx = mx.max(p)
+	var half: float = ((mx.x - mn.x) / 17.0) * 0.5      # 18 格 17 个格距 ⇒ 半个格距
+	var r0 := mn - Vector2(half, half)
+	var r1 := mx + Vector2(half, half)
+	var ppw: float = _t3.TEX_WINDOW_PX.size.x / _t3.TABLE_SIZE.x    # 画布像素 / 世界
+	var out_w: float = (half_w + PLACARD_GAP) * ppw     # 朝外那一维（世界 → 画布像素）
+	var out_h: float = (half_h + PLACARD_GAP) * ppw
+	var cx := (r0.x + r1.x) * 0.5
+	var cy := (r0.y + r1.y) * 0.5
+	if slot == 1:      # 右
+		return Vector2(r1.x + out_w, cy)
+	if slot == 2:      # 对面
+		return Vector2(cx, r0.y - out_h)
+	if slot == 3:      # 左
+		return Vector2(r0.x - out_w, cy)
+	return Vector2(cx, r1.y + out_h)                    # slot 0（我）—— 今天不摆
+
+## 立牌命中（画布像素进、peer 出；`GameData.NO_PEER` = 没打中）。
+## 口径与 `token_hit` 逐条相同（八角投影取包围盒 + 四面放宽；相机不可用时跳过）。
+func placard_hit(canvas_px: Vector2) -> int:
+	if _t3 == null or _t3.camera == null:
+		return GameData.NO_PEER
+	for peer in _placards:
+		var pl: Dictionary = _placards[peer]
+		var face: MeshInstance3D = pl["face"]
+		if face == null or not is_instance_valid(face):
+			continue
+		var mesh: PlaneMesh = face.mesh
+		var mn := Vector2(INF, INF)
+		var mx := Vector2(-INF, -INF)
+		var n := 0
+		for sx_v in [-0.5, 0.5]:
+			for sy_v in [-0.5, 0.5]:
+				for sz_v in [-0.5, 0.5]:
+					var corner: Vector3 = face.global_transform * Vector3(
+						mesh.size.x * float(sx_v), mesh.size.y * float(sy_v),
+						PLACARD_T * float(sz_v))
+					var px = _t3.screen_to_viewport(_t3.camera.unproject_position(corner))
+					if px == null:
+						continue
+					mn = mn.min(px as Vector2)
+					mx = mx.max(px as Vector2)
+					n += 1
+		if n < 4:
+			continue
+		var rect := Rect2(mn - PLACARD_HIT_SLACK, (mx - mn) + PLACARD_HIT_SLACK * 2.0)
+		if rect.has_point(canvas_px):
+			return int(peer)
+	return GameData.NO_PEER
 
 # ---------------- 四块立牌：批次 9 已整体退场 ----------------
 # 名字 / 身家 / 公开背包 / 倒计时 / "可被选中"高亮**全都有更稳的落点**：前两者与倒计时在

@@ -167,6 +167,16 @@ const MY_SLOT := 0
 # 取景也是从**表现层读**来的（往上找那个暴露 `view_t` / `dolly` 的祖先）⇒ 没有新的状态、
 # 没有新的 `@rpc`。
 
+# ---------------- 二期 Task 3（改版）：头顶名牌 / 取景四档恒可见 ----------------
+#
+# 本节的契约（v0.8.0 改版后）：
+#   ① **完全静止** —— 本文件**不播任何动画**（`_place` 里没有 `play()`；一次性反应播完 `stop()`）；
+#   ② **头顶名牌**（`Tags/Tag{i}`）—— 棋子色牌 + 昵称 + billboard；行动者多一圈金边；
+#   ③ **取景不淡出**（四档都看得见，见 `_apply_poses` 那段）。
+# **一行玩法都不碰**：行动者是从表现层**读**来的（`game.gd:_refresh_players` 里的 `st.turn`），
+# 取景也是从**表现层读**来的（往上找那个暴露 `view_t` / `dolly` 的祖先）⇒ 没有新的状态、
+# 没有新的 `@rpc`。
+
 ## ---------------- 头顶名牌（`Tags/Tag{i}`） ----------------
 #
 ## **它为什么存在**：用户 2026-10-06 判图后说「加个标识，不然我不知道他是谁」——
@@ -233,16 +243,6 @@ var _char_key := ""
 ## `_pose_die()` 停破产末帧。
 var _char_players: Array = []
 
-## 头顶名牌的**挂载点**（`Chars/Tags`，本文件建、跟着本层同生共死）。
-##
-## **为什么牌子不挂在 `Char{i}` 里**：见文件头那段（角色子树的 AABB 被一整批断言量着）。
-## 它是兄弟节点 ⇒ 位置得**自己算**（读模型的**全局 AABB 顶**，见 `_make_tag`），
-## 显隐得**自己管**（它不再随取景淡出，但"谁趴着"这套姿态仍要按 slot 刷）。
-var _tags_root: Node3D
-## 每个 slot 上的**头顶名牌**（`Node3D`，下标 = 椅子号，与 `_chars` 同进同出）；
-## 没人的槽位是 `null`。`char_tag()` 直接返回它。
-var _char_tags: Array = []
-
 ## 每个 slot 上那个人的**静止姿快照**（`[[Node3D, Transform3D], …]`）：`_place()` 摆完手摆坐姿、
 ## **还没有任何动画碰过**的那一瞬间，把模型子树里每个 `Node3D` 的 `transform` 记下来。
 ##
@@ -253,11 +253,6 @@ var _char_tags: Array = []
 ## 把残留姿态盖掉了。改版后**没有第二条动画来盖** ⇒ 必须**自己记、自己还原**
 ##（`_rest_pose`），否则打一次牌那个人就永远伸着手。
 var _rest_xf: Array = []
-
-## 当前行动者的 peer（`GameData.NO_PEER` = 没有行动者 / 还没读到）。
-## **只读表现层**：由 `game.gd:_refresh_players()` 从 `st.turn` 喂进来（`set_actor`），
-## 本文件不改任何玩法状态、也不发 RPC。
-var _actor_peer := GameData.NO_PEER
 
 ## 建角色层。**只建节点，不摆人** —— 摆人要读座位锚点的 `global_transform`，那要求整棵子树
 ## **已经入树**；而 `build()` 是 `table_3d._init()` 里调的，那时还没入树（读全局量会打
@@ -275,12 +270,6 @@ static func build(parent: Node3D, seats: Node3D) -> GameChars:
 	# 那时 `_seats` 还是空的（这一身位是给"房间建完就入树"的场景留的）。
 	c._seats = seats
 	parent.add_child(c)
-	# 头顶名牌的挂载点（见 `_tags_root` 那段：牌子是角色的**兄弟**，不挂进 `Char{i}`）。
-	# 与角色层同生共死 —— 它不参与 `set_chars` 的早退，牌子的重建在 `_clear()` / `set_chars` 里。
-	var tags := Node3D.new()
-	tags.name = "Tags"
-	c.add_child(tags)
-	c._tags_root = tags
 	return c
 
 ## 喂座位序：`[{peer, color, name}, …]`，**下标 = 椅子号**（与 `room.set_seats()` 逐项相同，
@@ -312,7 +301,6 @@ func set_chars(seats: Array) -> void:
 			_char_peers.append(GameData.NO_PEER)
 			_char_models.append("")
 			_char_players.append(null)
-			_char_tags.append(null)
 			_rest_xf.append(null)
 			continue
 		var sd: Dictionary = seats[i]
@@ -322,11 +310,8 @@ func set_chars(seats: Array) -> void:
 		_char_peers.append(int(sd.get("peer", GameData.NO_PEER)))
 		_char_models.append(model)
 		_char_players.append(_find_player(_chars[i]))
-		# 名牌：**颜色与名字都取自喂进来的这一份**（与椅背名牌、HUD 名册条同一个来源）。
-		_char_tags.append(_make_tag(i, color, String(sd.get("name", ""))))
-	# 新摆的这批人要**立刻**带上当前的行动者档与"谁趴着"（不能等下一次 `set_actor`：
-	# 重建之后的那几帧会各是"谁都没戴金边 + 破产那家端坐起来了"，而出图恰好抓的就是这几帧）。
-	_apply_actor()
+	# 新摆的这批人要**立刻**带上"谁趴着"（不能等下一次广播：重建之后的那几帧
+	# 破产那家会端坐起来，而出图恰好抓的就是这几帧）。
 	_apply_poses()
 
 ## 第 `slot` 把椅子上那个人**是哪一家**（`GameData.NO_PEER` = 那个座位上没人）。
@@ -349,15 +334,6 @@ func char_model(slot: int) -> String:
 static func model_for_color(color: int) -> String:
 	return CHAR_MODELS_BY_COLOR[clampi(color, 0, CHAR_MODELS_BY_COLOR.size() - 1)]
 
-## 第 `slot` 把椅子上那个人的**头顶名牌**（`null` = 那个座位上没人 / 还没喂过座位序）。
-## 测试用它核"牌色 = 那一家的棋子色、牌上写着昵称、立在头顶、朝向镜头"；
-## 节点路径是 `Chars/Tags/Tag{i}`（**不在 `Char{i}` 里**，见 `_tags_root` 那段）。
-func char_tag(slot: int) -> Node3D:
-	if slot < 0 or slot >= _char_tags.size():
-		return null
-	var tg := _char_tags[slot] as Node3D
-	return tg if tg != null and is_instance_valid(tg) else null
-
 ## 拆掉当前所有角色（**先 `remove_child` 再 `queue_free`**：`queue_free` 要到帧末才真的释放，
 ## 只调它的话紧接着的 `get_node_or_null("Char1")` 还会找到**旧人**——测试与出图都会读错）。
 func _clear() -> void:
@@ -365,17 +341,10 @@ func _clear() -> void:
 		if c != null and is_instance_valid(c):
 			remove_child(c)
 			c.queue_free()
-	# 名牌是**兄弟节点**（不在 `_chars` 里）⇒ 得单独拆（同一条"先 `remove_child` 再 `queue_free`"：
-	# 只 `queue_free` 的话紧接着的 `Tags/Tag1` 还会找到**旧牌**，测试与出图都会读错）。
-	if _tags_root != null and is_instance_valid(_tags_root):
-		for tg in _tags_root.get_children():
-			_tags_root.remove_child(tg)
-			tg.queue_free()
 	_chars.clear()
 	_char_peers.clear()
 	_char_models.clear()
 	_char_players.clear()
-	_char_tags.clear()
 	_rest_xf.clear()
 
 ## 第 `slot` 把椅子上**人该站的那一点**（位置 + 朝向）。
@@ -444,85 +413,6 @@ func _place(slot: int, model: String) -> Node3D:
 	# ⚠ **别在这里加回 `play()`**：`chars_test` ⑫（一帧动画都不播）与 ⑬（分件真的静止）
 	# 两条会立刻红 —— 那正是本改版要守住的东西。
 	return wrapper
-
-## 给第 `slot` 把椅子上的人造一块**头顶名牌**（`Tags/Tag{i}`）。
-##
-## 结构（与一期椅背名牌同一套语言，只加了 billboard 与金边）：
-##   `Tag{i}`（`Node3D`，世界坐标的挂点）
-##     ├ `Plate`  `MeshInstance3D` + `QuadMesh`(TAG_W × TAG_H)，**棋子色**、带一点自发光
-##     ├ `Label`  `Label3D`，名字；**billboard** 朝向镜头
-##     └ `Border` `MeshInstance3D` + 更大的 `QuadMesh`，**金边**；只有当前行动者露出来
-##
-## **位置**：xy 取座位上那个人的世界坐标、y 取**模型世界 AABB 的顶 + `TAG_GAP` + 半牌高**
-## （`_tag_top()` 实测，不写死高度 —— 见 `TAG_GAP` 那段）。
-##
-## **朝向**：牌子与字各自 `billboard`（`BaseMaterial3D.BILLBOARD_ENABLED` / `Label3D.billboard`）。
-## 相机在本作里**不绕圈**（转视角已删）⇒ 牌子永远在 +Z 那一侧看过来，这也让下面那条
-## **世界坐标的层叠偏移**（金边 / 字各往后 / 往前挪一点）站得住。
-func _make_tag(slot: int, color: int, name_text: String) -> Node3D:
-	if _tags_root == null or not is_instance_valid(_tags_root):
-		return null
-	var tag := Node3D.new()
-	tag.name = "Tag%d" % slot
-	_tags_root.add_child(tag)
-	var tint: Color = GameData.PLAYER_COLORS[clampi(color, 0, GameData.PLAYER_COLORS.size() - 1)]
-	# ---- 金边（先加：它在最里层，靠世界 −Z 的偏移落到牌面之后）----
-	var border := MeshInstance3D.new()
-	border.name = "Border"
-	border.mesh = _tag_quad(TAG_W + TAG_RIM * 2.0, TAG_H + TAG_RIM * 2.0)
-	border.material_override = _tag_mat(TAG_ACTOR_GOLD)
-	border.position = Vector3(0.0, 0.0, -0.03)
-	border.visible = false          # `_apply_actor()` 按"谁是行动者"点开
-	tag.add_child(border)
-	# ---- 牌面 ----
-	var plate := MeshInstance3D.new()
-	plate.name = "Plate"
-	plate.mesh = _tag_quad(TAG_W, TAG_H)
-	plate.material_override = _tag_mat(tint)
-	tag.add_child(plate)
-	# ---- 名字（在最外层：往 +Z 挪一点，落在牌面之前）----
-	var lab := Label3D.new()
-	lab.name = "Label"
-	lab.font_size = TAG_FONT_SIZE
-	# **长名字自动缩**：世界字宽 ≈ 字数 × 字号 × `pixel_size` ⇒ 反解出"刚好不出牌面"的那一档，
-	# 再与 `TAG_FONT_PS` 取小。短名字吃 `TAG_FONT_PS` 那一档（四个字的昵称离上限还远）。
-	var n := maxf(1.0, float(name_text.length()))
-	lab.pixel_size = minf(TAG_FONT_PS, TAG_W * 0.90 / (n * float(TAG_FONT_SIZE)))
-	lab.text = name_text
-	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lab.autowrap_mode = TextServer.AUTOWRAP_OFF
-	lab.outline_size = 10
-	lab.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
-	lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	lab.position = Vector3(0.0, 0.0, 0.05)
-	tag.add_child(lab)
-	_no_shadow(tag)
-	_place_tag(tag, slot)
-	return tag
-
-## 把 `tag` 立到第 `slot` 把椅子上那个人的**头顶之上**（见 `_make_tag` 的位置那段）。
-## 拆出来是因为位置要读**已经入树**的全局量（`_tag_top` 走 `global_transform`）。
-func _place_tag(tag: Node3D, slot: int) -> void:
-	var top := TAG_GAP
-	var w := _chars[slot] as Node3D if slot >= 0 and slot < _chars.size() else null
-	var xz := seat_pose(slot).origin
-	if w != null and is_instance_valid(w):
-		top = _tag_top(w) + TAG_GAP
-		xz = w.global_position
-	tag.global_position = Vector3(xz.x, top + TAG_H * 0.5, xz.z)
-
-## 一棵子树里**几何实例的世界 AABB 顶**（`-INF` = 一个几何实例都没有）。
-## 口径与 `room._model_aabb` / `chars_test._subtree_world_aabb` 同源（逐件 `global_transform ⊙ mesh AABB`
-## 再合并），但只取顶那一个数 —— 名牌要的只是"头顶在哪"。
-static func _tag_top(root: Node) -> float:
-	var top := -INF
-	for n in root.find_children("*", "GeometryInstance3D", true, false):
-		var gi := n as MeshInstance3D
-		if gi == null or gi.mesh == null:
-			continue
-		top = maxf(top, (gi.global_transform * gi.mesh.get_aabb()).end.y)
-	return top
 
 ## 一棵子树里每个 `Node3D` 的 `transform` 快照（静止姿的唯一记录，见 `_rest_xf` 那段）。
 static func _snapshot(root: Node) -> Array:
@@ -619,37 +509,15 @@ static func _no_shadow(root: Node) -> void:
 	for n in root.find_children("*", "GeometryInstance3D", true, false):
 		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
-# ---------------- Task 3（改版）：当前行动者（"轮到我了"） ----------------
-
-## 设当前行动者。**只读表现层** —— `game.gd:_refresh_players()` 从 `st.turn` 喂进来
-## （与 `set_chars` 同一处、同一份状态），本文件不新增任何玩法状态、不发 RPC。
-##
-## **表达方式 = 他头顶那块名牌多一圈金边**（静止的，不闪）。原先是"同一条 `idle` 提速 1.4×"，
-## 随"完全静止"一起退场（用户 2026-10-06 判图后拍板）—— 这也顺带解决了一个老问题：
-## 靠"谁动得快"认人是**要求玩家盯着看**的，而金边是一眼就能看见的静态事实。
-##
-## **不做早退**：`set_chars` 每次**重建**都会造一批新牌子（金边默认不露）⇒ 若这里按"peer 没变"
-## 早退，重建之后行动者的金边就丢了。三个 `visible` 赋值而已，每次广播都做也不贵。
-func set_actor(peer: int) -> void:
-	_actor_peer = peer
-	_apply_actor()
-
-## 当前记着的行动者 peer（`GameData.NO_PEER` = 没有）。
-func actor_peer() -> int:
-	return _actor_peer
-
-## 把"谁是行动者"刷到每块名牌的金边上。`_char_peers` 是**下标 = 椅子号**的数组
-## ⇒ 逐槽位比对即可（同一个 peer 只会在一把椅子上）。`slot 0`（我）没有牌子，跳过。
-func _apply_actor() -> void:
-	for i in _char_tags.size():
-		var tag := _char_tags[i] as Node3D
-		if tag == null or not is_instance_valid(tag):
-			continue
-		var bd := tag.get_node_or_null("Border") as Node3D
-		if bd == null:
-			continue
-		bd.visible = _actor_peer != GameData.NO_PEER and i < _char_peers.size() \
-			and int(_char_peers[i]) == _actor_peer
+# ---------------- 行动者的表达：**已整体搬到桌面立牌** ----------------
+#
+# 用户 2026-10-06：「**人物顶部铭牌去掉**」。角色层原先靠两种东西表达"轮到我了"：
+#   ① 待机动画提速 1.4×（第二次改版已随"完全静止"退场）；
+#   ② 头顶名牌上的一圈金边（第三次改版加的）。
+# **两次都退场了**，这条表达现在**在桌面立牌上**：牌面就是名册格烘出来的那块 Control，
+# 行动者那 1px 金边由 `game._apply_corner_style` 照旧刷（判据仍是 `_op_owner` / `_hl_peers`）。
+# ⇒ 本文件**没有**行动者这个概念了：`set_actor` / `actor_peer` / `_apply_actor` 一并删除，
+# `game.gd` 那处喂入也删了。角色的职责收敛成一条：**把四个人坐对、坐着不动**。
 
 ## 第 `slot` 把椅子上的 `AnimationPlayer`（`null` = 没人 / 没找到）。
 ## **改版后没人靠它播待机了**（见 `_char_players`）—— 测试与 `react` / `_pose_die` 用它。
@@ -697,7 +565,7 @@ func _apply_poses() -> void:
 # 不读 `st`、不认玩法（它连"什么叫出牌"都不知道 —— 那是 `game.gd` 的活）。
 #
 # **幅度 = 含蓄**（用户 2026-10-06 定案，spec §九 开放问题 5）：这四条都是 0.17~0.67 s 的小动作，
-# **不许用 `speed_scale` 放大**（那个旋钮是"当前行动者"的表达，由 `set_actor` 独占）——
+# **不许用 `speed_scale` 放大**（那个旋钮今天已经没人用了，但这条仍然有效）——
 # 本作视觉调性克制，四家同时动起来会变马戏团。`chars_test` 有一条钉着"react 不动 `speed_scale`"。
 
 ## 事件 → 动画（**只放实测存在的名字**，逐条依据见普查 §5.4）：

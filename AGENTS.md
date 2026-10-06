@@ -87,7 +87,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/tech_test.gd    # 开局科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
-& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（名册/底栏/客户端视角）
+& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（身家条/底栏/客户端视角）
+& $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
