@@ -24,15 +24,15 @@ extends Node3D
 ##   ② **头顶浮动名牌**（`Tags/Tag{i}`）：**棋子色牌 + 昵称**、整块 `billboard` 朝向镜头、
 ##      立在**头顶之上**（牌底边按模型的**世界 AABB 顶**算，不是写死的数）；
 ##   ③ **当前行动者靠牌上一圈金边**表达（静止的，不闪）—— 替掉原来的提速线索；
-##   ④ **随取景淡出**照旧（`set_fade`）："读棋盘"那几档（推近端 / 2D 端）把**人 + 名牌**一起隐掉，
-##      二期不拖慢主玩法档。
+##   ④ **取景不淡出**（v0.8.0 第三次改版：用户第三条「2D 视角下人物不要消失」）——
+##      四档取景下人都看得见。原先那套"读棋盘那几档全隐 + 停播"整段删除，理由见 `_apply_poses`。
 ## 四条都**只读表现层**：行动者读 `st.turn`，取景读 `view_t` / `dolly`。
 ##
 ## ⚠ **名牌为什么挂在 `Chars/Tags` 下、而不是挂在 `Char{i}` 里**：`chars_test` 有一整批断言
 ## 拿**角色子树的 AABB**去量落位 / 穿模 / 破产收势（`_subtree_world_aabb(Char{i})`）—— 名牌一进去，
 ## 那个"最高点"就变成牌顶，几条判据会**悄悄换了对象**（一期 `layout_test` 把 `Nameplate`
 ## 从家具那一批里剔出去，就是同一个理由）。挂成**兄弟节点**则各量各的，谁也不用剔谁。
-## 代价：名牌的显隐 / 透明度由 `_apply_fade` **显式**带着一起做（见那里）。
+## 名牌没有这个问题：它一直可见（v0.8.0 第三次改版起不再随取景淡出）。
 ##
 ## **二期 Task 4：四个玩法事件各有一动**（`react()`）—— 出牌 / 付钱 / 被抢地 / 破产，
 ## **四条动画名全部是普查实测存在的**（见 `REACT_ANIMS`）；破产那一条**停在 `die` 的末帧**
@@ -157,12 +157,12 @@ const CHAR_MODELS_BY_COLOR := [
 ## （一期只在那一侧留椅背 + 名牌）。`set_chars()` 跳过它，`char_peers()` 在那里给 `NO_PEER`。
 const MY_SLOT := 0
 
-# ---------------- 二期 Task 3（改版）：头顶名牌 / 随取景淡出 ----------------
+# ---------------- 二期 Task 3（改版）：头顶名牌 / 取景四档恒可见 ----------------
 #
 # 本节的契约（v0.8.0 改版后）：
 #   ① **完全静止** —— 本文件**不播任何动画**（`_place` 里没有 `play()`；一次性反应播完 `stop()`）；
 #   ② **头顶名牌**（`Tags/Tag{i}`）—— 棋子色牌 + 昵称 + billboard；行动者多一圈金边；
-#   ③ **随取景淡出**（"读棋盘"那几档把人 + 牌一起隐掉，见 `set_fade`）。
+#   ③ **取景不淡出**（四档都看得见，见 `_apply_poses` 那段）。
 # **一行玩法都不碰**：行动者是从表现层**读**来的（`game.gd:_refresh_players` 里的 `st.turn`），
 # 取景也是从**表现层读**来的（往上找那个暴露 `view_t` / `dolly` 的祖先）⇒ 没有新的状态、
 # 没有新的 `@rpc`。
@@ -212,27 +212,6 @@ const TAG_EMIT := 0.55
 const TAG_FONT_SIZE := 64
 const TAG_FONT_PS := 0.0045
 
-## ---------------- 随取景淡出：阈值（见 `set_fade`） ----------------
-##
-## `set_fade(t)` 的 `t` 是**「读棋盘程度」**（0 = 3D 看屋子那几档，1 = 读棋盘那几档），
-## **由 `_process` 从表现层的取景量算出来**（`view_t` 与 `dolly` 合起来的那个标量，见 `_framing_t`）。
-## 两档阈值把 [0,1] 切成三段：
-##   * `t <= FADE_SOLID_T`(0.25) ⇒ **全亮 + 在播**（3D 默认档 1.0 / 拉远端 1.4）
-##   * `t >= FADE_GONE_T`(0.75)  ⇒ **全隐 + 停播**（推近端 0.7 / 2D 端 `view_t=1`）
-##   * 中间 ⇒ alpha 线性过渡，**仍在播**（停播只在"已经看不见"之后才发生 —— 提前停会
-##     让"半透明但看得见"的那几帧僵住）
-const FADE_SOLID_T := 0.25
-const FADE_GONE_T := 0.75
-
-## **推拉近端的档位**（= `table_3d.DOLLY_MIN`，一期 Task 7 定的 0.7）。
-##
-## ⚠ **不能静态写 `TableView3D.DOLLY_MIN`**：`table_3d` → `room` → `chars` 已经是**类名环**，
-## 再反向引用就编译不过（同 `seat_pose()` 那段"连 `GameRoom` 都不写"的纪律）。
-## ⇒ 这里**复制一份数值**，并由 `chars_test` 一条断言钉住"两边相等"
-## （`t3.DOLLY_MIN == GameChars.FADE_NEAR_DOLLY`）—— 哪天那个常量改了、这里没跟，那条会红。
-## **它的含义**：推拉到这一档 ⇒ `_framing_t` 顶到 1.0 ⇒ 角色**全隐 + 停播**。
-const FADE_NEAR_DOLLY := 0.7
-
 ## 一期那四把椅子（`Room/Seats`）—— 座位坐标的**唯一来源**（见 `seat_pose()`）。
 var _seats: Node3D
 
@@ -258,7 +237,7 @@ var _char_players: Array = []
 ##
 ## **为什么牌子不挂在 `Char{i}` 里**：见文件头那段（角色子树的 AABB 被一整批断言量着）。
 ## 它是兄弟节点 ⇒ 位置得**自己算**（读模型的**全局 AABB 顶**，见 `_make_tag`），
-## 显隐 / 透明度也得由 `_apply_fade` 显式带着做。
+## 显隐得**自己管**（它不再随取景淡出，但"谁趴着"这套姿态仍要按 slot 刷）。
 var _tags_root: Node3D
 ## 每个 slot 上的**头顶名牌**（`Node3D`，下标 = 椅子号，与 `_chars` 同进同出）；
 ## 没人的槽位是 `null`。`char_tag()` 直接返回它。
@@ -279,18 +258,6 @@ var _rest_xf: Array = []
 ## **只读表现层**：由 `game.gd:_refresh_players()` 从 `st.turn` 喂进来（`set_actor`），
 ## 本文件不改任何玩法状态、也不发 RPC。
 var _actor_peer := GameData.NO_PEER
-
-## 当前的「读棋盘程度」（`set_fade` 的入参）。0 = 全亮在播、1 = 全隐停播。
-var _fade_t := 0.0
-
-## 取景宿主（那个暴露 `view_t` / `dolly` 的祖先节点 = `TableView3D`）。
-##
-## **为什么不静态引用 `TableView3D`**：见 `FADE_NEAR_DOLLY` 那段（类名环）。这里**运行时**
-## 往上找、并缓存（取景量是每帧读的，缓存掉那几次 `get_parent()`）。
-## **为什么"往上找"而不是让上层推**：`table_3d._apply_camera()` 是 `view_t` 的唯一出口，
-## 但它不认识本节点（`room.gd` 建我们时只交了座位表）⇒ 要么改 `table_3d` 多一条回调、
-## 要么由自己读。**自己读更小**：不动一期的取景契约，也不新增跨文件接口。
-var _framing_host: Node = null
 
 ## 建角色层。**只建节点，不摆人** —— 摆人要读座位锚点的 `global_transform`，那要求整棵子树
 ## **已经入树**；而 `build()` 是 `table_3d._init()` 里调的，那时还没入树（读全局量会打
@@ -357,10 +324,10 @@ func set_chars(seats: Array) -> void:
 		_char_players.append(_find_player(_chars[i]))
 		# 名牌：**颜色与名字都取自喂进来的这一份**（与椅背名牌、HUD 名册条同一个来源）。
 		_char_tags.append(_make_tag(i, color, String(sd.get("name", ""))))
-	# 新摆的这批人要**立刻**带上当前的行动者档与取景档（不能等下一次 `_process` / `set_actor`：
-	# 重建之后的那几帧会各是"谁都没戴金边 + 全亮"，而出图恰好抓的就是这几帧）。
+	# 新摆的这批人要**立刻**带上当前的行动者档与"谁趴着"（不能等下一次 `set_actor`：
+	# 重建之后的那几帧会各是"谁都没戴金边 + 破产那家端坐起来了"，而出图恰好抓的就是这几帧）。
 	_apply_actor()
-	_apply_fade()
+	_apply_poses()
 
 ## 第 `slot` 把椅子上那个人**是哪一家**（`GameData.NO_PEER` = 那个座位上没人）。
 ##
@@ -437,7 +404,7 @@ func _place(slot: int, model: String) -> Node3D:
 		push_warning("角色缺模型：%s（跳过）" % model)
 		return null
 	# **外套节点**：坐姿的整体下移放在它身上（见 `SEAT_ROOT_Y` 那段）——`AnimationPlayer`
-	# 够不着它，动画顶不掉。它也是"随取景淡出"要按的锚（Task 3）。
+	# 够不着它，动画顶不掉。
 	var wrapper := Node3D.new()
 	wrapper.name = "Char%d" % slot
 	add_child(wrapper)
@@ -692,133 +659,28 @@ func char_player(slot: int) -> AnimationPlayer:
 	var ap := _char_players[slot] as AnimationPlayer
 	return ap if ap != null and is_instance_valid(ap) else null
 
-# ---------------- Task 3（改版）：随取景淡出 ----------------
-
-## 设「读棋盘程度」`t ∈ [0,1]`，并据此淡出。**契约（可执行，`chars_test` 钉着）**：
+## 把「谁趴着」刷到每个座位上（`set_chars` 重建之后调它）。
 ##
-## | `t` | 表现 |
-## |---|---|
-## | `t <= FADE_SOLID_T`(0.25) | **全亮**（`GeometryInstance3D.transparency == 0`）、人 + 名牌都在 |
-## | `t >= FADE_GONE_T`(0.75) | **全隐**（外套节点与名牌 `visible = false`） |
-## | 中间 | 透明度线性过渡（`transparency = 1 − alpha`），**仍看得见** |
+## **为什么必须有这一条**：`set_chars` 是**整套重建**（`_place` 每次都摆的是**静止姿**），
+## 而"破产了"这件事记在 `_dead_peers` 里、**与播放器无关** ⇒ 重建之后必须按它把趴着的那家
+## 重新摆回 `die` 末帧，否则他会**复活**成端坐的样子（HUD 却已经说他出局了）。
+## 没趴下的那些不用管：新人本来就停在静止姿。
 ##
-## **判据按"取景档"，不按"是否落在视口内"**（spec §5.3 的前提已被 Task 1 出图更正）：
-## 角色在 3D 端**恒在画内**（哪怕被画面边缘切掉一半）⇒ 视口判据**永远为真、等于没判**。
-## 真正的判据是"**是不是读棋盘的那几档**"：推近端 / 2D 端 ⇒ 淡出；默认档 / 拉远端 ⇒ 在。
-##
-## **为什么全隐**（本任务的性能底线，spec §六）：读棋盘那一档是**主玩法档**，二期不许把它拖慢
-## —— 外套节点 `visible = false` 之后三个角色的绘制调用一并省掉。
-## 改版后**待机动画整条退场**（"完全静止"），原先"停播"那一半随之作废；能省的就只剩绘制。
-##
-## **名牌跟着一起淡**（本改版新增）：它是**兄弟节点**（不在 `Char{i}` 里，见 `_tags_root` 那段）
-## ⇒ 显隐 / 透明度得在这里**显式**带着做。漏掉的话，读棋盘那一档会剩三块牌浮在棋盘上。
-##
-## **透明度走 `GeometryInstance3D.transparency`，不碰材质**：
-## 它是**逐实例**的（0 = 完全恢复不透明、走不透明管线）⇒ 在"在"的那几档上
-## **渲染与 Task 2 验收时逐位相同**（材质一个字节没动）；若去改材质的 `transparency = ALPHA`，
-## 会把角色整体推进透明管线、且**改动 `albedo_color` 那份被 Ruling F2 判过的观感**。
-func set_fade(t: float) -> void:
-	var nt := clampf(t, 0.0, 1.0)
-	if nt == _fade_t:
-		return
-	_fade_t = nt
-	_apply_fade()
-
-## 当前的「读棋盘程度」（测试读数用）。
-func fade_t() -> float:
-	return _fade_t
-
-## 每帧把取景量读进来、算成 `t`、再交给 `set_fade`（`view_t` / `dolly` 都是**每帧平滑逼近**的
-## 当前值，不是一个事件 ⇒ 只能轮询，不能等回调）。
-##
-## **代价可忽略**：`_framing_host` 缓存着，稳态下每帧只是两次属性读 + 一次比较
-## （`set_fade` 在 `t` 没变时早退）—— 真正贵的那部分（动画求值 / 绘制）在淡出档已经停了。
-func _process(_delta: float) -> void:
-	set_fade(_framing_t())
-
-## 从表现层读到的「读棋盘程度」：
-##   * 2D 端（`view_t → 1`）**整条都在读棋盘** ⇒ 直接就是 `view_t`；
-##   * 3D 端的**推近**（`dolly < 1`）也归读棋盘 ⇒ 把它也归一化到 [0,1] 再取**两者的大者**。
-## 两个轴的极值都对上 spec §5.3：`dolly = FADE_NEAR_DOLLY`(0.7) ⇒ 1.0（全隐停播）、
-## `dolly ≥ 1.0`（默认档 / 拉远端）⇒ 0.0（全亮在播）。
-func _framing_t() -> float:
-	var host := _host()
-	if host == null:
-		return 0.0
-	var vt := float(host.get("view_t"))
-	var dl = host.get("dolly")
-	if dl == null:
-		return vt
-	var near := clampf((1.0 - float(dl)) / (1.0 - FADE_NEAR_DOLLY), 0.0, 1.0)
-	return maxf(vt, near)
-
-## 取景宿主 = 往上第一个**同时**暴露 `view_t` 与 `dolly` 的祖先（= `TableView3D`）。
-## 走 `get()`（**鸭子类型**，不写类名）—— 见 `_framing_host` 那段（类名环）。
-func _host() -> Node:
-	if _framing_host != null and is_instance_valid(_framing_host):
-		return _framing_host
-	var n := get_parent()
-	while n != null:
-		if n.get("view_t") != null and n.get("dolly") != null:
-			_framing_host = n
-			return n
-		n = n.get_parent()
-	return null
-
-## `_fade_t` 是不是已经落到「全隐 + 停播」那一档（本轮 fix round 新增）。
-##
-## **判据只有这一处**：`_apply_fade`（要不要隐藏 / `stop()`）与 `react`（要不要丢掉那次**播放**）
-## 都问它 —— 注意 `react` 里破产那一条是例外：**记忆照种、播放照丢**（见 `react()` 那段
-## "`die` 是这条早退的唯一例外"）。两处各写一遍的话，哪天阈值语义一动就会出现"已经停播了、
-## 却还肯收反应"这种半档 —— 而那一档的失败是**静默**的（见 `react()` 那段）：
-## 隐藏的播放器被重新点着、还再也停不下来。
-func _faded_out() -> bool:
-	return _fade_t >= FADE_GONE_T
-
-## 把 `_fade_t` 落到节点上：透明度 + 可见性 + 播放状态。
-##
-## **已经趴下的那一家（`_dead_peers`）单独一支**：见 `_pose_die` / `REACT_DIE` 那段 ——
-## 他是**停在 `die` 末帧**的，既不能跟着"回来就摆回静止姿"（那是**复活**），
-## 也不能因为 `stop()` 把姿态丢掉（从淡出回来时要重新摆回末帧）。
-func _apply_fade() -> void:
-	var a := clampf((FADE_GONE_T - _fade_t) / (FADE_GONE_T - FADE_SOLID_T), 0.0, 1.0)
-	var gone := _faded_out()
+## **这里也是"随取景淡出"整段退场之后留下的那一半**（v0.8.0 第三次改版）：
+## 原先 `_apply_fade()` 每次都要遍历所有槽位做三件事（显隐 / 透明度 / 姿态），
+## 前两件随"取景不淡出"一起作废，只剩"姿态"这一件 —— 就是本函数。
+## **谁调用它**：`set_chars()`（每次重建之后）。
+## `react(die)` 不走它（那一支当场就 `_pose_die` 了，不必绕一圈）。
+func _apply_poses() -> void:
 	for i in _chars.size():
 		var w := _chars[i] as Node3D
 		if w == null or not is_instance_valid(w):
 			continue
-		w.visible = not gone
-		_alpha(w, a)
-		# 名牌是**兄弟节点** ⇒ 显隐 / 透明度在这里显式跟着（见 `set_fade` 那段最后一条）。
-		var tg := _char_tags[i] as Node3D if i < _char_tags.size() else null
-		if tg != null and is_instance_valid(tg):
-			tg.visible = not gone
-			_alpha(tg, a)
-		var ap := _char_players[i] as AnimationPlayer if i < _char_players.size() else null
-		if ap == null or not is_instance_valid(ap):
+		if not char_dead(i):
 			continue
-		if gone:
-			if ap.is_playing():
-				ap.stop()
-		elif char_dead(i):
-			# 趴着的那一家：`stop()`（淡出档）与 `set_chars` 重建都会**把姿态丢掉** ⇒ 每次都重新
-			# 摆回末帧。**不能写成"回来就摆回静止"** —— 那正是"复活"。
+		var ap := _char_players[i] as AnimationPlayer if i < _char_players.size() else null
+		if ap != null and is_instance_valid(ap):
 			_pose_die(ap, w)
-		elif not ap.is_playing():
-			# 不在播 ⇒ 摆回静止姿。**从淡出档回来就走这一支**（淡出时那条被 `stop()` 打断的反应
-			# 会把分件留在末帧的伸手姿态，而 `stop()` 自己不复位 —— 见 `_rest_xf` 那段）。
-			# **在播就别动它**：一条反应正打到一半时取景小幅晃一下，不该把它掐掉。
-			_rest_pose(i)
-
-## 一棵子树里所有几何实例的**逐实例透明度**（`a` = 不透明程度：1 = 全亮、0 = 全隐）。
-## 走 `GeometryInstance3D.transparency`（= `1 − a`）—— **不动材质**（见 `set_fade` 那段）。
-## 只在真的变了时才写（每帧调它，多数帧是空转）。
-static func _alpha(root: Node, a: float) -> void:
-	var tr := clampf(1.0 - a, 0.0, 1.0)
-	for n in root.find_children("*", "GeometryInstance3D", true, false):
-		var gi := n as GeometryInstance3D
-		if gi != null and not is_equal_approx(gi.transparency, tr):
-			gi.transparency = tr
 
 # ---------------- 二期 Task 4：四个玩法事件的反应（出牌 / 付钱 / 被抢地 / 破产） ----------------
 #
@@ -885,8 +747,8 @@ const DIE_ROLL_DEG := 45.0    # 上身侧倒（破产那一下"倒下去"的主�
 const DIE_HEAD_DEG := 12.0    # 头再低一点
 
 ## 已经**趴下**的那几家（peer -> true）。破产是一次性、但**永久**的表现：
-## `die` 停末帧之后这个人就一直趴着 —— 而 `_apply_fade`（从淡出档回来）与 `set_chars`（重建）
-## 都会把新人摆成**待机** ⇒ 不记住就会**复活**（spec §5.4 要的是"留在座位上趴着"）。
+## `die` 停末帧之后这个人就一直趴着 —— 而 `set_chars`（重建）会把新人摆成**静止姿**
+## ⇒ 不记住就会**复活**（spec §5.4 要的是"留在座位上趴着"）。
 ##
 ## 记的是 **peer 而不是椅子号**：座位序会随 `_seat_peers()` 轮转（`set_chars` 重建），
 ## 而"这家破产了"与坐哪把椅子无关（同 `CHAR_MODELS_BY_COLOR` 那条"按人定、不按椅子定"）。
@@ -900,37 +762,15 @@ var _dead_peers := {}
 ## ⚠ **不碰 `speed_scale`** —— 改版后 `set_actor` 已不再用它（它去点名牌上的金边），但这条
 ## 仍然有效：反应的播放速度一律留在 **1.0**，不许"顺势放大一点看得清"（`chars_test` 钉着它）。
 ##
-## ⚠⚠ **已经淡到「全隐 + 停播」那一档时，反应一律丢掉、不排队**（本轮 fix round，终审 findings ①）。
-## 那一档（推近端 / 2D 端 = **读棋盘的主玩法档**）对二期的承诺就是"角色**停播 + 不绘制**"
-##（spec §5.3 / §六）。而 `react()` 原先不看淡出档：对手在读棋盘那一档付租 ⇒ 这里照常 `play()`
-## ⇒ **在一个 `visible = false` 的节点上重新开播**；0.17~0.67 s 后 `_react_finished` 才把它停下
-## ⇒ 整条动作在看不见的地方白播一遍；而 `set_fade` 在 `t` 没变时早退
-##（见那里）⇒ `_apply_fade` 不会再被调用 ⇒ 这个播放器在整个读棋盘档里**逐帧求值到取景变化为止**
-## —— 那条性能承诺**静默失效**（⑭(b)(c) 抓不到：它在淡出与断言之间没有任何事件，这正是修它的原因）。
+## ⚠ **v0.8.0 第三次改版：这条早退整段删除**。原先它规定"已经淡到全隐 + 停播那一档时，
+## 反应一律丢掉、不排队"（终审 findings ①）—— 现在**没有淡出档了**（见 `_apply_poses`：
+## 四档取景下人都看得见），所以事件到了就照常播，没有"丢掉"这回事。
 ##
-## **为什么是"丢"而不是"排队等取景回来再补播"**：补播出来的是一条**过期的反应** —— 那件事早就
-## 过去了，等角色淡回来再看它突然动一下只会莫名其妙；而在读棋盘那一档，玩家**根本没看见**那次
-## 事件 ⇒ 补播没有意义。
-##
-## ⚠⚠ **`die` 是这条早退的唯一例外**（fix round 3 更正）：淡出档上**播放**照丢，但**破产的记忆**
-## **必须活过淡出**（`_dead_peers[peer] = true` 照常种下、再随早退把播放丢掉）。两条理由：
-##   ① **它是终局的**（与 play / pay / rob 那种"一次小动作"不同）：一旦破产就不复活；而
-##      `_apply_fade` 从淡出档回来时**正是问 `_dead_peers`** 决定"摆回 `die` 末帧"还是"什么都不做"
-##      ⇒ 记忆丢了，这个人会**从淡出档回来重新坐正**（HUD 却已经说他出局了），此后还会对
-##      `pay` / `rob` 起反应 —— 而"记忆被种下"正是基线的行为（早退那道门必须排在这一支**之后**）。
-##   ② **不会再补发**：`game.gd` 是在**同一次调用里**把 `alive` 的真→假边沿消费掉的
-##      （`_react_chars()` 末尾 `_react_alive[peer] = alive`）⇒ 没有"下一次广播再送一遍"这条路。
-## ⇒ 于是：**先种记忆、再随早退丢掉播放**。淡出期间玩家没看见那一下"倒下去"，但从读棋盘档
-## 回到屋子里时，他是**趴在座位上**的（不是空椅子、也不是在呼吸）。
-## **变红**：把早退那一支里的 `_dead_peers[peer] = true` 拿掉 ⇒ `chars_test` ⑱ 的
-## "破产记忆已种下"与"回来时趴在座位上（不是在呼吸）"两条立刻红。
+## 留下这一条留档，是因为它当年钉出的那件事仍然值得记：**"在读棋盘那一档不许逐帧求值"**
+## 是二期对性能的承诺（spec §六），而当时 `react()` 不看淡出档 ⇒ 会在一个 `visible = false`
+## 的节点上重新开播、再也没人停它 ⇒ 那条承诺**静默失效**。今天这个矛盾消失了：
+## 人物完全静止（待机退场）+ 不再淡出 ⇒ 只剩三个静止角色的绘制调用，测不出成本。
 func react(peer: int, kind: String) -> void:
-	if _faded_out():
-		# 全隐 + 停播那一档：**播放**一律丢掉、不排队（见上）。**破产的记忆是唯一的例外** ——
-		# 先把它种下（它是一次性的终局、且不会再有下一次广播来补），再随早退丢掉播放。
-		if kind == REACT_DIE:
-			_dead_peers[peer] = true
-		return
 	var i := _slot_of_peer(peer)
 	if i < 0:
 		return
@@ -1066,7 +906,7 @@ func _slot_of_peer(peer: int) -> int:
 	return -1
 
 ## 第 `slot` 把椅子上那家**是不是已经破产趴下**（`react(peer, "die")` 之后一直为真）。
-## 测试用它核"趴下这件事被记住了" —— 不记住的话，一次淡出往返（或一次重建）就把他**复活**了。
-## `_apply_fade` 也用它（趴着的那家单独一支，见那里）。
+## 测试用它核"趴下这件事被记住了" —— 不记住的话，一次重建就把他**复活**了。
+## `_apply_poses` 也用它（趴着的那家走单独一支，见那里）。
 func char_dead(slot: int) -> bool:
 	return slot >= 0 and slot < _char_peers.size() and _dead_peers.has(int(_char_peers[slot]))
