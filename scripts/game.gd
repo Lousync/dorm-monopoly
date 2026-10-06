@@ -302,10 +302,16 @@ var _pending_token := 0
 var _decision := {"token": -1, "yes": false}
 var _prompt_kind := ""
 var _prompt_amount := 0
+# 询问的展示文案（掉线重连补发 s_prompt 用；_ask 写入，见 reclaim 补发链）
+var _prompt_tok := -1
+var _prompt_title := ""
+var _prompt_text := ""
+var _prompt_ok_text := ""
 var _over_shown := false
 var _roll_epoch := 0
 var _shot_path := ""
 var _shot_taken := false
+var _recon_dropped := false   # 重连回归：本端是否已模拟断线（只掉一次）
 var _shot_round := 2          # 摆拍在第几轮触发（默认 2；看装修/房子这类局中状态就调大）
 
 # ---------------- 表现层状态 ----------------
@@ -1222,7 +1228,10 @@ func _arm_roll_timeout(epoch: int, peer: int) -> void:
 func _bot_roll_later() -> void:
 	await _wait(0.8)
 	if running and _awaiting_roll != 0:
-		roll_received.emit()
+		# 座位可能在这 0.8 秒里被掉线者重连认领（转回真人）——真人回合不能代掷
+		var p := _player_by_peer(_awaiting_roll)
+		if p.is_empty() or bool(p.bot):
+			roll_received.emit()
 
 # ================= 房主：畸变 =================
 # 规则唯一来源：doc/game-design/畸变.md。两道闸门（2026-10-04 定稿）：
@@ -2218,6 +2227,10 @@ func _ask(p: Dictionary, kind: String, amount: int, title: String, text: String,
 	_awaiting_prompt = int(p.peer)
 	_prompt_kind = kind
 	_prompt_amount = amount
+	_prompt_tok = tok
+	_prompt_title = title
+	_prompt_text = text
+	_prompt_ok_text = ok_text
 	# 待决格 = 提问者脚下那一格（两个调用点都由 `_resolve_tile` 以 `p.pos` 为 idx 调过来）
 	_prompt_tile = int(p.pos)
 	_broadcast_state()
@@ -2268,7 +2281,7 @@ func _on_peer_disconnected(id: int) -> void:
 		if int(p.peer) == id and not bool(p.bot):
 			p.bot = true
 			found = true
-			_log("%s 掉线了，机器人接管他的回合" % p.name, "#8a90a5")
+			_log("%s 掉线了，机器人接管他的回合（座位保留，可凭凭证重连认领）" % p.name, "#8a90a5")
 			break
 	if not found:
 		return
@@ -2278,7 +2291,82 @@ func _on_peer_disconnected(id: int) -> void:
 		# 立刻按机器人策略替他做决定，不让全场等 25 秒超时
 		var pd := _player_by_peer(id)
 		_decision = {"token": _pending_token, "yes": _bot_decide(_prompt_kind, _prompt_amount, int(pd.get("money", 0)))}
+	if _awaiting_item == id:
+		# 道具阶段不等掉线者：立即按托管跳过（与机器人「跳过」同一出口）
+		_item_action = {"epoch": _item_epoch, "action": "skip"}
+	if _awaiting_card == id:
+		# 抽卡演出等他点「确定」：掉线即视作确认，别让全场盯着一张卡等超时
+		_card_ack = true
 	_broadcast_state()
+
+# ================= 房主：掉线重连认领（协议 §六，规格见 doc/development/联机协议.md） =================
+
+## 凭证命中座位 → 换 key 认领。由 net.c_hello 在对局中调用；幂等（重发的 hello 走一遍也无害）。
+## 返回 false = 座位不存在（调用方会踢）。
+func reclaim_seat(old_peer: int, new_peer: int) -> bool:
+	if not multiplayer.is_server():
+		return false
+	var idx := -1
+	for i in hp.size():
+		if int(hp[i].peer) == old_peer:
+			idx = i
+			break
+	if idx == -1:
+		return false
+	var p: Dictionary = hp[idx]
+	p.peer = new_peer
+	p.bot = false
+	# 地契换 key：名下地皮（含焦土归属）全部改新 peer
+	for t in htiles:
+		if int(t.owner) == old_peer:
+			t.owner = new_peer
+	_rekey_transient(old_peer, new_peer)
+	print("AUTOTEST RECLAIM host old=%d new=%d" % [old_peer, new_peer])
+	_log("%s 重连回到座位（掉线期间由机器人托管）" % String(p.name), "#74d188")
+	# 先广播一份让换 key 落地；私密弹层延迟补发——客户端刚收 s_reclaim、场景还没换好，
+	# RPC 先到会因节点不存在被丢（见协议 §六.3）。
+	_broadcast_state()
+	_resend_reclaim_ui(new_peer)
+	return true
+
+## 所有按 peer 记账的「当前等待 / 占用」字段换 key（漏一处，重连者在那个环节就是聋子）
+func _rekey_transient(old_peer: int, new_peer: int) -> void:
+	if _awaiting_roll == old_peer:
+		_awaiting_roll = new_peer
+	if _awaiting_prompt == old_peer:
+		_awaiting_prompt = new_peer
+	if _awaiting_item == old_peer:
+		_awaiting_item = new_peer
+	if _awaiting_card == old_peer:
+		_awaiting_card = new_peer
+	if _awaiting_tech_peer == old_peer:
+		_awaiting_tech_peer = new_peer
+	if _awaiting_discover_peer == old_peer:
+		_awaiting_discover_peer = new_peer
+	if _shop_peer == old_peer:
+		_shop_peer = new_peer
+	if _black_peer == old_peer:
+		_black_peer = new_peer
+	if _liq_peer == old_peer:
+		_liq_peer = new_peer
+	if _tgt_peer == old_peer:
+		_tgt_peer = new_peer
+	if _ab_extra_peer == old_peer:
+		_ab_extra_peer = new_peer
+
+## 补发重连者错过的「一次性」私密弹层（询问 / 科技三选一 / 发现三选一）。
+## 延迟 0.6 秒：等客户端的场景切换落地；等待循环在房主侧是 token / 截止时刻驱动，不依赖这一发。
+func _resend_reclaim_ui(new_peer: int) -> void:
+	await _wait(0.6)
+	if not running:
+		return
+	if _awaiting_prompt == new_peer and _prompt_tok > 0:
+		s_prompt.rpc_id(new_peer, _prompt_tok, _prompt_title, _prompt_text, _prompt_ok_text)
+	if _awaiting_tech_peer == new_peer and _tech_wait_token != -1:
+		s_tech_offer.rpc_id(new_peer, _tech_wait_token, _tech_tier, _tech_offered)
+	if _awaiting_discover_peer == new_peer and _discover_wait_token != -1:
+		s_discover.rpc_id(new_peer, _discover_wait_token, _discover_offered)
+	_broadcast_state()   # 再补一份快照，确保新端首帧就有完整状态
 
 # ================= 房主：广播 =================
 
@@ -2607,6 +2695,12 @@ func s_state(state: Dictionary) -> void:
 		dev.take_shot(_shot_path)
 	elif at_mode != "" and not multiplayer.is_server() and int(state.round) >= at_rounds:
 		_autotest_client_finish(state)
+	elif at_mode == "reconnect" and not multiplayer.is_server() \
+			and not Net.rejoined and not _recon_dropped:
+		# 重连回归：进对局拿到首份快照后模拟一次「网络波动」断线（协议 §六 的自动化用例）
+		_recon_dropped = true
+		print("AUTOTEST RECONNECT: dropping in 1.0s")
+		get_tree().create_timer(1.0).timeout.connect(Net.simulate_drop)
 
 ## 客户端 autotest 收尾：先校验挡位链路，再打印 OK 行退出。
 ## quit() 要到本帧末才生效，期间还可能再收到一次 s_state —— 用标记挡住重复打印。

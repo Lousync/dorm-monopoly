@@ -185,7 +185,7 @@ func _ready() -> void:
 
 	if _at_mode == "host":
 		_autotest_host()
-	elif _at_mode == "client":
+	elif _at_mode == "client" or _at_mode == "reconnect":
 		_autotest_client()
 	elif _shot_path != "":
 		_shot()
