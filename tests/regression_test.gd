@@ -102,6 +102,8 @@ func _run() -> void:
 	_test_camera_window_resize(g)
 	await _test_roll_button_off_home_view(g)
 	await _test_targeting(g)
+	await _test_new_items(g)
+	_test_bankrupt_shop(g)
 
 	# 掉线路径会触发换场景，放到最后
 	var lobby = load("res://scenes/lobby.tscn").instantiate()
@@ -383,7 +385,7 @@ func _test_hot_chain(g) -> void:
 	_check(g._note_roll_hot(p, 10), "中断后重新累计（第 3 次再抓）")
 
 func _test_shop_refresh_full_shelf(g) -> void:
-	print("== 小卖部刷新：货架没变化就不收钱 ==")
+	print("== 小卖部刷新：整架重掷（三格全换）并照价扣钱 ==")
 	var tile := _shop_tile()
 	var p := _mk_player(1, "甲")
 	p.money = 9000
@@ -393,9 +395,14 @@ func _test_shop_refresh_full_shelf(g) -> void:
 	g._shop_peer = 1
 	g._shop_tile = tile
 	g.refresh_count = 0
+	var cost: int = g._refresh_price()
 	g._shop_refresh(1)
-	_check(int(p.money) == 9000, "满货架刷新不扣钱（实得 %s）" % str(p.money))
-	_check(g.refresh_count == 0, "满货架刷新不推高全场刷新价")
+	# 整架重掷：三格全换、照价扣钱、推高全场刷新价（#12）
+	_check(int(p.money) == 9000 - cost, "整架刷新照价扣钱（9000 → %s）" % str(p.money))
+	_check(g.refresh_count == 1, "整架刷新推高全场刷新价")
+	var slots: Array = g.shops[tile].slots
+	_check(slots.size() == 3 and String(slots[0]) != "" and String(slots[1]) != "" and String(slots[2]) != "",
+		"刷新后三格仍满（整架重掷而非只补空位）")
 
 func _test_roster_marks_disconnected_bots(g, net) -> void:
 	print("== 开局名册：淡出期间掉线的玩家应转机器人 ==")
@@ -578,3 +585,137 @@ func _test_targeting(g) -> void:
 	# 非法 arg2（不属于目标）→ 回落随机，不崩
 	var ok3: bool = await g._apply_item_effect(p1, inst2, 2, 9999)
 	_check(ok3, "非法 arg2 回落随机仍返回成功")
+
+	# 保安队长（#26）：只挑**有冷却的主动件**，绝不碰被动
+	var tgt := _mk_player(2, "乙")
+	tgt.items = [{"id": "招财猫", "cd": 0}, {"id": "交换生", "cd": 0}]
+	g.hp = [p1, tgt]
+	var ok4: bool = await g._apply_item_effect(p1, {"id": "保安队长", "cd": 0}, 2)
+	_check(ok4, "保安队长返回成功")
+	_check(int(tgt.items[0].cd) == 0, "保安队长不动被动（招财猫 cd 仍 0）")
+	_check(int(tgt.items[1].cd) == 2, "保安队长只给有冷却的主动件 +2（交换生 cd=2）")
+
+## 数值专场行为代码（§六 #3）+ 紫档新批次（§六 #11）
+func _test_new_items(g) -> void:
+	print("== 道具：数值专场行为 + 紫档新批次 ==")
+	var p1 := _mk_player(1, "我")
+	var p2 := _mk_player(2, "乙")
+	g.my_peer = 1
+	g.hp = [p1, p2]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0, "soil": false})
+
+	# 数值专场行为：招财猫 +400 / 保安巡逻 ×1.3 / 校园卡 +1000
+	p1.items = [{"id": "招财猫", "cd": 0}]
+	_check(int(g._rent_gain(p1, 1000)) == 1400, "招财猫：租金 +400（实得 %d）" % int(g._rent_gain(p1, 1000)))
+	p1.items = [{"id": "保安巡逻", "cd": 0}]
+	_check(int(g._rent_gain(p1, 1000)) == 1300, "保安巡逻：收租 +30%（实得 %d）" % int(g._rent_gain(p1, 1000)))
+	p1.items = [{"id": "校园卡", "cd": 0}]
+	_check(int(g._salary_amount(p1)) == GameData.SALARY + 1000, "校园卡：过起点 +1000")
+
+	# 二手交易：弃本道具 +¥2000
+	p1.items = [{"id": "二手交易", "cd": 0}]
+	p1.money = 0
+	var ok_se: bool = await g._apply_item_effect(p1, p1.items[0], -1)
+	_check(ok_se and int(p1.money) == 2000, "二手交易：+¥2000（实得 %d）" % int(p1.money))
+
+	# 刮刮乐：¥100~1000 十档
+	p1.money = 0
+	var ok_sc: bool = await g._apply_item_effect(p1, {"id": "刮刮乐", "cd": 0}, -1)
+	_check(ok_sc and int(p1.money) >= 100 and int(p1.money) <= 1000 and int(p1.money) % 100 == 0,
+		"刮刮乐：¥100~1000 十档（实得 %d）" % int(p1.money))
+
+	# 顶楼加盖：自有地 +2 级
+	var pi := _prop_idx(0)
+	g.htiles[pi].owner = 1
+	g.htiles[pi].level = 1
+	var ok_rf: bool = await g._apply_item_effect(p1, {"id": "顶楼加盖", "cd": 0}, pi)
+	_check(ok_rf and int(g.htiles[pi].level) == 3, "顶楼加盖：+2 级（实得 Lv%d）" % int(g.htiles[pi].level))
+
+	# 没收：抢一件道具过来
+	p2.items = [{"id": "饭卡", "cd": 0}]
+	p1.items = []
+	var ok_cf: bool = await g._apply_item_effect(p1, {"id": "没收", "cd": 0}, 2)
+	_check(ok_cf and p1.items.size() == 1 and p2.items.is_empty(), "没收：抢走对方一件道具")
+
+	# 打印店：复制件带 fake 标记（用后焚毁不回池）
+	p2.items = [{"id": "饭卡", "cd": 0}]
+	p1.items = []
+	var ok_cp: bool = await g._apply_item_effect(p1, {"id": "打印店", "cd": 0}, 2)
+	_check(ok_cp and p1.items.size() == 1 and bool(p1.items[0].get("fake", false)),
+		"打印店：复制件带 fake 标记")
+
+	# 代课：置下笔租金反转标记
+	p1.items = []
+	var ok_sub: bool = await g._apply_item_effect(p1, {"id": "代课", "cd": 0}, -1)
+	_check(ok_sub and bool(p1.get("sub_rent", false)), "代课：置下笔租金反转标记")
+
+	# 转专业：交换两块地归属（arg2=我的地, arg3=他的地）
+	var pa := _prop_idx(0)
+	var pb := _prop_idx(1)
+	g.htiles[pa].owner = 1
+	g.htiles[pb].owner = 2
+	var ok_tr: bool = await g._apply_item_effect(p1, {"id": "转专业", "cd": 0}, 2, pa, pb)
+	_check(ok_tr and int(g.htiles[pa].owner) == 2 and int(g.htiles[pb].owner) == 1,
+		"转专业：交换两块地归属")
+
+## 破产清道具（台账 §四.1）+ 小卖部背包上限 / #25 收起
+func _test_bankrupt_shop(g) -> void:
+	print("== 破产清道具 + 小卖部收起 / 背包上限 ==")
+	var p1 := _mk_player(1, "我")
+	var p2 := _mk_player(2, "乙")
+	g.my_peer = 1
+	g.hp = [p1, p2]
+	g.htiles = []
+	for i in GameData.TILES.size():
+		g.htiles.append({"owner": GameData.NO_OWNER, "level": 0, "soil": false})
+
+	# 破产：现金清零 + 地产收归 + **道具清空**
+	var pi := _prop_idx(0)
+	g.htiles[pi].owner = 2
+	g.htiles[pi].level = 2
+	p2.money = 100
+	p2.items = [{"id": "招财猫", "cd": 0}, {"id": "砍价高手", "cd": 0}]
+	p2.alive = true
+	g._pay(p2, 999999, p1)
+	_check(not bool(p2.alive), "破产：alive=false")
+	_check(int(p2.money) == 0, "破产：现金清零")
+	_check(int(g.htiles[pi].owner) == GameData.NO_OWNER and int(g.htiles[pi].level) == 0,
+		"破产：地产收归无主且等级清零")
+	_check((p2.items as Array).is_empty(), "破产：道具清空（剩 %d 件）" % p2.items.size())
+
+	# 唯一道具回池：招财猫 / 砍价高手都是唯一，出局后 `_item_pool` 应重新包含
+	p1.items = []
+	p2.alive = false
+	var pool: Array = g._item_pool("白")
+	_check(pool.has("招财猫") and pool.has("砍价高手"), "破产后唯一道具回池")
+
+	# 小卖部背包上限：置物架 → 7（原先 `_shop_buy` 写死 5）
+	var stile := -1
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			stile = i
+			break
+	g._shop_peer = 1
+	g._shop_tile = stile
+	p1.money = 100000
+	var five := [{"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0},
+		{"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0}]
+	p1.items = five.duplicate(true)
+	g.shops[stile] = {"slots": ["兼职中介", "", ""]}
+	g._shop_buy(1, 0)
+	_check(p1.items.size() == 5, "小卖部：满 5 件不买（无置物架）")
+	p1.items = [{"id": "置物架", "cd": 0}, {"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0},
+		{"id": "饭卡", "cd": 0}, {"id": "饭卡", "cd": 0}]
+	g.shops[stile] = {"slots": ["兼职中介", "", ""]}
+	g._shop_buy(1, 0)
+	_check(p1.items.size() == 6, "小卖部：持置物架可买到第 6 件（上限 7）")
+
+	# #25：收起是**本地** UI 态，不动会话（`_shop_peer` 不变）
+	g._shop_collapsed = false
+	g._set_shop_collapsed(true)
+	_check(g._shop_collapsed and g._shop_peer == 1, "#25 收起：本地标记置位、会话不变")
+	g._set_shop_collapsed(false)
+	_check(not g._shop_collapsed, "#25 展开：本地标记复位")
+	g._shop_peer = 0

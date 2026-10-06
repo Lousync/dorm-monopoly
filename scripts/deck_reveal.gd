@@ -277,6 +277,7 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	#（根 / card / plate / m / layer / rule 都已经是 IGNORE，别只漏这一层）。
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_theme_constant_override("separation", 8)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER   # 标题 + 分隔线 + 正文**整块纵向居中**（不再标题贴顶、正文撑满下方）
 	m.add_child(v)
 	var title := UIKit.label(deck, 30, style[0])
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -289,8 +290,9 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	var body := UIKit.label(text, 18, UIKit.TEXT)
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)   # 锁换行宽度（内宽 − 4）
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_SHRINK_CENTER   # 不撑满：让整块（标题+正文）在面板里居中
 	v.add_child(body)
 	return card
 

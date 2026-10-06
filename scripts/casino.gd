@@ -63,7 +63,8 @@ func _broadcast_state() -> void:
 	g._broadcast_state()
 
 ## 落进赌场格：全员下注 → 相机聚焦 + 抽游戏 → 投骰子 → 最大者通吃（平局平分）
-func run(p: Dictionary) -> void:
+## `split_for`（出老千，紫·新批次）：仅本场，若该 peer 不是赢家，则与赢家平分奖金（各半）。
+func run(p: Dictionary, split_for: int = -1) -> void:
 	var alive: Array = g.hp.filter(func(x: Dictionary) -> bool: return bool(x.alive))
 	if alive.size() < 2:
 		_log("%s 走进赌场，却无人奉陪，悻悻离开" % p.name, "#8a90a5")
@@ -96,12 +97,24 @@ func run(p: Dictionary) -> void:
 	# 最大者通吃；平局并列者平分（余数按行动顺序逐人 +1）
 	var winners: Array = max_peers(vals, order)
 	var shares: Array = split(pot, winners.size())
+	# 出老千：使用者不是赢家 → 每个赢家的那份切一半给他（仅本场）
+	var split_gain := 0
+	if split_for >= 0 and not winners.is_empty() and not winners.has(split_for):
+		for i in winners.size():
+			var half := int(shares[i] / 2)
+			shares[i] = int(shares[i]) - half
+			split_gain += half
 	var maxv := 0
 	for peer in winners:
 		maxv = maxi(maxv, int(vals[int(peer)]))
 	for i in winners.size():
 		var wp := _player_by_peer(int(winners[i]))
 		wp.money = int(wp.money) + int(shares[i])
+	if split_gain > 0:
+		var sp := _player_by_peer(split_for)
+		if not sp.is_empty():
+			sp.money = int(sp.money) + split_gain
+			_log("%s 用【出老千】与赢家平分，拿到 %s" % [sp.name, GameData.fmt_money(split_gain)], "#f0a0c0")
 	s_casino_end.rpc(winners, pot)
 	if winners.size() == 1:
 		_log("%s 掷出 %d 点，赢下【投骰子】，独吞奖池 %s！" % [

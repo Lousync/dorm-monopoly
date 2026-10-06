@@ -7,7 +7,7 @@ config_version=5
 [application]
 
 config/name="宿舍大富翁"
-config/version="0.6.0"
+config/version="0.10.0"
 config/description="宿舍主题大富翁，支持局域网 4 人联机与 IPv6 直连"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.6")

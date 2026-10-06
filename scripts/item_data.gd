@@ -31,7 +31,7 @@ const ITEMS := {
 	# ---- 首批（已实装）----
 	"平均主义": {"quality": "紫", "cost": 5, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "所有玩家的现金同步至平均值。", "implemented": true, "icon": "item_balance"},
-	"作弊器": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
+	"作弊器": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "下一次转盘的点数由你决定。", "implemented": true, "icon": "item_dice"},
 	"交换生": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "与一名指定玩家随机交换一件道具。", "implemented": true, "target": "player", "icon": "item_exchange"},
@@ -64,7 +64,7 @@ const ITEMS := {
 	"小抄": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "偷看命运牌堆的下一张卡。", "implemented": true, "icon": "item_peek"},
 	"许愿池": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
-		"desc": "立刻随机获得 -¥600~+¥600。", "implemented": true, "icon": "item_fountain"},
+		"desc": "立刻随机获得 -¥400~+¥800。", "implemented": true, "icon": "item_fountain"},
 	"外卖箱": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "前进 1 格并获得 ¥200。", "implemented": true, "icon": "item_takeout"},
 	"幸运数7": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
@@ -117,7 +117,7 @@ const ITEMS := {
 		"desc": "与一名指定玩家各随机交换一块地皮。", "implemented": true, "target": "player", "icon": "item_timetable"},
 	"时光倒流": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "下一次转盘可以重掷一次，取更高点数。", "implemented": true, "icon": "item_rewind"},
-	"抄家队": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
+	"抄家队": {"quality": "紫", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家的一块地皮降 1 级。", "implemented": true, "target": "player", "then": "own_prop", "icon": "item_raiders"},
 	"拼车": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "立刻移动到一名指定玩家所在的格子。", "implemented": true, "target": "player", "icon": "item_carpool"},
@@ -154,25 +154,25 @@ const ITEMS := {
 	"二两寒暑": {"quality": "橙", "cost": 3, "type": "active", "unique": true, "cooldown": 3,
 		"desc": "指定一名玩家接下来两个道具的消耗各 +2。", "implemented": true, "target": "player", "icon": "item_thermo"},
 
-	# ---- 紫·新批次（2026-10-04 定稿，待实装：implemented=false 不进货架池） ----
+	# ---- 紫·新批次（2026-10-04 定稿；2026-10-05 全部实装） ----
 	"老虎机": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "转三把数字，奖金按点数翻倍，连号豹子更肥。", "implemented": false, "icon": "item_slot"},
+		"desc": "转三把数字，奖金按点数翻倍，连号豹子更肥。", "implemented": true, "icon": "item_slot"},
 	"出老千": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "开一场赌局，就算没赢也能和赢家平分奖金。", "implemented": false, "icon": "item_gamble"},
+		"desc": "开一场赌局，就算没赢也能和赢家平分奖金。", "implemented": true, "icon": "item_gamble"},
 	"代课": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "你的下一笔租金，由房东替你付。", "implemented": false, "icon": "item_substitute"},
+		"desc": "你的下一笔租金，由房东替你付。", "implemented": true, "icon": "item_substitute"},
 	"没收": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "指定玩家的一件随机道具，直接归你。", "implemented": false, "target": "player", "icon": "item_confiscate"},
+		"desc": "指定玩家的一件随机道具，直接归你。", "implemented": true, "target": "player", "icon": "item_confiscate"},
 	"顶楼加盖": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "你的一块地皮直接加盖两层。", "implemented": false, "target": "own_tile", "icon": "item_roof"},
+		"desc": "你的一块地皮直接加盖两层。", "implemented": true, "target": "own_tile", "icon": "item_roof"},
 	"转专业": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "与指定玩家各挑一块地皮互换。", "implemented": false, "target": "player", "icon": "item_transfer"},
+		"desc": "与指定玩家各挑一块地皮互换。", "implemented": true, "target": "player", "then": "swap_both", "icon": "item_transfer"},
 	"宿舍改造": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "学校八折收购他的一块地皮，补偿归他。", "implemented": false, "target": "player", "icon": "item_redevelop"},
+		"desc": "学校八折收购他的一块地皮，补偿归他。", "implemented": true, "target": "player", "icon": "item_redevelop"},
 	"打印店": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "复印他的随机一件道具（橙货拒印）。", "implemented": false, "target": "player", "icon": "item_copy"},
+		"desc": "复印他的随机一件道具（橙货拒印）。", "implemented": true, "target": "player", "icon": "item_copy"},
 	"刮刮乐": {"quality": "紫", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "刮开涂层，随机 ¥100~¥1000。", "implemented": false, "icon": "item_scratch"},
+		"desc": "刮开涂层，随机 ¥100~¥1000。", "implemented": true, "icon": "item_scratch"},
 }
 
 static func def(id: String) -> Dictionary:
@@ -180,3 +180,21 @@ static func def(id: String) -> Dictionary:
 
 static func price(quality: String) -> int:
 	return int(QUALITY_PRICES.get(quality, 999999))
+
+## 一件道具实例 → 卡面**右上角标**所需状态（§六 #22）：
+## 黑卡剩余次数 / 香皂融化回合 / 冷却剩余。`cooling` 单独给出（count 也承载次数与融化回合，
+## 单看 count>0 会把还有次数的黑卡画成冷却中）。手牌卡面与公开背包弹窗共用这一份口径。
+static func badge_state(item: Dictionary) -> Dictionary:
+	var id := String(item.get("id", ""))
+	var cd := int(item.get("cd", 0))
+	var charges := int(item.get("charges", 0))
+	var count := -1
+	var melt := false
+	if charges > 0:
+		count = charges
+	elif id == "空想者的香皂":
+		count = int(item.get("melt_left", 10))
+		melt = count <= 5
+	elif cd > 0:
+		count = cd
+	return {"count": count, "melt": melt, "cooling": charges <= 0 and cd > 0}

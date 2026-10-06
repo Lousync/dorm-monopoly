@@ -60,6 +60,18 @@ static func build_play_ui(g: Node) -> void:
 	# 那个容器从一个局部量变成可引用的成员。
 	g.hud_layer = hud
 
+	# 指向性道具的**屏幕层瞄准箭头**（#24，杀戮尖塔式）：由 `game._update_aim_arrow` 每帧驱动，
+	# 选目标态（`_tgt_stage != ""`）期间从手牌那张卡指向鼠标/目标，其余收起。纯表现、不吃鼠标。
+	g.aim_arrow = AimArrow.new()
+	hud.add_child(g.aim_arrow)
+
+	# 悬停手牌的**放大预览**（#23）：屏幕层一张大 `ItemCard`，内容随悬停那张牌换（`_set_hand_preview`）。
+	g.hand_preview = Control.new()
+	g.hand_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.hand_preview.z_index = 32
+	g.hand_preview.visible = false
+	hud.add_child(g.hand_preview)
+
 	# ---- 悬停棋子的信息条（批次 11 Task 3）----
 	# 悬停到桌面上一枚棋子时浮出「昵称 / 身家 / 名次 / 已出局」。**内容与判据一字未改**：
 	# 原先它是画布里的一个 PanelContainer（`board_view._token_tip`，批次 11 Task 1 随棋子一起删了），
@@ -192,6 +204,13 @@ static func build_play_ui(g: Node) -> void:
 	shead.add_child(sh_sp)
 	g.shop_tile_l = UIKit.label("", 14, Color(0.78, 0.7, 0.58))
 	shead.add_child(g.shop_tile_l)
+	# #25：收起界面看棋盘（**不结束逛店**）——店里全屏压暗底会吞掉所有棋盘点击，
+	# 原先只能靠「离开」才看得到棋盘。收起后由右下角「回到小卖部」入口再展开。
+	g.shop_close_btn = UIKit.button("✕", 14)
+	g.shop_close_btn.custom_minimum_size = Vector2(32, 26)
+	g.shop_close_btn.tooltip_text = "收起界面看棋盘（不结束逛店）"
+	g.shop_close_btn.pressed.connect(func() -> void: g._set_shop_collapsed(true))
+	shead.add_child(g.shop_close_btn)
 
 	# 「XX 正在挑选」说明条（批次 12 C2 / 设计 §⑧）：小卖部改为**全员可见**之后，
 	# 非本人看到的是同一份货架、但**只读**（买 / 刷新 / 离开全置灰）。没有这条，
@@ -289,6 +308,22 @@ static func build_play_ui(g: Node) -> void:
 	g.shop_timer_left.custom_minimum_size = Vector2(56, 0)
 	g.shop_timer_left.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	g.shop_timer_row.add_child(g.shop_timer_left)
+
+	# #25：收起店里界面后，右下角这枚入口负责把界面再拉回来。**必须另挂 `g`**：
+	# 收起时 `shop_layer` 整体 `visible=false`，挂在它下面的东西会一起消失。走 bottom-right 锚点。
+	g.shop_reopen_btn = UIKit.button("🛒 小卖部 · 点此继续", 15, "good")
+	g.shop_reopen_btn.visible = false
+	g.shop_reopen_btn.z_index = 72
+	g.shop_reopen_btn.anchor_left = 1.0
+	g.shop_reopen_btn.anchor_right = 1.0
+	g.shop_reopen_btn.anchor_top = 1.0
+	g.shop_reopen_btn.anchor_bottom = 1.0
+	g.shop_reopen_btn.offset_left = -330
+	g.shop_reopen_btn.offset_right = -24
+	g.shop_reopen_btn.offset_top = -62
+	g.shop_reopen_btn.offset_bottom = -24
+	g.shop_reopen_btn.pressed.connect(func() -> void: g._set_shop_collapsed(false))
+	g.add_child(g.shop_reopen_btn)
 
 	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
 	g.black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,
