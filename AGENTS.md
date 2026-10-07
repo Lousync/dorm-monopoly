@@ -136,7 +136,9 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   （批次 12 D；如 `xx_logopen_table_plain.png`）—— **批次 13 ② 起名册条搬到左上角，两者天然分居
   左右、不再打架**；**批次 13 辛 ② 起战报栏顶边已收到 52**（贴在两枚按钮之下），这张图用来核那一条；
   `abshow` → 把房主的 `_ab_active` 写一条畸变再 `_broadcast_state()`，让**顶部居中的畸变横幅**
-  亮起来核对落位与不重叠（批次 12 D；如 `xx_abshow_table_plain.png`）。
+  亮起来核对落位与不重叠（批次 12 D；如 `xx_abshow_table_plain.png`）；
+  `techroll` → 播**开局科技骰子定档演出**（屏幕层，`_show_tech_dice`），停在「骰面定格 + 等级
+  横幅」那一刻（如 `xx_techroll_table_plain.png`）——核对骰面点数 / 等级配色 / 落位。
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
   **两条都会顺带推动手牌淡出**（`view2d` 端手里牌本就看不见）：想拍"手里有牌"，文件名别带
   `tilt` / `view2d` —— 否则会拿到一张空手牌，并当成 bug 去查。
@@ -144,7 +146,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   （单带 `plain` 拍出来的**仍是全景**，要近景请再加 `freecam`，见上）、
   **看房子 `xx_level_plain.png`**、**看手里握着牌 `xx_table_hand_plain.png`**、
   **看选目标态 `xx_target_plain.png`**（看**第一帧**）、**看展开的战报栏 `xx_logopen_table_plain.png`**、
-  **看畸变横幅 `xx_abshow_table_plain.png`**。
+  **看畸变横幅 `xx_abshow_table_plain.png`**、**看科技定档演出 `xx_techroll_table_plain.png`**。
 - **一次连拍三帧**（间隔 0.6s），文件名依次 `x.png` / `x_1.png` / `x_2.png`，挑一张看即可。
 - **`--` 分隔符不能漏** —— 这些开关都读 `OS.get_cmdline_user_args()`（`--` **之后**的那一段）：
   写成 `--path . --shot=x.png` 会被 Godot 自己吃掉（不报错、也不生效），必须是
