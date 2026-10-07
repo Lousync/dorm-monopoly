@@ -1105,6 +1105,45 @@ static func build_menu_ui(g: Node) -> void:
 	cv_cancel.pressed.connect(g._close_cheat_picker)
 	cv2.add_child(cv_cancel)
 
+	# 天命在握点数选框（钻石科技：转轮前指定 1~11 + 不指定；结构同作弊器点数框）
+	g.tianming_picker = Control.new()
+	g.tianming_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.tianming_picker.visible = false
+	g.add_child(g.tianming_picker)
+	var td_dim := ColorRect.new()
+	td_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	td_dim.color = Color(0.04, 0.04, 0.08, 0.55)
+	g.tianming_picker.add_child(td_dim)
+	var tc2 := CenterContainer.new()
+	tc2.set_anchors_preset(Control.PRESET_FULL_RECT)
+	g.tianming_picker.add_child(tc2)
+	var tp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.8), 1, 10)
+	tc2.add_child(tp)
+	var tpm := UIKit.margins(20, 20, 14, 12)
+	tp.add_child(tpm)
+	var tv2 := VBoxContainer.new()
+	tv2.add_theme_constant_override("separation", 8)
+	tpm.add_child(tv2)
+	tv2.add_child(UIKit.label("【天命在握】指定本次转盘点数（1~11）", 14, UIKit.ACCENT))
+	var tgrid := GridContainer.new()
+	tgrid.columns = 6
+	tgrid.add_theme_constant_override("h_separation", 6)
+	tgrid.add_theme_constant_override("v_separation", 6)
+	tv2.add_child(tgrid)
+	for v in range(1, 12):
+		var vb := UIKit.button(str(v), 14)
+		var vv := v
+		vb.pressed.connect(func() -> void:
+			g._tianming_answer(g._tianming_tok, vv)
+		)
+		tgrid.add_child(vb)
+	var tv_skip := UIKit.button("不指定", 13)
+	tv_skip.pressed.connect(func() -> void:
+		g._tianming_answer(g._tianming_tok, 0)
+	)
+	tv2.add_child(tv_skip)
+
 	# 指向性道具目标提示条（顶部居中）：**点屏幕四角的身家条 / 点格子**选目标（玩家卡随批次 5
 	# 的座位卡、桌上立牌随批次 9 一起退场了，选人的落点在屏幕层四角条上）；
 	# 取消 = 点此「取消」或 Esc / 右键单击（拖拽平移不触发）
