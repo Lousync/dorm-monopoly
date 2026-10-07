@@ -28,11 +28,29 @@ var host_port := 0             # 房主实际使用的端口
 var last_error := ""           # 返回主菜单时展示给玩家看
 
 # ---------------- 掉线重连（协议 §六） ----------------
-## 重连凭证：开局时房主私发（s_assign_token），仅存内存；掉线后随 c_hello 带回认领座位。
-## 整局有效、可重复使用；认领成功 token 不变、座位表换绑新 peer。房主进程 / 客户端重启即失效。
+## 重连凭证：开局时房主私发（s_assign_token）；掉线后随 c_hello 带回认领座位。
+## 整局有效、可重复使用；认领成功 token 不变、座位表换绑新 peer。
+## **2026-10-07 起持久化**：原先只在内存 ⇒ 退出程序 / 回主菜单再重开就丢，「退出游戏后重连」失效；
+## 现写进 `user://rejoin.cfg`，启动时读回（房主进程重启 = 对局没了，token 会因认领失败被清）。
 var rejoin_token := 0
 var rejoined := false          # 本次连接已认领成功（s_reclaim 置位；停掉 hello 重试）
 var last_join_addr := ""       # 上次加入的地址（主菜单回填，方便断线后一键重连）
+
+const REJOIN_CFG := "user://rejoin.cfg"
+
+func _persist_rejoin() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(REJOIN_CFG)   # 先读旧文件（保留其它段），再覆盖 rejoin 段
+	cfg.set_value("rejoin", "token", rejoin_token)
+	cfg.set_value("rejoin", "addr", last_join_addr)
+	cfg.save(REJOIN_CFG)
+
+func _load_rejoin() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(REJOIN_CFG) != OK:
+		return
+	rejoin_token = int(cfg.get_value("rejoin", "token", 0))
+	last_join_addr = String(cfg.get_value("rejoin", "addr", ""))
 
 ## 房主侧：token -> 座位 peer（开局发牌时建；认领后换绑新 peer）
 var _seat_tokens := {}
@@ -51,6 +69,7 @@ var _disco_clock := 99.0
 var _disco_targets: PackedStringArray = []
 
 func _ready() -> void:
+	_load_rejoin()
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -71,6 +90,9 @@ func host_game(port: int) -> Error:
 	multiplayer.multiplayer_peer = peer
 	is_host = true
 	in_game = false
+	# 开房 = 不再需要旧的重连凭证（那是别人局里的座位）
+	rejoin_token = 0
+	_persist_rejoin()
 	host_port = port
 	players = []
 	chat_history = []
@@ -95,11 +117,15 @@ func join_game(address: String, port: int) -> Error:
 	is_host = false
 	return OK
 
-func leave() -> void:
+func leave(keep_seat := false) -> void:
 	_reset_peer()
 	players = []
 	in_game = false
-	rejoin_token = 0   # 主动退出 = 放弃座位，凭证作废
+	# 主动退出 = 放弃座位，凭证作废；`keep_seat=true`（游戏内「返回主菜单」）= 软离开，保留凭证可重连。
+	if not keep_seat:
+		rejoin_token = 0
+		last_join_addr = ""
+	_persist_rejoin()
 
 func _reset_peer() -> void:
 	stop_disco()
@@ -219,6 +245,7 @@ func start_game() -> void:
 @rpc("authority", "call_remote", "reliable")
 func s_assign_token(token: int) -> void:
 	rejoin_token = token
+	_persist_rejoin()   # 持久化：退出程序 / 回主菜单再重开也能凭它重连
 	print("NET: rejoin token assigned")
 
 ## 客户端：认领成功。直进对局场景——状态快照是全量的，对局内各界面都由快照驱动。
@@ -422,6 +449,9 @@ func _on_server_disconnected() -> void:
 func s_kick(reason: String) -> void:
 	print("NET: kicked: ", reason)
 	_reset_peer()
+	# 被踢 = 座位没了 / 认领被拒（如房主重开了新局）⇒ 清掉持久化凭证，别再拿它去重连
+	rejoin_token = 0
+	_persist_rejoin()
 	kicked.emit(reason)
 
 # ---------------- 局域网房间搜索（UDP 广播） ----------------

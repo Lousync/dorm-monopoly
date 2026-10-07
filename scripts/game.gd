@@ -160,10 +160,10 @@ var ab_title: Label           # 对局内设置面板：畸变小节标题（与
 var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
 # ---------------- 开局科技（host 状态，规则见 doc/game-design/开局科技.md） ----------------
-var _tech_tier := ""          # 本局科技等级（掷骰定档，空 = 未开科技）
-var _tech_wait_token := -1    # 当前等待选卡的 token（-1 = 无）
-var _tech_pick := {}          # {"token", "name"}：选卡应答
-var _awaiting_tech_peer := 0  # 正在选科技的玩家（0 = 无，进快照 await 状态）
+var _tech_tier := ""          # 本局科技等级（掷骰 / 房主指定，空 = 未开科技）
+var _tech_offers := {}        # token -> {"peer": int, "names": Array}：本局**同时**三选一的各份
+var _tech_picks := {}         # peer -> 选中的科技名（房主权威；全员同时选，2026-10-07）
+var _tech_open := false       # 科技三选一阶段进行中（驱动客户端弹层显隐 / 快照 await）
 var _awaiting_discover_peer := 0  # 正在「发现」三选一挑卡的玩家（0 = 无，进快照 await 状态）
 
 # ---------------- 破产变卖保底（经济与胜负.md §三；开局设置「破产变卖保底」默认开） ----------------
@@ -172,7 +172,6 @@ var _liq_epoch := 0       # 变卖会话计数（结束 / 换人会话都靠它�
 var _liq_need := 0        # 还需凑齐的应付款（卖出即 p.money 增，凑足 = money ≥ need）
 var _liq_receiver := {}   # 收款方字典（空 = 交给学校，如缴费 / 罚款）
 var _liq_ok := false      # 本次变卖会话的结果（true = 凑足已付款；_run_liquidation 读它返回）
-var _tech_offered: Array = [] # 当前给该玩家的 3 个候选（校验回包用）
 var _tech_offer_layer: Control  # 选卡弹层（临时全屏层，答完即毁）
 var _tech_cards: Array = []     # 弹层里的三张卡（选中态刷新 / 摆拍程序化选中用）
 var _tech_picked: Array = [-1]  # 选中下标（-1 = 未选；数组形式便于跨闭包读写）
@@ -598,33 +597,64 @@ func _tech_phase() -> void:
 	_broadcast_state()
 	s_tech_dice.rpc(pips, _tech_tier)   # 定档演出（全员同演；不挡流程，仅等它走完再开选卡）
 	await _wait(TECH_DICE_TIME if pips > 0 else TECH_DICE_TIME_FIXED)
+	# ---- 全员**同时**三选一（2026-10-07 改：原先逐个问，一个人选完才轮到下一个）----
+	_tech_offers = {}
+	_tech_picks = {}
+	var humans: Array = []
 	for p in hp:
-		if not running:
-			return
 		var names := _tech_sample(_tech_tier)
-		var token := _tech_ask(p, names)
-		var sec := GameSettings.turn_seconds(_settings.timeout_tier, "prompt")
-		var timed: bool = sec > 0.0   # 不限时（挡位 none）= 不自动随机，等玩家选
-		var deadline := Time.get_ticks_msec() + int(maxf(sec, 5.0) * 1000.0)
-		while running and _tech_pick.get("token", -1) != token:
-			if bool(p.bot):
-				_tech_pick = {"token": token, "name": String(names[randi_range(0, names.size() - 1)])}
+		if bool(p.bot):
+			_tech_picks[int(p.peer)] = String(names[randi_range(0, names.size() - 1)])   # bot 立即定，不占等待
+			continue
+		_pending_token += 1
+		var token := _pending_token
+		_tech_offers[token] = {"peer": int(p.peer), "names": names.duplicate()}
+		humans.append({"peer": int(p.peer), "token": token, "names": names})
+	_tech_open = true
+	_broadcast_state()
+	# 一次把所有人的选卡弹层都发出去（房主本人本地调，客户端 rpc_id）
+	for h in humans:
+		if int(h.peer) == 1:
+			_show_tech_offer(int(h.token), _tech_tier, h.names)
+		else:
+			s_tech_offer.rpc_id(int(h.peer), int(h.token), _tech_tier, h.names)
+	# 等所有人答完 / 统一超时（不限时档 = 不自动随机，等玩家自己点「确定」）
+	var sec := GameSettings.turn_seconds(_settings.timeout_tier, "prompt")
+	var timed: bool = sec > 0.0
+	var deadline := Time.get_ticks_msec() + int(maxf(sec, 5.0) * 1000.0)
+	while running:
+		var all_done := true
+		for h in humans:
+			if not _tech_picks.has(int(h.peer)):
+				all_done = false
 				break
-			if timed and Time.get_ticks_msec() >= deadline:
-				_tech_pick = {"token": token, "name": String(names[randi_range(0, names.size() - 1)])}
-				_log("%s 选科技超时，随机拍了一张" % p.name, "#8a90a5")
-				break
-			await _wait(_WINDOW_TICK)
-		_awaiting_tech_peer = 0
-		var picked := String(_tech_pick.get("name", ""))
+		if all_done:
+			break
+		if timed and Time.get_ticks_msec() >= deadline:
+			break
+		await _wait(_WINDOW_TICK)
+	_tech_open = false
+	# 落地：未答的按超时随机兜底
+	for p in hp:
+		var picked := String(_tech_picks.get(int(p.peer), ""))
 		if picked == "":
+			var names := _tech_names_for(int(p.peer))
+			if names.is_empty():
+				continue
 			picked = String(names[randi_range(0, names.size() - 1)])
+			_log("%s 选科技超时，随机拍了一张" % p.name, "#8a90a5")
 		p.tech = picked
 		_log("【开局科技】%s 选了「%s」：%s" % [p.name, picked, String(TechData.def(picked).get("desc", ""))], "#74d188")
 		_tech_apply_instant(p, picked)
-		_broadcast_state()
-		await _wait(0.4)
+	_broadcast_state()
 	_log("【开局科技】全员选定，发车！", "#f0c064")
+
+## 某 peer 在本局科技三选一里的候选（bot 不在 `_tech_offers` 里；找不到给空）
+func _tech_names_for(peer: int) -> Array:
+	for tok in _tech_offers:
+		if int(_tech_offers[tok].peer) == peer:
+			return _tech_offers[tok].names
+	return []
 
 # ---------------- 骰子定档演出（2026-10-07） ----------------
 # `开局科技.md` §四 原记「骰子定档演出仍待做，当前定档走战报公告」——本段补齐：
@@ -745,22 +775,6 @@ func _tech_sample(tier: String) -> Array:
 	pool.shuffle()
 	return pool.slice(0, 3)
 
-## 私发选卡弹层：房主本人直接本地调，客户端走 rpc_id；bot 不发（循环里自动随机选）。返回本次 token
-func _tech_ask(p: Dictionary, names: Array) -> int:
-	_pending_token += 1
-	var token := _pending_token
-	_tech_pick = {"token": -1, "name": ""}
-	_tech_wait_token = token
-	_tech_offered = names.duplicate()
-	_awaiting_tech_peer = int(p.peer)
-	_broadcast_state()
-	if not bool(p.bot):
-		if int(p.peer) == 1:
-			_show_tech_offer(token, _tech_tier, names)
-		else:
-			s_tech_offer.rpc_id(int(p.peer), token, _tech_tier, names)
-	return token
-
 ## 即时型科技效果：选中的当下结算；其余为状态钩子（各挂点 _has_tech 现查）
 func _tech_apply_instant(p: Dictionary, picked: String) -> void:
 	match picked:
@@ -809,17 +823,21 @@ func s_tech_offer(token: int, tier: String, names: Array) -> void:
 func c_tech_pick(token: int, tech: String) -> void:
 	if not multiplayer.is_server():
 		return
-	if multiplayer.get_remote_sender_id() != _awaiting_tech_peer:
+	if not _tech_offers.has(token):
 		return
-	if token != _tech_wait_token or not (tech in _tech_offered):
+	var off: Dictionary = _tech_offers[token]
+	# 只有这一份的本人能应答（同 c_decision 的校验口径）
+	if multiplayer.get_remote_sender_id() != int(off.peer):
 		return
-	_tech_pick = {"token": token, "name": tech}
+	if not (tech in (off.names as Array)):
+		return
+	_tech_picks[int(off.peer)] = tech
 
 ## 房主/客户端共同入口：应答选卡（房主本地写应答，客户端发回房主）
 func _tech_answer(token: int, tech: String) -> void:
 	if multiplayer.is_server():
-		if token == _tech_wait_token and tech in _tech_offered:
-			_tech_pick = {"token": token, "name": tech}
+		if _tech_offers.has(token) and tech in (_tech_offers[token].names as Array):
+			_tech_picks[int(_tech_offers[token].peer)] = tech
 	else:
 		c_tech_pick.rpc_id(1, token, tech)
 
@@ -1123,15 +1141,23 @@ func s_discover(token: int, ids: Array) -> void:
 func c_discover_pick(token: int, id: String) -> void:
 	if not multiplayer.is_server():
 		return
+	# 只有被问的本人能应答（同 c_tech_pick / c_decision 的校验口径）
+	if multiplayer.get_remote_sender_id() != _awaiting_discover_peer:
+		return
 	if int(token) != _discover_wait_token or not _discover_offered.has(String(id)):
 		return
 	_discover_pick = {"token": int(token), "id": String(id)}
 
-## 挑卡应答收口（本机直选与 RPC 回包共用）
+## 挑卡应答收口（本机直选与 RPC 回包共用）。
+## ⚠ **客户端必须发回房主**（`c_discover_pick`）—— 原先这里漏了客户端分支、只写了本机变量，
+## 房主永远收不到选择 ⇒ 「不限时」档整局卡在发现窗、限时档要等超时才随机拿一件（实机 bug）。
 func _discover_answer(token: int, id: String) -> void:
 	if int(token) != _discover_wait_token or not _discover_offered.has(String(id)):
 		return
-	_discover_pick = {"token": int(token), "id": String(id)}
+	if multiplayer.is_server():
+		_discover_pick = {"token": int(token), "id": String(id)}
+	else:
+		c_discover_pick.rpc_id(1, int(token), String(id))
 	_close_discover()
 
 ## 私密挑卡弹层：屏幕正中三张大卡，点选 + 「拿走」；倒计时与「决定」同挡位
@@ -2777,10 +2803,12 @@ func _rekey_transient(old_peer: int, new_peer: int) -> void:
 		_awaiting_item = new_peer
 	if _awaiting_card == old_peer:
 		_awaiting_card = new_peer
-	if _awaiting_tech_peer == old_peer:
-		_awaiting_tech_peer = new_peer
 	if _awaiting_discover_peer == old_peer:
 		_awaiting_discover_peer = new_peer
+	# 科技三选一：全员同时 ⇒ 换掉该 peer 那一份 offer 的 peer（可能不在等待里，遍历无害）
+	for tok in _tech_offers:
+		if int(_tech_offers[tok].peer) == old_peer:
+			_tech_offers[tok].peer = new_peer
 	if _shop_peer == old_peer:
 		_shop_peer = new_peer
 	if _black_peer == old_peer:
@@ -2800,8 +2828,11 @@ func _resend_reclaim_ui(new_peer: int) -> void:
 		return
 	if _awaiting_prompt == new_peer and _prompt_tok > 0:
 		s_prompt.rpc_id(new_peer, _prompt_tok, _prompt_title, _prompt_text, _prompt_ok_text)
-	if _awaiting_tech_peer == new_peer and _tech_wait_token != -1:
-		s_tech_offer.rpc_id(new_peer, _tech_wait_token, _tech_tier, _tech_offered)
+	if _tech_open:
+		for tok in _tech_offers:
+			if int(_tech_offers[tok].peer) == new_peer:
+				s_tech_offer.rpc_id(new_peer, int(tok), _tech_tier, _tech_offers[tok].names)
+				break
 	if _awaiting_discover_peer == new_peer and _discover_wait_token != -1:
 		s_discover.rpc_id(new_peer, _discover_wait_token, _discover_offered)
 	_broadcast_state()   # 再补一份快照，确保新端首帧就有完整状态
@@ -3014,9 +3045,11 @@ func _broadcast_state() -> void:
 	elif _awaiting_prompt != 0:
 		await_state = "prompt"
 		await_peer = _awaiting_prompt
-	elif _awaiting_tech_peer != 0:
+	elif _tech_open:
+		# 科技三选一（2026-10-07 起全员**同时**）：没有单个 await_peer，
+		# 客户端弹层显隐改看快照的 `tech_open`（见 s_state 的兜底关闭）。
 		await_state = "tech"
-		await_peer = _awaiting_tech_peer
+		await_peer = 0
 	elif _awaiting_discover_peer != 0:
 		await_state = "discover"
 		await_peer = _awaiting_discover_peer
@@ -3056,7 +3089,7 @@ func _broadcast_state() -> void:
 		"timeout_tier": _settings.timeout_tier,
 		"aberrations": _ab_active,
 		"ab_freq": _settings.ab_freq, "ab_dur": _settings.ab_dur, "ab_cond": _settings.ab_cond,
-		"tech_tier": _tech_tier,
+		"tech_tier": _tech_tier, "tech_open": _tech_open,
 		"winner": winner, "roll_epoch": _roll_epoch,
 		# 开局设置（经济 / 胜利条件；客户端只读展示，见开局设置.md）
 		"win_mode": _settings.win_mode, "win_cash": _settings.win_cash,
@@ -3087,10 +3120,9 @@ func s_state(state: Dictionary) -> void:
 	if _prompt_token != -1 and not (String(state.get("await", "")) == "prompt" \
 			and int(state.get("await_peer", -1)) == my_peer):
 		_close_prompt()
-	# 科技选卡层兜底：等待已不在我身上（答完 / 房主超时随机）⇒ 收起（与 _close_prompt 同款；
-	# 若没收这条，超时玩家的选卡层会一直挂着挡住全屏输入）
-	if _tech_offer_layer != null and not (String(state.get("await", "")) == "tech" \
-			and int(state.get("await_peer", -1)) == my_peer):
+	# 科技选卡层兜底：三选一阶段整体结束（全员同时，故看 `tech_open` 而非单个 await_peer）
+	# ⇒ 收起（答完自己会先收一遍；这条兜住超时 / 房主随机后还挂着的层）
+	if _tech_offer_layer != null and not bool(state.get("tech_open", false)):
 		_close_tech_offer()
 	# 「发现」挑卡层同款兜底（失物招领三选一）
 	if _discover_layer != null and not (String(state.get("await", "")) == "discover" \
@@ -6898,7 +6930,10 @@ func _on_conn_lost(reason: String) -> void:
 func _on_exit() -> void:
 	get_tree().paused = false
 	Engine.time_scale = 1.0
-	Net.leave()
+	# 「返回主菜单」= **软离开**（保留座位与重连凭证，2026-10-07）：掉线座位本来就整局保留、
+	# 机器人托管，让玩家回主菜单 / 退出程序后还能凭凭证重连回对局。
+	# 真放弃座位走 `Net.leave()`（默认清凭证），目前只有大厅「退出房间」用它。
+	Net.leave(true)
 	Fx.go_to("res://scenes/main_menu.tscn")
 
 func _wait(sec: float) -> void:

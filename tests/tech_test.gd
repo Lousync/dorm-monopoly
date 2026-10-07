@@ -97,7 +97,7 @@ func _run() -> void:
 		"掷骰定档恢复（2026-10-07 三档池齐）：本局档 = %s" % g._tech_tier)
 	_check(String(p1.tech) != "" and String(p1.tech) in TechData.pool(g._tech_tier)
 		and String(p2.tech) in TechData.pool(g._tech_tier), "全员都拿到了本档科技")
-	_check(int(g._awaiting_tech_peer) == 0, "科技阶段结束：等待态清零")
+	_check(not bool(g._tech_open), "科技阶段结束：三选一阶段收口（tech_open=false）")
 	g._settings.tech_on = false
 
 	# ---------- 房主指定等级（2026-10-07） ----------
@@ -114,6 +114,39 @@ func _run() -> void:
 	_check(String(g.hp[0].tech) in TechData.pool("钻石"), "指定档抽卡来自钻石池")
 	g._settings.tech_tier = GameSettings.TECH_TIER_RANDOM
 	g._settings.tech_on = false
+
+	# ---------- 全员**同时**三选一（2026-10-07：原先逐个问） ----------
+	print("== 全员同时三选一 ==")
+	var h1 := _mk_player(1, "甲")
+	var h2 := _mk_player(2, "乙")
+	g.hp = [h1, h2]
+	g.htiles = _fresh_tiles()
+	g._settings.tech_on = true
+	g._settings.tech_tier = "白银"
+	g.running = true
+	g._tech_phase()   # 后台跑（不 await：本测试要并发地代两个客户端作答）
+	var w := 0.0
+	while g._tech_offers.size() < 2 and w < 10.0:
+		await create_timer(0.1).timeout
+		w += 0.1
+	_check(g._tech_offers.size() == 2, "两份选卡 offer 同时发出（实得 %d）" % g._tech_offers.size())
+	_check(bool(g._tech_open), "阶段进行中：tech_open = true")
+	var off_peers: Array = []
+	for tok in g._tech_offers:
+		off_peers.append(int(g._tech_offers[tok].peer))
+	_check(off_peers.has(1) and off_peers.has(2), "两份 offer 分别指向两个真人（不是逐个）")
+	_check(g._tech_picks.is_empty(), "没人作答时 picks 为空（两人同时在等）")
+	for tok in g._tech_offers.keys():
+		g._tech_answer(int(tok), String(g._tech_offers[tok].names[0]))
+	w = 0.0
+	while bool(g._tech_open) and w < 8.0:
+		await create_timer(0.1).timeout
+		w += 0.1
+	_check(not bool(g._tech_open), "两份都答完 → 阶段收口")
+	_check(String(h1.tech) != "" and String(h2.tech) != "", "两个真人都拿到科技")
+	g._settings.tech_tier = GameSettings.TECH_TIER_RANDOM
+	g._settings.tech_on = false
+	g.running = false
 
 	# ---------- 即时型效果 ----------
 	print("== 即时型效果 ==")

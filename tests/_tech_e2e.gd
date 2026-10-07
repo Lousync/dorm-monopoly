@@ -55,15 +55,15 @@ func _run() -> void:
 		await create_timer(0.25).timeout
 		waited += 0.25
 	_check(g._tech_offer_layer != null, "真实开局链路：房主收到选卡弹层（等待 %.2fs）" % waited)
-	_check(String(g._tech_tier) == "白银", "本局白银档（黄金/钻石池定稿前临时口径）")
-	_check(g._tech_offered.size() == 3, "房主拿到 3 个候选")
+	_check(String(g._tech_tier) in TechData.TIERS, "本局档位合法（掷骰定档）")
+	_check(g._tech_names_for(1).size() == 3, "房主拿到 3 个候选")
 	if g._tech_offer_layer == null:
 		printerr("TECH E2E: 弹层未出现，中止")
 		quit(1)
 		return
 
 	# 走真按钮链路应答：程序化选中第 0 张 + 点「确定」
-	var my_offer: Array = (g._tech_offered as Array).duplicate()
+	var my_offer: Array = g._tech_names_for(1).duplicate()
 	g._tech_pick_card(0)
 	_check(bool(g._tech_ok.disabled) == false, "选中后「确定」点亮")
 	g._tech_ok.pressed.emit()
@@ -75,7 +75,7 @@ func _run() -> void:
 		for p in g.hp:
 			if String(p.get("tech", "")) == "":
 				done = false
-		if done and g._awaiting_tech_peer == 0:
+		if done and not bool(g._tech_open):
 			break
 		await create_timer(0.25).timeout
 		waited += 0.25
