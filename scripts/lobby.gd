@@ -17,6 +17,7 @@ var _set_wrap: Control
 var _set_scroll: ScrollContainer
 var _set_chips: HBoxContainer            # 操作限时挡位
 var _set_tech_chips: HBoxContainer       # 开局科技开关
+var _set_tech_tier_chips: HBoxContainer  # 开局科技等级（随机 / 指定）
 var _set_liq_chips: HBoxContainer        # 破产变卖保底
 var _set_rounds_chips: HBoxContainer     # 回合上限档位
 var _set_win_chips: HBoxContainer        # 胜利条件
@@ -32,6 +33,7 @@ var _set_salary_edit: LineEdit           # 起点补贴
 var _set_wincash_edit: LineEdit          # 目标现金金额
 var _set_tier := GameSettings.TIER_CURRENT
 var _set_tech := false   # 开局科技开关（发车前配置；对局内不可改）
+var _set_tech_tier := GameSettings.TECH_TIER_RANDOM   # 科技等级：random = 掷骰；其余 = 指定
 var _set_liq := true
 var _set_rounds := 30
 var _set_win := "rounds"
@@ -368,12 +370,22 @@ func _build_settings_dialog() -> void:
 	# —— 特殊机制 ——
 	sv.add_child(_sect_title("特殊机制"))
 	# 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡
-	sv.add_child(UIKit.label("开局科技：每人三选一（黄金/钻石池定稿前暂只开放白银池）", 13, UIKit.TEXT_DIM))
+	sv.add_child(UIKit.label("开局科技：每人三选一", 13, UIKit.TEXT_DIM))
 	_set_tech_chips = UIKit.chip_row(GameSettings.TECH_SW, GameSettings.TECH_SW_LABELS,
 		func(id: String) -> void:
 			_set_tech = id == "on"
 			UIKit.chip_select(_set_tech_chips, id))
 	sv.add_child(_set_tech_chips)
+	# 科技等级（2026-10-07）：随机 = 掷骰定档；指定 = 本局固定该档（仅科技开启时生效）
+	var tier_row := HBoxContainer.new()
+	tier_row.add_theme_constant_override("separation", 10)
+	sv.add_child(tier_row)
+	tier_row.add_child(UIKit.label("等级", 13, UIKit.TEXT_DIM))
+	_set_tech_tier_chips = UIKit.chip_row(GameSettings.TECH_TIERS, GameSettings.TECH_TIER_LABELS,
+		func(id: String) -> void:
+			_set_tech_tier = id
+			UIKit.chip_select(_set_tech_tier_chips, id))
+	tier_row.add_child(_set_tech_tier_chips)
 	sv.add_child(UIKit.label("畸变：回合开始时可能触发的全场事件", 13, UIKit.TEXT_DIM))
 	var abr := HBoxContainer.new()
 	abr.add_theme_constant_override("separation", 10)
@@ -455,6 +467,7 @@ func _apply_preset(name: String) -> void:
 			_set_black = true
 			_set_casino = true
 			_set_tech = false
+			_set_tech_tier = GameSettings.TECH_TIER_RANDOM
 			_set_ab_freq = "关"
 			_set_ab_dur = 2
 			_set_ab_cond = true
@@ -467,6 +480,7 @@ func _apply_preset(name: String) -> void:
 			_set_rounds = 60
 		"大乱斗":
 			_set_tech = true
+			_set_tech_tier = GameSettings.TECH_TIER_RANDOM
 			_set_casino = true
 			_set_black = true
 			_set_shop = true
@@ -491,6 +505,7 @@ func _sync_panel() -> void:
 	UIKit.chip_select(_set_black_chips, "on" if _set_black else "off")
 	UIKit.chip_select(_set_casino_chips, "on" if _set_casino else "off")
 	UIKit.chip_select(_set_tech_chips, "on" if _set_tech else "off")
+	UIKit.chip_select(_set_tech_tier_chips, _set_tech_tier)
 	UIKit.chip_select(_set_chips, _set_tier)
 	UIKit.chip_select(_set_ab_chips, _set_ab_freq)
 	UIKit.chip_select(_set_ab_dur_chips, str(_set_ab_dur))
@@ -517,6 +532,7 @@ func _on_open_settings() -> void:
 	var gs := Net.game_settings
 	_set_tier = gs.timeout_tier
 	_set_tech = gs.tech_on
+	_set_tech_tier = gs.tech_tier
 	_set_liq = gs.liq_on
 	_set_rounds = gs.max_rounds
 	_set_win = gs.win_mode
@@ -537,6 +553,7 @@ func _on_settings_save() -> void:
 	var gs := Net.game_settings
 	gs.timeout_tier = _set_tier
 	gs.tech_on = _set_tech
+	gs.tech_tier = _set_tech_tier
 	gs.liq_on = _set_liq
 	gs.max_rounds = _set_rounds
 	gs.win_mode = _set_win

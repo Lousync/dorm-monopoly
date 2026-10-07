@@ -100,6 +100,21 @@ func _run() -> void:
 	_check(int(g._awaiting_tech_peer) == 0, "科技阶段结束：等待态清零")
 	g._settings.tech_on = false
 
+	# ---------- 房主指定等级（2026-10-07） ----------
+	print("== 房主指定科技等级 ==")
+	g.hp = [_mk_player(1, "甲"), _mk_player(2, "乙")]
+	g.hp[0].bot = true
+	g.hp[1].bot = true
+	g._settings.tech_on = true
+	g._settings.tech_tier = "钻石"
+	g.running = true
+	await g._tech_phase()
+	g.running = false
+	_check(g._tech_tier == "钻石", "指定「钻石」→ 不掷骰，本局档 = 钻石（实得 %s）" % g._tech_tier)
+	_check(String(g.hp[0].tech) in TechData.pool("钻石"), "指定档抽卡来自钻石池")
+	g._settings.tech_tier = GameSettings.TECH_TIER_RANDOM
+	g._settings.tech_on = false
+
 	# ---------- 即时型效果 ----------
 	print("== 即时型效果 ==")
 	p1.money = 20000

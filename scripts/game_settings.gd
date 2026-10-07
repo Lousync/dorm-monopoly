@@ -36,6 +36,13 @@ const TECH_SW_LABELS := {"off": "关", "on": "开"}
 
 var tech_on := false  # 科技开关（默认关）
 
+# 开局科技等级：随机 = 掷骰定档（1~2 白银 / 3~4 黄金 / 5~6 钻石）；其余 = 房主指定该档（2026-10-07）
+const TECH_TIER_RANDOM := "random"
+const TECH_TIERS: Array[String] = [TECH_TIER_RANDOM, "白银", "黄金", "钻石"]
+const TECH_TIER_LABELS := {"random": "随机（掷骰）", "白银": "白银", "黄金": "黄金", "钻石": "钻石"}
+
+var tech_tier := TECH_TIER_RANDOM   # "random" = 掷骰；其余 = 指定等级
+
 # ---- A · 经济（开局设置.md §二；数值默认 = GameData 常量） ----
 const CASH_MIN := 0
 const CASH_MAX := 99999
@@ -82,6 +89,8 @@ func clamp_all() -> void:
 	win_cash = clampi(win_cash, WIN_CASH_MIN, WIN_CASH_MAX)
 	if not WIN_MODES.has(win_mode):
 		win_mode = "rounds"
+	if not TECH_TIERS.has(tech_tier):
+		tech_tier = TECH_TIER_RANDOM
 
 func copy() -> GameSettings:
 	var s := GameSettings.new()
@@ -90,6 +99,7 @@ func copy() -> GameSettings:
 	s.ab_dur = ab_dur
 	s.ab_cond = ab_cond
 	s.tech_on = tech_on
+	s.tech_tier = tech_tier
 	s.start_cash = start_cash
 	s.start_salary = start_salary
 	s.liq_on = liq_on

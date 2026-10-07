@@ -41,6 +41,7 @@ func _test_object() -> void:
 	_check(s.max_rounds == 30 and s.win_mode == "rounds" and s.win_cash == 50000,
 		"回合上限 30 / 胜利条件到轮结算 / 目标现金 5 万 默认")
 	_check(s.shop_on and s.black_on and s.casino_on, "小卖部 / 黑市 / 赌场默认开")
+	_check(s.tech_tier == GameSettings.TECH_TIER_RANDOM, "科技等级默认 = 随机（掷骰定档）")
 	var c := s.copy()
 	c.start_cash = 40000
 	c.win_mode = "cash"
@@ -55,12 +56,14 @@ func _test_object() -> void:
 	b.max_rounds = 45
 	b.win_mode = "bogus"
 	b.win_cash = 99999999
+	b.tech_tier = "bogus"
 	b.clamp_all()
 	_check(b.start_cash == 0, "起始资金负数钳到 0")
 	_check(b.start_salary == GameSettings.SALARY_MAX, "起点补贴越界钳到上限")
 	_check(b.max_rounds == 30, "回合上限非法档位（45）回落 30")
 	_check(b.win_mode == "rounds", "胜利条件非法值回落 rounds")
 	_check(b.win_cash == GameSettings.WIN_CASH_MAX, "目标现金越界钳到上限")
+	_check(b.tech_tier == GameSettings.TECH_TIER_RANDOM, "科技等级非法值回落 random")
 
 ## 经济设置生效 + 变卖保底（房间口径见 doc/game-design/经济与胜负.md §三/§四）
 func _test_economy_and_liq() -> void:

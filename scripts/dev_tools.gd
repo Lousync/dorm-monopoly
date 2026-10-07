@@ -563,9 +563,10 @@ func take_shot(path: String) -> void:
 		await get_tree().create_timer(0.3).timeout
 	if path.contains("techroll") and g.multiplayer.is_server():
 		# 摆拍：骰子定档演出（屏幕层）——等快滚走完、停在「定格 + 等级横幅」那一刻。
+		# 文件名再带 `fixed` 则拍**房主指定等级**那档（无骰面、直接亮横幅）。
 		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_techroll_table_plain.png`
-		g._show_tech_dice(5, "钻石")
-		await get_tree().create_timer(1.05).timeout   # 快滚 0.7s + 定格后 ~0.35s
+		g._show_tech_dice(0 if path.contains("fixed") else 5, "黄金" if path.contains("fixed") else "钻石")
+		await get_tree().create_timer(1.05 if not path.contains("fixed") else 0.5).timeout
 		get_tree().paused = true
 	if path.contains("pause"):
 		# 摆拍：打开暂停菜单。**这张 PNG 证明不了卡与菜单的层级**：`--shot=pause` 是先开菜单、

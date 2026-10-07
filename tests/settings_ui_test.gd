@@ -80,6 +80,12 @@ func _run() -> void:
 	lb._on_settings_save()
 	_check(net.game_settings.start_cash == 40000 and net.game_settings.max_rounds == 60,
 		"预设值经「确定」写入设置")
+	# 开局科技等级（2026-10-07）：chip 行 4 档，选「钻石」写进设置
+	var tier_chips: Dictionary = lb._set_tech_tier_chips.get_meta("chips", {})
+	_check(tier_chips.size() == 4, "科技等级 4 档 chip（随机/白银/黄金/钻石）")
+	tier_chips["钻石"].pressed.emit()
+	lb._on_settings_save()
+	_check(net.game_settings.tech_tier == "钻石", "选「钻石」写进设置（tech_tier）")
 	lb._set_wrap.visible = false
 	# 「开始游戏！」不再弹设置窗（本测试只有 1 人，can_start 不通过，不会真的换场景）
 	lb._start_btn.pressed.emit()

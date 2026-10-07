@@ -587,11 +587,17 @@ func _host_setup() -> void:
 
 func _tech_phase() -> void:
 	var pips := randi_range(1, 6)
-	_tech_tier = TechData.tier_by_dice(pips)
-	_log("【开局科技】掷骰 %d 点 —— 本局科技等级「%s」！" % [pips, _tech_tier], "#f0c064")
+	if _settings.tech_tier != GameSettings.TECH_TIER_RANDOM:
+		# 房主指定等级（2026-10-07）：不掷骰，直接用该档；pips=0 告诉演出「无骰面」。
+		pips = 0
+		_tech_tier = _settings.tech_tier
+		_log("【开局科技】房主指定本局科技等级「%s」！" % _tech_tier, "#f0c064")
+	else:
+		_tech_tier = TechData.tier_by_dice(pips)
+		_log("【开局科技】掷骰 %d 点 —— 本局科技等级「%s」！" % [pips, _tech_tier], "#f0c064")
 	_broadcast_state()
 	s_tech_dice.rpc(pips, _tech_tier)   # 定档演出（全员同演；不挡流程，仅等它走完再开选卡）
-	await _wait(TECH_DICE_TIME)
+	await _wait(TECH_DICE_TIME if pips > 0 else TECH_DICE_TIME_FIXED)
 	for p in hp:
 		if not running:
 			return
@@ -623,6 +629,7 @@ func _tech_phase() -> void:
 # ---------------- 骰子定档演出（2026-10-07） ----------------
 # `开局科技.md` §四 原记「骰子定档演出仍待做，当前定档走战报公告」——本段补齐：
 # 掷骰定档时在**屏幕层**演一段（骰面快滚 → 定格 + 等级横幅 → 自动收），全员同演。
+# 2026-10-07 加「房主指定等级」：指定档不掷骰，演出一段无骰面的横幅（`pips <= 0`）。
 # 程序化画骰面（3×3 圆点网格，不依赖字体 / 素材，同「能程序化就别加素材」的约定）。
 
 const TECH_DICE_ROLL_N := 10       # 快滚步数
@@ -630,6 +637,8 @@ const TECH_DICE_ROLL_DT := 0.07    # 每步间隔
 const TECH_DICE_HOLD := 1.4        # 定格后横幅停留
 ## 演出总时长（`_tech_phase` 按它等演出走完再开选卡），留一点收尾余量。
 const TECH_DICE_TIME := TECH_DICE_ROLL_N * TECH_DICE_ROLL_DT + TECH_DICE_HOLD + 0.35
+## 指定等级时的演出更短（无骰面快滚，只亮横幅 + 停留）。
+const TECH_DICE_TIME_FIXED := TECH_DICE_HOLD + 0.35
 ## 骰面点数 → 3×3 网格里点亮的格（row-major：0 1 2 / 3 4 5 / 6 7 8）。
 const DICE_PIPS := [[4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8]]
 
@@ -674,7 +683,9 @@ func _set_die_face(grid: GridContainer, pips: int) -> void:
 func s_tech_dice(pips: int, tier: String) -> void:
 	_show_tech_dice(pips, tier)
 
-## 定档演出：屏幕层压暗底 + 居中面板（标题 / 骰面 / 等级横幅）。时长口径 = `TECH_DICE_TIME`。
+## 定档演出：屏幕层压暗底 + 居中面板（标题 / 骰面 / 等级横幅）。
+## `pips > 0` = 掷骰档（骰面快滚 → 定格；时长 `TECH_DICE_TIME`）；`pips <= 0` = 房主**指定档**
+## （无骰面、直接亮横幅；时长 `TECH_DICE_TIME_FIXED`）。
 func _show_tech_dice(pips: int, tier: String) -> void:
 	var layer := Control.new()
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -697,25 +708,32 @@ func _show_tech_dice(pips: int, tier: String) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 16)
 	m.add_child(v)
-	var t := UIKit.title_label("开局科技 · 掷骰定档", 22)
+	var t := UIKit.title_label("开局科技 · 掷骰定档" if pips > 0 else "开局科技 · 指定等级", 22)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
-	var face_wrap := CenterContainer.new()
-	v.add_child(face_wrap)
-	var face := _die_face(120.0)
-	face_wrap.add_child(face)
+	# 骰面只在掷骰档出现（指定档无骰）
+	var face: GridContainer = null
+	if pips > 0:
+		var face_wrap := CenterContainer.new()
+		v.add_child(face_wrap)
+		face = _die_face(120.0)
+		face_wrap.add_child(face)
+		_set_die_face(face, 1)
 	var banner := UIKit.label("", 26, _tier_color(tier))
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(banner)
-	_set_die_face(face, 1)
+	if pips <= 0:
+		banner.text = "本局科技等级 · %s" % tier   # 指定档：直接亮，不等快滚
+		Fx.play("cash", 0.0)
 	var tw := create_tween()
-	for i in TECH_DICE_ROLL_N:
-		tw.tween_callback(func() -> void: _set_die_face(face, randi_range(1, 6))).set_delay(TECH_DICE_ROLL_DT)
-	tw.tween_callback(func() -> void:
-		_set_die_face(face, pips)
-		if is_instance_valid(banner):
-			banner.text = "本局科技等级 · %s" % tier
-		Fx.play("cash", 0.0))
+	if pips > 0:
+		for i in TECH_DICE_ROLL_N:
+			tw.tween_callback(func() -> void: _set_die_face(face, randi_range(1, 6))).set_delay(TECH_DICE_ROLL_DT)
+		tw.tween_callback(func() -> void:
+			_set_die_face(face, pips)
+			if is_instance_valid(banner):
+				banner.text = "本局科技等级 · %s" % tier
+			Fx.play("cash", 0.0))
 	tw.tween_interval(TECH_DICE_HOLD)
 	tw.tween_callback(func() -> void:
 		if is_instance_valid(layer):
