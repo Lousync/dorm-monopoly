@@ -568,6 +568,12 @@ func take_shot(path: String) -> void:
 		g._show_tech_dice(0 if path.contains("fixed") else 5, "黄金" if path.contains("fixed") else "钻石")
 		await get_tree().create_timer(1.05 if not path.contains("fixed") else 0.5).timeout
 		get_tree().paused = true
+	if path.contains("abstyle") and g.multiplayer.is_server():
+		# 摆拍：畸变触发大字卡（DeckReveal，aberr 配色）。用法：
+		# `--autotest=host --rounds=6 --shot=shots/xx_abstyle_table_plain.png`
+		g.s_card("你的现金超过门槛后遭强征！（按现金的 20%）", "aberr", "🌀 畸变 · 枪打出头鸟")
+		await get_tree().create_timer(1.0).timeout
+		get_tree().paused = true
 	if path.contains("pause"):
 		# 摆拍：打开暂停菜单。**这张 PNG 证明不了卡与菜单的层级**：`--shot=pause` 是先开菜单、
 		# 之后才 `show_card`（门是 `not path.contains("plain") or path.contains("card")`，所以不带
