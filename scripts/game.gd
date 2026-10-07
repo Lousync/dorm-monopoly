@@ -590,7 +590,8 @@ func _tech_phase() -> void:
 	_tech_tier = TechData.tier_by_dice(pips)
 	_log("【开局科技】掷骰 %d 点 —— 本局科技等级「%s」！" % [pips, _tech_tier], "#f0c064")
 	_broadcast_state()
-	await _wait(0.8)
+	s_tech_dice.rpc(pips, _tech_tier)   # 定档演出（全员同演；不挡流程，仅等它走完再开选卡）
+	await _wait(TECH_DICE_TIME)
 	for p in hp:
 		if not running:
 			return
@@ -618,6 +619,107 @@ func _tech_phase() -> void:
 		_broadcast_state()
 		await _wait(0.4)
 	_log("【开局科技】全员选定，发车！", "#f0c064")
+
+# ---------------- 骰子定档演出（2026-10-07） ----------------
+# `开局科技.md` §四 原记「骰子定档演出仍待做，当前定档走战报公告」——本段补齐：
+# 掷骰定档时在**屏幕层**演一段（骰面快滚 → 定格 + 等级横幅 → 自动收），全员同演。
+# 程序化画骰面（3×3 圆点网格，不依赖字体 / 素材，同「能程序化就别加素材」的约定）。
+
+const TECH_DICE_ROLL_N := 10       # 快滚步数
+const TECH_DICE_ROLL_DT := 0.07    # 每步间隔
+const TECH_DICE_HOLD := 1.4        # 定格后横幅停留
+## 演出总时长（`_tech_phase` 按它等演出走完再开选卡），留一点收尾余量。
+const TECH_DICE_TIME := TECH_DICE_ROLL_N * TECH_DICE_ROLL_DT + TECH_DICE_HOLD + 0.35
+## 骰面点数 → 3×3 网格里点亮的格（row-major：0 1 2 / 3 4 5 / 6 7 8）。
+const DICE_PIPS := [[4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8]]
+
+func _tier_color(tier: String) -> Color:
+	match tier:
+		"黄金":
+			return Color(0.95, 0.78, 0.35)
+		"钻石":
+			return Color(0.55, 0.88, 1.0)
+		_:
+			return Color(0.80, 0.84, 0.92)   # 白银
+
+## 造一个骰面（3×3 圆点网格）。返回的网格由 `_set_die_face` 按点数点亮。
+func _die_face(size: float) -> GridContainer:
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.custom_minimum_size = Vector2(size, size)
+	var cell := (size - 12.0) / 3.0
+	grid.set_meta("cell", cell)   # 圆点半径随格子尺寸取（`_set_die_face` 读它）
+	for i in 9:
+		var dot := Panel.new()
+		dot.custom_minimum_size = Vector2(cell, cell)
+		dot.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0), int(cell * 0.5)))
+		grid.add_child(dot)
+	return grid
+
+func _set_die_face(grid: GridContainer, pips: int) -> void:
+	if grid == null or not is_instance_valid(grid):
+		return
+	var corner := int(float(grid.get_meta("cell", 36.0)) * 0.5)   # 半格 = 正圆
+	var on: Array = DICE_PIPS[clampi(pips, 1, 6) - 1]
+	for i in grid.get_child_count():
+		var dot := grid.get_child(i) as Panel
+		if dot == null:
+			continue
+		dot.add_theme_stylebox_override("panel",
+			UIKit.stylebox(UIKit.ACCENT if i in on else Color(0, 0, 0, 0), corner))
+
+@rpc("authority", "call_local", "reliable")
+func s_tech_dice(pips: int, tier: String) -> void:
+	_show_tech_dice(pips, tier)
+
+## 定档演出：屏幕层压暗底 + 居中面板（标题 / 骰面 / 等级横幅）。时长口径 = `TECH_DICE_TIME`。
+func _show_tech_dice(pips: int, tier: String) -> void:
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.z_index = 75   # 高于抽卡 / 结算（40~50），低于暂停（80）
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.03, 0.03, 0.06, 0.82)
+	layer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(cc)
+	var panel := UIKit.panel_container(Color(0.09, 0.08, 0.14, 0.98), 18, UIKit.ACCENT_DEEP, 2, 16)
+	panel.custom_minimum_size = Vector2(500, 0)
+	cc.add_child(panel)
+	var m := UIKit.margins(30, 30, 24, 22)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 16)
+	m.add_child(v)
+	var t := UIKit.title_label("开局科技 · 掷骰定档", 22)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(t)
+	var face_wrap := CenterContainer.new()
+	v.add_child(face_wrap)
+	var face := _die_face(120.0)
+	face_wrap.add_child(face)
+	var banner := UIKit.label("", 26, _tier_color(tier))
+	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(banner)
+	_set_die_face(face, 1)
+	var tw := create_tween()
+	for i in TECH_DICE_ROLL_N:
+		tw.tween_callback(func() -> void: _set_die_face(face, randi_range(1, 6))).set_delay(TECH_DICE_ROLL_DT)
+	tw.tween_callback(func() -> void:
+		_set_die_face(face, pips)
+		if is_instance_valid(banner):
+			banner.text = "本局科技等级 · %s" % tier
+		Fx.play("cash", 0.0))
+	tw.tween_interval(TECH_DICE_HOLD)
+	tw.tween_callback(func() -> void:
+		if is_instance_valid(layer):
+			layer.queue_free())
 
 ## 从某档池子里抽 3 张不同的科技名
 func _tech_sample(tier: String) -> Array:

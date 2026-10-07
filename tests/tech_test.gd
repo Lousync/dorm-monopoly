@@ -65,6 +65,22 @@ func _run() -> void:
 		ok3 = ok3 and (s as Array).all(func(n: String) -> bool: return n in TechData.pool("白银"))
 	_check(ok3, "同档抽 3 张且互不重复")
 
+	# ---------- 骰子定档演出（2026-10-07 补齐） ----------
+	print("== 骰子定档演出 ==")
+	_check(g._tier_color("白银") != g._tier_color("黄金")
+		and g._tier_color("黄金") != g._tier_color("钻石")
+		and g._tier_color("白银") != g._tier_color("钻石"), "三档等级色互不相同")
+	var pip_ok := true
+	for i in 6:
+		pip_ok = pip_ok and (g.DICE_PIPS[i] as Array).size() == i + 1
+	_check(pip_ok, "骰面点数映射：1~6 各 i+1 个点")
+	var before: int = g.get_child_count()
+	g._show_tech_dice(3, "黄金")
+	_check(g.get_child_count() == before + 1, "定档演出挂了一层屏幕层控件（不报错）")
+	await create_timer(2.8).timeout
+	await process_frame
+	_check(g.get_child_count() == before, "定档演出自动收（层已释放）")
+
 	# ---------- 全 bot 跑通科技阶段 ----------
 	print("== 科技阶段（全 bot） ==")
 	var p1 := _mk_player(1, "甲")
