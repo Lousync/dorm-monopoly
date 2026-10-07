@@ -56,8 +56,8 @@ func _run() -> void:
 	_check(TechData.tier_by_dice(3) == "黄金" and TechData.tier_by_dice(4) == "黄金", "骰子 3~4 → 黄金")
 	_check(TechData.tier_by_dice(5) == "钻石" and TechData.tier_by_dice(6) == "钻石", "骰子 5~6 → 钻石")
 	_check((TechData.pool("白银") as Array).size() == 20, "白银池 20 条")
-	_check((TechData.pool("黄金") as Array).size() == 4 and (TechData.pool("钻石") as Array).size() == 4,
-		"黄金 / 钻石草案占池各 4 条")
+	_check((TechData.pool("黄金") as Array).size() == 19, "黄金池 19 条（样板房弃案留空）")
+	_check((TechData.pool("钻石") as Array).size() == 20, "钻石池 20 条")
 	var ok3 := true
 	for r in range(10):
 		var s: Array = g._tech_sample("白银")
@@ -77,8 +77,8 @@ func _run() -> void:
 	g.running = true   # 科技阶段内部有 while running 守卫，需临时解冻
 	await g._tech_phase()
 	g.running = false
-	_check(g._tech_tier == TechData.TIER_SILVER,
-		"定档固定白银（黄金/钻石池定稿前的临时口径）：%s" % g._tech_tier)
+	_check(g._tech_tier in TechData.TIERS,
+		"掷骰定档恢复（2026-10-07 三档池齐）：本局档 = %s" % g._tech_tier)
 	_check(String(p1.tech) != "" and String(p1.tech) in TechData.pool(g._tech_tier)
 		and String(p2.tech) in TechData.pool(g._tech_tier), "全员都拿到了本档科技")
 	_check(int(g._awaiting_tech_peer) == 0, "科技阶段结束：等待态清零")
@@ -103,6 +103,31 @@ func _run() -> void:
 	g._tech_apply_instant(p1, "二手教材")
 	_check(p1.items.size() == 1 and String(ItemData.def(String(p1.items[0].id)).quality) == "白",
 		"二手教材：开局获得一件白档道具")
+	p1.items = []
+	g._tech_apply_instant(p1, "名师指点")
+	_check(p1.items.size() == 1 and String(ItemData.def(String(p1.items[0].id)).quality) == "蓝",
+		"名师指点：开局获得一件蓝档道具")
+	p1.items = []
+	p1.money = 20000
+	g._tech_apply_instant(p1, "孤注一掷")
+	_check(int(p1.money) == 14000 and p1.items.size() == 1
+		and String(ItemData.def(String(p1.items[0].id)).quality) == "紫",
+		"孤注一掷：起始资金 −6000 换一件紫档道具")
+	p1.items = []
+	p1.money = 20000
+	g._tech_apply_instant(p1, "欧皇附体")
+	_check(int(p1.money) == 20000 and p1.items.size() == 1
+		and String(ItemData.def(String(p1.items[0].id)).quality) == "橙",
+		"欧皇附体：开局获得一件橙档道具")
+	g._tech_apply_instant(p1, "悔棋")
+	_check(int(p1.get("meiqi_left", 0)) == 1, "悔棋：置 1 次")
+	g._tech_apply_instant(p1, "天命在握")
+	_check(int(p1.get("tianming_left", 0)) == 4, "天命在握：置 4 次")
+	g._tech_apply_instant(p1, "任意门")
+	_check(int(p1.get("renmen_left", 0)) == 2, "任意门：置 2 次")
+	p1.money = 20000
+	g._tech_apply_instant(p1, "预支未来")
+	_check(int(p1.money) == 50000, "预支未来：开局立得 +30000")
 
 	# ---------- 上限叠加 ----------
 	print("== 精力充沛 ==")
@@ -127,7 +152,7 @@ func _run() -> void:
 	pt.tech = "风险投资"
 	pt.money = 20000
 	g._item_turn_start(pt)
-	_check(int(pt.money) == 20800, "风险投资：回合开始 +800")
+	_check(int(pt.money) == 20500, "风险投资：回合开始 +500（2026-10-07 定稿降档）")
 	pt.tech = "反思津贴"
 	pt.money = 20000
 	pt.skip = 1
@@ -272,9 +297,239 @@ func _run() -> void:
 	_check(int(g.htiles[prop_a].level) == 1 and int(pv.money) == 50000 - lv_cost + 150,
 		"装修返现：升级花费 −¥150 返现")
 
+	# ---------- 2026-10-07 批次：黄金 / 钻石定稿逐条 ----------
+	print("== 工资三件（工资上调 / 金饭碗 / 预支未来） ==")
+	var pw := _mk_player(1, "工资员")
+	_check(g._salary_amount(pw) == 4500, "无科技：工资 4500")
+	pw.tech = "工资上调"
+	_check(g._salary_amount(pw) == 6500, "工资上调：每次经过起点 4500 → 6500")
+	pw.tech = "金饭碗"
+	_check(g._salary_amount(pw) == 8500, "金饭碗：4500 → 8500")
+	pw.tech = "预支未来"
+	_check(g._salary_amount(pw) == 0, "预支未来：本局工资归零")
+	pw.money = 20000
+	await g._pass_start(pw, "顺路踏上起点")
+	_check(int(pw.money) == 20000, "预支未来：踏起点不领工资（抵押）")
+
+	print("== 装修师傅 / 置业补贴 / 批发拿地 ==")
+	g.running = true
+	var pz := _mk_player(2, "装修师")
+	pz.bot = true
+	pz.money = 50000
+	pz.tech = "装修师傅"
+	g.hp = [pz, _mk_player(1, "旁人甲")]
+	g.htiles = _fresh_tiles()
+	g.htiles[prop_a] = {"owner": 2, "level": 0}
+	var lv_cost2: int = int(GameData.upgrade_cost(prop_a) * 3 / 4)
+	await g._resolve_upgrade(pz, prop_a)
+	_check(int(g.htiles[prop_a].level) == 1 and int(pz.money) == 50000 - lv_cost2,
+		"装修师傅：升级费打 75 折（¥%d → ¥%d）" % [GameData.upgrade_cost(prop_a), lv_cost2])
+	var py := _mk_player(2, "置业商")
+	py.bot = true
+	py.money = 50000
+	py.tech = "置业补贴"
+	g.hp = [py, _mk_player(1, "旁人乙")]
+	g.htiles = _fresh_tiles()
+	await g._resolve_buy(py, prop_a)
+	_check(int(g.htiles[prop_a].owner) == 2 and int(py.money) == 50000 - base_price + 500,
+		"置业补贴：购地后 +¥500")
+	var ppf := _mk_player(2, "批发商")
+	ppf.bot = true
+	ppf.money = 50000
+	ppf.tech = "批发拿地"
+	g.hp = [ppf, _mk_player(1, "旁人丙")]
+	g.htiles = _fresh_tiles()
+	await g._resolve_buy(ppf, prop_a)
+	_check(int(ppf.money) == 50000 - int(base_price * 3 / 4),
+		"批发拿地：购地立减 25%%（¥%d → ¥%d）" % [base_price, int(base_price * 3 / 4)])
+	g.running = false
+
+	print("== 定期存款 / 复利 / 大器晚成 ==")
+	var pi := _mk_player(1, "储户")
+	pi.tech = "定期存款"
+	pi.money = 1000
+	g._item_turn_start(pi)
+	_check(int(pi.money) == 1020, "定期存款：现金 ×2%（¥1000 → +20）")
+	pi.money = 200000
+	g._item_turn_start(pi)
+	_check(int(pi.money) == 200600, "定期存款：单次上限 ¥600")
+	pi.tech = "复利"
+	pi.money = 1000
+	g._item_turn_start(pi)
+	_check(int(pi.money) == 1025, "复利：现金 ×2.5%（¥1000 → +25）")
+	pi.money = 200000
+	g._item_turn_start(pi)
+	_check(int(pi.money) == 201000, "复利：单次上限 ¥1000")
+	var pdw := _mk_player(1, "晚成")
+	pdw.tech = "大器晚成"
+	pdw.money = 20000
+	g.round_no = 14
+	g._item_turn_start(pdw)
+	_check(int(pdw.money) == 20000, "大器晚成：第 14 轮不发")
+	g.round_no = 15
+	g._item_turn_start(pdw)
+	_check(int(pdw.money) == 21000, "大器晚成：第 15 轮起每回合 +1000")
+	g.round_no = 1
+
+	print("== 活力全开 ==")
+	var pv2 := _mk_player(3, "活力")
+	pv2.tech = "活力全开"
+	_check(g._stamina_cap(pv2) == 7, "活力全开：体力上限 5 → 7")
+	pv2.items.append({"id": "充电宝", "cd": 0})
+	_check(g._stamina_cap(pv2) == 8, "活力全开 + 充电宝：叠加到 8（科技与道具上限可叠）")
+	pv2.items = []
+
+	print("== 会员卡 / 小金库 ==")
+	var pvip := _mk_player(1, "会员")
+	pvip.money = 2000
+	pvip.tech = "会员卡"
+	g.hp = [pvip, pp]
+	g.shops = {prop_a: {"slots": ["饭卡", "", ""]}}
+	g._shop_peer = 1
+	g._shop_tile = prop_a
+	g._shop_buy(1, 0)
+	g._shop_peer = 0
+	g._shop_tile = -1
+	_check(int(pvip.money) == 2000 - 480 and pvip.items.size() == 1,
+		"会员卡：饭卡 600 → 480（8 折）")
+	var px := _mk_player(1, "金库")
+	px.tech = "小金库"
+	px.money = 29999
+	g._check_xiaojinku(px)
+	_check(int(px.money) == 29999, "小金库：未达 30000 不发")
+	px.money = 30000
+	g._check_xiaojinku(px)
+	_check(int(px.money) == 35000 and int(px.get("xjk_done", 0)) == 1, "小金库：首达 ¥30000 → +5000")
+	g._check_xiaojinku(px)
+	_check(int(px.money) == 35000, "小金库：一次性，不重复发")
+
+	print("== 双开 / 手速惊人 / 熟能生巧 / 能量回收 ==")
+	var pduo := _mk_player(1, "双开侠")
+	pduo.money = 0
+	pduo.stamina = 5
+	pduo.tech = "双开"
+	pduo.items = [{"id": "兼职中介", "cd": 0}]
+	var foe := _mk_player(2, "陪练")
+	g.hp = [pduo, foe]
+	g._awaiting_item = 1
+	g._use_item(1, 0, -1)
+	_check(int(pduo.money) == 800 and int(pduo.get("item_used_n", 0)) == 1 and not bool(pduo.item_used),
+		"双开：第一件用完仍可再出")
+	pduo.items.append({"id": "兼职中介", "cd": 0})
+	g._use_item(1, 1, -1)   # 第一件已进冷却（cd=2），第二件从新槽位出
+	_check(int(pduo.money) == 1600 and bool(pduo.item_used), "双开：第二件出完封手")
+	_check(int(pduo.get("rework", 3)) == 3, "双开：不消耗重修卡耐久")
+	var pcd := _mk_player(1, "手速")
+	pcd.stamina = 5
+	pcd.money = 0
+	pcd.tech = "手速惊人"
+	pcd.items = [{"id": "兼职中介", "cd": 0}]
+	g.hp = [pcd, foe]
+	g._awaiting_item = 1
+	g._use_item(1, 0, -1)
+	_check(int(pcd.items[0].cd) == 1, "手速惊人：冷却 2 → 1")
+	var pshu := _mk_player(1, "熟练")
+	pshu.stamina = 5
+	pshu.money = 0
+	pshu.tech = "熟能生巧"
+	pshu.items = [{"id": "兼职中介", "cd": 0}]
+	g.hp = [pshu, foe]
+	g._awaiting_item = 1
+	g._use_item(1, 0, -1)
+	_check(int(pshu.items[0].cd) == 0, "熟能生巧：用后不进冷却")
+	var refunds := 0
+	for i in range(100):
+		var pr := _mk_player(1, "回收%d" % i)
+		pr.stamina = 5
+		pr.money = 0
+		pr.tech = "能量回收"
+		pr.items = [{"id": "兼职中介", "cd": 0}]
+		g.hp = [pr, foe]
+		g._awaiting_item = 1
+		g._use_item(1, 0, -1)
+		if int(pr.stamina) == 4:
+			refunds += 1
+	_check(refunds >= 30 and refunds <= 70, "能量回收：100 次约 50 次退回 1⚡（实测 %d）" % refunds)
+
+	print("== 谈判专家 / 金字招牌 ==")
+	var ptn := _mk_player(1, "谈判")
+	ptn.tech = "谈判专家"
+	_check(g._rent_pay(ptn, 1000) == 600, "谈判专家：付租 −40%")
+	ptn.tech = "宿舍威望"
+	_check(g._rent_pay(ptn, 1000) == 800, "宿舍威望：付租 −20%（对照）")
+	var pjz := _mk_player(1, "招牌")
+	pjz.money = 10000
+	pjz.tech = "金字招牌"
+	g.htiles = _fresh_tiles()
+	g.htiles[prop_a] = {"owner": 1, "level": 2}
+	var plain: int = g._net_worth(pjz)
+	var boosted: int = 10000 + int(round(float(int(GameData.TILES[prop_a].price)
+		+ 2 * GameData.upgrade_cost(prop_a)) * 1.3))
+	_check(g._net_worth_final(pjz) == boosted and boosted > plain, "金字招牌：到轮结算地皮 ×1.3")
+	_check(g._net_worth(pjz) == plain, "金字招牌：对局中实时身家不放大")
+
+	print("== 广置家业 ==")
+	var pgz := _mk_player(1, "广置")
+	pgz.tech = "广置家业"
+	pgz.money = 20000
+	g.htiles = _fresh_tiles()
+	for i in range(2):
+		var e1 := 20 + i
+		while String(GameData.TILES[e1].get("type", "")) != "property" \
+				or int(g.htiles[e1].owner) != GameData.NO_OWNER:
+			e1 = (e1 + 1) % GameData.TILES.size()
+		g.htiles[e1] = {"owner": 1, "level": 0}
+	g._check_tech_milestone(pgz)
+	_check(int(pgz.money) == 25000 and int(pgz.get("guangzhi", 0)) == 1, "广置家业：2 块首档 +5000")
+	for i in range(4):
+		var e2 := 25 + i
+		while String(GameData.TILES[e2].get("type", "")) != "property" \
+				or int(g.htiles[e2].owner) != GameData.NO_OWNER:
+			e2 = (e2 + 1) % GameData.TILES.size()
+		g.htiles[e2] = {"owner": 1, "level": 0}
+	g._check_tech_milestone(pgz)
+	_check(int(pgz.money) == 35000 and int(pgz.get("guangzhi", 0)) == 3, "广置家业：4 / 6 块两档连发（共 +15000）")
+
+	print("== 东山再起 / 接收大员 ==")
+	g._settings.liq_on = false
+	var pds := _mk_player(1, "东山")
+	pds.money = 100
+	pds.tech = "东山再起"
+	var foe2 := _mk_player(2, "对手乙")
+	g.hp = [pds, foe2]
+	g.htiles = _fresh_tiles()
+	await g._pay(pds, 5000, {})
+	_check(bool(pds.alive) and int(pds.money) == 8000 and int(pds.get("dongshan_used", 0)) == 1,
+		"东山再起：首次破产不出局，现金回 ¥8000")
+	await g._pay(pds, 99999, {})
+	_check(not bool(pds.alive), "东山再起：仅一次，二度资不抵债仍出局")
+	var bust := _mk_player(1, "破产者")
+	bust.money = 0
+	var taker := _mk_player(2, "接收者")
+	taker.bot = true
+	taker.money = 50000
+	taker.tech = "接收大员"
+	g.hp = [bust, taker]
+	g.htiles = _fresh_tiles()
+	g.htiles[prop_a] = {"owner": 1, "level": 2}
+	g.running = true   # 收购完成的守卫含 while running
+	await g._pay(bust, 10000, {})
+	g.running = false
+	_check(not bool(bust.alive), "接收大员：破产成立")
+	var half_price: int = int(GameData.TILES[prop_a].price) / 2
+	_check(int(g.htiles[prop_a].owner) == 2 and int(taker.get("jieshou_used", 0)) == 1
+		and int(taker.money) == 50000 - half_price,
+		"接收大员：5 折（¥%d）收购遗产地，每局一次" % half_price)
+	g._settings.liq_on = true
+
+	print("== 天命在握（bot 路径） ==")
+	var pft := _mk_player(1, "天命bot")
+	pft.bot = true
+	_check(await g._ask_tianming(pft) == 7, "天命在握：bot 指定 7（避开 10/11 查寝风险）")
+
 	# ---------- 快照 ----------
 	print("== 快照字段 ==")
-	pv.tech = "助学金"
+	g.hp[1].tech = "助学金"   # 当前 hp[1] = 接收者（前面用例换过 hp，不再用旧的 pv）
 	g._tech_tier = "白银"
 	g._broadcast_state()
 	await process_frame

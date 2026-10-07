@@ -110,6 +110,10 @@ func run(p: Dictionary, split_for: int = -1) -> void:
 	for i in winners.size():
 		var wp := _player_by_peer(int(winners[i]))
 		wp.money = int(wp.money) + int(shares[i])
+		if g._has_tech(wp, "赌运加持"):
+			wp.money = int(wp.money) + 3000   # 赌运加持（黄金科技）：赌场获胜额外 +¥3000
+			_log("【赌运加持】%s 手气正旺，额外 +¥3000！" % String(wp.name), "#74d188")
+		g._check_xiaojinku(wp)
 	if split_gain > 0:
 		var sp := _player_by_peer(split_for)
 		if not sp.is_empty():
