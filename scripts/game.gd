@@ -48,6 +48,7 @@ const OP_KIND_LABELS := {
 
 # ---------------- 道具系统（host 状态，详见 doc/game-design/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
+var shop_weights: Dictionary = ItemData.SHOP_WEIGHTS.duplicate()  # 品质权重=运行时状态（小卖部.md §二）：道具/科技/设置可改、改后影响铺货；每局随 _host_setup 重置
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
 var _extra_move := false   # 特浓咖啡：本次落地后再行动一次（_play_turn 每轮重置后消费）
@@ -90,6 +91,7 @@ var _tgt_tiles: Array = []  # 当前可选的地块 idx
 var _tgt_swap_mine := -1    # 转专业两段式：已选定的「我的那块地」（-1 = 还没选）
 var target_hint: Control
 var target_hint_l: Label
+var target_hint_wrap: Control    # 提示条锚点容器（§六 #7 / ⑪ 动态让位：`_place_target_hint` 改它的 offset）
 var shop_layer: Control          # 小卖部全屏界面（触发时独占，见 table_hud.gd）
 var shop_panel: PanelContainer
 var shop_cards: Array = []       # 每格 {holder: CenterContainer, price_l: Label}
@@ -132,6 +134,7 @@ var black_btns: Array = []
 var black_hint: Label
 var black_picker: Control
 var black_picker_box: VBoxContainer
+var black_picker_head: Label   # 清单头部的进度行（还需交 N 块 · 已交 X）
 var _black_sig := ""
 
 # ---------------- 畸变（host 状态，规则与两道闸门见 doc/game-design/畸变.md §二） ----------------
@@ -489,6 +492,7 @@ func lab_reset() -> void:
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
+	shop_weights = ItemData.SHOP_WEIGHTS.duplicate()   # 权重是局内状态，不是跨局设置
 	refresh_count = 0
 	items_consumed = {}
 	for i in GameData.TILES.size():
@@ -545,6 +549,7 @@ func _host_setup() -> void:
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
+	shop_weights = ItemData.SHOP_WEIGHTS.duplicate()   # 权重是局内状态，不是跨局设置
 	refresh_count = 0
 	blackshop_enabled = _settings.black_on   # 黑市开关：关 = 机会卡「黑市开张」不发
 	for i in GameData.TILES.size():
@@ -1351,17 +1356,41 @@ func _ab_enqueue(id: String) -> void:
 ## 公告走 _log（s_log 顶部气泡），debuff 的震屏在 s_aberr 里对所有端生效。
 func _ab_trigger(p: Dictionary, id: String) -> void:
 	var d: Dictionary = AberrationData.def(id)
-	_log("【畸变】%s —— %s" % [id, String(d.get("desc", ""))], "#f0c064")
+	var left := -1   # 持续型在本函数内定档后回填（横幅 / 大字卡都带「剩 N 回合」）
 	if String(d.get("type", "")) == "持续":
-		var left := int(d.get("dur", 0))
+		left = int(d.get("dur", 0))
 		if left <= 0:
 			left = maxi(1, int(_settings.ab_dur))
+	var text := _ab_announce_text(id, left)
+	_log("【畸变】%s —— %s" % [id, text], "#f0c064")
+	# 触发大字卡（畸变可读性，台账 §六 #28）：屏幕层演出 3.2 秒自动收（不用任何人点确定，
+	# 定时器 fire-and-forget，不阻塞回合流；重复触发时后一张盖前一张，close 幂等）
+	s_card.rpc(text, "aberr", "🌀 畸变 · %s" % id)
+	get_tree().create_timer(3.2).timeout.connect(func() -> void: s_card_close.rpc())
+	if String(d.get("type", "")) == "持续":
 		_ab_active.append({"id": id, "left": left})
 		s_aberr.rpc(id, "start", left)
 		_ab_apply_persistent_start(p, id)
 	else:
 		s_aberr.rpc(id, "start", 0)
 		await _ab_apply_instant(p, id)
+
+## 畸变公告文案（唯一来源；触发大字卡 / 战报 / 横幅悬停共用，aberration_test 钉住）：
+## desc 全文 + 比例类畸变的实时数值 + 持续型的「剩 N 回合，到期自动解除」。
+## 所有畸变都**没有手动解除**——持续型到期自动消失（用户 2026-10-06 定口径）。
+static func _ab_announce_text(id: String, left := -1) -> String:
+	var d: Dictionary = AberrationData.def(id)
+	var text := String(d.get("desc", ""))
+	match id:
+		"金融危机":
+			text += "（无房产者扣 %d%%、有房产者扣 %d%%）" % [
+				int(AberrationData.FIN_RATE_NC * 100), int(AberrationData.FIN_RATE_C * 100)]
+		"枪打出头鸟":
+			text += "（按现金的 %d%%）" % int(AberrationData.BIRD_RATE * 100)
+	if String(d.get("type", "")) == "持续" and left > 0:
+		text += "
+持续 %d 回合，到期自动解除。" % left
+	return text
 
 ## 非持续型：触发瞬间结算（debuff 逐玩家独立被香皂/护盾免疫）
 func _ab_apply_instant(p: Dictionary, id: String) -> void:
@@ -2467,9 +2496,15 @@ func _refresh_ab_ui() -> void:
 		ab_label.visible = false
 		return
 	var parts := PackedStringArray()
+	var tips := PackedStringArray()
 	for a in act:
 		parts.append("%s·剩%d回合" % [String(a.id), int(a.left)])
+		# 悬停即查（畸变可读性）：全文说明 + 剩余回合；所有畸变到期自动解除、无手动解除
+		tips.append("%s：%s（剩 %d 回合，到期自动解除）" % [
+			String(a.id), AberrationData.def(String(a.id)).get("desc", ""), int(a.left)])
 	ab_label_l.text = "🌀 畸变生效中：%s" % "、".join(parts)
+	ab_label.tooltip_text = "
+".join(tips)
 	ab_label.visible = true
 
 ## 操作窗口剩余时间（全员可见）走这条专用 RPC，而不进 _broadcast_state：
@@ -2821,6 +2856,8 @@ func _push_log_toast(line: String) -> void:
 		var old := log_toast.get_child(0)
 		log_toast.remove_child(old)
 		old.queue_free()
+	# 提示条要让位给气泡栈（⑪）：新气泡的高度要等容器排完版才准 ⇒ 延后一拍重算。
+	call_deferred("_place_target_hint")
 
 @rpc("authority", "call_local", "reliable")
 func s_prompt(token: int, title: String, text: String, ok_text: String) -> void:
@@ -4220,8 +4257,10 @@ func _item_pool(quality: String) -> Array:
 		out.append(String(id))
 	return out
 
-## 按权重表抽品质（小卖部补货用 SHOP_WEIGHTS，失物招领格用 FIND_WEIGHTS）
-func _roll_quality(weights: Dictionary = ItemData.SHOP_WEIGHTS) -> String:
+## 按权重表抽品质（小卖部铺货传每局状态 `shop_weights`，失物招领格传 `FIND_WEIGHTS`）。
+## 权重表必须是调用方手里的运行时副本 —— 不给默认参数，防止顺手把 ItemData.SHOP_WEIGHTS
+## 常量本身传进来被改掉。
+func _roll_quality(weights: Dictionary) -> String:
 	var total := 0
 	for q in weights:
 		total += int(weights[q])
@@ -4233,7 +4272,7 @@ func _roll_quality(weights: Dictionary = ItemData.SHOP_WEIGHTS) -> String:
 	return "白"
 
 func _stock_one() -> String:
-	var q := _roll_quality()
+	var q := _roll_quality(shop_weights)
 	if q == "橙" and _item_pool("橙").is_empty():
 		q = "紫"  # 橙池空并入紫（定稿）
 	var pool := _item_pool(q)
@@ -4385,6 +4424,8 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 	var p := _player_by_peer(peer)
 	if p.is_empty() or _awaiting_item != peer:
 		return
+	if not bool(p.get("alive", true)):
+		return   # 出局/观战显式禁用道具（⑱）：破产虽已清包，这里挡住其余一切入口
 	if int(p.get("silence", 0)) > 0:
 		return
 	var limit := 2 if _has_item(p, "重修卡") else 1
@@ -5715,9 +5756,31 @@ func _target_item_id() -> String:
 		return ""
 	return String(items[_tgt_slot].id)
 
+## 选目标提示条与战报气泡栈的净空 / 自身高度（§六 #7 / ⑪ 动态让位）。
+## 高度与 `table_hud` 里 `th_wrap` 的 `offset_bottom - offset_top`（100 − 52）一致。
+const TARGET_HINT_GAP := 10.0
+const TARGET_HINT_H := 48.0
+
+## 选目标提示条**贴着当前战报气泡栈正下方**（§六 #7 / ⑪，2026-10-06 拍板：动态让位）：
+## 气泡栈有几条、它就落在几条之下（净空 `TARGET_HINT_GAP`），两者永不同带。
+## **重算挂点两处**：`_push_log_toast`（战报新增气泡）与 `_show_target_hint`（进入选目标态，
+## 覆盖 `_begin_peer_target` / `_begin_tile_target`）；退出选目标态隐藏（`_cancel_target` 现状不变）。
+func _place_target_hint() -> void:
+	if target_hint_wrap == null or not is_instance_valid(target_hint_wrap):
+		return
+	# 气泡栈顶边取自它自己的锚点（单一来源，别写死 52）；没有气泡时提示条就落在原位。
+	var top := 52.0
+	if log_toast != null and is_instance_valid(log_toast):
+		top = log_toast.offset_top
+		if log_toast.get_child_count() > 0:
+			top += log_toast.get_combined_minimum_size().y + TARGET_HINT_GAP
+	target_hint_wrap.offset_top = top
+	target_hint_wrap.offset_bottom = top + TARGET_HINT_H
+
 func _show_target_hint(text: String) -> void:
 	if target_hint == null:
 		return
+	_place_target_hint()
 	target_hint.visible = true
 	if target_hint_l != null:
 		target_hint_l.text = text
@@ -6299,6 +6362,10 @@ func _rebuild_black_picker(active: bool) -> void:
 		c.free()
 	if not active:
 		return
+	var need := int(st.get("black_pay_need", 0))
+	var got := int(st.get("black_pay_got", 0))
+	black_picker_head.text = "本次结账还需交 %d 块（已交 %d）——逐块点「交出」，交齐自动生效" % [
+		maxi(need - got, 0), got]
 	var tiles_arr: Array = st.get("tiles", [])
 	var added := 0
 	for i in mini(tiles_arr.size(), GameData.TILES.size()):
@@ -6308,8 +6375,15 @@ func _rebuild_black_picker(active: bool) -> void:
 		var t: Dictionary = tiles_arr[i]
 		if int(t.get("owner", GameData.NO_OWNER)) != my_peer or bool(t.get("soil", false)):
 			continue
-		var b := UIKit.button("交出【%s】Lv%d · 地价 %s" % [
-			String(d.name), int(t.get("level", 0)), GameData.fmt_money(int(d.price))], 13)
+		# 清单行带详情：地皮名 / 等级 / 累计投入（地价 + 等级 × 升级费）——与变卖保底同一口径
+		var invested := int(d.price) + int(t.get("level", 0)) * GameData.upgrade_cost(i)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var l := UIKit.label("【%s】Lv%d · 累计投入 %s" % [
+			String(d.name), int(t.get("level", 0)), GameData.fmt_money(invested)], 13, UIKit.TEXT)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var b := UIKit.button("交出", 12)
 		var idx := i
 		b.pressed.connect(func() -> void:
 			if multiplayer.is_server():
@@ -6317,10 +6391,11 @@ func _rebuild_black_picker(active: bool) -> void:
 			else:
 				c_black_pay.rpc(idx)
 		)
-		black_picker_box.add_child(b)
+		row.add_child(b)
+		black_picker_box.add_child(row)
 		added += 1
 	if added == 0:
-		black_picker_box.add_child(UIKit.label("没有可用地皮", 12, UIKit.TEXT_DIM))
+		black_picker_box.add_child(UIKit.label("（没有可交的地皮）", 12, UIKit.TEXT_DIM))
 
 func _on_conn_lost(reason: String) -> void:
 	Net.last_error = reason

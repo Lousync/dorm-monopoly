@@ -117,6 +117,22 @@ func _run() -> void:
 	_check(g._shop_peer == 0, "机器人离店后会话结束（_shop_peer == 0）")
 	_check(not g.shop_layer.visible, "机器人离店后界面重新收起")
 
+	# ---- ④ 品质权重运行时可变（⑧，小卖部.md §二）----
+	# 权重是对局状态（game.shop_weights），改它要真实影响铺货；且不许污染 ItemData 常量表。
+	print("== 品质权重运行时可变 ==")
+	g.hp = [_mk_player(1, "甲", 5000)]
+	g.shops = {idx: {"slots": ["", "", ""]}}
+	g.shop_weights = {"白": 0, "绿": 100, "蓝": 0, "紫": 0, "橙": 0}
+	g._stock_shop(idx, true)
+	var all_green := true
+	for sid in g.shops[idx].slots:
+		var iid := String(sid)
+		if iid == "" or String(ItemData.def(iid).quality) != "绿":
+			all_green = false
+			break
+	_check(all_green, "权重全给绿 ⇒ 整架重掷后都是绿货（改权重真实影响铺货）")
+	_check(int(ItemData.SHOP_WEIGHTS["白"]) == 40, "对局权重是独立副本，常量表不被污染")
+
 	if fails == 0:
 		print("SHOP TEST: ALL PASS")
 		quit(0)

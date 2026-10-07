@@ -234,6 +234,12 @@ static func _item() -> String:
 		"· 刷新费 = %s + %s × 全场刷新次数（整局递增、不重置）" % [
 			GameData.fmt_money(ItemData.REFRESH_BASE), GameData.fmt_money(ItemData.REFRESH_STEP)],
 		"",
+		"",
+		_h("畸变（全场事件，房主可开关）"),
+		"· 回合开始可能触发：触发时有%s，写明效果与持续回合" % _d("大字公告"),
+		"· 持续型%s自动解除；生效中可悬停顶部「畸变生效中」横幅查看说明" % _d("到期"),
+		"· 两道闸门：每回合最多触发 1 条；同时最多 1 条持续型生效中",
+		"",
 		_h("黑市（仅由机会卡进入，不占地图格）"),
 		"· 一切消费用地产：紫 %d 块 · 橙 %d 块 · 刷新 %d 块 · 出口 %d 块" % [
 			ItemData.BLACK_COST["紫"], ItemData.BLACK_COST["橙"],

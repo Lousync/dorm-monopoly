@@ -34,6 +34,9 @@ func _ready() -> void:
 		elif a == "--lab" and OS.is_debug_build():
 			# 道具试验场：独立沙盒（item_lab 内部自己 host + 内嵌 game.tscn）；正式版无此入口
 			get_tree().change_scene_to_file.call_deferred("res://scenes/item_lab.tscn")
+		elif a.begins_with("--lab-case=") and OS.is_debug_build():
+			# `--lab-case=名字`：直达试验场并回放该用例（`item_lab._ready` 里读名字，见 §九 D / ⑭）
+			get_tree().change_scene_to_file.call_deferred("res://scenes/item_lab.tscn")
 
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")

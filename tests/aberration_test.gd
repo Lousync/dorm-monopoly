@@ -78,6 +78,17 @@ func _run() -> void:
 	g._ab_active.clear()
 	g._ab_queue.clear()
 
+	# ---------- 公告文案（畸变可读性，台账 §六 #28） ----------
+	print("== 公告文案 ==")
+	var t1: String = g._ab_announce_text("限电", 2)
+	_check(t1.contains("体力") and t1.contains("持续 2 回合") and t1.contains("到期自动解除"),
+		"持续型公告带效果全文 + 持续回合 + 自动解除（畸变无手动解除）")
+	var t2: String = g._ab_announce_text("金融危机")
+	_check(t2.contains("无房产者扣 10%") and t2.contains("有房产者扣 20%"),
+		"比例类公告带实时数值（占位 10% / 20%）")
+	var t3: String = g._ab_announce_text("天降红包")
+	_check(not t3.contains("持续"), "非持续型公告不带持续回合")
+
 	# ---------- 条件检测与窗口 ----------
 	print("== 条件触发与窗口 ==")
 	var p1 := _mk_player(1, "甲")

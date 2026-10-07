@@ -138,7 +138,7 @@ static func build_play_ui(g: Node) -> void:
 	hud.add_child(g.ab_wrap)
 	g.ab_label = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.88), 10, Color(0, 0, 0, 0), 0, 5)
 	g.ab_label.visible = false
-	g.ab_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.ab_label.mouse_filter = Control.MOUSE_FILTER_STOP   # 可悬停：tooltip 带畸变全文说明
 	var ab_lm := UIKit.margins(12, 5, 4, 4)
 	ab_lm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.ab_label.add_child(ab_lm)
@@ -368,9 +368,10 @@ static func build_play_ui(g: Node) -> void:
 	g.liq_watch.visible = false
 	g.liq_layer.add_child(g.liq_watch)
 
-	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）
-	g.black_bar = UIKit.panel_container(Color(0.11, 0.055, 0.06, 0.93), 12,
-		Color(0.96, 0.55, 0.3, 0.6), 1, 8)
+	# 黑市操作条（行动者屏幕层；货架不公开，只在行动者面板展示）。
+	# 黑暗风（用户 2026-10-06 点名）：近黑底 + 暗紫描边 + 血红点缀——「后门非法生意」的观感。
+	g.black_bar = UIKit.panel_container(Color(0.055, 0.03, 0.075, 0.97), 12,
+		Color(0.55, 0.25, 0.68, 0.85), 1, 8)
 	g.black_bar.custom_minimum_size = Vector2(360, 0)
 	g.black_bar.visible = false
 	g.add_child(g.black_bar)
@@ -379,7 +380,7 @@ static func build_play_ui(g: Node) -> void:
 	var bbv := VBoxContainer.new()
 	bbv.add_theme_constant_override("separation", 6)
 	bbm.add_child(bbv)
-	bbv.add_child(UIKit.label("黑市 · 只收地皮（紫1 / 橙2 / 刷新1 / 出口1）", 12, Color(0.98, 0.7, 0.4)))
+	bbv.add_child(UIKit.label("☠ 黑市 · 只收地皮（紫1 / 橙2 / 刷新1 / 出口1）", 13, Color(0.85, 0.55, 0.95)))
 	g.black_btns = []
 	for i in 3:
 		var bb := UIKit.button("买", 12)
@@ -411,7 +412,7 @@ static func build_play_ui(g: Node) -> void:
 			g.c_black_leave.rpc()
 	)
 	brow.add_child(bleave)
-	g.black_hint = UIKit.label("", 11, Color(0.95, 0.5, 0.45))
+	g.black_hint = UIKit.label("", 11, Color(0.90, 0.45, 0.55))
 	g.black_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	g.black_hint.custom_minimum_size = Vector2(336, 0)
 	bbv.add_child(g.black_hint)
@@ -1118,6 +1119,7 @@ static func build_menu_ui(g: Node) -> void:
 	th_wrap.offset_bottom = 100
 	th_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.target_hint.add_child(th_wrap)
+	g.target_hint_wrap = th_wrap   # 动态让位（⑪）要改它的 offset_top / offset_bottom
 	var th := UIKit.panel_container(UIKit.PANEL_GLASS, 12,
 		Color(1.0, 0.86, 0.35, 0.85), 1, 8)
 	th_wrap.add_child(th)
@@ -1130,28 +1132,30 @@ static func build_menu_ui(g: Node) -> void:
 	th_cancel.pressed.connect(g._cancel_target)
 	th_row.add_child(th_cancel)
 
-	# 黑市交地选择器（逐块选自有地皮抵账）
+	# 黑市交地清单（买卖 / 刷新 / 出口同一套）：黑暗风面板 + 带详情的清单行（名 / 等级 / 累计投入）
 	g.black_picker = Control.new()
 	g.black_picker.set_anchors_preset(Control.PRESET_FULL_RECT)
 	g.black_picker.visible = false
 	g.add_child(g.black_picker)
 	var bd_dim := ColorRect.new()
 	bd_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bd_dim.color = Color(0.04, 0.03, 0.05, 0.6)
+	bd_dim.color = Color(0.03, 0.02, 0.045, 0.72)
 	g.black_picker.add_child(bd_dim)
 	var bcc := CenterContainer.new()
 	bcc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	g.black_picker.add_child(bcc)
-	var bcp := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(0.96, 0.55, 0.3, 0.85), 1, 10)
-	bcp.custom_minimum_size = Vector2(340, 0)
+	var bcp := UIKit.panel_container(Color(0.05, 0.035, 0.07, 0.985), 14,
+		Color(0.55, 0.25, 0.68, 0.9), 1, 12)
+	bcp.custom_minimum_size = Vector2(470, 0)
 	bcc.add_child(bcp)
 	var bcpm := UIKit.margins(20, 20, 14, 12)
 	bcp.add_child(bcpm)
 	var bcv := VBoxContainer.new()
 	bcv.add_theme_constant_override("separation", 8)
 	bcpm.add_child(bcv)
-	bcv.add_child(UIKit.label("选择要交出的地皮", 14, Color(0.98, 0.7, 0.4)))
+	bcv.add_child(UIKit.label("🕯 交出地皮抵账", 15, Color(0.85, 0.55, 0.95)))
+	g.black_picker_head = UIKit.label("", 13, Color(0.90, 0.45, 0.55))
+	bcv.add_child(g.black_picker_head)
 	g.black_picker_box = VBoxContainer.new()
 	g.black_picker_box.add_theme_constant_override("separation", 6)
 	bcv.add_child(g.black_picker_box)
