@@ -100,7 +100,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
 & $G --headless --path . --script tests/layout_test.gd  # 3D 房间+桌面布局与取景（格宽/房间带/光照契约/家具/吊灯）
 & $G --headless --path . --script tests/chars_test.gd   # 3D 人物（坐姿/静止/事件反应/不穿模/不投影）
-& $G --headless --path . --script tests/lab_case_test.gd # 道具试验场用例（**未入 CI**，本机手动跑）
+& $G --headless --path . --script tests/lab_case_test.gd # 道具试验场用例（保存/回放逐项还原）
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）

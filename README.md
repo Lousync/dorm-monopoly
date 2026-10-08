@@ -214,8 +214,7 @@ Godot_console.exe --headless --path . --export-release "Windows Desktop"
 
 ## 自动化测试
 
-除 `lab_case_test.gd`（道具试验场用例，本机手动跑）外，其余套件都在
-`.github/workflows/ci.yml` 里跑（推送 / PR 时自动执行）。本机跑法：
+全部套件都在 `.github/workflows/ci.yml` 里跑（推送 / PR 时自动执行）。本机跑法：
 
 ```bash
 # 脚本静态加载检查（改完先跑这个，能抓出解析错误）
@@ -252,7 +251,7 @@ Godot_console.exe --headless --path . --script tests/layout_test.gd
 Godot_console.exe --headless --path . --script tests/chars_test.gd
 # 桌面名牌：落点 / 朝向 / 命中链 / 金边 / 倒计时 / 幂等
 Godot_console.exe --headless --path . --script tests/placard_test.gd
-# 道具试验场用例（**未入 CI**，改动沙盒后再手动跑）
+# 道具试验场用例（用例保存 / 回放逐项还原）
 Godot_console.exe --headless --path . --script tests/lab_case_test.gd
 # 双实例联机回归（房主+客户端自动打 3 轮，含机器人、购买决策、断线接管）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 &
