@@ -427,6 +427,45 @@ static func build_play_ui(g: Node) -> void:
 	g.opt_btn.offset_bottom = 38
 	g.opt_btn.pressed.connect(g._open_menu)
 	g.add_child(g.opt_btn)
+
+	# 暂停按钮旁：网络质量指示（**仅非房主**；fix/0.14.1）。数值/信号由 game._refresh_net_indicator 逐帧填。
+	g.net_ind = null
+	g.net_ind_pips = []
+	g.net_ind_text = null
+	if not g.multiplayer.is_server():
+		g.net_ind = UIKit.panel_container(UIKit.PANEL_GLASS, 8,
+			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 0)
+		g.net_ind.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		g.net_ind.offset_left = 100
+		g.net_ind.offset_top = 10
+		g.net_ind.offset_right = 268
+		g.net_ind.offset_bottom = 38
+		g.net_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		g.net_ind.tooltip_text = "到房主的往返延迟与信号质量"
+		var nm := UIKit.margins(9, 8, 0, 0)
+		g.net_ind.add_child(nm)
+		var nh := HBoxContainer.new()
+		nh.add_theme_constant_override("separation", 7)
+		nh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		nm.add_child(nh)
+		# 4 格信号条：用 ColorRect 画（不依赖字体里有没有 ● / ▮ 之类的字形）
+		var pip_box := HBoxContainer.new()
+		pip_box.add_theme_constant_override("separation", 2)
+		pip_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		nh.add_child(pip_box)
+		for i in 4:
+			var pip := ColorRect.new()
+			pip.custom_minimum_size = Vector2(4, 12)
+			pip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pip.color = Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.35)
+			pip_box.add_child(pip)
+			g.net_ind_pips.append(pip)
+		g.net_ind_text = UIKit.label("延迟 --", 12, UIKit.TEXT_DIM)
+		g.net_ind_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		nh.add_child(g.net_ind_text)
+		g.add_child(g.net_ind)
+
 	g._build_menu_ui()
 
 	g.dev.build_panel()

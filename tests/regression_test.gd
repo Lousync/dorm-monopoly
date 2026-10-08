@@ -127,9 +127,11 @@ func _test_net_reset(net) -> void:
 	# 模拟「玩家曾在房间里」的残留状态
 	net.players = [{"peer": 7, "name": "旧玩家", "color": 0, "bot": false, "ready": true}]
 	net.chat_history = [{"name": "旧玩家", "text": "hi"}]
+	net.latency_ms = 123
 	net._reset_peer()
 	_check(net.players.is_empty(), "重置后 players 清空")
 	_check(net.chat_history.is_empty(), "重置后 chat_history 清空")
+	_check(net.latency_ms == -1, "重置把延迟读数清回未知（fix/0.14.1）")
 
 	# 行为层：重置后再加入新房间，必须触发 lobby_joined（否则主菜单永久卡住）
 	net.is_host = false

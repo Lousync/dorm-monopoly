@@ -43,6 +43,17 @@ const PROBE_INTERVAL_MS := 400     # 探针发送间隔
 const PROBE_TIMEOUT_MS := 3000     # 无任何回复 → 判定地址不可达
 const CONNECT_TIMEOUT_MS := 12000  # 整体硬超时（连上了但大厅不来也走这条）
 
+# ---------------- 延迟 / 信号质量（fix/0.14.1） ----------------
+## 非房主每 1s `c_ping` 一发，房主 `s_pong` 原样回；客户端用**同一时钟**算 RTT。
+## `latency_ms = -1` 表示未知 / 超时未更新（UI 显示「延迟 --」）。
+signal latency_changed(ms: int)
+var latency_ms := -1
+var _ping_timer := 0.0
+var _ping_last_ms := 0
+
+const PING_INTERVAL := 1.0
+const PING_STALE_MS := 3000        # 这么久没更新过 pong → 视为未知
+
 # ---------------- 掉线重连（协议 §六） ----------------
 ## 重连凭证：开局时房主私发（s_assign_token）；掉线后随 c_hello 带回认领座位。
 ## 整局有效、可重复使用；认领成功 token 不变、座位表换绑新 peer。
@@ -95,6 +106,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_poll_disco(delta)
 	_poll_probe()
+	_poll_ping(delta)
 
 # ---------------- 创建 / 加入 / 离开 ----------------
 
@@ -155,6 +167,7 @@ func _reset_peer() -> void:
 	_connecting = false
 	_net_connected = false
 	_stop_probe()
+	latency_ms = -1
 	stop_disco()
 	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		multiplayer.multiplayer_peer.close()
@@ -635,6 +648,40 @@ func _fail_join(reason: String) -> void:
 	_reset_peer()
 	players = []
 	join_failed.emit(reason)
+
+# ---------------- 延迟 / 信号质量（fix/0.14.1） ----------------
+
+## 非房主：每 PING_INTERVAL 发一枚 `c_ping`（带本机时间戳）；房主回 `s_pong` 原样带回，
+## 客户端用同一时钟算 RTT（无需对时）。pong 超时未更新 → `latency_ms = -1`。
+func _poll_ping(delta: float) -> void:
+	if is_host:
+		return
+	var mp := multiplayer.multiplayer_peer
+	if not (mp is ENetMultiplayerPeer):
+		return
+	if mp.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	_ping_timer -= delta
+	if _ping_timer <= 0.0:
+		_ping_timer = PING_INTERVAL
+		c_ping.rpc_id(1, Time.get_ticks_msec())
+	if latency_ms >= 0 and Time.get_ticks_msec() - _ping_last_ms > PING_STALE_MS:
+		latency_ms = -1
+		latency_changed.emit(latency_ms)
+
+@rpc("any_peer", "call_remote", "unreliable")
+func c_ping(t: int) -> void:
+	if not multiplayer.is_server():
+		return
+	s_pong.rpc_id(multiplayer.get_remote_sender_id(), t)
+
+@rpc("authority", "call_remote", "unreliable")
+func s_pong(t: int) -> void:
+	var rtt := maxi(Time.get_ticks_msec() - int(t), 0)
+	# 轻平滑（0.5 权重），避免单帧抖动让数字乱跳
+	latency_ms = rtt if latency_ms < 0 else int(round(float(latency_ms) * 0.5 + float(rtt) * 0.5))
+	_ping_last_ms = Time.get_ticks_msec()
+	latency_changed.emit(latency_ms)
 
 # ---------------- 地址工具 ----------------
 # 实现在 NetAddr（纯函数、可单测），这里保留同名入口方便旧调用点。

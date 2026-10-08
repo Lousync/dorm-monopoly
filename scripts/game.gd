@@ -14,6 +14,9 @@ var board: BoardView
 var table3d: TableView3D      # 2.5D 桌面容器（scripts/table_3d.gd）
 var log_head: Label
 var opt_btn: Button
+var net_ind: PanelContainer          # 网络质量指示（仅非房主；暂停按钮旁，fix/0.14.1）
+var net_ind_pips: Array = []         # 4 格信号条（ColorRect）
+var net_ind_text: Label
 var menu_layer: Control
 var menu_dim: ColorRect
 var menu_wraps := {}          # 面板名 -> 外层全屏容器（切换时连外层一起切，见 _menu_show）
@@ -6772,6 +6775,32 @@ func _process(_delta: float) -> void:
 			_at_card_done = false
 	if dev.enabled:
 		dev.refresh_panel()
+	_refresh_net_indicator()
+
+## 暂停按钮旁的「延迟 / 信号」读数（仅非房主；`net_ind == null` = 房主，直接返回）。
+## 数据源是 `Net.latency_ms`（Net._process 里的 ping/pong 维护），这里只做显示与配色。
+func _refresh_net_indicator() -> void:
+	if net_ind == null or not is_instance_valid(net_ind):
+		return
+	var ms := Net.latency_ms
+	var filled := 0
+	var col := UIKit.TEXT_DIM
+	var label := "延迟 --"
+	if ms >= 0:
+		label = "延迟 %d ms" % ms
+		if ms > 200:
+			filled = 1; col = Color(0.90, 0.42, 0.45); label += " · 信号较差"
+		elif ms > 120:
+			filled = 2; col = Color(0.95, 0.75, 0.35); label += " · 信号一般"
+		elif ms > 60:
+			filled = 3; col = Color(0.42, 0.82, 0.45); label += " · 信号良好"
+		else:
+			filled = 4; col = Color(0.42, 0.82, 0.45); label += " · 信号极佳"
+	var dim := Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.35)
+	for i in net_ind_pips.size():
+		net_ind_pips[i].color = col if i < filled else dim
+	net_ind_text.text = label
+	net_ind_text.modulate = col
 
 ## 操作倒计时（D 方案）：**只挂当前行动者那一块**（留痕 §四 的原设计：嵌在行动者的
 ## 座位卡里 —— 载体换过两次（立牌已于批次 9 退场），这条"只挂行动者"的语义一字未改）。
