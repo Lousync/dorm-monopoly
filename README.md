@@ -124,10 +124,10 @@
 project.godot          引擎配置（GL Compatibility 渲染 + 4x MSAA，窗口 1280×800）
 theme.tres             全局主题（SystemFont 中文字体：雅黑/苹方/思源黑）
 start.bat              Windows 双击启动（自动查找 Godot；首次或脚本类名变动时自动 --import）
-export_presets.cfg     Windows 导出预设（custom_template 指向本机 4.6.2 模板目录，换机器需改）
+export_presets.cfg     Windows 导出预设（custom_template 留空 = 用编辑器模板目录，换机器装好模板即可）
 build/                 打包产物（DormMonopoly.exe 单文件 + zip 分发包）；已 gitignore
 shots/                 截图产物（--shot= 的输出目录，不是源码）；已 gitignore
-scenes/                main_menu / lobby / game 三个场景（根节点，UI 代码构建）
+scenes/                main_menu / lobby / game / item_lab 四个场景（根节点，UI 代码构建）
 scripts/
   net.gd               自动加载：ENet 联机、大厅名册与聊天、UDP 广播搜索房间
   net_addr.gd          纯函数地址工具：地址解析/展示、发现报文解析（可单测）
@@ -139,6 +139,8 @@ scripts/
   item_card.gd         道具卡面控件（图鉴 / 货架 / 使用展示共用）
   game.gd              对局场景：房主权威回合状态机 + 全员状态同步 + HUD + 小游戏
   table_hud.gd         对局 HUD 与暂停菜单族的控件构建（构建器，写回 game 同名成员）
+  rules_text.gd        规则说明文案（分页正文；数值直接引用代码常量，不写死）
+  rules_panel.gd       规则说明面板（右上角「📖 规则说明」展开 / 换页，与战报互斥）
   table_3d.gd          3D 桌面：相机（3D↔2D 推移 + 推拉）、光照契约、输入映射到画布像素
   table_props.gd       桌上实物：转盘 / 手牌 / 棋子和房子薄牌 / 两摞牌堆 / **对手名牌**
   table_geometry.gd    世界坐标 ↔ 画布像素 ↔ 屏幕的换算（纯函数）
@@ -155,12 +157,14 @@ scripts/
   lobby.gd             大厅（准备、机器人、直连地址一键复制、聊天）
   ui_kit.gd            控件样式小工具（程序化九宫格渐变纹理 / 氛围背景 / 素材加载）
   dev_tools.gd         自动化开关与摆拍（--autotest / --shot / --fps / --lab 等）
+  item_lab.gd          道具试验场场景（--lab）：道具效果沙盒的界面与状态注入
+  lab_case.gd          道具试验场的用例数据（供沙盒逐件验证）
 assets/                开源素材（授权与来源见根目录 LICENSE）
   pieces/              Kenney 桌游棋子（CC0）：玩家棋子与头像
   icons/               Twemoji 图标（CC-BY 4.0）：格子水印图标 + HUD 图标（ui_*）
   textures/            ambientCG 木纹（CC0）：棋盘桌面
   models/              Kenney 家具包 + Blocky Characters（CC0）：3D 房间的家具与人物
-  cards/               道具卡面素材
+  cards/               机会 / 命运牌的卡背（Wikimedia「Atlas deck」，CC0）
 doc/                   设计文档与原型（.md 为活文档，.html/.drawio 为定稿原型）
   game-design/         玩法设计：机制与数值、道具图鉴、设计决策留痕、交互原型
   development/         系统架构、联机协议、上手指南、开发台账、3D 房间设计
@@ -173,10 +177,10 @@ tests/                 见下一节
 
 - **总索引与仓库约定**：`AGENTS.md`（**文档导航、工程约定、提交规范的单一来源**；
   面向 AI 编码代理，人类开发者同样先读这一篇）
-- **玩法设计**：`doc/game-design/`（索引与术语表见该目录 `README.md`）
+- **玩法设计**：`doc/game-design/`（**全局语义见该目录 `术语表.md`**）
   （棋盘与地产 / 事件卡 / 经济与胜负 / 小卖部 / 黑市 / 赌场 / 道具系统 / 道具图鉴 /
   开局科技 / 畸变 / 开局设置；另有 `设计决策留痕.md` 与交互原型 `.html`/`.drawio`）
-- **工程与协作**：`doc/development/`（架构总览 · 联机协议 · 上手指南 · 开发台账 · 3D 房间设计）
+- **工程与协作**：`doc/development/`（架构总览 · 联机协议 · 上手指南 · 开发台账 · 未完成项-交接 · 道具试验场 · 3D 房间设计）
 - **实施计划**：`doc/development/plans/`（随版本开发，合并进 `main` 后删除）
 - **版本变更**：`CHANGELOG.md`（每版改了什么、修了哪些缺陷）
 
@@ -187,16 +191,16 @@ tests/                 见下一节
 界面主体（按钮、卡片、背景、转盘、骰面、3D 房间的墙地纹样与吊灯）为运行时程序化绘制，无外部素材。
 引用的开源素材均在根目录 `LICENSE` 的「第三方素材与授权」一节声明来源与授权：
 **Kenney** 桌游棋子与家具包（CC0）、**Kenney** Blocky Characters（CC0）、
-**Twemoji** 图标（CC-BY 4.0，需保留署名）、**ambientCG** 木纹（CC0）。
+**Twemoji** 图标（CC-BY 4.0，需保留署名）、**ambientCG** 木纹（CC0）、
+**Wikimedia Commons**「Atlas deck」牌背（CC0，作者 Dmitry Fomin）。
 另有经批准的例外 `Quaternius Asset License (QAL) v1.0`（非标准开源许可，实质兼容，
 理由与约束见 `doc/game-design/设计决策留痕.md` §十四）。
 **分发时请一并保留 `LICENSE`。**
 
 ## 打包（导出独立 exe）
 
-前提：本机有对应版本的导出模板。`export_presets.cfg` 的 `custom_template/*`
-写死了开发机上的绝对路径（换机器必须改，或清空该字段让 Godot 回退到
-「编辑器设置 → 导出 → 模板目录」）。模板从 godotengine.org 下载
+前提：本机有对应版本的导出模板。`export_presets.cfg` 的 `custom_template/*` 已**留空**，
+Godot 会自动回退到「编辑器设置 → 导出 → 模板目录」；要固定到别的目录再填绝对路径。模板从 godotengine.org 下载
 `Godot_v4.6.2-stable_export_templates.tpz`，把里面 `templates/` 解压到目标目录。然后：
 
 ```bash
@@ -210,7 +214,8 @@ Godot_console.exe --headless --path . --export-release "Windows Desktop"
 
 ## 自动化测试
 
-所有套件都在 `.github/workflows/ci.yml` 里跑（推送 / PR 时自动执行）。本机跑法：
+除 `lab_case_test.gd`（道具试验场用例，本机手动跑）外，其余套件都在
+`.github/workflows/ci.yml` 里跑（推送 / PR 时自动执行）。本机跑法：
 
 ```bash
 # 脚本静态加载检查（改完先跑这个，能抓出解析错误）
@@ -247,6 +252,8 @@ Godot_console.exe --headless --path . --script tests/layout_test.gd
 Godot_console.exe --headless --path . --script tests/chars_test.gd
 # 桌面名牌：落点 / 朝向 / 命中链 / 金边 / 倒计时 / 幂等
 Godot_console.exe --headless --path . --script tests/placard_test.gd
+# 道具试验场用例（**未入 CI**，改动沙盒后再手动跑）
+Godot_console.exe --headless --path . --script tests/lab_case_test.gd
 # 双实例联机回归（房主+客户端自动打 3 轮，含机器人、购买决策、断线接管）
 Godot_console.exe --headless --path . -- --autotest=host --rounds=3 &
 Godot_console.exe --headless --path . -- --autotest=client --rounds=3

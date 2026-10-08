@@ -46,7 +46,12 @@
 当时谈定的交互，**可能与现状不一致**（例如原型里的「☰ 选项」按钮后来已改名「⏸ 暂停」）。
 要写代码请以 `game-design/*` 与现有实现为准，不要把原型当成活的规范逐条对照。
 `道具试验场-原型.html`、`对局UI改版-原型.html`（牌垫阶段按钮 + 道具点选交互）、
-`赌场改造-原型.html` 是可交互原型。
+`赌场改造-原型.html`、`倒计时位置-原型.html`（倒计时落点五方案对比）、
+`道具使用引导-原型.html`（拖动指向 + 引导）、`卡面角标与放大-原型.html`、
+`小卖部开关-原型.html` 是可交互原型。
+其中后四个原型**专供 `开发台账.md` §六「实机问题」**（#22 卡面角标 / #23 放大 / #24 拖动指向 /
+#25 小卖部开关 / 倒计时落点）当时拍板用，除 `倒计时位置-原型.html` 外均**未被活文档引用**，
+属"用了但没登记"——保留作定稿存档，**不要**当成活规范对照。
 
 ### 工程与协作（`doc/development/`）
 
@@ -56,7 +61,11 @@
 | `联机协议.md` | s_*/c_* 全表、状态快照字段、等待状态机、超时/托管/断线 |
 | `上手指南.md` | 环境、跑通、自动化开关、新增内容 checklist |
 | `开发台账.md` | 系统状态总表、批次进度、跨文档待办（分工用） |
+| `未完成项-交接.md` | **可直接开工的清单**：逐项待办 + 验收口径（交接用） |
 | `道具试验场.md` | 道具效果的独立沙盒（已实现）：入口、界面、状态注入 |
+| `3D房间-一期设计.md` | 3D 房间一期设计稿（**已完成，随 [0.10.0] 发布**）：房间层 / 推拉 / 材质与光照 |
+| `3D房间-二期设计.md` | 3D 房间二期设计稿（**已完成，随 [0.10.0] 发布**）：人物层 / 坐姿 / 事件反应 |
+| `chars-导入与动画普查.md` | Kenney「Blocky Characters」包的导入与动画普查（二期成果，零骨骼结论在此） |
 | `plans/` | 实施计划：**随版本开发，合并进 `main` 后连同文件一起删除**（不留档） |
 
 ### 仓库根（不在 `doc/` 里，但属于文档体系）
@@ -89,6 +98,9 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
 & $G --headless --path . --script tests/hud_test.gd      # HUD 回归（身家条/底栏/客户端视角）
 & $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
+& $G --headless --path . --script tests/layout_test.gd  # 3D 房间+桌面布局与取景（格宽/房间带/光照契约/家具/吊灯）
+& $G --headless --path . --script tests/chars_test.gd   # 3D 人物（坐姿/静止/事件反应/不穿模/不投影）
+& $G --headless --path . --script tests/lab_case_test.gd # 道具试验场用例（**未入 CI**，本机手动跑）
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
