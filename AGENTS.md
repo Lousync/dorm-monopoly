@@ -229,8 +229,9 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 - 机制/数值改动 → 同步 `doc/game-design/*`；协议/架构改动 → 同步 `doc/development/*`。
 - **逐件道具的唯一来源是 `doc/game-design/道具图鉴.md`**；`道具系统.md` 只讲机制与进度，不重复逐件表。
-- 新想法（未排期）→ 登记到 `doc/development/开发台账.md` §三「跨文档待办」；
+- 新想法（未排期）→ 登记到 `doc/development/未完成项-交接.md`（**「还剩什么」的唯一权威**，见 §七）；
   讨论过程、拍板理由与备选方案写进 `doc/game-design/设计决策留痕.md`。
+  批次推进过程中的记录留在 `doc/development/开发台账.md`——它**只记「做到哪了」，不再收待办**。
 - 实施计划 → `doc/development/plans/`；**该版本开发完并合入 `main` 后，连同计划文件一起删除**（这里不留档，历史看 `git log`）。
 - 代码与文档里的互相引用：跨目录一律写仓库相对路径（`doc/game-design/...`、`doc/development/...`）；
   `doc/` 内部互引写相对 `doc/` 的路径（`game-design/...`、`development/...`）。
