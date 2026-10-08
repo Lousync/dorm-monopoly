@@ -626,12 +626,18 @@ func _test_new_items(g) -> void:
 	_check(ok_sc and int(p1.money) >= 100 and int(p1.money) <= 1000 and int(p1.money) % 100 == 0,
 		"刮刮乐：¥100~1000 十档（实得 %d）" % int(p1.money))
 
-	# 顶楼加盖：自有地 +2 级
+	# 顶楼加盖：自有地 +2 级。**格号必须 ≠ 任何存活玩家 peer**（回归：原先 `_apply_item_effect` 把
+	# `tile/own_tile` 的 arg 也当 peer 校验 ⇒ 格号不巧等于某个 peer 时才用得出，真机上「选了地用不出」）。
 	var pi := _prop_idx(0)
+	for k in range(GameData.TILES.size()):
+		if String(GameData.TILES[k].get("type", "")) == "property" and k >= 10:
+			pi = k
+			break
 	g.htiles[pi].owner = 1
 	g.htiles[pi].level = 1
 	var ok_rf: bool = await g._apply_item_effect(p1, {"id": "顶楼加盖", "cd": 0}, pi)
-	_check(ok_rf and int(g.htiles[pi].level) == 3, "顶楼加盖：+2 级（实得 Lv%d）" % int(g.htiles[pi].level))
+	_check(ok_rf and int(g.htiles[pi].level) == 3,
+		"顶楼加盖：+2 级（格号 %d ≠ peer，实得 Lv%d）" % [pi, int(g.htiles[pi].level)])
 
 	# 没收：抢一件道具过来
 	p2.items = [{"id": "饭卡", "cd": 0}]

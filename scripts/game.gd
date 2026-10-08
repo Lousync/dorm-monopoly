@@ -5102,8 +5102,11 @@ func _own_props(peer: int) -> Array:
 func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1, arg3: int = -1) -> bool:
 	var id := String(it.id)
 	var t := _player_by_peer(arg)
-	var need_target: bool = String(ItemData.def(id).get("target", "")) != ""
-	if need_target and (t.is_empty() or not bool(t.alive)):
+	# 只有 `target=="player"` 的件才把 `arg` 当 peer 校验（交换生 / 强拆令 / 抄家队 / 转专业…）。
+	# `target=="tile"/"own_tile"`（快递直达 / 顶楼加盖）的 `arg` 是**格号**，`_player_by_peer(arg)` 多半为空
+	# —— 原先这里一律校验 ⇒ 那两件只在「格号恰好等于某个存活玩家 peer」时才用得出（顶楼加盖无法使用的真因）。
+	var need_player: bool = String(ItemData.def(id).get("target", "")) == "player"
+	if need_player and (t.is_empty() or not bool(t.alive)):
 		return false
 	match id:
 		# ---- 首批 ----
@@ -6079,7 +6082,12 @@ func _on_use_pressed() -> void:
 	elif tgt == "tile":
 		_begin_tile_target(slot, range(GameData.TILES.size()))
 	elif tgt == "own_tile":
-		_begin_tile_target(slot, _selectable_props(my_peer))
+		# 无自有地皮时**显式提示**（原先 `_begin_tile_target` 对空表静默返回，玩家只看到"点了没反应"）
+		var own := _selectable_props(my_peer)
+		if own.is_empty():
+			_log("你没有可加盖的地皮（退体力/冷却）", "#8a90a5")
+			return
+		_begin_tile_target(slot, own)
 	else:
 		_send_use_item(slot, -1)
 

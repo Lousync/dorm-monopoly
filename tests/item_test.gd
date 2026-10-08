@@ -56,6 +56,7 @@ func _run() -> void:
 	_test_egg(g)
 	_test_coco(g)
 	_test_use_guard(g)
+	_test_roof(g)
 	await _test_erging(g)
 	_test_card_state(g)
 	_test_price_state(g)
@@ -116,6 +117,32 @@ func _test_use_guard(g) -> void:
 	_check(p0.money == 1000, "效果未生效（招财猫 +400 没发）")
 	_check(not bool(p0.item_used), "未占本回合使用额度")
 	_check(g._item_action.is_empty(), "未写道具动作（回合流程不被推进）")
+
+## 顶楼加盖（own_tile）：`arg` 是**格号**、不是 peer —— 走完整 `_use_item` 链路回归
+## 「真机选了地用不出」（原 `_apply_item_effect` 把 tile/own_tile 的 arg 也当 peer 校验）。
+func _test_roof(g) -> void:
+	print("== 顶楼加盖（格号 ≠ peer） ==")
+	var p0 := _mk_player(1, "甲")
+	var p1 := _mk_player(2, "乙")
+	g.hp = [p0, p1]
+	g.htiles = _fresh_tiles()
+	var pi := -1
+	for k in range(GameData.TILES.size()):
+		if String(GameData.TILES[k].get("type", "")) == "property" and k >= 10:
+			pi = k
+			break
+	g.htiles[pi].owner = 1
+	g.htiles[pi].level = 1
+	p0.items = [{"id": "顶楼加盖", "cd": 0}]
+	p0.stamina = 5
+	p0.item_used_n = 0
+	p0.item_used = false
+	g._awaiting_item = 1
+	g._item_epoch = 0
+	g._use_item(1, 0, pi)
+	_check(int(g.htiles[pi].level) == 3, "顶楼加盖：+2 级（格号 %d，实得 Lv%d）" % [pi, int(g.htiles[pi].level)])
+	_check(int(p0.stamina) == 2, "顶楼加盖：消耗 3⚡（5→2）")
+	_check(p0.items.is_empty(), "顶楼加盖：一次性用后丢弃")
 
 ## 二青会酒寒暑（橙·一次性·焚毁）+ 强化版「组队学习·寒暑」（1⚡ / 无冷却 / 独立次数）
 func _test_erging(g) -> void:
