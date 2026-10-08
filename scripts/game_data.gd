@@ -6,6 +6,9 @@ class_name GameData
 const MAX_PLAYERS := 4
 const START_MONEY := 20000
 const SALARY := 4500
+## 绿货「信托基金」每回合开始进账（回合开始结算里发，见 道具图鉴.md）。
+## **唯一来源**：game.gd 发钱与 rules_text 面板文案都读它——曾各写各的，面板一度显示成 +100。
+const TRUST_FUND := 200
 const MAX_LEVEL := 4          # 装修等级上限
 ## 装修等级配色：1 绿 / 2 蓝 / 3 紫 / 4 金。
 ## 棋盘上的房子图标与格详情卡的文案共用这一份，避免两处各写一套。

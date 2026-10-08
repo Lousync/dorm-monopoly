@@ -1,6 +1,6 @@
 class_name TableProps
 extends Node3D
-## 桌面上的实体物件（见 doc/development/plans/v0.5.0-桌面实体化-设计.md §五）。
+## 桌面上的实体物件（见 doc/game-design/设计决策留痕.md §五）。
 ##
 ## 只负责「摆在哪、长什么样」：坐标一律由桌垫 UV 坐标系换算（TableView3D.canvas_px_to_world），
 ## 命中判定只回一个布尔 —— 掷轮 / 用道具这些后果由 game.gd 决定，这里不碰任何玩法逻辑。

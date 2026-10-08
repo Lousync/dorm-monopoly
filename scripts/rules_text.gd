@@ -94,7 +94,7 @@ static func _turn(tier: String) -> String:
 		"回合开始结算 → ①转轮盘 → 移动与落地结算 → ②使用道具 → 回合结束",
 		"",
 		_h("回合开始（被动照常）"),
-		"· 体力 +1（上限 5）· 道具冷却 -1 · 信托基金 +%s" % GameData.fmt_money(100),
+		"· 体力 +1（上限 5）· 道具冷却 -1 · 信托基金 +%s" % GameData.fmt_money(GameData.TRUST_FUND),
 		"",
 		_h("① 转轮盘（0~12）"),
 		"· 1~11：前进对应步数",

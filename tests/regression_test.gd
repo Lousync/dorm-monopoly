@@ -725,3 +725,10 @@ func _test_bankrupt_shop(g) -> void:
 	g._set_shop_collapsed(false)
 	_check(not g._shop_collapsed, "#25 展开：本地标记复位")
 	g._shop_peer = 0
+
+	# 信托基金：规则面板文案与实际发钱**必须是同一个数**
+	# （2026-10-08 查出来的真缺陷：面板写死 +100 而 game.gd 发 +200，玩家在局内查到的规则是错的。
+	#  修法是两处都读 `GameData.TRUST_FUND` —— 下面两条一起钉住，谁再写死谁红。）
+	_check(RulesText._turn("current").contains(GameData.fmt_money(GameData.TRUST_FUND)),
+		"信托基金：规则面板文案与 GameData.TRUST_FUND 同源（不再写死 +100）")
+	_check(GameData.TRUST_FUND == 200, "信托基金：常量值为 200（与道具图鉴.md 一致）")

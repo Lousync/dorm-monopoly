@@ -3622,7 +3622,7 @@ func _refresh_table_props() -> void:
 ## 客户端也能算的身家：与 `_refresh_players` 顶部战况面板**同一公式**，但读的是已同步的
 ## `st.tiles`，而不是房主专有的 `htiles`（客户端没有 hp / htiles）。
 ##
-## 调用方：`_open_player_popup`（批次 9 的道具弹窗，见 批次9-设计 §4.3）—— 立牌退场后它接手了
+## 调用方：`_open_player_popup`（批次 9 的道具弹窗，见 `doc/game-design/设计决策留痕.md` §九）—— 立牌退场后它接手了
 ## "看别人身家"那个落点。与 `_refresh_players` 里那份 `worth_map` 同式，**改公式要两处一起改**。
 func _state_worth(peer: int) -> int:
 	var v := int(_state_player(peer).get("money", 0))
@@ -4891,8 +4891,8 @@ func _item_turn_start(p: Dictionary) -> void:
 		else:
 			await _pay(p, 600, {})
 	if _has_item(p, "信托基金"):
-		p.money = int(p.money) + 200
-		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(200)], "#74d188")
+		p.money = int(p.money) + GameData.TRUST_FUND
+		_log("【信托基金】给 %s 发了 %s 零花钱" % [p.name, GameData.fmt_money(GameData.TRUST_FUND)], "#74d188")
 	if _ab_has("奖学金季"):
 		p.money = int(p.money) + 300
 		_log("【奖学金季】%s 领到 %s 补贴" % [p.name, GameData.fmt_money(300)], "#74d188")
@@ -5444,8 +5444,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			return false
 	return true
 
-## 小抄：把命运牌堆顶卡私密发给该玩家
-@rpc("authority", "call_local", "reliable")
 # ================= 老虎机（紫·新批次） =================
 
 ## 老虎机：3 个转轮各 0~9；奖金 = 三数之和 × 倍率 × ¥50。
@@ -5537,7 +5535,11 @@ func _show_slot(digits: Array, prize: int) -> void:
 		if is_instance_valid(layer):
 			layer.queue_free())
 
-## 小抄：把命运牌堆顶卡私密发给该玩家
+## 小抄：把命运牌堆顶卡私密发给该玩家。
+## **注意是广播 + 收端自过滤**（`if peer == my_peer`），不是 `rpc_id` 私发 —— 调用点走 `.rpc()`。
+## ⚠ 这个 `@rpc` 曾经被"老虎机"那一段的插入挤掉过（注解与函数被分开、函数就此不再是 RPC，
+## `.rpc()` 在运行时才会炸），别再把注解和函数拆开。
+@rpc("authority", "call_local", "reliable")
 func s_peek_card(peer: int, text: String) -> void:
 	if peer == my_peer:
 		_log("（小抄）命运牌堆下一张：%s" % text, "#f0c064")

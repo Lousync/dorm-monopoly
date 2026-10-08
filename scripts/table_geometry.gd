@@ -1,5 +1,5 @@
 class_name TableGeometry
-## 2.5D 桌面的纯几何（见 doc/development/plans/v0.5.0-布局2.5D.md §6.2）。
+## 2.5D 桌面的纯几何（原计划文件 doc/development/plans/v0.5.0-布局2.5D.md 已按约定随版本删除，历史见 git log）。
 ## 刻意不依赖相机与场景：相机只负责给出射线的 origin/dir，几何全在这里，于是可无头单测。
 ##
 ## 桌面板是**矩形**（宽 × 进深），进深与「贴图窗口」同比例（见 TableView3D.TEX_WINDOW_PX）：

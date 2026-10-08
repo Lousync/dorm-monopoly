@@ -1,6 +1,6 @@
 class_name DeckReveal
 extends Control
-## 「机会 / 命运」抽卡演出的**屏幕层大字卡**（批次 8，见 doc/development/plans/v0.5.0-批次8-设计.md）。
+## 「机会 / 命运」抽卡演出的**屏幕层大字卡**（批次 8，见 doc/game-design/设计决策留痕.md §八）。
 ##
 ## 为什么搬到屏幕层：原先演在桌垫画布（`BoardView._world`）里，靠把 **2D 相机**拉近 2 倍
 ## （旧 `DECK_PUSH_FACTOR`）才读得出字 —— 那一推会让**印在桌垫上的图案**整体放大滑动，而手牌

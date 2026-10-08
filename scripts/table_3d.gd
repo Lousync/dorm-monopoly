@@ -1,6 +1,6 @@
 class_name TableView3D
 extends Node3D
-## 2.5D 桌面容器（见 doc/development/plans/v0.5.0-布局2.5D.md §二 / §6.1）。
+## 2.5D 桌面容器（原计划文件 doc/development/plans/v0.5.0-布局2.5D.md 已按约定随版本删除，历史见 git log）。
 ##
 ## 结构：本节点（Node3D）持有 3D 场景 —— 桌面板 + 相机 + 灯 —— 以及一个 SubViewport，
 ## 现有 BoardView 原样住在那个 SubViewport 里。屏幕层 HUD 在 game 上，叠在 3D 之上。
