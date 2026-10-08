@@ -69,6 +69,8 @@ func _run() -> void:
 		fails += 1
 	else:
 		_test_net_reset(_net)
+		_test_rejoin_hint(_net)
+		_test_disco_ping(_net)
 	_test_lobby_rules(_net)
 	_test_endpoint_format()
 	_test_room_info_port()
@@ -139,6 +141,31 @@ func _test_net_reset(net) -> void:
 		{"peer": 9, "name": "我", "color": 1, "bot": false, "ready": false},
 	])
 	_check(fired[0] == 1, "重置后加入新房间会触发 lobby_joined（实得 %d 次）" % fired[0])
+
+## 首页「连接中断」红字常驻（2026-10-08 用户报）：
+## 判据曾是 `rejoin_token != 0`，而该 token **持久化**在 user://rejoin.cfg，
+## 首局之后永远非零 ⇒ 每次进首页都挂红字，网络明明正常。
+## 现在改由一次性提示位驱动：只有真实断线才置位，取走即清。
+func _test_rejoin_hint(net) -> void:
+	print("== 首页断线提示（net.gd） ==")
+	net.rejoin_token = 424242          # 模拟「持久化凭证还在」
+	_check(net.take_rejoin_hint().is_empty(), "冷启动：光有 rejoin_token 不提示（这就是那个常驻 bug）")
+	net.simulate_drop()                # 真实断线
+	var hint: String = net.take_rejoin_hint()
+	_check(not hint.is_empty(), "真断线：提示出现")
+	_check(hint.contains("连接中断"), "真断线：文案是「连接中断…」")
+	_check(net.take_rejoin_hint().is_empty(), "取走后清空：再进首页不会又冒出来")
+	net.rejoin_token = 0
+	_check(net.take_rejoin_hint().is_empty(), "清掉凭证后仍为空")
+
+## 主菜单「刷新」按钮：把发现时钟推过阈值，下一帧立刻重发一轮搜索（平时靠 1 秒节拍）
+func _test_disco_ping(net) -> void:
+	print("== 局域网搜索手动刷新（net.gd） ==")
+	net.start_disco_client()
+	net._disco_clock = 0.0
+	net.disco_ping_now()
+	_check(net._disco_clock >= 1.0, "disco_ping_now 把发现时钟推到阈值（下一帧即重发）")
+	net.stop_disco_client()
 
 func _test_round_counter(g) -> void:
 	print("== 回合计数（0 号位破产后仍应计轮） ==")

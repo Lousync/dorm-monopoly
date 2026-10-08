@@ -77,6 +77,14 @@ SOFTWARE.
 - 用途：道具卡面图案（`item_*.png` 全部 61 件，2026-10-02；由 jsdelivr 同版本 SVG 经 Godot
   烘焙为 256px PNG，招财猫/亡牌飞行员coco/夜跑 为双 emoji 合成）
 
+## Simple Icons — GitHub
+- 路径：`assets/icons/github.svg`
+- 授权：**CC0 1.0（公有领域献出）**，可自由商用、修改、分发，无需署名
+- 来源：https://simpleicons.org （Simple Icons 图标集，CC0 1.0）
+- 用途：主菜单右上角的仓库入口图标，点击用系统浏览器打开本项目仓库
+  （`https://github.com/Lousync/dorm-monopoly`）。**仅作指代本项目之用**：
+  GitHub 的猫标是 GitHub, Inc. 的商标，本图标不表示 GitHub 对本项目的背书。
+
 ## ambientCG — WoodFloor064
 - 路径：`assets/textures/wood_floor.jpg`
 - 授权：**CC0 1.0（公有领域）**

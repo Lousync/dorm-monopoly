@@ -1,5 +1,11 @@
 extends Control
 ## 主菜单：昵称、创建房间、加入房间（IP/IPv6/域名）、局域网房间列表。
+## 布局为**双栏门厅**（2026-10-08）：左「品牌区」= 标题 + 小棋盘意象，
+## 右「操作区」= 昵称 / 建房·加入页签 / 房间列表；仓库图标挂右上角。
+## 早先是 660px 居中单栏把三块面板一路往下堆，左右空一片、背景棋盘环又太亮抢戏。
+
+## 本仓库地址（右上角图标点开它）
+const REPO_URL := "https://github.com/Lousync/dorm-monopoly"
 
 var _name_edit: LineEdit
 var _port_edit: LineEdit
@@ -7,11 +13,17 @@ var _addr_edit: LineEdit
 var _join_port_edit: LineEdit
 var _create_btn: Button
 var _join_btn: Button
+var _refresh_btn: Button
 var _rooms_box: VBoxContainer
 var _status: Label
 var _title: Label
 var _rooms_sig := ""
 var _shot_game := false
+
+# 建房 / 加入 两页签：同一位置只留一页，省掉一半竖向高度（两页等高，切页不跳）
+var _tab_row: HBoxContainer
+var _host_page: Control
+var _join_page: Control
 
 var _at_mode := ""
 
@@ -41,11 +53,11 @@ func _ready() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")
 
-	# 背景：整张环形棋盘铺满窗口（就像对局里那张桌子），再压一层暗纱 + 金色暖光 + 暗角，
-	# 中间留白给操作面板——启动页一眼就是「宿舍大富翁」。
+	# 背景：整张环形棋盘铺满窗口（就像对局里那张桌子），再压一层暗纱 + 金色暖光 + 暗角。
+	# 棋盘**保持原色**（2026-10-08 试过压暗，用户否了：更丑）；靠内区那块留白承托面板。
 	var bg_board := MenuBoardDecor.new()
 	bg_board.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# 环做薄一点（每边格数多一点），内区就往外让 —— 标题与页脚不会贴着环的内沿
+	# 环做薄一点（每边格数多一点），内区就往外让
 	bg_board.count_x = 14
 	bg_board.count_y = 10
 	bg_board.pad = 0.0
@@ -63,39 +75,58 @@ func _ready() -> void:
 	add_child(UIKit.grad_rect([Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.40)],
 		[0.0, 1.0], true, Vector2(0.5, 0.5), Vector2(0.5, -0.14)))
 
+	# ----- 主体：双栏门厅 -----
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	var root := VBoxContainer.new()
-	root.custom_minimum_size = Vector2(660, 0)
-	root.add_theme_constant_override("separation", 10)
-	center.add_child(root)
+	var page := VBoxContainer.new()
+	page.custom_minimum_size = Vector2(1060, 0)
+	page.add_theme_constant_override("separation", 12)
+	center.add_child(page)
 
-	# 标题行：双骰子图标 + 描边金字
-	var title_row := HBoxContainer.new()
-	title_row.add_theme_constant_override("separation", 16)
-	title_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(title_row)
-	var icon_l := UIKit.dice_icon(40)
-	icon_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	title_row.add_child(icon_l)
-	_title = UIKit.title_label("宿舍大富翁", 46)
-	title_row.add_child(_title)
-	var icon_r := UIKit.dice_icon(40)
-	icon_r.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	title_row.add_child(icon_r)
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", 16)
+	page.add_child(body)
 
-	var sub := UIKit.label("宿舍楼里的财富战争 · 局域网 4 人联机 · IPv6 直连 · 56 格地图", 14, UIKit.TEXT_DIM)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	root.add_child(sub)
+	# 入场动画的对象按构建顺序攒着，最后统一错落淡入
+	var anim_targets: Array[Control] = []
+	var ptext := str(cfg.get_value("net", "port", Net.PORT))
 
-	root.add_child(UIKit.vspace(8))
+	# ---- 左栏：品牌区（标题 + 转盘）----
+	# **没有面板底**（用户 2026-10-08）：直接落在棋盘内区上，不再套一层灰玻璃；
+	# 标题两侧的骰子图标、以及标题下的「局域网 4 人联机…」一行，也都按要求去掉了。
+	var brand := VBoxContainer.new()
+	brand.custom_minimum_size = Vector2(408, 0)
+	brand.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	brand.add_theme_constant_override("separation", 14)
+	body.add_child(brand)
+	anim_targets.append(brand)
+
+	# 标题：**普通文字 + 黄色**（用户 2026-10-08：不要描边/投影，也不要呼吸动画；
+	# 颜色用对局里的骰子黄 `UIKit.ACCENT`，跟转盘金圈、主按钮同一个色系）
+	_title = UIKit.label("宿舍大富翁", 46, UIKit.ACCENT)
+	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	brand.add_child(_title)
+
+	# 中央意象：**转盘**（复用对局里那个 13 格转轮 WheelView，尺寸随控件缩放、零新绘制代码）。
+	# 原先这里摆的是块小棋盘 —— 跟铺满窗口的背景棋盘重复了，用户要求换掉。
+	# 静态摆着当装饰，不 spin_to（那会连带放转盘音效）。
+	var hero := WheelView.new()
+	hero.custom_minimum_size = Vector2(0, 376)
+	hero.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	brand.add_child(hero)
+
+	# ---- 右栏：操作区（昵称 / 建房·加入 / 房间列表）----
+	var action := VBoxContainer.new()
+	action.add_theme_constant_override("separation", 10)
+	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(action)
 
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 8)
-	root.add_child(name_row)
+	action.add_child(name_row)
+	anim_targets.append(name_row)
 	name_row.add_child(UIKit.label("昵称", 15))
 	_name_edit = UIKit.line_edit("给你的室友起个外号")
 	_name_edit.text = cfg.get_value("player", "name", "玩家")
@@ -103,77 +134,51 @@ func _ready() -> void:
 	_name_edit.max_length = 12
 	name_row.add_child(_name_edit)
 
-	# ----- 创建房间 -----
-	var create_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
-	var cp := UIKit.margins()
-	create_panel.add_child(cp)
-	root.add_child(create_panel)
+	# 建房 / 加入：原先两块独立面板，合并成一个带页签的卡片（竖向省一半）
+	var net_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
+	action.add_child(net_panel)
+	anim_targets.append(net_panel)
+	var np := UIKit.margins()
+	net_panel.add_child(np)
+	var nv := VBoxContainer.new()
+	nv.add_theme_constant_override("separation", 9)
+	np.add_child(nv)
 
-	var cv := VBoxContainer.new()
-	cv.add_theme_constant_override("separation", 8)
-	cp.add_child(cv)
-	var create_title := UIKit.label("我是房主（4 人联机由你开局）", 16, UIKit.TEXT)
-	cv.add_child(create_title)
-	var create_row := HBoxContainer.new()
-	create_row.add_theme_constant_override("separation", 8)
-	cv.add_child(create_row)
-	create_row.add_child(UIKit.label("端口", 14, UIKit.TEXT_DIM))
-	_port_edit = UIKit.line_edit("7777")
-	_port_edit.text = str(cfg.get_value("net", "port", Net.PORT))
-	_port_edit.custom_minimum_size = Vector2(90, 0)
-	create_row.add_child(_port_edit)
-	_create_btn = UIKit.button("创建房间", 16, "primary")
-	_create_btn.pressed.connect(_on_create)
-	create_row.add_child(_create_btn)
-	var create_hint := UIKit.label("同一局域网的室友会自动搜到你的房间", 13, UIKit.TEXT_DIM)
-	create_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	create_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	create_row.add_child(create_hint)
+	_tab_row = UIKit.chip_row(["host", "join"], {"host": "我是房主", "join": "加入房间"}, _on_tab)
+	nv.add_child(_tab_row)
+	_host_page = _build_host_page(ptext)
+	nv.add_child(_host_page)
+	_join_page = _build_join_page(ptext)
+	nv.add_child(_join_page)
 
-	# ----- 加入房间 -----
-	var join_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
-	var jp := UIKit.margins()
-	join_panel.add_child(jp)
-	root.add_child(join_panel)
-
-	var jv := VBoxContainer.new()
-	jv.add_theme_constant_override("separation", 8)
-	jp.add_child(jv)
-	jv.add_child(UIKit.label("加入房间", 16, UIKit.TEXT))
-	var addr_row := HBoxContainer.new()
-	addr_row.add_theme_constant_override("separation", 8)
-	jv.add_child(addr_row)
-	addr_row.add_child(UIKit.label("地址", 14, UIKit.TEXT_DIM))
-	_addr_edit = UIKit.line_edit("留空自动搜索局域网；或输入 IPv4 / IPv6 / 域名，如 2001:da8::1234")
-	_addr_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	addr_row.add_child(_addr_edit)
-	var port_row := HBoxContainer.new()
-	port_row.add_theme_constant_override("separation", 8)
-	jv.add_child(port_row)
-	port_row.add_child(UIKit.label("端口", 14, UIKit.TEXT_DIM))
-	_join_port_edit = UIKit.line_edit("7777")
-	_join_port_edit.text = str(cfg.get_value("net", "port", Net.PORT))
-	_join_port_edit.custom_minimum_size = Vector2(90, 0)
-	port_row.add_child(_join_port_edit)
-	_join_btn = UIKit.button("加入", 16, "primary")
-	_join_btn.pressed.connect(_on_join)
-	port_row.add_child(_join_btn)
-	var join_hint := UIKit.label("IPv6 直连：让房主在大厅里复制「全球 IPv6 地址」发给你", 13, UIKit.TEXT_DIM)
-	port_row.add_child(join_hint)
-
-	# ----- 局域网房间列表 -----
+	# 局域网房间列表：升为主视觉，标题右侧挂「刷新」
 	var rooms_panel := UIKit.panel_container(UIKit.PANEL_GLASS, 12, _card_border(), 1, 10)
-	rooms_panel.custom_minimum_size = Vector2(0, 120)
+	rooms_panel.custom_minimum_size = Vector2(0, 176)
+	rooms_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	action.add_child(rooms_panel)
+	anim_targets.append(rooms_panel)
 	var rp := UIKit.margins()
 	rooms_panel.add_child(rp)
-	root.add_child(rooms_panel)
-
 	var rv := VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 6)
 	rp.add_child(rv)
-	rv.add_child(UIKit.label("局域网房间（自动搜索中…）", 14, UIKit.TEXT_DIM))
+
+	var rooms_head := HBoxContainer.new()
+	rooms_head.add_theme_constant_override("separation", 8)
+	rv.add_child(rooms_head)
+	var rooms_title := UIKit.label("局域网房间", 14, UIKit.TEXT_DIM)
+	rooms_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rooms_head.add_child(rooms_title)
+	rooms_head.add_child(UIKit.label("每秒自动搜索", 12, UIKit.TEXT_DIM.darkened(0.18)))
+	_refresh_btn = UIKit.button("⟳ 刷新", 13)
+	_refresh_btn.custom_minimum_size = Vector2(0, 28)
+	_refresh_btn.tooltip_text = "立刻重发一轮局域网搜索"
+	_refresh_btn.pressed.connect(_on_refresh)
+	rooms_head.add_child(_refresh_btn)
+
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(0, 66)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	rv.add_child(scroll)
 	_rooms_box = VBoxContainer.new()
@@ -181,10 +186,12 @@ func _ready() -> void:
 	_rooms_box.add_theme_constant_override("separation", 4)
 	scroll.add_child(_rooms_box)
 
-	_status = UIKit.label("", 14, UIKit.DANGER)
+	_status = UIKit.label("", 14, UIKit.TEXT_DIM)
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status.custom_minimum_size = Vector2(0, 22)
-	root.add_child(_status)
+	page.add_child(_status)
+
+	_on_tab("host")
 
 	# 开发者入口：仅在开发模式下显示（dev 开关：启动带 --dev，或设置里 dev.enabled=true；
 	# 正式导出版一律关闭——OS.is_debug_build() 门控，见 game.gd 的同款处理）
@@ -205,11 +212,15 @@ func _ready() -> void:
 		lab_btn.pressed.connect(func() -> void:
 			get_tree().change_scene_to_file.call_deferred("res://scenes/item_lab.tscn"))
 		lv.add_child(lab_btn)
-		root.add_child(lab_panel)
+		page.add_child(lab_panel)
+		anim_targets.append(lab_panel)
 
-	var footer := UIKit.label("Godot 4 制作 · 拿去和室友玩吧", 12, UIKit.TEXT_DIM)
-	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	root.add_child(footer)
+	# 仓库入口：钉在**棋盘内区的右下角**（用户 2026-10-08 指定 —— 落在棋盘里，不是窗口角），
+	# 跟着棋盘内框走，窗口尺寸一变也跟着挪。`add_child` 排在最后 = 树序最靠后，
+	# Godot 的 GUI 拾取按倒序走，所以它压在面板之上、可点。
+	var repo := _repo_button()
+	add_child(repo)
+	bg_board.pin_corner(repo)
 
 	# 房间列表每 0.4s 刷新一次（逐帧重建会让按钮点不中、悬停闪烁）
 	var room_timer := Timer.new()
@@ -223,15 +234,18 @@ func _ready() -> void:
 	Net.kicked.connect(_on_kicked)
 
 	if not Net.last_error.is_empty():
-		_status.text = Net.last_error
+		_set_status(Net.last_error, "danger")
 		Net.last_error = ""
-	# 掉线重连（协议 §六）：手里还攥着凭证且已断开 → 地址栏回填 + 提示，点「加入」即回对局
-	var mp_r := Net.multiplayer.multiplayer_peer
-	if Net.rejoin_token != 0 and not Net.is_host \
-			and (mp_r == null or mp_r is OfflineMultiplayerPeer):
-		if not Net.last_join_addr.is_empty():
-			_addr_edit.text = Net.last_join_addr
-		_status.text = "连接中断——用同一地址点「加入」即可回到对局（座位已由机器人托管）"
+	# 掉线重连（协议 §六）：地址栏回填**总是**做（冷启动也填，凭持久化凭证一键回对局）；
+	# 但红字提示**只在真实断线那一刻**出现，由 net.gd 的一次性提示位驱动。
+	# 原先拿「rejoin_token 非零」当判据 —— 它是持久化的，首局之后首页永远挂着红字，
+	# 网络明明正常（用户 2026-10-08 报的 bug）。
+	var hint := Net.take_rejoin_hint()
+	if not Net.last_join_addr.is_empty():
+		_addr_edit.text = Net.last_join_addr
+		_on_tab("join")
+	if not hint.is_empty():
+		_set_status(hint, "danger")
 
 	var mp := Net.multiplayer.multiplayer_peer
 	if not _shot_game and mp != null and not (mp is OfflineMultiplayerPeer) and Net.is_host:
@@ -240,15 +254,9 @@ func _ready() -> void:
 	else:
 		Net.start_disco_client()
 
-	# 入场动画：面板错落淡入，标题轻轻呼吸
-	for i in root.get_child_count():
-		var c: Control = root.get_child(i)
-		Fx.animate_in(c, 0.05 * i)
-	_title.resized.connect(func() -> void: _title.pivot_offset = _title.size * 0.5)
-	var tw := create_tween()
-	tw.set_loops()
-	tw.tween_property(_title, "scale", Vector2(1.025, 1.025), 1.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	tw.tween_property(_title, "scale", Vector2.ONE, 1.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	# 入场动画：面板错落淡入（标题不再有呼吸动画 —— 用户 2026-10-08 要求去掉）
+	for i in anim_targets.size():
+		Fx.animate_in(anim_targets[i], 0.05 * i)
 
 	if _at_mode == "host":
 		Engine.time_scale = 3.0
@@ -278,6 +286,142 @@ func _ready() -> void:
 
 func _card_border() -> Color:
 	return Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85)
+
+# ---------------- 双栏门厅的构件 ----------------
+
+## 建房页（页签「我是房主」）
+func _build_host_page(port_text: String) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.custom_minimum_size = Vector2(0, 78)   # 与加入页等高，切页不跳
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	box.add_child(row)
+	row.add_child(UIKit.label("端口", 14, UIKit.TEXT_DIM))
+	_port_edit = UIKit.line_edit("7777")
+	_port_edit.text = port_text
+	_port_edit.custom_minimum_size = Vector2(90, 0)
+	row.add_child(_port_edit)
+	_create_btn = UIKit.button("创建房间", 16, "primary")
+	_create_btn.pressed.connect(_on_create)
+	row.add_child(_create_btn)
+	box.add_child(UIKit.label("同一局域网的室友会自动搜到你的房间", 13, UIKit.TEXT_DIM))
+	return box
+
+## 加入页（页签「加入房间」）
+func _build_join_page(port_text: String) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.custom_minimum_size = Vector2(0, 78)   # 与建房页等高，切页不跳
+	var addr_row := HBoxContainer.new()
+	addr_row.add_theme_constant_override("separation", 8)
+	box.add_child(addr_row)
+	addr_row.add_child(UIKit.label("地址", 14, UIKit.TEXT_DIM))
+	_addr_edit = UIKit.line_edit("留空自动搜索局域网；或输入 IPv4 / IPv6 / 域名，如 2001:da8::1234")
+	_addr_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	addr_row.add_child(_addr_edit)
+	var port_row := HBoxContainer.new()
+	port_row.add_theme_constant_override("separation", 8)
+	box.add_child(port_row)
+	port_row.add_child(UIKit.label("端口", 14, UIKit.TEXT_DIM))
+	_join_port_edit = UIKit.line_edit("7777")
+	_join_port_edit.text = port_text
+	_join_port_edit.custom_minimum_size = Vector2(90, 0)
+	port_row.add_child(_join_port_edit)
+	_join_btn = UIKit.button("加入", 16, "primary")
+	_join_btn.pressed.connect(_on_join)
+	port_row.add_child(_join_btn)
+	var jhint := UIKit.label("IPv6 直连：让房主在大厅里复制「全球 IPv6 地址」发给你", 13, UIKit.TEXT_DIM)
+	jhint.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	jhint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	port_row.add_child(jhint)
+	return box
+
+## 建房 / 加入 页签切换：同一位置只留一页。
+## 局域网房间框**两个页签都显示**（2026-10-08 用户改的口径：做过一版只在「加入房间」下显示，
+## 被否 —— 房主自己也常要看有没有别人开了房）。
+func _on_tab(id: String) -> void:
+	UIKit.chip_select(_tab_row, id)
+	if _host_page != null:
+		_host_page.visible = id == "host"
+	if _join_page != null:
+		_join_page.visible = id == "join"
+
+## 状态行按语义分色（原先恒为红色，连「正在连接…」都报红）
+func _set_status(text: String, kind := "info") -> void:
+	_status.text = text
+	var col := UIKit.TEXT_DIM
+	match kind:
+		"danger":
+			col = UIKit.DANGER
+		"warn":
+			col = UIKit.ACCENT
+	_status.add_theme_color_override("font_color", col)
+
+## 手动刷新：立刻重发一轮搜索 + 重建列表，不必干等每秒节拍
+func _on_refresh() -> void:
+	Net.disco_ping_now()
+	_rooms_sig = ""
+	_refresh_rooms()
+	_refresh_btn.disabled = true
+	_refresh_btn.text = "刷新中…"
+	await get_tree().create_timer(0.45).timeout
+	if is_instance_valid(_refresh_btn):
+		_refresh_btn.disabled = false
+		_refresh_btn.text = "⟳ 刷新"
+
+## 棋盘内区右下角的仓库入口。图标缺货时退化成纯文字按钮（`UIKit.tex` 对**未导入**的 svg
+## 拿不到纹理，新克隆没在编辑器里开过项目时会走到这条路）。
+## **无底板**（用户 2026-10-08）：只留图标本身落在棋盘上，不再套一层灰按钮底；
+## 悬停/按下给一层极淡的底，保住「这里可点」的手感。
+## 尺寸写死：它由 `MenuBoardDecor.pin_corner` 按绝对坐标摆位，不吃容器布局。
+func _repo_button() -> Button:
+	var b := Button.new()
+	var t := UIKit.tex("res://assets/icons/github.svg")
+	if t != null:
+		b.icon = t
+		b.expand_icon = false
+		b.add_theme_constant_override("icon_max_width", 24)
+		# `icon_alignment` 默认是 **LEFT** —— 只有图标没有文字时，它把图标齐着盒子左边画，
+		# 看着就是「没居中」（实测图标左沿 1131 而盒子左沿 1132.7，正是贴边）。
+		# 必须显式给 CENTER（用户 2026-10-08 两次报「在背景容器里不居中」）。
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		# 正方形盒子：图标四边等距（先前 44×36，左右比上下多留 4px）
+		b.custom_minimum_size = Vector2(40, 40)
+	else:
+		b.text = "GitHub"
+		b.custom_minimum_size = Vector2(0, 36)
+	b.size = b.custom_minimum_size
+	b.tooltip_text = "在 GitHub 上查看源码"
+	b.add_theme_font_size_override("font_size", 13)
+	b.focus_mode = Control.FOCUS_NONE
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var clear := UIKit.stylebox(Color(0, 0, 0, 0), 8)
+	b.add_theme_stylebox_override("normal", clear)
+	b.add_theme_stylebox_override("focus", clear)
+	b.add_theme_stylebox_override("disabled", clear)
+	b.add_theme_stylebox_override("hover", UIKit.stylebox(Color(1, 1, 1, 0.08), 8))
+	b.add_theme_stylebox_override("pressed", UIKit.stylebox(Color(0, 0, 0, 0.20), 8))
+	for s in ["font_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(s, UIKit.TEXT_DIM)
+	b.add_theme_color_override("font_hover_color", UIKit.ACCENT)
+	b.pressed.connect(func() -> void:
+		Fx.play("click", -6.0)
+		OS.shell_open(REPO_URL))
+	return b
+
+## 点空白处要收掉输入框的焦点（用户 2026-10-08 报「鼠标点到别处，昵称框还亮着」）。
+## 根因：本项目所有按钮都是 `FOCUS_NONE`、面板也不吃键盘焦点，于是点哪儿 LineEdit 都还攥着
+## 焦点，`focus` 样式（金色描边）一直挂着。
+## 用 `_input`（GUI 之前拿到事件）：点**落在输入框内**就不动它，让 LineEdit 自己处理；
+## 落在别处才收焦点，而这次点击照常派发给下面的控件，不会吞掉按钮的点击。
+func _input(e: InputEvent) -> void:
+	if not (e is InputEventMouseButton) or not (e as InputEventMouseButton).pressed:
+		return
+	var f := get_viewport().gui_get_focus_owner()
+	if f is LineEdit and not f.get_global_rect().has_point(get_viewport().get_mouse_position()):
+		f.release_focus()
 
 func _exit_tree() -> void:
 	Net.lobby_joined.disconnect(_on_lobby_joined)
@@ -309,7 +453,7 @@ func _on_create() -> void:
 	_save_cfg()
 	var err := Net.host_game(_parse_port(_port_edit))
 	if err != OK:
-		_status.text = "创建失败（端口可能被占用）：%s" % error_string(err)
+		_set_status("创建失败（端口可能被占用）：%s" % error_string(err), "danger")
 		return
 	Fx.go_to("res://scenes/lobby.tscn")
 
@@ -318,17 +462,17 @@ func _on_join() -> void:
 	_save_cfg()
 	var parsed := Net.parse_endpoint(_addr_edit.text, _parse_port(_join_port_edit))
 	if parsed.is_empty():
-		_status.text = "请输入房主的 IP（局域网搜索不需要填）"
+		_set_status("请输入房主的 IP（局域网搜索不需要填）", "warn")
 		return
 	_join_to(parsed[0], parsed[1])
 
 func _join_to(ip: String, port: int) -> void:
-	_status.text = "正在连接 %s:%d …" % [ip, port]
+	_set_status("正在连接 %s:%d …" % [ip, port], "info")
 	_join_btn.disabled = true
 	_create_btn.disabled = true
 	var err := Net.join_game(ip, port)
 	if err != OK:
-		_status.text = "连接失败：%s" % error_string(err)
+		_set_status("连接失败：%s" % error_string(err), "danger")
 		_join_btn.disabled = false
 		_create_btn.disabled = false
 
@@ -336,12 +480,12 @@ func _on_lobby_joined() -> void:
 	Fx.go_to("res://scenes/lobby.tscn")
 
 func _on_join_failed(reason: String) -> void:
-	_status.text = reason
+	_set_status(reason, "danger")
 	_join_btn.disabled = false
 	_create_btn.disabled = false
 
 func _on_kicked(reason: String) -> void:
-	_status.text = reason
+	_set_status(reason, "danger")
 	_join_btn.disabled = false
 	_create_btn.disabled = false
 
@@ -436,6 +580,14 @@ class MenuBoardDecor extends Control:
 	var pad := 10.0            # 棋盘离控件边缘的留白（当背景时给 0，让环贴着窗口边）
 	var with_center := true    # 中央是否画两粒骰子（当背景时留空给操作面板）
 
+	## 内区四角那对金色括号：距内区角点 CORNER_INSET，臂长 = min(内区宽, 高) × CORNER_ARM_K。
+	## 钉在角上的控件（`pin_corner`）要按 `CORNER_INSET + 线宽` 让位，别按臂长。
+	const CORNER_INSET := 12.0
+	const CORNER_ARM_K := 0.12
+
+	var corner_node: Control = null      # 钉在内区右下角的控件（仓库图标用）
+	var corner_inset := Vector2(16.0, 14.0)
+
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -457,21 +609,16 @@ class MenuBoardDecor extends Control:
 			draw_rect(Rect2(r.position.x + 1.0, r.position.y + 1.0, r.size.x - 2.0, r.size.y * 0.22), c, true)
 		# 中央场地：比环稍亮的毡面 + 金色内框 + 四角括号，
 		# 让它读起来是「桌面」而不是一块黑板（对标对局里那张桌子的衬底）
-		var nx := count_x if count_x > 0 else per_side
-		var ny := count_y if count_y > 0 else per_side
-		var tw := board.size.x / float(nx + 1)
-		var th := board.size.y / float(ny + 1)
-		var inner := Rect2(board.position.x + tw, board.position.y + th,
-			board.size.x - tw * 2.0, board.size.y - th * 2.0)
+		var inner := inner_rect()
 		draw_rect(inner, Color(0.128, 0.152, 0.203), true)
 		draw_rect(inner, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.20), false, 2.0)
-		var arm := minf(inner.size.x, inner.size.y) * 0.12
+		var arm := minf(inner.size.x, inner.size.y) * CORNER_ARM_K
 		var gc := Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.30)
 		var corners := [
-			[inner.position.x + 12.0, inner.position.y + 12.0, 1.0, 1.0],
-			[inner.end.x - 12.0, inner.position.y + 12.0, -1.0, 1.0],
-			[inner.position.x + 12.0, inner.end.y - 12.0, 1.0, -1.0],
-			[inner.end.x - 12.0, inner.end.y - 12.0, -1.0, -1.0],
+			[inner.position.x + CORNER_INSET, inner.position.y + CORNER_INSET, 1.0, 1.0],
+			[inner.end.x - CORNER_INSET, inner.position.y + CORNER_INSET, -1.0, 1.0],
+			[inner.position.x + CORNER_INSET, inner.end.y - CORNER_INSET, 1.0, -1.0],
+			[inner.end.x - CORNER_INSET, inner.end.y - CORNER_INSET, -1.0, -1.0],
 		]
 		for cn in corners:
 			var px: float = cn[0]
@@ -495,6 +642,34 @@ class MenuBoardDecor extends Control:
 		if with_center:
 			draw_die(Vector2(w * 0.5 - 32.0, h * 0.5 - 10.0), 30.0, 3)
 			draw_die(Vector2(w * 0.5 + 4.0, h * 0.5 + 6.0), 26.0, 5)
+
+	## 「内区」矩形（环以内那块场地）。**与 _draw 用的是同一份算法**——
+	## 仓库图标就钉在它的右下角，两处若各算各的，图标迟早跑到环上去。
+	func inner_rect() -> Rect2:
+		var board := Rect2(pad, pad, size.x - pad * 2.0, size.y - pad * 2.0)
+		var nx := count_x if count_x > 0 else per_side
+		var ny := count_y if count_y > 0 else per_side
+		var tw := board.size.x / float(nx + 1)
+		var th := board.size.y / float(ny + 1)
+		return Rect2(board.position.x + tw, board.position.y + th,
+			board.size.x - tw * 2.0, board.size.y - th * 2.0)
+
+	## 把 `c` 钉在内区右下角，并随窗口尺寸自动跟随（仓库图标用）。
+	## 留白必须**盖过金色括号的线宽**：括号画在 `end - CORNER_INSET` 处、线宽 3px，
+	## 所以 inset 得大于 `CORNER_INSET + 3`，否则图标压在金线上（用户 2026-10-08 报的）。
+	## ⚠ 这里是**让线宽**，不是让臂长 —— 曾经误按臂长（0.12 × 内区宽）退让，
+	## 图标被推到内区正中间，「位置飞了」。
+	func pin_corner(c: Control, inset := Vector2(22.0, 22.0)) -> void:
+		corner_node = c
+		corner_inset = inset
+		resized.connect(_place_corner)
+		c.resized.connect(_place_corner)
+		_place_corner.call_deferred()
+
+	func _place_corner() -> void:
+		if corner_node == null:
+			return
+		corner_node.position = inner_rect().end - corner_node.size - corner_inset
 
 	## 环岛格：上边连同左右上角一次画满，其余三边依次接续，不重复画角
 	func ring_rects(b: Rect2) -> Array:

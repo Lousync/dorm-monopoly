@@ -36,7 +36,19 @@ var rejoin_token := 0
 var rejoined := false          # 本次连接已认领成功（s_reclaim 置位；停掉 hello 重试）
 var last_join_addr := ""       # 上次加入的地址（主菜单回填，方便断线后一键重连）
 
+## 断线提示（一次性）：**只在真实断线那一刻**置位，主菜单取走即清。
+## ⚠ 不能用 `rejoin_token != 0` 当判据——它是**持久化**的，首局之后永远非零，
+## 于是主菜单每次启动都挂着「连接中断」红字，网络明明正常（用户 2026-10-08 报的 bug）。
+var _rejoin_hint := ""
+
+func take_rejoin_hint() -> String:
+	var m := _rejoin_hint
+	_rejoin_hint = ""
+	return m
+
 const REJOIN_CFG := "user://rejoin.cfg"
+## 掉线后回主菜单要展示的提示（协议 §六）
+const REJOIN_HINT := "连接中断——用同一地址点「加入」即可回到对局（座位已由机器人托管）"
 
 func _persist_rejoin() -> void:
 	var cfg := ConfigFile.new()
@@ -263,6 +275,7 @@ func simulate_drop() -> void:
 	_reset_peer()
 	players = []
 	in_game = false
+	_rejoin_hint = REJOIN_HINT
 	connection_lost.emit("与房主的连接已断开")
 
 @rpc("authority", "call_local", "reliable")
@@ -443,6 +456,7 @@ func _on_server_disconnected() -> void:
 	_reset_peer()
 	players = []
 	in_game = false
+	_rejoin_hint = REJOIN_HINT
 	connection_lost.emit("与房主的连接已断开")
 
 @rpc("authority", "call_remote", "reliable")
@@ -481,6 +495,12 @@ func ensure_disco_client() -> void:
 	if not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		return  # 正处联机会话中（房主或已加入），不另起搜索
 	start_disco_client()
+
+## 主菜单「刷新」按钮：把发现时钟推过阈值，下一帧 _poll_disco 立刻重发一轮 DISCO_REQ
+##（平时靠 1 秒节拍，手动刷新不必干等）；搜索器没起来时顺带兜底拉起。
+func disco_ping_now() -> void:
+	ensure_disco_client()
+	_disco_clock = 99.0
 
 func stop_disco_client() -> void:
 	if _disco_client != null:
