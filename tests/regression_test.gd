@@ -72,6 +72,7 @@ func _run() -> void:
 	_test_lobby_rules(_net)
 	_test_endpoint_format()
 	_test_room_info_port()
+	_test_addr_display()
 
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
@@ -482,6 +483,24 @@ func _test_room_info_port() -> void:
 	_check(String(info.get("count", "")) == "2/4", "解析出人数")
 	_check(int(info.get("port", 0)) == 8123, "解析出房主端口")
 	_check(NetAddr.parse_room_info("bad").is_empty(), "坏报文返回空")
+
+func _test_addr_display() -> void:
+	print("== 直连地址展示：回环必须过滤、同 /64 必须去重（fix/0.14.1） ==")
+	# 实测 Godot/Windows 把回环给成展开式 0:0:0:0:0:0:0:1，只判 == "::1" 会漏
+	var c: Dictionary = NetAddr.classify_addresses([
+		"0:0:0:0:0:0:0:1", "::1", "fe80:0:0:0:915:a333:7df9:ebd9",
+		"127.0.0.1", "169.254.196.125", "0.0.0.0",
+		"2001:da8:a012:389:0:0:0:829", "2001:da8:a012:389:5ad4:323e:fbc7:ec94",
+		"2001:db8:1:2:3:4:5:6", "fd12:3456:789a::1",
+		"10.11.151.104", "8.8.8.8",
+	])
+	_check(c.pub6.size() == 2, "全球 IPv6 同 /64 去重为 2 条（实得 %d：%s）" % [c.pub6.size(), str(c.pub6)])
+	_check(c.lan6.size() == 1, "内网(ULA) IPv6 保留 1 条")
+	_check(c.lan4 == ["10.11.151.104"], "局域网 IPv4")
+	_check(c.pub4 == ["8.8.8.8"], "公网 IPv4")
+	var all: Array = c.lan4 + c.pub4 + c.lan6 + c.pub6
+	_check(not all.has("0:0:0:0:0:0:0:1") and not all.has("::1"), "回环（展开式 + 压缩式）都被过滤")
+	_check(not all.has("fe80:0:0:0:915:a333:7df9:ebd9"), "链路本地 IPv6 被过滤")
 
 func _test_camera_window_resize(g) -> void:
 	print("== 镜头状态：窗口缩放不重置镜头 ==")

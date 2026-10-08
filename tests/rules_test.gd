@@ -7,6 +7,7 @@ func _initialize() -> void:
 	_test_rent()
 	_test_fmt()
 	_test_endpoint()
+	_test_classify()
 	_test_board_shape()
 	_test_paths()
 	if fails == 0:
@@ -76,6 +77,22 @@ func _test_endpoint() -> void:
 	_check(NetAddrScript.parse_endpoint("2001:db8::1", 7777) == ["2001:db8::1", 7777], "全球 IPv6")
 	_check(NetAddrScript.parse_endpoint("", 7777) == [], "空输入")
 	_check(NetAddrScript.parse_endpoint("[::1", 7777) == [], "坏括号")
+
+func _test_classify() -> void:
+	# 回环（展开式 `0:0:0:0:0:0:0:1`，Godot/Windows 实测就是这个）不该出现在任何一类
+	var c: Dictionary = NetAddrScript.classify_addresses([
+		"0:0:0:0:0:0:0:1", "::1", "fe80:0:0:0:915:a333:7df9:ebd9",
+		"127.0.0.1", "169.254.196.125", "0.0.0.0",
+		"2001:da8:a012:389:0:0:0:829", "2001:da8:a012:389:5ad4:323e:fbc7:ec94",
+		"2001:db8:1:2:3:4:5:6", "fd12:3456:789a::1",
+		"10.11.151.104", "8.8.8.8",
+	])
+	_check(c.pub6.size() == 2, "全球 IPv6 同 /64 去重为 2（实得 %d）" % c.pub6.size())
+	_check(c.lan6.size() == 1, "内网(ULA) IPv6 保留 1")
+	_check(c.lan4 == ["10.11.151.104"], "局域网 IPv4")
+	_check(c.pub4 == ["8.8.8.8"], "公网 IPv4")
+	var all: Array = c.lan4 + c.pub4 + c.lan6 + c.pub6
+	_check(not all.has("0:0:0:0:0:0:0:1") and not all.has("::1"), "回环（展开式 + 压缩式）都被过滤")
 
 func _test_board_shape() -> void:
 	_check(GameData.TILES.size() == 56, "棋盘 56 格（112 的一半）")

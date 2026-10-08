@@ -7,6 +7,7 @@ var _addr_edit: LineEdit
 var _join_port_edit: LineEdit
 var _create_btn: Button
 var _join_btn: Button
+var _cancel_btn: Button
 var _rooms_box: VBoxContainer
 var _status: Label
 var _title: Label
@@ -158,6 +159,11 @@ func _ready() -> void:
 	_join_btn = UIKit.button("加入", 16, "primary")
 	_join_btn.pressed.connect(_on_join)
 	port_row.add_child(_join_btn)
+	# 连接期间显示「取消」：不可达地址不再让玩家干等（fix/0.14.1）
+	_cancel_btn = UIKit.button("取消", 16, "danger")
+	_cancel_btn.visible = false
+	_cancel_btn.pressed.connect(_on_cancel)
+	port_row.add_child(_cancel_btn)
 	var join_hint := UIKit.label("IPv6 直连：让房主在大厅里复制「全球 IPv6 地址」发给你", 13, UIKit.TEXT_DIM)
 	port_row.add_child(join_hint)
 
@@ -326,24 +332,29 @@ func _join_to(ip: String, port: int) -> void:
 	_status.text = "正在连接 %s:%d …" % [ip, port]
 	_join_btn.disabled = true
 	_create_btn.disabled = true
+	_cancel_btn.visible = true
 	var err := Net.join_game(ip, port)
 	if err != OK:
-		_status.text = "连接失败：%s" % error_string(err)
-		_join_btn.disabled = false
-		_create_btn.disabled = false
+		_on_join_failed("连接失败：%s" % error_string(err))
+
+func _on_cancel() -> void:
+	Net.cancel_join()
 
 func _on_lobby_joined() -> void:
 	Fx.go_to("res://scenes/lobby.tscn")
 
-func _on_join_failed(reason: String) -> void:
-	_status.text = reason
+func _reset_join_ui() -> void:
 	_join_btn.disabled = false
 	_create_btn.disabled = false
+	_cancel_btn.visible = false
+
+func _on_join_failed(reason: String) -> void:
+	_status.text = reason
+	_reset_join_ui()
 
 func _on_kicked(reason: String) -> void:
 	_status.text = reason
-	_join_btn.disabled = false
-	_create_btn.disabled = false
+	_reset_join_ui()
 
 func _refresh_rooms() -> void:
 	if _rooms_box == null:
