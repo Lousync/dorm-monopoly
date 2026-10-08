@@ -2046,7 +2046,7 @@ func _resolve_rent(p: Dictionary, idx: int) -> void:
 	if op.is_empty() or not bool(op.alive):
 		return
 	rent = _rent_gain(op, rent)   # 招财猫 +400 / 保安巡逻 ×1.3
-	rent = _rent_pay(p, rent)     # 宿舍威望 ×0.8（黄金科技）
+	rent = _rent_pay(p, rent)     # 宿舍威望 ×0.7（黄金科技，付租 −30%）
 	var ab_mult := _ab_rent_mult()
 	if ab_mult != 1.0:
 		rent = int(rent * ab_mult)   # 畸变：通胀 ×2 / 房价崩盘 ×0.5（中性，香皂无效）
@@ -4627,7 +4627,7 @@ func _salary_amount(p: Dictionary) -> int:
 		return 0   # 预支未来（钻石科技）：开局已立得 ¥30000，本局工资全部抵押
 	return _settings.start_salary \
 		+ (1000 if _has_item(p, "校园卡") else 0) \
-		+ (2000 if _has_tech(p, "工资上调") else 0) \
+		+ (1500 if _has_tech(p, "工资上调") else 0) \
 		+ (4000 if _has_tech(p, "金饭碗") else 0)
 
 ## 踏过 / 停在起点的工资结算（含预支未来抵押提示与小金库检查）
@@ -4667,9 +4667,9 @@ func _rent_gain(op: Dictionary, rent: int) -> int:
 
 func _rent_pay(payer: Dictionary, rent: int) -> int:
 	if _has_tech(payer, "宿舍威望"):
-		rent = int(rent * 0.8)   # 宿舍威望（黄金科技）
+		rent = int(rent * 0.7)   # 宿舍威望（黄金科技）：付租 −30%
 	if _has_tech(payer, "谈判专家"):
-		rent = int(rent * 0.6)   # 谈判专家（钻石科技）：与宿舍威望乘算叠加（0.8×0.6 = 付 48%）
+		rent = int(rent * 0.6)   # 谈判专家（钻石科技）：与宿舍威望乘算叠加（0.7×0.6 = 付 42%）
 	return maxi(0, rent)
 
 ## 应急基金：现金低于 5000 时补足（每局一次，触发即弃）
@@ -6238,6 +6238,8 @@ func _open_player_popup(peer: int) -> void:
 		"alive": bool(p.get("alive", true)),
 		"color_idx": int(p.get("color", 0)), "rank": _rank_of(peer),
 		"items": p.get("items", []),
+		# 已选科技（§六）：名字 + 描述由 player_popup 显示（空串 / 出局则不显）
+		"tech": String(p.get("tech", "")),
 	})
 
 ## 某玩家的名次（`standing` 里的 rank；查不到给 0 = 不画徽章）。

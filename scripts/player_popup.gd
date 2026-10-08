@@ -122,6 +122,17 @@ func _fill(data: Dictionary) -> void:
 	for c in _body.get_children():
 		c.queue_free()
 	var alive := bool(data.get("alive", true))
+	# 背包数据与面板宽度先算出来（§六 科技描述要按同一份可用宽度换行；背包区随后复用这几个量）。
+	var items: Array = data.get("items", [])
+	item_count = items.size()
+	# 槽位数 = **背包上限**（基础 5、带「置物架」7）；数据缺失时退回件数，至少 1 格。
+	# **必须读 `bag_cap`、不是 `cap`**：`cap` 是**体力上限**（5，带「充电宝」6）——
+	# 拿它当槽位数会同时错两头（充电宝多画一格、置物架少画两格），见 `game._open_player_popup` 那段。
+	var slots: int = maxi(int(data.get("bag_cap", 0)), maxi(items.size(), 1))
+	# 面板宽度按**槽位数与窗口宽度**收窄（窄窗口里 5 列放不下就换行），别硬撑出屏。
+	var per_row: int = _slots_per_row(slots)
+	var panel_w := float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * 8.0 + PANEL_PAD * 2.0
+	_panel.custom_minimum_size = Vector2(panel_w, 0)
 	# 标题行：棋子色小片 + 名字 + 名次徽章 + 关闭
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
@@ -180,22 +191,25 @@ func _fill(data: Dictionary) -> void:
 			Color(0.95, 0.78, 0.35) if i < cur else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 		e_row.add_child(pip)
+	# 已选科技（§六）：**仅存活且确实选了科技**时显示 —— 名字一行 + 其下小字描述。
+	# 空串（未开科技 / 未选 / 已出局）则整段不显示。
+	var tech := String(data.get("tech", ""))
+	if alive and tech != "":
+		_body.add_child(UIKit.label("科技：%s" % tech, 15, UIKit.TEXT))
+		var tdesc := String(TechData.def(tech).get("desc", ""))
+		if tdesc != "":
+			var tl := UIKit.label(tdesc, 12, UIKit.TEXT_DIM)
+			tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			tl.custom_minimum_size = Vector2(panel_w - PANEL_PAD * 2.0, 0)
+			tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_body.add_child(tl)
 	# 卡牌列表（批次 12 B2：一行一件的"小图标 + 名字"改成**一整张 `ItemCard`**；
 	# **批次 13 ⑤：按规则上限画固定槽位** —— 已拥有的是整张卡，未拥有的是**细边框占位框**
 	#（**不是虚线**：Compatibility 渲染器没有虚线画笔，见 `_empty_slot`），
 	# 让玩家一眼看出"最多只能同时拥有 5 张"）。
 	# 换行排布（`FlowContainer`）+ 超高滚动（`ScrollContainer`）—— 大背包不会把面板顶出屏幕。
 	# 弹窗本来就是 Control 树 ⇒ 直接挂真节点即可，**与商店货架同一份画法**，没有任何烘焙。
-	var items: Array = data.get("items", [])
-	item_count = items.size()
-	# 槽位数 = **背包上限**（基础 5、带「置物架」7）；数据缺失时退回件数，至少 1 格。
-	# **必须读 `bag_cap`、不是 `cap`**：`cap` 是**体力上限**（5，带「充电宝」6）——
-	# 拿它当槽位数会同时错两头（充电宝多画一格、置物架少画两格），见 `game._open_player_popup` 那段。
-	var slots: int = maxi(int(data.get("bag_cap", 0)), maxi(items.size(), 1))
-	# 面板宽度按**槽位数与窗口宽度**收窄（窄窗口里 5 列放不下就换行），别硬撑出屏。
-	var per_row: int = _slots_per_row(slots)
-	var panel_w := float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * 8.0 + PANEL_PAD * 2.0
-	_panel.custom_minimum_size = Vector2(panel_w, 0)
+	# （`items` / `slots` / `per_row` / `panel_w` 已在 `_fill` 顶部算好。）
 	_body.add_child(UIKit.label("背包 %d / %d 格" % [item_count, slots], 14, UIKit.TEXT_DIM))
 	var sc := ScrollContainer.new()
 	sc.name = "BagScroll"

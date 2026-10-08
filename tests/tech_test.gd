@@ -366,7 +366,7 @@ func _run() -> void:
 	var pw := _mk_player(1, "工资员")
 	_check(g._salary_amount(pw) == 4500, "无科技：工资 4500")
 	pw.tech = "工资上调"
-	_check(g._salary_amount(pw) == 6500, "工资上调：每次经过起点 4500 → 6500")
+	_check(g._salary_amount(pw) == 6000, "工资上调：每次经过起点 4500 → 6000")
 	pw.tech = "金饭碗"
 	_check(g._salary_amount(pw) == 8500, "金饭碗：4500 → 8500")
 	pw.tech = "预支未来"
@@ -520,7 +520,7 @@ func _run() -> void:
 	ptn.tech = "谈判专家"
 	_check(g._rent_pay(ptn, 1000) == 600, "谈判专家：付租 −40%")
 	ptn.tech = "宿舍威望"
-	_check(g._rent_pay(ptn, 1000) == 800, "宿舍威望：付租 −20%（对照）")
+	_check(g._rent_pay(ptn, 1000) == 700, "宿舍威望：付租 −30%（对照）")
 	var pjz := _mk_player(1, "招牌")
 	pjz.money = 10000
 	pjz.tech = "金字招牌"

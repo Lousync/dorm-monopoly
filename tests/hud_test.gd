@@ -1788,6 +1788,44 @@ func _run() -> void:
 	_check(has_passive, "弹窗里那张卡下面含「（被动）」（招财猫是 passive；实得 %s）" % str(row_texts))
 	g.player_popup.close()
 
+	print("== 弹窗：显示「已选科技」（§六）==")
+	# 数据来源已就绪（`st.players[].tech`）：面板在**能量行之后**加一行「科技：<名>」+ 其下小字描述，
+	# 空串（未选 / 未开科技）/ 出局者则整行不显。
+	var s_tech: Dictionary = _state(3, false)
+	for p in s_tech.players:
+		if int(p.peer) == 1:
+			p.tech = "工资上调"
+			p.items = []
+	g.s_state(s_tech)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	var tech_labels: Array = _popup_labels(g.player_popup)
+	_check(tech_labels.has("科技：工资上调"), "弹窗显示科技名（实得 %s）" % str(tech_labels))
+	_check(tech_labels.has(String(TechData.def("工资上调").get("desc", ""))),
+		"弹窗显示科技描述（= TechData.def(tech).desc）")
+	g.player_popup.close()
+	# 出局者：整行不显示
+	var s_out: Dictionary = _state(3, false)
+	for p in s_out.players:
+		if int(p.peer) == 1:
+			p.tech = "工资上调"
+			p.alive = false
+			p.items = []
+	g.s_state(s_out)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	var out_labels: Array = _popup_labels(g.player_popup)
+	var has_tech_row := false
+	for t in out_labels:
+		if String(t).begins_with("科技："):
+			has_tech_row = true
+	_check(not has_tech_row, "出局者不显示科技行（实得 %s）" % str(out_labels))
+	g.player_popup.close()
+
 	print("== 弹窗：道具是**一整张卡**（批次 12 B2）==")
 	# 从"30×30 图标 + 名字"改成**真的 `ItemCard` 节点**（与商店货架同一份画法，弹窗本来就是 Control 树
 	# ⇒ 直接挂，没有烘焙）+ 换行排布（`FlowContainer`）+ 超高滚动（`ScrollContainer`）。
