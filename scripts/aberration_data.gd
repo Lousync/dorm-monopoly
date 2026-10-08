@@ -43,7 +43,14 @@ const ABERRATIONS := {
 		"desc": "有人囤到 5 块地皮：全场租金减半。", "implemented": true},
 	"枪打出头鸟": {"type": "非持续", "trigger": "条件", "tag": "debuff", "dur": 0,
 		"cond": {"cash": 30000},   # 现金门槛占位，待数值专场
+		"min_round": 5,   # 第 5 回合起才可能触发（防「预支未来」开局即成出头鸟；2026-10-07 拍板）
 		"desc": "有人现金超过门槛：被强制捐款！", "implemented": true},
+
+	# ---- 缩差（中期防贫富悬殊；第 30 回合起才可能随机触发，2026-10-07 拍板） ----
+	"斗地主": {"type": "非持续", "trigger": "随机", "tag": "中性", "dur": 0, "min_round": 30,
+		"desc": "房产最多的「地主」把自己一块投入最少的地皮无偿过户给末位（保留等级）。", "implemented": true},
+	"改革开放": {"type": "非持续", "trigger": "随机", "tag": "buff", "dur": 0, "min_round": 30,
+		"desc": "让后富的玩家先富：身家末位随机获得一件紫色道具。", "implemented": true},
 }
 
 static func def(id: String) -> Dictionary:

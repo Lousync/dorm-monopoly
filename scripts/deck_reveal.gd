@@ -280,7 +280,12 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	v.alignment = BoxContainer.ALIGNMENT_CENTER   # 标题 + 分隔线 + 正文**整块纵向居中**（不再标题贴顶、正文撑满下方）
 	m.add_child(v)
 	var title := UIKit.label(deck, 30, style[0])
+	# §十：标题按卡面内宽**锁宽换行 + 居中**。不锁的话 Label 的 min 宽 = 整串文字宽
+	#（畸变标题「🌀 畸变 · xx」较长时会超出牌面内宽）⇒ 文字块被顶得向右偏、看着不在卡牌居中。
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)
+	title.size_flags_horizontal = Control.SIZE_FILL
 	v.add_child(title)
 	var rule := ColorRect.new()
 	rule.color = Color(style[0].r, style[0].g, style[0].b, 0.35)

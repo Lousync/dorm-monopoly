@@ -99,6 +99,7 @@ func _run() -> void:
 	g._ab_active = []
 	g._ab_queue = []
 	g._ab_fired = {}
+	g.round_no = 5   # 枪打出头鸟 min_round=5：第 5 回合起才可能触发
 	g._aberration_window(p1)
 	_check(int(p1.money) == 40000 - 8000, "枪打出头鸟：现金 40000 被强制捐款 20%%（-8000）")
 	_check(bool(g._ab_fired.get("枪打出头鸟", false)), "条件型一次性标记已写")
@@ -251,6 +252,77 @@ func _run() -> void:
 	g._aberration_window(bot)
 	_check(not bool(bot.get("ab_extra_roll", false)),
 		"畸变关闭时 peer=−1 的机器人不白拿双掷（哨兵撞车回归）")
+
+	print("== 枪打出头鸟 轮次门槛（min_round=5） ==")
+	g.round_no = 4
+	var rich := _mk_player(1, "甲")
+	rich.money = 40000
+	g.hp = [rich]
+	g.htiles = _fresh_tiles()
+	_check(not g._ab_cond_met("枪打出头鸟"), "第 4 回合：现金超门槛也不触发")
+	g.round_no = 5
+	_check(g._ab_cond_met("枪打出头鸟"), "第 5 回合：现金超门槛达成（可触发）")
+
+	print("== 缩差畸变：轮次门槛（min_round=30） ==")
+	g.round_no = 29
+	var pool29: Array = g._ab_random_pool()
+	_check(not pool29.has("斗地主") and not pool29.has("改革开放"), "第 29 回合：缩差畸变不进随机池")
+	g.round_no = 30
+	var pool30: Array = g._ab_random_pool()
+	_check(pool30.has("斗地主") and pool30.has("改革开放"), "第 30 回合：缩差畸变进随机池")
+	_check(bool(AberrationData.def("斗地主").get("implemented", false))
+		and String(AberrationData.def("斗地主").get("tag", "")) == "中性",
+		"斗地主已实装且标中性（不吃香皂）")
+
+	print("== 斗地主 ==")
+	g.round_no = 30
+	var dl := _mk_player(1, "地主")
+	var mid := _mk_player(3, "中游")
+	var poor := _mk_player(2, "末位")
+	g.hp = [dl, mid, poor]
+	g.htiles = _fresh_tiles()
+	var props: Array = []
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "property":
+			props.append(i)
+	var pa: int = props[0]
+	var pb: int = props[1]
+	var pc: int = props[2]
+	g.htiles[pa] = {"owner": 1, "level": 3}
+	g.htiles[pb] = {"owner": 1, "level": 1}
+	g.htiles[pc] = {"owner": 3, "level": 1}
+	dl.money = 10000
+	mid.money = 5000
+	poor.money = 1000
+	var lv_pa := int(g.htiles[pa].level)
+	var lv_pb := int(g.htiles[pb].level)
+	var inv_a: int = int(GameData.TILES[pa].price) + lv_pa * GameData.upgrade_cost(pa)
+	var inv_b: int = int(GameData.TILES[pb].price) + lv_pb * GameData.upgrade_cost(pb)
+	var expect: int = pb if inv_b <= inv_a else pa
+	g._ab_apply_instant(dl, "斗地主")
+	_check(int(g.htiles[expect].owner) == 2, "地主投入最少的地皮过户给末位（%s）" % String(GameData.TILES[expect].name))
+	_check(int(g.htiles[expect].level) == (lv_pa if expect == pa else lv_pb), "过户保留等级")
+	_check(int(g.htiles[pa if expect == pb else pb].owner) == 1, "地主其余地皮不动")
+	# 全场无地 ⇒ 空过（不崩）
+	g.htiles = _fresh_tiles()
+	g._ab_apply_instant(dl, "斗地主")
+	_check(true, "斗地主：全场无地时空过（不崩）")
+
+	print("== 改革开放 ==")
+	g.round_no = 30
+	var r1 := _mk_player(1, "富")
+	var r2 := _mk_player(2, "穷")
+	r1.money = 20000
+	r2.money = 100
+	r2.items = []
+	g.hp = [r1, r2]
+	g.htiles = _fresh_tiles()
+	g.items_consumed = {}
+	g.shops = {}
+	g._ab_apply_instant(r1, "改革开放")
+	_check(r2.items.size() == 1, "改革开放：末位获得一件道具（实得 %d）" % r2.items.size())
+	var q := String(ItemData.def(String(r2.items[0].id)).quality) if r2.items.size() > 0 else ""
+	_check(q == "紫", "改革开放：授予紫档（实得 %s）" % q)
 
 	print("== 快照字段 ==")
 	_ab(g, "通胀", 2)

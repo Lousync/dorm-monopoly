@@ -1655,17 +1655,28 @@ func _ab_candidates(p: Dictionary) -> Array:
 		return out
 	if randf() >= float(AberrationData.FREQ_P.get(_settings.ab_freq, 0.06)):
 		return out
-	var pool: Array = []
-	for id in AberrationData.ABERRATIONS:
-		var d: Dictionary = AberrationData.def(id)
-		if String(d.get("trigger", "")) == "随机" and bool(d.get("implemented", false)):
-			pool.append(id)
+	var pool: Array = _ab_random_pool()
 	if not pool.is_empty():
 		out.append({"id": pool[randi_range(0, pool.size() - 1)], "prio": 1})
 	return out
 
+## 本回合可随机触发的畸变池：已实装 + 随机型 + 已过轮次门槛（`min_round`）。
+## 抽成独立函数便于测试「缩差畸变第 30 回合才进池」这条闸。
+func _ab_random_pool() -> Array:
+	var pool: Array = []
+	for id in AberrationData.ABERRATIONS:
+		var d: Dictionary = AberrationData.def(id)
+		if String(d.get("trigger", "")) != "随机" or not bool(d.get("implemented", false)):
+			continue
+		if round_no < int(d.get("min_round", 0)):
+			continue   # 轮次门槛：如「斗地主 / 改革开放」第 30 回合起才可能随机触发
+		pool.append(id)
+	return pool
+
 ## 条件型是否在本回合窗口达成（一次性标记由候选收集方写）
 func _ab_cond_met(id: String) -> bool:
+	if round_no < int(AberrationData.def(id).get("min_round", 0)):
+		return false   # 轮次门槛：如「枪打出头鸟」第 5 回合起才可能触发
 	var cond: Dictionary = AberrationData.def(id).get("cond", {})
 	if id == "房价崩盘":
 		for o in hp:
@@ -1814,6 +1825,55 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 				htiles[si].owner = GameData.NO_OWNER
 				htiles[si].level = 0
 				_log("【拆迁】%s 被拆平了，归为无主" % String(GameData.TILES[si].name), "#c9a6ff")
+		"斗地主":
+			# 缩差：房产最多的「地主」把一块投入最少的地皮无偿过户给身家末位（保留等级）。
+			# tag=中性：双方一 debuff 一 buff 相抵，不吃香皂。地主无地 / 本身即末位 ⇒ 空过。
+			var alive: Array = hp.filter(func(o: Dictionary) -> bool: return bool(o.alive))
+			var landlord: Dictionary = {}
+			var best_lv := -1
+			for o in alive:
+				var props: Array = _own_props(int(o.peer))
+				if props.is_empty():
+					continue
+				var lv := 0
+				for pi in props:
+					lv += int(htiles[pi].get("level", 0))
+				if lv > best_lv:   # 并列按行动序（hp 顺序）：> 保证先到者胜
+					best_lv = lv
+					landlord = o
+			if landlord.is_empty():
+				_log("【斗地主】全场无人持有地皮，无事发生", "#8a90a5")
+			else:
+				var target: Dictionary = alive[0]
+				for o in alive:
+					if _net_worth(o) < _net_worth(target):
+						target = o
+				if int(target.peer) == int(landlord.peer):
+					_log("【斗地主】地主 %s 本身就是末位，无事发生" % landlord.name, "#8a90a5")
+				else:
+					var props2: Array = _own_props(int(landlord.peer))
+					var pick_i := -1
+					var min_inv := 1 << 30
+					for pi in props2:
+						var inv := int(GameData.TILES[pi].price) \
+							+ int(htiles[pi].get("level", 0)) * GameData.upgrade_cost(pi)
+						if inv < min_inv:
+							min_inv = inv
+							pick_i = pi
+					if pick_i >= 0:
+						var lvl := int(htiles[pick_i].get("level", 0))
+						htiles[pick_i].owner = int(target.peer)   # 保留等级：level 不动
+						_log("【斗地主】地主 %s 把【%s】（保留 Lv%d）无偿过户给末位 %s" % [
+							landlord.name, String(GameData.TILES[pick_i].name), lvl, target.name], "#c9a6ff")
+		"改革开放":
+			var alive2: Array = hp.filter(func(o: Dictionary) -> bool: return bool(o.alive))
+			if not alive2.is_empty():
+				var poor: Dictionary = alive2[0]
+				for o in alive2:
+					if _net_worth(o) < _net_worth(poor):
+						poor = o
+				# 背包满 / 紫池空 ⇒ 落空（_grant_item_of_quality 内部记日志）
+				_grant_item_of_quality(poor, "紫", "改革开放")
 		"调休":
 			_ab_no_roll = true
 			_ab_extra_peer = int(p.peer)
