@@ -77,6 +77,13 @@ func _test_endpoint() -> void:
 	_check(NetAddrScript.parse_endpoint("2001:db8::1", 7777) == ["2001:db8::1", 7777], "全球 IPv6")
 	_check(NetAddrScript.parse_endpoint("", 7777) == [], "空输入")
 	_check(NetAddrScript.parse_endpoint("[::1", 7777) == [], "坏括号")
+	# fix/0.14.1：大厅「复制地址」给的是带中文标签的文本，粘进来也要能切出地址
+	_check(NetAddrScript.parse_endpoint("局域网 IPv4：10.11.151.104:7791", 7777) == ["10.11.151.104", 7791],
+		"带标签的一行切出 IPv4")
+	_check(NetAddrScript.parse_endpoint("全球 IPv6（跨网直连）：[2001:da8::1]:7791", 7777) == ["2001:da8::1", 7791],
+		"带标签的一行切出 IPv6")
+	var blob := "局域网 IPv4：10.11.151.104:7791\n全球 IPv6（跨网直连）：[2001:da8::1]:7791"
+	_check(NetAddrScript.parse_endpoint(blob, 7777) == ["2001:da8::1", 7791], "整块多行优先切出 IPv6（跨网）")
 
 func _test_classify() -> void:
 	# 回环（展开式 `0:0:0:0:0:0:0:1`，Godot/Windows 实测就是这个）不该出现在任何一类

@@ -7,7 +7,7 @@ var _add_bot_btn: Button
 var _remove_bot_btn: Button
 var _start_btn: Button
 var _settings_btn: Button
-var _addr_label: Label
+var _addr_box: VBoxContainer
 var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
 var _room_label: Label
@@ -129,24 +129,12 @@ func _ready() -> void:
 	var av := VBoxContainer.new()
 	av.add_theme_constant_override("separation", 4)
 	am.add_child(av)
-	av.add_child(UIKit.label("把下面的地址发给室友（加入时填入「地址」框）", 14, UIKit.TEXT_DIM))
-	_addr_label = UIKit.label("", 14, UIKit.TEXT)
-	_addr_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	av.add_child(_addr_label)
-	var copy_row := HBoxContainer.new()
-	copy_row.add_theme_constant_override("separation", 6)
-	av.add_child(copy_row)
-	var copy_btn := UIKit.button("复制地址", 13)
-	copy_btn.pressed.connect(func() -> void:
-		DisplayServer.clipboard_set(_addr_label.text)
-		copy_btn.text = "已复制 ✓"
-		Fx.play("pop", -6.0)
-		await get_tree().create_timer(1.2).timeout
-		if is_instance_valid(copy_btn):
-			copy_btn.text = "复制地址"
-	)
-	copy_row.add_child(copy_btn)
-	copy_row.add_child(UIKit.label("点击复制全部地址", 12, UIKit.TEXT_DIM))
+	av.add_child(UIKit.label("点「复制」把地址发给室友（加入时粘进「地址」框）", 14, UIKit.TEXT_DIM))
+	# 逐条地址 + 各自的「复制」（fix/0.14.1）：以前是一个按钮复制**整块带标签的多行文本**，
+	# 室友粘进地址框根本解析不出 host —— 现在每条复制的是**裸地址**（可直接粘）。
+	_addr_box = VBoxContainer.new()
+	_addr_box.add_theme_constant_override("separation", 4)
+	av.add_child(_addr_box)
 
 	var chat_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 8)
 	chat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -244,22 +232,47 @@ func _refresh() -> void:
 	_start_btn.disabled = not (Net.players.size() >= 2 and human_ready)
 	_start_btn.tooltip_text = "" if not _start_btn.disabled else "需要所有真人都点「准备」"
 
+	for c in _addr_box.get_children():
+		c.queue_free()
 	if Net.is_host:
 		var a := Net.split_addresses()
 		var port := Net.host_port if Net.host_port > 0 else Net.PORT
-		var lines: Array[String] = []
 		# IPv6 必须带方括号，否则朋友粘贴后解析不出端口（见 fix/v0.0.2）
+		var entries: Array = []
 		for ip in a.lan4:
-			lines.append("局域网 IPv4：%s" % NetAddr.format_endpoint(ip, port))
+			entries.append(["局域网 IPv4", ip])
 		for ip in a.lan6:
-			lines.append("内网 IPv6：%s" % NetAddr.format_endpoint(ip, port))
+			entries.append(["内网 IPv6", ip])
 		for ip in a.pub6:
-			lines.append("全球 IPv6（跨网直连）：%s" % NetAddr.format_endpoint(ip, port))
+			entries.append(["全球 IPv6（跨网直连）", ip])
 		for ip in a.pub4:
-			lines.append("公网 IPv4：%s" % NetAddr.format_endpoint(ip, port))
-		if lines.is_empty():
-			lines.append("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）")
-		_addr_label.text = "\n".join(lines)
+			entries.append(["公网 IPv4", ip])
+		if entries.is_empty():
+			_addr_box.add_child(UIKit.label("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）", 13, UIKit.TEXT_DIM))
+		for e in entries:
+			_addr_box.add_child(_make_addr_row(String(e[0]), String(e[1]), port))
+
+## 一条直连地址行：标签 + 裸地址 + 复制按钮（复制的是**裸** `[v6]:port`，可直接粘进地址框）。
+func _make_addr_row(tag: String, ip: String, port: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var ep := NetAddr.format_endpoint(ip, port)
+	var lab := UIKit.label("%s　%s" % [tag, ep], 14, UIKit.TEXT)
+	lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lab.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(lab)
+	var cb := UIKit.button("复制", 12)
+	cb.tooltip_text = "复制 %s（直接粘进「地址」框）" % ep
+	cb.pressed.connect(func() -> void:
+		DisplayServer.clipboard_set(ep)
+		cb.text = "已复制 ✓"
+		Fx.play("pop", -6.0)
+		await get_tree().create_timer(1.2).timeout
+		if is_instance_valid(cb):
+			cb.text = "复制"
+	)
+	row.add_child(cb)
+	return row
 
 func _card_border() -> Color:
 	return Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85)

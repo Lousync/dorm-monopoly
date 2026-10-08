@@ -3,10 +3,21 @@ class_name NetAddr
 
 ## 把输入解析为 [地址, 端口]。
 ## 支持：10.11.28.88 / 10.11.28.88:7800 / ::1 / 2001:db8::1 / [2001:db8::1]:7800 / hostname
+##
+## fix/0.14.1：**容错整块粘贴**。房主大厅「复制地址」给的是带中文标签的多行文本
+##（如 `全球 IPv6（跨网直连）：[2001:…]:7777`），直接喂进来会被整行当成 host。
+## 现在先按单地址解析；失败就切出文本里**第一段能用的地址**（优先方括号 IPv6 → IPv4）。
 static func parse_endpoint(text: String, default_port: int) -> Array:
 	var s := text.strip_edges()
 	if s.is_empty():
 		return []
+	var direct := _parse_single(s, default_port)
+	if not direct.is_empty():
+		return direct
+	return _scan_endpoint(s, default_port)
+
+## 单段文本 → [host, port]（不做跨段扫描）；host 必须是「像地址的东西」。
+static func _parse_single(s: String, default_port: int) -> Array:
 	var host := s
 	var port := default_port
 	if s.begins_with("["):
@@ -21,9 +32,42 @@ static func parse_endpoint(text: String, default_port: int) -> Array:
 		var parts := s.split(":")
 		host = parts[0]
 		port = int(parts[1])
-	if host.is_empty() or port <= 0:
+	if not _valid_host(host) or port <= 0 or port > 65535:
 		return []
 	return [host, port]
+
+## host 合法性：ASCII 的字母 / 数字 / `.` `-` `_` `:` `%`；挡掉带空格、中文标签、
+## 括号的整行文本（否则 `"局域网 IPv4：10.11.151.104"` 会被当成 hostname 拨出去）。
+static func _valid_host(host: String) -> bool:
+	if host.is_empty():
+		return false
+	for i in host.length():
+		var c := host.unicode_at(i)
+		var ok := (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) \
+			or c == 46 or c == 45 or c == 95 or c == 58 or c == 37
+		if not ok:
+			return false
+	return true
+
+## 从任意文本里切出第一段可用地址：方括号 IPv6 → IPv4 → 裸 IPv6。
+static func _scan_endpoint(s: String, default_port: int) -> Array:
+	var pats := [
+		"\\[([0-9A-Fa-f:.]+)\\](?::(\\d{1,5}))?",                       # [IPv6]:port
+		"((?:\\d{1,3}\\.){3}\\d{1,3})(?::(\\d{1,5}))?",                 # IPv4:port
+		"([0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,})(?::(\\d{1,5}))?",  # 裸 IPv6
+	]
+	for p in pats:
+		var re := RegEx.new()
+		if re.compile(String(p)) != OK:
+			continue
+		var m := re.search(s)
+		if m == null:
+			continue
+		var host := m.get_string(1)
+		var port := int(m.get_string(2)) if m.get_string(2) != "" else default_port
+		if _valid_host(host) and port > 0 and port <= 65535:
+			return [host, port]
+	return []
 
 ## 拼「主机:端口」展示串。IPv6 必须带方括号，否则 parse_endpoint 无法把端口
 ## 与地址本身区分开（`2001:db8::1:8000` 整体会被当成主机名）——见 fix/v0.0.2。
