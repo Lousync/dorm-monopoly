@@ -120,15 +120,22 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	ql.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	qbar.add_child(ql)
 
-	# 左上徽章：⚡消耗 / 被动标
+	# 左上徽章：⚡消耗（§十六：显示**生效值**，> 基础红、< 基础绿）/ 被动标
 	var bs := maxf(size.y * 0.15, 20.0)
-	var lb := _badge(bs, Color(0.15, 0.17, 0.26), Color(1.0, 0.85, 0.3))
+	var cost_eff := int(state.get("cost_eff", cost))
+	var cost_dir := 0
+	if cost_eff > cost:
+		cost_dir = 1
+	elif cost_eff < cost:
+		cost_dir = -1
+	var lc := _delta_color(cost_dir, Color(1.0, 0.85, 0.3))
+	var lb := _badge(bs, Color(0.15, 0.17, 0.26), lc)
 	lb.position = Vector2(-bs * 0.42, -bs * 0.42)
 	card.add_child(lb)
 	var lb_text := "被动"
 	if not passive:
-		lb_text = "⚡%d" % maxi(cost, 0)
-	var lb_l := UIKit.label(lb_text, int(bs * 0.38), Color(1.0, 0.85, 0.3))
+		lb_text = "⚡%d" % maxi(cost_eff, 0)
+	var lb_l := UIKit.label(lb_text, int(bs * 0.38), lc)
 	lb_l.set_anchors_preset(Control.PRESET_FULL_RECT)
 	lb_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lb_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -139,6 +146,15 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	# 其余计数位（黑卡剩余次数 / 香皂融化回合）→ 数字。
 	var count := int(state.get("count", -1))
 	var cooling: bool = bool(state.get("cooling", false))
+	# §十六：未使用时显示**生效冷却预览**（红升绿降）；冷却中（count>=0）显示剩余、照旧压暗。
+	var cd_preview := int(state.get("cd_preview", -1))
+	var cd_dir := 0
+	if state.has("cd_base"):
+		var cb := int(state.get("cd_base", cd_preview))
+		if cd_preview > cb:
+			cd_dir = 1
+		elif cd_preview < cb:
+			cd_dir = -1
 	var is_once: bool = String(d.get("type", "")) == "consumable"
 	if is_once:
 		var pw := bs * 2.1
@@ -163,6 +179,18 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 		rb_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		rb_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		rb.add_child(rb_l)
+	elif cd_preview >= 0:
+		# 未使用的主动件：显示生效冷却预览（不压暗，区别于「冷却中」）
+		var cdc := _delta_color(cd_dir, Color(0.7, 0.9, 1.0))
+		var pb := _badge(bs, Color(0.15, 0.17, 0.26), cdc)
+		pb.position = Vector2(size.x - bs * 0.58, -bs * 0.42)
+		card.add_child(pb)
+		var pb_l := UIKit.label("⏳%d" % cd_preview, int(bs * 0.42), cdc)
+		pb_l.set_anchors_preset(Control.PRESET_FULL_RECT)
+		pb_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		pb_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		pb_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pb.add_child(pb_l)
 
 	# 状态表现：是否冷却必须显式给出。count 同时承载「剩余次数(黑卡)/融化回合(香皂)/
 	# 冷却回合」，单看 count > 0 会把还有次数的黑卡也画成冷却中（见 fix/v0.0.2）。
@@ -174,6 +202,14 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 		card.add_theme_stylebox_override("panel", UIKit.card_stylebox(bg, int(size.y * 0.05),
 			Color(1.0, 0.86, 0.4), 3, 10, Color(1.0, 0.86, 0.4, 0.35)))
 	return card
+
+## §十六 红绿：变高红、变低绿、不变用默认色。
+static func _delta_color(dir: int, base: Color) -> Color:
+	if dir > 0:
+		return Color(1.0, 0.45, 0.42)
+	if dir < 0:
+		return Color(0.5, 0.92, 0.55)
+	return base
 
 static func _badge(side: float, bg: Color, border: Color) -> Panel:
 	var b := Panel.new()

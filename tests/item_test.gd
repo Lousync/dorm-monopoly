@@ -56,6 +56,9 @@ func _run() -> void:
 	_test_egg(g)
 	_test_coco(g)
 	_test_use_guard(g)
+	await _test_erging(g)
+	_test_card_state(g)
+	_test_price_state(g)
 	await _test_soil(g)
 	await _test_discover(g)
 	if fails == 0:
@@ -113,6 +116,87 @@ func _test_use_guard(g) -> void:
 	_check(p0.money == 1000, "效果未生效（招财猫 +400 没发）")
 	_check(not bool(p0.item_used), "未占本回合使用额度")
 	_check(g._item_action.is_empty(), "未写道具动作（回合流程不被推进）")
+
+## 二青会酒寒暑（橙·一次性·焚毁）+ 强化版「组队学习·寒暑」（1⚡ / 无冷却 / 独立次数）
+func _test_erging(g) -> void:
+	print("== 二青会酒寒暑 ==")
+	var p0 := _mk_player(1, "甲")
+	var p1 := _mk_player(2, "乙")
+	g.hp = [p0, p1]
+	var dest := _prop_idx(2)           # 找一块真地产当落点（焦土只长在地产上，board_view 要读 price）
+	var t := _fresh_tiles()
+	t[dest].soil = true                # 落点设焦土，不弹买地询问
+	t[dest].soil_prog = 0
+	g.htiles = t
+	g.shops = {}
+	g.items_consumed = {}
+	g._awaiting_item = 1
+	g._item_epoch = 0
+	p0.items = [{"id": "二青会酒寒暑", "cd": 0}]
+	p0.stamina = 3
+	p0.item_used_n = 0
+	p0.item_used = false
+	p0.bonus_used = 0
+	g._use_item(1, 0, -1)
+	_check(p0.stamina == 2, "二青会消耗 1⚡")
+	_check(g.items_consumed.has("二青会酒寒暑"), "二青会用后焚毁不回池")
+	_check(p0.items.size() == 1 and String(p0.items[0].id) == "组队学习·寒暑", "授予强化版组队学习")
+	_check(int(p0.item_used_n) == 1 and bool(p0.item_used), "二青会占用普通使用额度")
+	_check(g._item_pool("绿").find("组队学习·寒暑") == -1, "授予件不进随机池（hidden）")
+	var grade := ItemData.def("组队学习·寒暑")
+	_check(int(grade.get("cost", 0)) == 1, "授予件能量 = 1")
+	_check(int(grade.get("cooldown", 0)) == 0, "授予件无冷却")
+	_check(bool(grade.get("bonus", false)), "授予件带 bonus 标记")
+	# 本回合普通额度已用满（item_used_n=1 / item_used=true），授予件仍可用 → 独立次数
+	p0.pos = dest - 2                  # 走 2 步正好落在焦土上
+	p0.money = 5000
+	_check(g._item_usable_now(p0, p0.items[0]), "普通额度用满后授予件仍可用")
+	await g._use_item(1, 0, int(p0.peer))     # 目标给自己：running=false 故只动 p0
+	_check(int(p0.bonus_used) == 1, "授予件用后计入独立次数")
+	_check(int(p0.item_used_n) == 1, "授予件不写 item_used_n（普通额度不变）")
+	_check(int(p0.stamina) == 1, "授予件消耗 1⚡（基础 2 → 1）")
+	_check(not g._item_usable_now(p0, p0.items[0]), "独立次数每回合 1 次：再用被挡")
+	var stamina2 := int(p0.stamina)
+	g._use_item(1, 0, int(p0.peer))
+	_check(int(p0.bonus_used) == 1 and int(p0.stamina) == stamina2, "第二次使用不生效")
+
+## §十六 卡面红绿：能量 / 冷却的生效值 vs 基础值
+func _test_card_state(g) -> void:
+	print("== 卡面红绿（§十六）==")
+	var p := _mk_player(1, "甲")
+	p.items = [{"id": "交换生", "cd": 0}]
+	p.first_used = false
+	var s: Dictionary = g._card_state(p, p.items[0])
+	_check(int(s.get("cost_eff", -1)) == 3 and int(s.get("cost_base", -1)) == 3, "无修正：能量生效=基础=3")
+	_check(int(s.get("cd_preview", -1)) == 3 and int(s.get("cd_base", -1)) == 3, "无修正：冷却预览=基础=3")
+	# 错峰用电：本回合首件 -1（绿）
+	p.items = [{"id": "交换生", "cd": 0}, {"id": "错峰用电", "cd": 0}]
+	s = g._card_state(p, p.items[0])
+	_check(int(s.get("cost_eff", -1)) == 2 and int(s.get("cost_base", -1)) == 3, "错峰用电：首件能量 -1（3→2）")
+	# 手速惊人：冷却 -1（绿）
+	p.items = [{"id": "交换生", "cd": 0}]
+	p.tech = "手速惊人"
+	s = g._card_state(p, p.items[0])
+	_check(int(s.get("cd_preview", -1)) == 2 and int(s.get("cd_base", -1)) == 3, "手速惊人：冷却预览 -1（3→2）")
+	# 熟能生巧：冷却 →0（绿）
+	p.tech = "熟能生巧"
+	s = g._card_state(p, p.items[0])
+	_check(int(s.get("cd_preview", -1)) == 0 and int(s.get("cd_base", -1)) == 3, "熟能生巧：冷却预览 →0")
+	# 冷却中：不给预览（由 badge_state 给剩余）
+	p.tech = ""
+	p.items = [{"id": "交换生", "cd": 2}]
+	s = g._card_state(p, p.items[0])
+	_check(not s.has("cd_preview"), "冷却中不给冷却预览（改显剩余）")
+
+## 单件售价覆盖（二青会 ¥8000）+ 货架冷却预览状态
+func _test_price_state(g) -> void:
+	print("== 售价覆盖 / 货架冷却预览 ==")
+	_check(ItemData.item_price("二青会酒寒暑") == 8000, "二青会单件售价 = ¥8000")
+	_check(ItemData.item_price("招财猫") == ItemData.QUALITY_PRICES["白"], "普通件仍按品质定价")
+	var ss: Dictionary = ItemData.shop_state("拼车")
+	_check(int(ss.get("cd_preview", -1)) == 5, "货架：拼车显示冷却预览 5")
+	_check(ItemData.shop_state("刮刮乐").is_empty(), "货架：一次性件无冷却预览")
+	_check(ItemData.shop_state("招财猫").is_empty(), "货架：被动件无冷却预览")
 
 func _test_coco(g) -> void:
 	print("== 亡牌飞行员coco ==")

@@ -101,6 +101,11 @@ const ITEMS := {
 		"desc": "指定一名玩家下个道具消耗能量 +1。", "implemented": true, "target": "player", "icon": "item_horn"},
 	"组队学习": {"quality": "绿", "cost": 2, "type": "active", "unique": false, "cooldown": 4,
 		"desc": "你和一名玩家各前进 2 格。", "implemented": true, "target": "player", "icon": "item_team"},
+	# 「二青会酒寒暑」授予的强化版：1⚡ / 无冷却 / 独立次数（不占普通道具上限、每回合独立 1 次）。
+	# `hidden` = 不进任何随机池（小卖部 / 发现 / 失物招领）；只能由二青会酒寒暑授予。
+	"组队学习·寒暑": {"quality": "绿", "cost": 1, "type": "active", "unique": false, "cooldown": 0,
+		"desc": "你和一名玩家各前进 2 格。（独立次数：不占本回合道具上限）", "implemented": true,
+		"target": "player", "hidden": true, "bonus": true, "icon": "item_team"},
 	"二手群接龙": {"quality": "绿", "cost": 2, "type": "consumable", "unique": false, "cooldown": 3,
 		"desc": "随机获得一件稀有道具，其消耗 -1，用后丢弃。", "implemented": true, "icon": "item_groupchat"},
 	"校园卡充值": {"quality": "绿", "cost": 1, "type": "active", "unique": false, "cooldown": 1,
@@ -153,6 +158,11 @@ const ITEMS := {
 	# ---- 橙·传说 ----
 	"二两寒暑": {"quality": "橙", "cost": 3, "type": "active", "unique": true, "cooldown": 3,
 		"desc": "指定一名玩家接下来两个道具的消耗各 +2。", "implemented": true, "target": "player", "icon": "item_thermo"},
+	# 「二青会酒寒暑」：橙·一次性·用后焚毁（不回池）；效果 = 获得一个强化版「组队学习」。
+	# `price` 单件覆盖 ¥8000（不随橙档整体定价）。
+	"二青会酒寒暑": {"quality": "橙", "cost": 1, "type": "consumable", "unique": false, "cooldown": 0,
+		"price": 8000, "desc": "销毁本道具，获得一个强化版组队学习（1⚡、无冷却、不占次数）。",
+		"implemented": true, "icon": "item_erging"},
 
 	# ---- 紫·新批次（2026-10-04 定稿；2026-10-05 全部实装） ----
 	"老虎机": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
@@ -171,7 +181,7 @@ const ITEMS := {
 		"desc": "学校八折收购他的一块地皮，补偿归他。", "implemented": true, "target": "player", "icon": "item_redevelop"},
 	"打印店": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "复印他的随机一件道具（橙货拒印）。", "implemented": true, "target": "player", "icon": "item_copy"},
-	"刮刮乐": {"quality": "紫", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
+	"刮刮乐": {"quality": "绿", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "刮开涂层，随机 ¥100~¥1000。", "implemented": true, "icon": "item_scratch"},
 }
 
@@ -180,6 +190,20 @@ static func def(id: String) -> Dictionary:
 
 static func price(quality: String) -> int:
 	return int(QUALITY_PRICES.get(quality, 999999))
+
+## 单件售价：道具自带 `price` 覆盖（如二青会酒寒暑 ¥8000），否则按品质定价。
+static func item_price(id: String) -> int:
+	var d := def(id)
+	if d.has("price"):
+		return int(d.price)
+	return price(String(d.get("quality", "")))
+
+## 小卖部 / 黑市货架卡面状态（§八）：主动件且基础冷却 > 0 → 右上角显示 ⏳预览（不压暗）。
+static func shop_state(id: String) -> Dictionary:
+	var d := def(id)
+	if String(d.get("type", "")) == "active" and int(d.get("cooldown", 0)) > 0:
+		return {"cd_preview": int(d.cooldown), "cd_base": int(d.cooldown)}
+	return {}
 
 ## 一件道具实例 → 卡面**右上角标**所需状态（§六 #22）：
 ## 黑卡剩余次数 / 香皂融化回合 / 冷却剩余。`cooling` 单独给出（count 也承载次数与融化回合，

@@ -542,6 +542,8 @@ func _build_hp() -> Array:
 			"hot_chain": 0,
 			# 补全道具新增字段（缺失时一律用 .get 默认，兼容测试构造的玩家字典）
 			"item_used_n": 0, "cost_pen": [], "first_used": false,
+			# 奖励件（如「组队学习·寒暑」）的独立次数：每回合 1 次，不占普通道具上限
+			"bonus_used": 0,
 			"roll_bonus": 0, "reroll_next": false, "silence": 0, "silence2": 0, "shield": 0,
 			"charm_used": false, "emg_used": false, "loan_left": 0, "rework": 3,
 			# 开局科技新增字段（tech = 所选科技名；wuyun/yanguang/kingtu = 对应科技的计数）
@@ -2621,19 +2623,40 @@ func _hand_unusable_slots() -> Array:
 	var p := _state_player(my_peer)
 	var items: Array = p.get("items", [])
 	var using: bool = String(st.get("await", "")) == "item" and int(st.get("await_peer", -1)) == my_peer
-	var limit := _item_limit(p)
-	var used_up: bool = int(p.get("item_used_n", 0)) >= limit or bool(p.get("item_used", false))
-	var silenced: bool = int(p.get("silence", 0)) > 0
 	for i in items.size():
 		var it: Dictionary = items[i]
-		var d := ItemData.def(String(it.id))
-		if String(d.get("type", "")) == "passive":
-			continue
-		if (not using) or int(it.get("cd", 0)) > 0 \
-				or int(p.get("stamina", 0)) < _item_cost(p, it) \
-				or used_up or silenced or not bool(d.get("implemented", false)):
+		if String(ItemData.def(String(it.id)).get("type", "")) == "passive":
+			continue   # 被动件不参与置灰（仍可选中丢弃）
+		if (not using) or not _item_usable_now(p, it):
 			out.append(i)
 	return out
+
+## 手牌逐槽的卡面状态（§十六）：能量 / 冷却的「生效值 vs 基础值」。
+## 冷却：未用 → 预览生效冷却；冷却中 → 由 badge_state 给剩余回合（压暗）。
+func _hand_card_states() -> Array:
+	var out: Array = []
+	var p := _state_player(my_peer)
+	for it in p.get("items", []):
+		out.append(_card_state(p, it))
+	return out
+
+## 单件卡面状态：在 `ItemData.badge_state` 基础上补能量 / 冷却的生效值与基础值。
+func _card_state(p: Dictionary, it: Dictionary) -> Dictionary:
+	var d := ItemData.def(String(it.id))
+	var s := ItemData.badge_state(it)
+	if String(d.get("type", "")) != "passive":
+		s["cost_base"] = int(d.get("cost", 0))
+		s["cost_eff"] = _item_cost(p, it)
+	var dbase := int(d.get("cooldown", 0))
+	if String(d.get("type", "")) == "active" and dbase > 0 and int(it.get("cd", 0)) <= 0:
+		var deff := dbase
+		if _has_tech(p, "熟能生巧"):
+			deff = 0
+		elif dbase >= 1 and _has_tech(p, "手速惊人"):
+			deff = maxi(1, dbase - 1)
+		s["cd_preview"] = deff
+		s["cd_base"] = dbase
+	return s
 
 ## 点手中的牌 = **直接使用**（杀戮尖塔式，批次 7）：点一张牌就出它，不再有"选中 → 再点确认"。
 ## 需要选目标的进选目标态，作弊器弹点数框，其余直接发 —— 分派逻辑复用既有的 `_on_use_pressed`，
@@ -3036,6 +3059,10 @@ func _broadcast_state() -> void:
 			"stamina": int(p.get("stamina", 3)), "items": p.get("items", []),
 			"item_used": bool(p.get("item_used", false)), "silence": int(p.get("silence", 0)),
 			"shield": int(p.get("shield", 0)), "tech": String(p.get("tech", "")),
+			# 客户端手牌置灰 / 卡面红绿要算「已用几件 / 是否首件 / 消耗修正 / 独立次数」，
+			# 这几项必须随快照下发（原先缺 item_used_n，双开档客户端会误判还能用）。
+			"item_used_n": int(p.get("item_used_n", 0)), "first_used": bool(p.get("first_used", false)),
+			"cost_pen": p.get("cost_pen", []), "bonus_used": int(p.get("bonus_used", 0)),
 		})
 	var await_state := ""
 	var await_peer := -1
@@ -3508,6 +3535,8 @@ func _refresh_table_props() -> void:
 		return                      # 还没轮到自己进状态（理论上不会）：宁可什么都不摆
 	# 自己的道具 = 桌上一排「手中牌」（Task 4 显示 / Task 5 点选）
 	table3d.table_props.set_hand(mine.get("items", []))
+	# §十六：逐槽下发卡面状态（能量 / 冷却的生效值 vs 基础值），供卡面画红绿
+	table3d.table_props.set_hand_states(_hand_card_states())
 	# 此刻用不出的牌压暗（§六 手牌置灰：非道具阶段 / 冷却中 / 体力不足 / 本回合已用 / 被禁）
 	table3d.table_props.set_hand_unusable(_hand_unusable_slots())
 	# 选中反馈（抬起 + 提亮）画在桌上那张牌身上：set_hand 重摆位置时不会带上它，
@@ -4723,6 +4752,8 @@ func _item_pool(quality: String) -> Array:
 		var d: Dictionary = ItemData.ITEMS[id]
 		if not bool(d.implemented):
 			continue
+		if bool(d.get("hidden", false)):
+			continue  # 隐藏件（组队学习·寒暑）：只能由指定道具授予，不进任何随机池
 		if items_consumed.has(String(id)):
 			continue  # 焚毁的一次性道具永久离池
 		if quality != "" and String(d.quality) != quality:
@@ -4777,6 +4808,7 @@ func _item_turn_start(p: Dictionary) -> void:
 	p.item_used = false
 	p.item_used_n = 0
 	p.first_used = false
+	p.bonus_used = 0   # 奖励件（组队学习·寒暑）每回合独立一次
 	if int(p.get("silence", 0)) > 0:
 		p.silence = int(p.get("silence", 0)) - 1   # 包场/反作弊：禁道具回合数 -1
 	for it in p.get("items", []):
@@ -4828,28 +4860,38 @@ func _item_turn_start(p: Dictionary) -> void:
 func _item_limit(p: Dictionary) -> int:
 	return 2 if (_has_item(p, "重修卡") or _has_tech(p, "双开")) else 1
 
+## 本回合普通道具已用满（含 item_used 显式置位）。
+func _item_used_up(p: Dictionary) -> bool:
+	return int(p.get("item_used_n", 0)) >= _item_limit(p) or bool(p.get("item_used", false))
+
+## 单件此刻是否可用（`_has_usable` / 手牌置灰 / bot 选牌的**唯一口径**）。
+## 奖励件（def.bonus，如「组队学习·寒暑」）走**独立次数**：每回合 1 次、不占普通上限。
+func _item_usable_now(p: Dictionary, it: Dictionary) -> bool:
+	var d := ItemData.def(String(it.id))
+	if String(d.get("type", "")) == "passive" or not bool(d.get("implemented", false)):
+		return false
+	if int(p.get("silence", 0)) > 0:
+		return false
+	if int(it.get("cd", 0)) > 0:
+		return false
+	if int(p.get("stamina", 0)) < _item_cost(p, it):
+		return false
+	if bool(d.get("bonus", false)):
+		return int(p.get("bonus_used", 0)) < 1
+	return not _item_used_up(p)
+
 func _has_usable(p: Dictionary) -> bool:
 	if int(p.get("silence", 0)) > 0:
 		return false
-	var limit := _item_limit(p)
-	if int(p.get("item_used_n", 0)) >= limit or bool(p.get("item_used", false)):
-		return false
 	for it in p.get("items", []):
-		var d := ItemData.def(String(it.id))
-		if String(d.type) == "passive" or not bool(d.implemented):
-			continue
-		if int(it.get("cd", 0)) > 0:
-			continue
-		if int(p.get("stamina", 0)) < _item_cost(p, it):
-			continue
-		return true
+		if _item_usable_now(p, it):
+			return true
 	return false
 
 func _item_phase(p: Dictionary) -> void:
 	if not running or not bool(p.alive) or not _has_usable(p):
 		return
-	var limit := _item_limit(p)
-	while running and int(p.get("item_used_n", 0)) < limit and _has_usable(p):
+	while running and _has_usable(p):
 		_item_epoch += 1
 		var epoch := _item_epoch
 		_awaiting_item = int(p.peer)
@@ -4873,11 +4915,9 @@ func _item_phase(p: Dictionary) -> void:
 func _bot_use_one(p: Dictionary) -> bool:
 	for i in p.get("items", []).size():
 		var it: Dictionary = p.items[i]
+		if not _item_usable_now(p, it):
+			continue
 		var d := ItemData.def(String(it.id))
-		if String(d.type) == "passive" or not bool(d.implemented):
-			continue
-		if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < _item_cost(p, it):
-			continue
 		var arg := -1
 		var arg2 := -1
 		var tgt := String(d.get("target", ""))
@@ -4914,9 +4954,6 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 		return   # 出局/观战显式禁用道具（⑱）：破产虽已清包，这里挡住其余一切入口
 	if int(p.get("silence", 0)) > 0:
 		return
-	var limit := _item_limit(p)
-	if int(p.get("item_used_n", 0)) >= limit or bool(p.get("item_used", false)):
-		return
 	var items: Array = p.get("items", [])
 	if slot < 0 or slot >= items.size():
 		return
@@ -4924,11 +4961,21 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 	var d := ItemData.def(String(it.id))
 	if String(d.type) == "passive" or not bool(d.implemented):
 		return
+	# 奖励件（组队学习·寒暑）走独立次数：每回合 1 次、不占普通道具上限；
+	# 普通件照旧受 item_used_n / item_used 约束。
+	var is_bonus := bool(d.get("bonus", false))
+	if is_bonus:
+		if int(p.get("bonus_used", 0)) >= 1:
+			return
+	elif _item_used_up(p):
+		return
 	var cost := _item_cost(p, it)
 	if int(it.get("cd", 0)) > 0 or int(p.get("stamina", 0)) < cost:
 		return
 	var prev_cd := int(it.get("cd", 0))
-	if String(it.id) == "蛋蛋节" or String(it.id) == "亡牌飞行员coco":
+	# 焚毁件（用后永久离池、不回）：蛋蛋节 / 亡牌飞行员coco / 二青会酒寒暑
+	if String(it.id) == "蛋蛋节" or String(it.id) == "亡牌飞行员coco" \
+			or String(it.id) == "二青会酒寒暑":
 		items_consumed[String(it.id)] = true
 		items.remove_at(slot)
 	p.stamina = int(p.stamina) - cost
@@ -4943,34 +4990,39 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 		it.cd = prev_cd
 		p.stamina = int(p.stamina) + cost
 		return
-	p.item_used_n = int(p.get("item_used_n", 0)) + 1
-	p.first_used = true
-	if _has_tech(p, "勤工俭学"):
-		p.money = int(p.money) + 100   # 勤工俭学：每用一件主动道具 +¥100
-	if _has_tech(p, "能量回收") and randi_range(0, 1) == 0:
-		p.stamina = mini(_stamina_cap(p), int(p.get("stamina", 0)) + 1)   # 能量回收：50% 退 1⚡
-		_log("【能量回收】%s 找回了 1⚡（现 %d/%d）" % [p.name, int(p.stamina), _stamina_cap(p)], "#74d188")
+	if is_bonus:
+		# 奖励件独立结算：不写 item_used_n / item_used，也不触发勤工俭学 / 能量回收 / 消耗修正
+		p.bonus_used = int(p.get("bonus_used", 0)) + 1
+	else:
+		p.item_used_n = int(p.get("item_used_n", 0)) + 1
+		p.first_used = true
+		if _has_tech(p, "勤工俭学"):
+			p.money = int(p.money) + 100   # 勤工俭学：每用一件主动道具 +¥100
+		if _has_tech(p, "能量回收") and randi_range(0, 1) == 0:
+			p.stamina = mini(_stamina_cap(p), int(p.get("stamina", 0)) + 1)   # 能量回收：50% 退 1⚡
+			_log("【能量回收】%s 找回了 1⚡（现 %d/%d）" % [p.name, int(p.stamina), _stamina_cap(p)], "#74d188")
+		_consume_cost_pen(p)
+		# 一次性道具（type=consumable，紫档主动等）：用后自动丢弃回池。
+		# 橙档焚毁件（蛋蛋节 / 亡牌飞行员coco / 二青会酒寒暑）已在上面按 items_consumed 永久离池。
+		# 打印店复制件（`fake`）也是用后即弃，但**不回池**（原主那件还在，回池会污染唯一性）。
+		var once: bool = String(d.type) == "consumable" \
+			and String(it.id) != "蛋蛋节" and String(it.id) != "亡牌飞行员coco" \
+			and String(it.id) != "二青会酒寒暑"
+		if once or bool(it.get("fake", false)):
+			var ci: int = items.find(it)
+			if ci >= 0:
+				items.remove_at(ci)
+			_log("%s 的【%s】用后%s" % [p.name, String(it.id),
+				"焚毁（复制件）" if bool(it.get("fake", false)) else "回池"], "#8a90a5")
+		if int(p.item_used_n) >= _item_limit(p):
+			p.item_used = true
+			# 重修卡才计次扣耐久；「双开」是科技、没有耐久可扣
+			if _has_item(p, "重修卡"):
+				p.rework = int(p.get("rework", 3)) - 1
+				if int(p.rework) <= 0:
+					_remove_item(p, "重修卡")
+					_log("%s 的【重修卡】用尽三次，作废回池" % p.name, "#c9a6ff")
 	_check_xiaojinku(p)   # 道具效果可能直接进账（饭卡 / 兼职中介……）
-	_consume_cost_pen(p)
-	# 一次性道具（type=consumable，紫档主动等）：用后自动丢弃回池。
-	# 橙档焚毁件（蛋蛋节 / 亡牌飞行员coco）已在上面按 items_consumed 永久离池，这里不重复。
-	# 打印店复制件（`fake`）也是用后即弃，但**不回池**（原主那件还在，回池会污染唯一性）。
-	var once: bool = String(d.type) == "consumable" \
-		and String(it.id) != "蛋蛋节" and String(it.id) != "亡牌飞行员coco"
-	if once or bool(it.get("fake", false)):
-		var ci: int = items.find(it)
-		if ci >= 0:
-			items.remove_at(ci)
-		_log("%s 的【%s】用后%s" % [p.name, String(it.id),
-			"焚毁（复制件）" if bool(it.get("fake", false)) else "回池"], "#8a90a5")
-	if int(p.item_used_n) >= limit:
-		p.item_used = true
-		# 重修卡才计次扣耐久；「双开」是科技、没有耐久可扣
-		if _has_item(p, "重修卡"):
-			p.rework = int(p.get("rework", 3)) - 1
-			if int(p.rework) <= 0:
-				_remove_item(p, "重修卡")
-				_log("%s 的【重修卡】用尽三次，作废回池" % p.name, "#c9a6ff")
 	_item_action = {"epoch": _item_epoch, "action": "used"}
 	_broadcast_state()
 	_check_end()   # 目标现金：道具效果可能让人达标（招财猫 / 刮刮乐……），用后即查
@@ -5103,7 +5155,7 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			cpen.append(1)
 			t.cost_pen = cpen
 			_log("%s 朝 %s 喊话：下个道具消耗 +1" % [p.name, t.name], "#c9a6ff")
-		"组队学习":
+		"组队学习", "组队学习·寒暑":
 			await _move_and_resolve(p, 2)
 			if bool(t.alive) and running:
 				await _move_and_resolve(t, 2)
@@ -5320,6 +5372,11 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			cpen2.append(2)
 			t.cost_pen = cpen2
 			_log("%s 对 %s 施放【二两寒暑】：接下来两个道具消耗各 +2" % [p.name, t.name], "#c9a6ff")
+		"二青会酒寒暑":
+			# 本件已在 _use_item 里焚毁离池（顺带腾出格位）；这里授予强化版组队学习。
+			# 授予件不会因背包满而落空：焚毁已使 size−1 ≤ cap−1。
+			_grant_item(p, "组队学习·寒暑")
+			_log("%s 开了一瓶【二青会酒寒暑】，入手强化版【组队学习·寒暑】" % p.name, "#f0c064")
 		_:
 			return false
 	return true
@@ -5483,7 +5540,7 @@ func _shop_buy(peer: int, slot: int) -> void:
 	if slot < 0 or slot >= arr.size() or String(arr[slot]) == "":
 		return
 	var id := String(arr[slot])
-	var price := ItemData.price(String(ItemData.def(id).quality))
+	var price := ItemData.item_price(id)
 	var p := _player_by_peer(peer)
 	if _has_tech(p, "会员卡"):
 		price = int(price * 4 / 5)   # 会员卡（黄金科技）：先打 8 折（黑市按地皮计价不适用）
@@ -6418,12 +6475,16 @@ func _set_hand_preview(hi: int) -> void:
 		return
 	var it: Dictionary = items[hi]
 	var id := String(it.get("id", ""))
-	var sig := "%s|%d" % [id, int(it.get("cd", 0))]
+	var cstate := _card_state(_state_player(my_peer), it)
+	var sig := "%s|%d|%d|%d|%d|%d|%d" % [id, int(it.get("cd", 0)),
+		int(cstate.get("cost_eff", -1)), int(cstate.get("cost_base", -1)),
+		int(cstate.get("cd_preview", -1)), int(cstate.get("cd_base", -1)),
+		int(cstate.get("cooling", false))]
 	# 内容变了才重建（悬停同一张时只重摆位置）
 	if String(hand_preview.get_meta("preview_sig", "")) != sig:
 		for c in hand_preview.get_children():
 			c.queue_free()
-		var card := ItemCard.make(id, Vector2(240, 330), ItemData.badge_state(it))
+		var card := ItemCard.make(id, Vector2(240, 330), cstate)
 		card.position = Vector2.ZERO
 		hand_preview.add_child(card)
 		hand_preview.size = Vector2(240, 330)
@@ -6824,12 +6885,12 @@ func _refresh_shop_ui() -> void:
 			for c in holder.get_children():
 				c.queue_free()
 			if id != "":
-				holder.add_child(ItemCard.make(id, ItemCard.SIZE_MEDIUM, {}))
+				holder.add_child(ItemCard.make(id, ItemCard.SIZE_MEDIUM, ItemData.shop_state(id)))
 		if id == "":
 			price_l.text = "空货位"
 			b.visible = false
 			continue
-		var price := ItemData.price(String(ItemData.def(id).quality))
+		var price := ItemData.item_price(id)
 		price_l.text = GameData.fmt_money(price)
 		b.visible = true
 		b.disabled = (not mine_shop) or bag.size() >= _bag_cap(mine) or (not free_buy and money < price)

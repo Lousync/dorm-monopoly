@@ -777,6 +777,8 @@ var _hand_sel := -1              # 选中的那张（-1 = 都不选）；由 gam
 var _hand_disc := -1             # 待确认丢弃的那张（-1 = 无）；由 game.gd 同步过来
 ## 「此刻用不出的牌」的槽位集合（§六 手牌置灰）：由 `set_hand_unusable` 写，卡面按它压暗。
 var _hand_unusable := {}
+## 逐槽的卡面状态（§十六 能量 / 冷却红绿）：由 `set_hand_states` 写，与 `badge_state` 合并后交卡面。
+var _hand_states: Array = []
 ## 批次 12 B1：逐槽的卡面视口 / 视口里那张 `ItemCard` / 该槽**当前烘的是哪件道具**（id 没变就不重画）。
 var _hand_face_vps: Array[SubViewport] = []
 var _hand_face_cards: Array = []
@@ -996,9 +998,11 @@ func _apply_hand_layout() -> void:
 func _set_hand_face_card(i: int, id: String, state: Dictionary = {}) -> void:
 	if i < 0 or i >= _hand_face_vps.size() or i >= _hand_face_ids.size():
 		return
-	# 签名含状态（冷却剩余 / 次数 / 融化）：冷却回合变了要重画卡面右上角标（§六 #22）
-	var sig := "%s|%d|%d|%d|%d" % [id, int(state.get("count", -1)), int(state.get("cooling", false)),
-		int(state.get("melt", false)), int(state.get("dim", false))]
+	# 签名含状态（冷却剩余 / 次数 / 融化 / 红绿值）：变了要重画卡面角标（§六 #22 / §十六）
+	var sig := "%s|%d|%d|%d|%d|%d|%d|%d|%d" % [id, int(state.get("count", -1)),
+		int(state.get("cooling", false)), int(state.get("melt", false)), int(state.get("dim", false)),
+		int(state.get("cost_eff", -1)), int(state.get("cost_base", -1)),
+		int(state.get("cd_preview", -1)), int(state.get("cd_base", -1))]
 	if _hand_face_ids[i] == sig:
 		return
 	_hand_face_ids[i] = sig
@@ -1016,11 +1020,22 @@ func _set_hand_face_card(i: int, id: String, state: Dictionary = {}) -> void:
 	_hand_face_cards[i] = card
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
-## 一张手牌的道具状态（供卡面角标 / 置灰）：黑卡次数 / 香皂融化回合 / 冷却剩余 + 是否用不出。
+## 一张手牌的道具状态（供卡面角标 / 置灰）：黑卡次数 / 香皂融化回合 / 冷却剩余 + 是否用不出
+## + §十六 的能量 / 冷却红绿（由 game 逐槽算好经 `set_hand_states` 下发）。
 func _hand_item_state(item: Dictionary, slot: int) -> Dictionary:
 	var s := ItemData.badge_state(item)
+	if slot >= 0 and slot < _hand_states.size() and _hand_states[slot] is Dictionary:
+		for k in (_hand_states[slot] as Dictionary):
+			s[k] = _hand_states[slot][k]
 	s["dim"] = _hand_unusable.has(slot)
 	return s
+
+## 逐槽卡面状态（§十六）：与手牌背包同下标。传空数组 = 不带红绿（只显基础值）。
+func set_hand_states(states: Array) -> void:
+	if str(states) == str(_hand_states):
+		return
+	_hand_states = states
+	_apply_hand_layout()   # 重摆一次：卡面签名含红绿值，变了要重画
 
 ## 「此刻用不出的牌」的槽位（§六 手牌置灰）：由 game 按回合窗口 / 冷却 / 体力等算出，
 ## 每次状态广播重设。传空数组 = 都不置灰。
