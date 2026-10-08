@@ -166,7 +166,8 @@ assets/                开源素材（授权与来源见根目录 LICENSE）
   models/              Kenney 家具包 + Blocky Characters（CC0）：3D 房间的家具与人物
   cards/               机会 / 命运牌的卡背（Wikimedia「Atlas deck」，CC0）
 doc/                   设计文档与原型（.md 为活文档，.html/.drawio 为定稿原型）
-  game-design/         玩法设计：机制与数值、道具图鉴、设计决策留痕、交互原型
+  game-design/         玩法设计：机制与数值、道具图鉴、设计决策留痕
+    prototype/         交互原型存档（.html/.drawio，定稿，不随实现更新）
   development/         系统架构、联机协议、上手指南、开发台账、3D 房间设计
     plans/             实施计划（随版本开发，合并后删除）
   screenshots/         README 用的截图（**受版本控制**；`shots/` 那份是临时产物）
@@ -179,7 +180,8 @@ tests/                 见下一节
   面向 AI 编码代理，人类开发者同样先读这一篇）
 - **玩法设计**：`doc/game-design/`（**全局语义见该目录 `术语表.md`**）
   （棋盘与地产 / 事件卡 / 经济与胜负 / 小卖部 / 黑市 / 赌场 / 道具系统 / 道具图鉴 /
-  开局科技 / 畸变 / 开局设置；另有 `设计决策留痕.md` 与交互原型 `.html`/`.drawio`）
+  开局科技 / 畸变 / 开局设置；另有 `设计决策留痕.md`；交互原型定稿存档在
+  `doc/game-design/prototype/`，`.html`/`.drawio`）
 - **工程与协作**：`doc/development/`（架构总览 · 联机协议 · 上手指南 · 开发台账 · 未完成项-交接 · 道具试验场 · 3D 房间设计）
 - **实施计划**：`doc/development/plans/`（随版本开发，合并进 `main` 后删除）
 - **版本变更**：`CHANGELOG.md`（每版改了什么、修了哪些缺陷）
