@@ -6399,6 +6399,9 @@ func _bot_blackshop(p: Dictionary) -> void:
 		var cost := int(ItemData.BLACK_COST.get(String(ItemData.def(id).quality), 1))
 		if props.size() - cost < 1:
 			continue
+		# 黑市比价**按档价**（`QUALITY_PRICES`）而非 `item_price`：这里一切用**地皮**计价，
+		# 单件现金覆盖（二青会酒寒暑）在黑市不适用，货又只有紫 / 金两档 ⇒ 按档价排就是「金优先」。
+		# 判过是对的（2026-10-10 道具重构），别再当 bug 改成 `item_price`。
 		var val := int(ItemData.QUALITY_PRICES.get(String(ItemData.def(id).quality), 0))
 		if val > best_val:
 			best_val = val
