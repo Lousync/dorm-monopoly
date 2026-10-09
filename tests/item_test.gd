@@ -54,6 +54,7 @@ func _run() -> void:
 	root.add_child(g)
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	_test_quality_tiers(g)
+	_test_item_numbers(g)
 	_test_icons(g)
 	_test_egg(g)
 	_test_coco(g)
@@ -267,6 +268,36 @@ func _test_quality_tiers(_g) -> void:
 		_check(ItemData.QUALITY_PRICES.has(q) and ItemData.QUALITY_COLORS.has(q),
 			"%s 档在定价表与配色表里都有" % q)
 
+## 逐件平衡（2026-10-10 道具重构 §三 3.2）：12 处数值，效果逻辑不变。
+## **数值一律从数据类读出核对**（不是把设计稿的那张表再抄一份进断言）—— 表与设计稿一脱钩就红。
+## 奖金那一件多钉一条：金额的**唯一来源**是 `ItemData.LUCK7_BONUS`，结算与卡面文案都读它，
+## 所以连常量一起钉住（只验 `desc` 的话，结算里留着旧数照样全绿 —— 验不到声称的改动）。
+func _test_item_numbers(_g) -> void:
+	print("== 逐件数值 ==")
+	# id 先逐个点名：`ItemData.def` 对不存在的 id 返回 `{}`，打错字会变成硬崩而不是一条 FAIL，
+	# 那会把整轮用例的结果一起带走。这条先把「12 个 id 都真的在表里」钉住。
+	for id in ["幸运数7", "二手交易", "占座", "团购拼单", "刮刮乐", "体测", "换课", "点名",
+			"出老千", "宿舍改造", "强拆令", "二青会酒寒暑"]:
+		_check(ItemData.ITEMS.has(id), "数据表里有「%s」（逐件数值的 id 不许打错）" % id)
+	_check(int(ItemData.def("幸运数7").cooldown) == 0
+		and "¥1000" in String(ItemData.def("幸运数7").desc),
+		"幸运数7：掷 7 奖金 ¥1400 → ¥1000（文案同步）")
+	_check(int(ItemData.LUCK7_BONUS) == 1000,
+		"幸运数7：奖金常量 LUCK7_BONUS = ¥1000（实得 %d）" % int(ItemData.LUCK7_BONUS))
+	_check(String(ItemData.def("幸运数7").desc).contains(str(ItemData.LUCK7_BONUS)),
+		"幸运数7：卡面文案与奖金常量同额（desc = %s）" % String(ItemData.def("幸运数7").desc))
+	_check("¥1500" in String(ItemData.def("二手交易").desc), "二手交易：兑换 ¥2000 → ¥1500（文案同步）")
+	_check(int(ItemData.def("占座").cooldown) == 3, "占座：冷却 4 → 3")
+	_check(int(ItemData.def("团购拼单").cost) == 1, "团购拼单：2⚡ → 1⚡")
+	_check(int(ItemData.def("刮刮乐").cost) == 1, "刮刮乐：2⚡ → 1⚡")
+	_check(int(ItemData.def("体测").cost) == 2, "体测：3⚡ → 2⚡")
+	_check(int(ItemData.def("换课").cost) == 2, "换课：3⚡ → 2⚡")
+	_check(int(ItemData.def("点名").cost) == 2, "点名：3⚡ → 2⚡")
+	_check(int(ItemData.def("出老千").cost) == 3, "出老千：4⚡ → 3⚡")
+	_check(int(ItemData.def("宿舍改造").cost) == 3, "宿舍改造：4⚡ → 3⚡")
+	_check(int(ItemData.def("强拆令").cooldown) == 0, "强拆令：冷却 4 → 0（一次性件用后即回池）")
+	_check(ItemData.item_price("二青会酒寒暑") == 2600, "二青会酒寒暑：单件售价 ¥8000 → ¥2600")
+
 ## 图标齐备：68 件的 `icon` 字段都要能在 `assets/icons/` 找到对应 PNG。
 ## 用 `FileAccess.file_exists` 而不是 `ResourceLoader.exists` —— 后者要求资源先导入过
 ## （新克隆 / CI 未必导入），会把「文件真缺」和「没导入」混为一谈。
@@ -283,10 +314,11 @@ func _test_icons(_g) -> void:
 	_check(seen == 68, "遍历到 68 件道具（实得 %d）" % seen)
 	_check(missing.is_empty(), "68 件图标文件齐备（缺：%s）" % ", ".join(missing))
 
-## 单件售价覆盖（二青会 ¥8000）+ 货架冷却预览状态
+## 单件售价覆盖（二青会 ¥2600，2026-10-10 道具重构 §三 3.2 由 ¥8000 压到蓝档价与紫档价之间）
+## + 货架冷却预览状态
 func _test_price_state(g) -> void:
 	print("== 售价覆盖 / 货架冷却预览 ==")
-	_check(ItemData.item_price("二青会酒寒暑") == 8000, "二青会单件售价 = ¥8000")
+	_check(ItemData.item_price("二青会酒寒暑") == 2600, "二青会单件售价 = ¥2600")
 	_check(ItemData.item_price("招财猫") == ItemData.QUALITY_PRICES["白"], "普通件仍按品质定价")
 	var ss: Dictionary = ItemData.shop_state("拼车")
 	_check(int(ss.get("cd_preview", -1)) == 5, "货架：拼车显示冷却预览 5")
@@ -357,23 +389,31 @@ func _test_pricing(g) -> void:
 ## bot 定价读单件覆盖（2026-10-10 修）：`_discover_bot_pick` / `_bot_shop` 与 UI（`_refresh_shop_ui`）
 ## 及购买链路（`_shop_buy`）**同源** —— 都该读 `ItemData.item_price(id)`（先看单件 `price` 覆盖）。
 ## 黑市比价按 `BLACK_COST` 档位（地皮计价）**是对的**，不在本条内。
+##
+## **区分力从哪来**：全仓唯一带单件覆盖的是 `二青会酒寒暑`（`price` 字段）。T8 起它是 **¥2600**，
+## **低于**同档紫货的档价 ¥3200 —— 方向与批 1（当时 ¥8000，高于档价）相反。
+## `_discover_bot_pick` 取**严格最大**（同价时取列表里靠前的那件）⇒ 单件覆盖**低于**档价时，
+## 必须把它**摆在前面**才分得出「旧实现按档价 ⇒ 取列表第一件」。两个方向各摆一次：
+## 无论覆盖值是高于还是低于档价，至少有一条能把「只看档价」的旧实现钉红，而正确实现两条都绿。
 func _test_bot_pricing(g) -> void:
 	print("== bot 定价读单件覆盖 ==")
-	# 方向一（发现三选一）：三件**同为紫档** —— 只按档价排就是「三件一样贵」（取第一件），
-	# 只有读 item_price 才分得出高下（二青会单件覆盖 ¥8000 > 紫档价 ¥3200）。
-	# 用三件而非两件：无论将来单件覆盖的数怎么改，「最贵的那件不是 ids[0]」恒成立。
-	var ids := ["作弊器", "平均主义", "二青会酒寒暑"]
-	var want := ""
-	for id in ids:
-		if want == "" or ItemData.item_price(id) > ItemData.item_price(want):
-			want = id
-	_check(want != ids[0], "（前置）按 item_price 排最贵的不是列表第一件（实得最贵 = %s）" % want)
-	_check(g._discover_bot_pick(ids) == want,
-		"发现三选一：bot 按 item_price 挑最贵（期望 %s，实得 %s）" % [want, g._discover_bot_pick(ids)])
+	var ov := "二青会酒寒暑"   # 紫档 · 有单件覆盖
+	var other := "作弊器"      # 同为紫档 · 无单件覆盖 ⇒ item_price == 档价
+	_check(ItemData.item_price(ov) != ItemData.item_price(other),
+		"（前置）单件覆盖与同档紫货的档价不同（¥%d vs ¥%d）" % [
+			ItemData.item_price(ov), ItemData.item_price(other)])
 
-	# 方向二（小卖部）：同一架上是「真有单件覆盖、bot 买不起」的件 + 「只按档价、买得起」的件，
-	# bot 只揣 ¥5000。读 item_price 才知道二青会要 ¥8000 ⇒ 转头买 ¥3200 的紫货；
-	# 只按档价（两件都被看成 ¥3200）则先撞上二青会、再被 `_shop_buy` 的真实价 ¥8000 拒付 ⇒ 空手离店。
+	# 方向一（发现三选一）：两个方向各摆一次 —— 只按档价时两件同价、恒取列表第一件。
+	for pair in [[other, ov], [ov, other]]:
+		var want := ""
+		for id in pair:
+			if want == "" or ItemData.item_price(String(id)) > ItemData.item_price(want):
+				want = String(id)
+		_check(g._discover_bot_pick(pair) == want,
+			"发现三选一：%s → bot 取 %s（期望 %s）" % [str(pair), g._discover_bot_pick(pair), want])
+
+	# 方向二（小卖部）：bot 只揣 ¥3000 —— 二青会单件覆盖 ¥2600 买得起，同档紫货档价 ¥3200 买不起。
+	# 读 item_price 才知道该拿二青会；只按档价（两件都看成 ¥3200）则两件都「买不起」⇒ 空手离店。
 	var tile := -1
 	for i in GameData.TILES.size():
 		if String(GameData.TILES[i].get("type", "")) == "shop":
@@ -382,24 +422,22 @@ func _test_bot_pricing(g) -> void:
 	_check(tile >= 0, "找到小卖部格子")
 	if tile < 0:
 		return
-	var cheap := "作弊器"   # 紫档 · 无单件覆盖 ⇒ 按档价 ¥3200
-	_check(ItemData.item_price(cheap) == ItemData.item_price("平均主义")
-		and ItemData.item_price(cheap) < ItemData.item_price("二青会酒寒暑"),
-		"（前置）廉价件按档价、贵件按单件覆盖（%d < %d）" % [
-			ItemData.item_price(cheap), ItemData.item_price("二青会酒寒暑")])
+	_check(ItemData.item_price(ov) < 3000 and 3000 < ItemData.item_price(other),
+		"（前置）¥3000 买得起单件覆盖件、买不起同档紫货（%d < 3000 < %d）" % [
+			ItemData.item_price(ov), ItemData.item_price(other)])
 	var p := _mk_player(1, "甲")
 	p.bot = true
-	p.money = 5000
+	p.money = 3000
 	g.hp = [p]
-	g.shops = {tile: {"slots": ["二青会酒寒暑", cheap, ""]}}
+	g.shops = {tile: {"slots": [ov, other, ""]}}
 	g._shop_peer = 1
 	g._shop_tile = tile
 	g._bot_shop(p, tile)
-	_check(p.items.size() == 1 and String(p.items[0].id) == cheap,
-		"小卖部：bot 跳过买不起的 ¥8000 件、买下买得起的档价件（实得 %s）" % str(p.items))
-	_check(int(p.money) == 5000 - ItemData.item_price(cheap),
+	_check(p.items.size() == 1 and String(p.items[0].id) == ov,
+		"小卖部：bot 买下买得起的单件覆盖件、跳过按档价买不起的那件（实得 %s）" % str(p.items))
+	_check(int(p.money) == 3000 - ItemData.item_price(ov),
 		"小卖部：按真实价 ¥%d 扣钱（余 %d，期望 %d）" % [
-			ItemData.item_price(cheap), int(p.money), 5000 - ItemData.item_price(cheap)])
+			ItemData.item_price(ov), int(p.money), 3000 - ItemData.item_price(ov)])
 	# 收摊：本用例造的货架就地清干净（本文件既有约定），免得后面 _item_pool 的断言看运气
 	g.shops = {}
 	g._shop_peer = 0

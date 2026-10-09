@@ -646,11 +646,11 @@ func _test_new_items(g) -> void:
 	p1.items = [{"id": "校园卡", "cd": 0}]
 	_check(int(g._salary_amount(p1)) == GameData.SALARY + 1000, "校园卡：过起点 +1000")
 
-	# 二手交易：弃本道具 +¥2000
+	# 二手交易：弃本道具 +¥1500（2026-10-10 道具重构 §三 3.2：¥2000 → ¥1500）
 	p1.items = [{"id": "二手交易", "cd": 0}]
 	p1.money = 0
 	var ok_se: bool = await g._apply_item_effect(p1, p1.items[0], -1)
-	_check(ok_se and int(p1.money) == 2000, "二手交易：+¥2000（实得 %d）" % int(p1.money))
+	_check(ok_se and int(p1.money) == 1500, "二手交易：+¥1500（实得 %d）" % int(p1.money))
 
 	# 刮刮乐：¥100~1000 十档
 	p1.money = 0

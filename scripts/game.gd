@@ -1103,7 +1103,7 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 
 ## bot 挑卡策略（简单可预期）：**按 `item_price`（含单件 `price` 覆盖）**取最贵。
 ## 2026-10-10 修：原先读 `ItemData.price(quality)`（只看档价），与 UI（`_refresh_shop_ui`）
-## 及购买链路（`_shop_buy`）**不同源** —— 二青会酒寒暑（单件覆盖 ¥8000）在 bot 眼里一直只值
+## 及购买链路（`_shop_buy`）**不同源** —— 二青会酒寒暑（单件覆盖）在 bot 眼里一直只值
 ## 它那一档的档价。契约是「单件 `price` 覆盖优先」，任何覆盖都该被 bot 看见。
 func _discover_bot_pick(ids: Array) -> String:
 	var best := ""
@@ -1461,8 +1461,9 @@ func _play_turn(p: Dictionary) -> void:
 				p.tianming_roll = -1
 				_log("%s 动用【天命在握】，这次转盘按 %d 点走" % [p.name, roll], "#f0c064")
 		if roll == 7 and _has_item(p, "幸运数7"):
-			p.money = int(p.money) + 1400
-			_log("%s 掷出 7，【幸运数7】额外 +¥1400" % p.name, "#74d188")
+			# 金额只有一个来源：`ItemData.LUCK7_BONUS`（卡面文案 `desc` 与这里同额）
+			p.money = int(p.money) + ItemData.LUCK7_BONUS
+			_log("%s 掷出 7，【幸运数7】额外 +%s" % [p.name, GameData.fmt_money(ItemData.LUCK7_BONUS)], "#74d188")
 		if at_mode != "":
 			print("AT roll %s: %d" % [p.name, roll])
 		s_roll.rpc(roll)
@@ -5620,6 +5621,12 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 	if need_player and (t.is_empty() or not bool(t.alive)):
 		return false
 	match id:
+		# 分节线索（2026-10-10 批 2 补，替换原先被删的 `# ---- 白/绿/蓝/紫/橙 ----`）：
+		# 本 match 的 50 个分支按**批次沿革**排——首批定稿的 6 件（作弊器 / 平均主义 / 交换生 /
+		# 黑卡 / 蛋蛋节 / 亡牌飞行员coco），其余照**旧档位**分批落位。
+		# 四档重构只改了 `quality` 键、**没有重排分支** ⇒ 现在同档分支是散开的
+		# （如 `占座`（白）与 `夜跑`（蓝）相邻）⇒ **故意不标品质分节**：标了就是假的。
+		# 纯被动件（招财猫 / 信托基金 / 香皂 / 雨伞…）一律不在本 match 里，见各自调用点。
 		"作弊器":
 			p.cheat_roll = clampi(arg, 0, 12)
 			_log("%s 掏出【作弊器】，下一次转盘他说了算" % p.name, "#8fb7f2")
@@ -5719,9 +5726,10 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			p.loan_left = 3
 			_log("%s 办了【助学贷款】：+¥1500，之后 3 回合各还 ¥600" % p.name, "#74d188")
 		"二手交易":
-			# 数值专场改版：**弃掉本道具**，立刻 +¥2000（本件是 consumable，用后由 _use_item 回池）
-			p.money = int(p.money) + 2000
-			_log("%s 二手卖掉【二手交易】，得 ¥2000" % p.name, "#74d188")
+			# 数值专场改版：**弃掉本道具**，立刻 +¥1500（本件是 consumable，用后由 _use_item 回池）
+			# 2026-10-10 道具重构 §三 3.2：¥2000 → ¥1500（对齐 `助学贷款` 的即时到账量级）
+			p.money = int(p.money) + 1500
+			_log("%s 二手卖掉【二手交易】，得 ¥1500" % p.name, "#74d188")
 		"喇叭":
 			var cpen: Array = t.get("cost_pen", [])
 			cpen.append(1)
@@ -6099,7 +6107,8 @@ func _bot_shop(p: Dictionary, idx: int) -> void:
 		if id == "":
 			continue
 		# 2026-10-10 修：与 UI / 购买链路同源（含单件 `price` 覆盖）。
-		# 只按档价会把二青会酒寒暑看成紫档价 ⇒ bot 挑它、再被 `_shop_buy` 的真实价拒付，空手离店。
+		# 只按档价就看不见单件覆盖 ⇒ bot 会挑到一件 `_shop_buy` 拒付的、白跑一趟（空手离店），
+		# 或反过来漏掉一件其实买得起的。覆盖值高于还是低于档价都出这套错，与具体数无关。
 		var price := ItemData.item_price(id)
 		if int(p.money) >= price and p.items.size() < _bag_cap(p) and price > best_price:
 			best = i
@@ -6405,8 +6414,9 @@ func _bot_blackshop(p: Dictionary) -> void:
 		# 黑市比价**按档价**（`QUALITY_PRICES`）而非 `item_price`：
 		# ① 这里一切用**地皮**计价，单件现金覆盖（二青会酒寒暑）在黑市不适用；
 		# ② 货又只有紫 / 金两档 ⇒ 按档价排就是「金优先」。
-		# ③ 若改读 `item_price`：二青会（紫档、单件覆盖 ¥8000）会与**金档价 ¥8000 持平**，
-		#    而下面的比较器是严格 `>` ⇒ 两件并列时退化成「看货位顺序」，不是真正的「取最值」。
+		# ③ 若改读 `item_price`：那是**现金**价，与「收几块地皮」不同量纲 ⇒ 排出来的是另一套序，
+		#    仍不是真正的「取最值」。（原先举「单件覆盖与金档价同价 ⇒ 并列退化」一例，批 2 T8
+		#    把二青会由 ¥8000 压到 ¥2600 后那条已不成立。）
 		#    真正该排的是 `item_price / BLACK_COST[quality]`（每块地皮买到多少价值）—— 那是**批 2 的活**。
 		# 判过是对的（2026-10-10 道具重构），别再当 bug 改成 `item_price`。
 		var val := int(ItemData.QUALITY_PRICES.get(String(ItemData.def(id).quality), 0))

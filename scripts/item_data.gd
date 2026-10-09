@@ -16,6 +16,7 @@ const REFRESH_STEP := 400   # 300 → 400：让「刷到出金为止」有实打
 const SHOP_TIMEOUT := 20.0  # 逛店发呆兜底
 const SOIL_DONATE := 400    # 落地焦土自动捐款（待数值专场）；恢复目标 = 地价 × 1.0
 const ITEM_TIMEOUT := 12.0  # 道具阶段发呆兜底
+const LUCK7_BONUS := 1000   # 「幸运数7」掷 7 的额外奖金；结算与卡面文案都读它（2026-10-10 由 ¥1400 下调）
 
 # ---------------- 黑市（§8：仅由机会卡进入，一切消费用地产） ----------------
 const BLACK_COST := {"紫": 1, "金": 3}        # 每件货的地皮价；金 2 → 3：黑市只从紫/金抽（金占池内 ~24%），用价格收口
@@ -46,7 +47,7 @@ const ITEMS := {
 	"外卖箱": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "前进 1 格并获得 ¥200。", "implemented": true, "icon": "item_takeout"},
 	"幸运数7": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
-		"desc": "你掷出 7 时额外获得 ¥1400。", "implemented": true, "icon": "item_luck"},
+		"desc": "你掷出 7 时额外获得 ¥1000。", "implemented": true, "icon": "item_luck"},
 	"校园卡": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "你每次经过起点时多领 ¥1000。", "implemented": true, "icon": "item_campus"},
 	"校历": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
@@ -55,19 +56,19 @@ const ITEMS := {
 		"desc": "你前进时额外多走 1 格。", "implemented": true, "icon": "item_bus"},
 	"信托基金": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "你的回合开始时，获得 ¥200。", "implemented": true, "icon": "item_fund"},
-	"占座": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 4,
+	"占座": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "立刻移动到离你最近的一块自有地皮。", "implemented": true, "icon": "item_seat"},
-	"团购拼单": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 2,
+	"团购拼单": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "你和一名玩家各获得 ¥400。", "implemented": true, "target": "player", "icon": "item_groupbuy"},
 	"助学贷款": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "立刻获得 ¥1500，之后 3 回合各还 ¥600。", "implemented": true, "icon": "item_loan"},
 	"二手交易": {"quality": "白", "cost": 1, "type": "consumable", "unique": false, "cooldown": 0,
-		"desc": "弃掉本道具，获得 ¥2000。", "implemented": true, "icon": "item_recycle"},
+		"desc": "弃掉本道具，获得 ¥1500。", "implemented": true, "icon": "item_recycle"},
 	"校园卡充值": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 1,
 		"desc": "花 ¥500 恢复 3 点体力。", "implemented": true, "icon": "item_recharge"},
 	"雨伞": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "你不会被事件后退。", "implemented": true, "icon": "item_umbrella"},
-	"刮刮乐": {"quality": "白", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
+	"刮刮乐": {"quality": "白", "cost": 1, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "刮开涂层，随机 ¥100~¥1000。", "implemented": true, "icon": "item_scratch"},
 	"喇叭": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "指定一名玩家下个道具消耗能量 +1。", "implemented": true, "target": "player", "icon": "item_horn"},
@@ -75,11 +76,11 @@ const ITEMS := {
 		"desc": "现金不足 ¥5000 时补足到 ¥5000，每局一次。", "implemented": true, "icon": "item_emergency"},
 	"护身符": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "每局游戏你第一次被送进宿委会时免疫。", "implemented": true, "icon": "item_amulet"},
-	"体测": {"quality": "白", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
+	"体测": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "指定一名玩家体力 -2。", "implemented": true, "target": "player", "icon": "item_fittest"},
-	"换课": {"quality": "白", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
+	"换课": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "与一名指定玩家交换体力。", "implemented": true, "target": "player", "icon": "item_swap"},
-	"点名": {"quality": "白", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
+	"点名": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "指定一名玩家下回合点数 +3。", "implemented": true, "target": "player", "icon": "item_rollcall"},
 
 	# ---- 蓝·稀有（20）----
@@ -122,9 +123,9 @@ const ITEMS := {
 		"desc": "你的一块地皮直接加盖两层。", "implemented": true, "target": "own_tile", "icon": "item_roof"},
 	"老虎机": {"quality": "蓝", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "转三把数字，奖金按点数翻倍，连号豹子更肥。", "implemented": true, "icon": "item_slot"},
-	"出老千": {"quality": "蓝", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+	"出老千": {"quality": "蓝", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "开一场赌局，就算没赢也能和赢家平分奖金。", "implemented": true, "icon": "item_gamble"},
-	"宿舍改造": {"quality": "蓝", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
+	"宿舍改造": {"quality": "蓝", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "学校八折收购他的一块地皮，补偿归他。", "implemented": true, "target": "player", "icon": "item_redevelop"},
 
 	# ---- 紫·史诗（16）----
@@ -138,7 +139,7 @@ const ITEMS := {
 		"desc": "摧毁一名指定玩家的一件随机道具。", "implemented": true, "target": "player", "icon": "item_wrench"},
 	"快递直达": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "立刻移动到地图上的任意一格。", "implemented": true, "target": "tile", "icon": "item_rocket"},
-	"强拆令": {"quality": "紫", "cost": 5, "type": "consumable", "unique": false, "cooldown": 4,
+	"强拆令": {"quality": "紫", "cost": 5, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家的一块地皮变为无主。", "implemented": true, "target": "player", "then": "own_prop", "icon": "item_demolish"},
 	"时间暂停": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家下一回合休眠。", "implemented": true, "target": "player", "icon": "item_pause"},
@@ -159,9 +160,10 @@ const ITEMS := {
 	"二两寒暑": {"quality": "紫", "cost": 3, "type": "active", "unique": true, "cooldown": 3,
 		"desc": "指定一名玩家接下来两个道具的消耗各 +2。", "implemented": true, "target": "player", "icon": "item_thermo"},
 	# 「二青会酒寒暑」：紫·一次性·用后焚毁（不回池）；效果 = 获得一个强化版「组队学习」。
-	# `price` 单件覆盖 ¥8000（不随紫档整体定价）。
+	# `price` 单件覆盖 ¥2600（不随紫档整体定价）：它是兑换券、产出只是一件蓝档强化件，
+	# 故压在蓝档价（¥1600）与紫档价（¥3200）之间。
 	"二青会酒寒暑": {"quality": "紫", "cost": 1, "type": "consumable", "unique": false, "cooldown": 0,
-		"price": 8000, "desc": "销毁本道具，获得一个强化版组队学习（1⚡、无冷却、不占次数）。",
+		"price": 2600, "desc": "销毁本道具，获得一个强化版组队学习（1⚡、无冷却、不占次数）。",
 		"implemented": true, "icon": "item_erging"},
 
 	# ---- 金·传说（5）----
@@ -183,7 +185,7 @@ static func def(id: String) -> Dictionary:
 static func price(quality: String) -> int:
 	return int(QUALITY_PRICES.get(quality, 999999))
 
-## 单件售价：道具自带 `price` 覆盖（如二青会酒寒暑 ¥8000），否则按品质定价。
+## 单件售价：道具自带 `price` 覆盖（如二青会酒寒暑 ¥2600），否则按品质定价。
 static func item_price(id: String) -> int:
 	var d := def(id)
 	if d.has("price"):
