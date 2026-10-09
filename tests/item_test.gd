@@ -80,6 +80,7 @@ func _run() -> void:
 	_test_price_state(g)
 	_test_pricing(g)
 	_test_bot_pricing(g)
+	_test_roll_mods(g)
 	await _test_soil(g)
 	await _test_discover(g)
 	await _test_taobao_guarantee(g)
@@ -916,3 +917,35 @@ func _test_tile_shield(g) -> void:
 	g._cancel_target()
 	g._tgt_stage = ""
 	g.hp = []
+
+## 掷点修正链（`game._apply_roll_mods`）：**单独**用「作弊器」/「天命在握」也该生效。
+## 原来这两件嵌在 `if roll_bonus != 0`（点名）块里 ⇒ 没被点名时**静默无效**：
+## 道具/次数照扣、点数照旧随机，且 `cheat_roll` 一直挂着、直到某次被点名才突然生效。
+## 本用例先钉住「单独用就生效」，再钉住叠加时**语义与从前一致**（指名点数的两件盖过 +3）。
+func _test_roll_mods(g) -> void:
+	print("== 掷点修正链 ==")
+	# ① 单独用「作弊器」：点数被指定、标记一次性消费（修复前：返回原随机值且 cheat_roll 仍挂着 ⇒ 红）
+	var p := _mk_player(1, "甲")
+	p.cheat_roll = 7
+	_check(g._apply_roll_mods(p, 3) == 7, "单独用「作弊器」：点数被指定为 7（不再随原值）")
+	_check(int(p.get("cheat_roll", -1)) == -1, "单独用「作弊器」：标记一次性消费（不再挂着等点名）")
+	# ② 单独用「天命在握」：同上
+	var q := _mk_player(2, "乙")
+	q.tianming_roll = 9
+	_check(g._apply_roll_mods(q, 3) == 9, "单独用「天命在握」：点数被指定为 9")
+	_check(int(q.get("tianming_roll", -1)) == -1, "单独用「天命在握」：标记一次性消费")
+	# ③ 叠加语义不变：点名 +3 在前、指名点数盖过 +3（与修复前嵌在点名块里的结果一致）
+	var r := _mk_player(3, "丙")
+	r.roll_bonus = 3
+	r.cheat_roll = 5
+	_check(g._apply_roll_mods(r, 0) == 5, "点名 + 作弊器：指名点数盖过 +3（叠加语义与修复前一致）")
+	_check(int(r.get("roll_bonus", 0)) == 0 and int(r.get("cheat_roll", -1)) == -1,
+		"点名 + 作弊器：两个标记都被消费")
+	# ④ 两件指名点数互叠时，「天命在握」胜（顺序：点名 → 作弊器 → 天命在握，与修复前一致）
+	var s := _mk_player(4, "丁")
+	s.cheat_roll = 4
+	s.tianming_roll = 11
+	_check(g._apply_roll_mods(s, 0) == 11, "作弊器 + 天命在握：「天命在握」胜（顺序与修复前一致）")
+	# ⑤ 无任何修正：点数原样通过（别把普通的一转也改动）
+	var t := _mk_player(1, "戊")
+	_check(g._apply_roll_mods(t, 6) == 6, "无任何修正：点数原样通过")

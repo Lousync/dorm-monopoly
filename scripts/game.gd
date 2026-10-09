@@ -1378,6 +1378,32 @@ func _note_roll_hot(p: Dictionary, roll: int) -> bool:
 		return false   # 心理素质：连续三次 10+ 也查不走
 	return true
 
+## 一次转盘点数的修正链：把「点名 +3」「作弊器指定」「天命在握指定」依次套到本次点子上，
+## 返回最终点数（三件的消费与日志都落在这里）。
+##
+## **三件彼此独立**——原来后两件嵌在 `if roll_bonus != 0` 块里，只有被点名时才消费，
+## 于是**单独**用「作弊器」（紫·一次性）或「天命在握」（钻石科技）会**静默无效**：
+## 道具/次数被扣、点数照旧随机，且 `cheat_roll` 一直挂着、直到某次被点名才**突然生效**。
+## 故把两件从点名块里提出来，各自独立判定。
+##
+## 顺序 **点名 → 作弊器 → 天命在握**：后两件都是**覆盖**（而非相加），放在点名之后
+## ⇒ 叠加时一律盖过「+3」、且两件互叠时**天命在握**胜——与从前嵌在点名块里的结果一字不差，
+## 只是不再要求「先被点名」这个门槛。三处消费与文案均照旧。
+func _apply_roll_mods(p: Dictionary, roll: int) -> int:
+	if int(p.get("roll_bonus", 0)) != 0:
+		roll = clampi(roll + int(p.roll_bonus), 0, 12)
+		_log("%s 被【点名】，点数 +%d" % [p.name, int(p.roll_bonus)], "#c9a6ff")
+		p.roll_bonus = 0
+	if int(p.get("cheat_roll", -1)) >= 0:
+		roll = clampi(int(p.cheat_roll), 0, 12)
+		p.cheat_roll = -1
+		_log("%s 掏出【作弊器】——这次转盘他说了算" % p.name, "#8fb7f2")
+	if int(p.get("tianming_roll", -1)) >= 0:
+		roll = clampi(int(p.tianming_roll), 0, 12)
+		p.tianming_roll = -1
+		_log("%s 动用【天命在握】，这次转盘按 %d 点走" % [p.name, roll], "#f0c064")
+	return roll
+
 func _play_turn(p: Dictionary) -> void:
 	if at_mode != "":
 		print("AT turn start: r%d %s" % [round_no, p.name])
@@ -1448,18 +1474,7 @@ func _play_turn(p: Dictionary) -> void:
 			p.reroll_next = false
 			roll = maxi(roll, randi_range(0, 12))
 			_log("%s 的【时光倒流】重掷取高" % p.name, "#8fb7f2")
-		if int(p.get("roll_bonus", 0)) != 0:
-			roll = clampi(roll + int(p.roll_bonus), 0, 12)
-			_log("%s 被【点名】，点数 +%d" % [p.name, int(p.roll_bonus)], "#c9a6ff")
-			p.roll_bonus = 0
-			if int(p.get("cheat_roll", -1)) >= 0:
-				roll = clampi(int(p.cheat_roll), 0, 12)
-				p.cheat_roll = -1
-				_log("%s 掏出【作弊器】——这次转盘他说了算" % p.name, "#8fb7f2")
-			if int(p.get("tianming_roll", -1)) >= 0:
-				roll = clampi(int(p.tianming_roll), 0, 12)
-				p.tianming_roll = -1
-				_log("%s 动用【天命在握】，这次转盘按 %d 点走" % [p.name, roll], "#f0c064")
+		roll = _apply_roll_mods(p, roll)
 		if roll == 7 and _has_item(p, "幸运数7"):
 			# 金额只有一个来源：`ItemData.LUCK7_BONUS`（卡面文案 `desc` 与这里同额）
 			p.money = int(p.money) + ItemData.LUCK7_BONUS
@@ -3833,7 +3848,7 @@ func _on_bury_picked(bury: bool) -> void:
 			_bury_pick = bury
 			_bury_ack = true
 	else:
-		c_bury_ok.rpc(bury)
+		c_bury_ok.rpc_id(1, bury)
 
 ## 本机玩家点了「确定」（`DeckReveal.confirmed`）：房主直接放行，客户端回 `c_card_ok`。
 func _on_card_confirm() -> void:
