@@ -91,7 +91,7 @@ func _run() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false
-	# 脚手架那局**不要跑开局科技**（2026-10-09 起 `tech_on` 默认开；同 `casino_test` 那条）：
+	# 脚手架那局**不要跑科技（定档 + 全员三选一）**（2026-10-09 起 `tech_on` 默认开；同 `casino_test` 那条）：
 	# 实例化时 `_start()` 已经起跑（它先 `_wait(1.5)`），本文件又习惯**一上来就往 `hp` 里塞人**，
 	# 于是 1.5 秒一到它就当"名单已就绪"：`_tech_phase` 会给在场每家发一张随机科技 +
 	# 即时效果（可能直接动钱），还 `rpc_id` 给客户端位（测试里没这些 peer ⇒ 刷一堆

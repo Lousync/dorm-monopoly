@@ -309,7 +309,7 @@ func _entries_techs() -> Array:
 			var col := _hex(TechData.tier_color(tier))
 			out.append({
 				"title": String(name),
-				"subtitle": "开局三选一 · 整局生效",   # 档位由上面那枚彩色 chip 说，副标题别重复它
+				"subtitle": "整局生效的强化",   # 档位由上面那枚彩色 chip 说，副标题别重复它
 				"glyph": TIER_GLYPH.get(tier, "🔧"),
 				"accent": col,
 				"chips": [{"t": tier, "color": col}],

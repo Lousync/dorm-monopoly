@@ -804,7 +804,7 @@ func _grant_tech(p: Dictionary, name: String) -> bool:
 	return true
 
 ## 是否持有某条科技。2026-10-10 方案 B：该字段由**单字符串**改为**列表**——
-## **只有实现这一行变了，签名与语义不变**，所以全仓 54 处调用点一行都不用改。
+## **只有实现这一行变了，签名与语义不变**，所以全仓既有 54 处调用点一行都不用改。
 func _has_tech(p: Dictionary, name: String) -> bool:
 	return name in p.get("techs", [])
 
@@ -1106,7 +1106,7 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 	_discover_wait_token = token
 	_discover_offered = ids.duplicate()
 	_awaiting_discover_peer = int(p.peer)
-	_log("%s 翻开失物招领箱，触发「发现」三选一（只有本人看得到候选）" % p.name, "#f0c064")
+	_log("%s 翻开失物招领箱，触发「发现」（只有本人看得到候选）" % p.name, "#f0c064")
 	_broadcast_state()
 	if not bool(p.bot):
 		if int(p.peer) == 1:
