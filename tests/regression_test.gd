@@ -430,6 +430,11 @@ func _test_shop_refresh_full_shelf(g) -> void:
 	var slots: Array = g.shops[tile].slots
 	_check(slots.size() == 3 and String(slots[0]) != "" and String(slots[1]) != "" and String(slots[2]) != "",
 		"刷新后三格仍满（整架重掷而非只补空位）")
+	# 收摊：2026-10-10 起「整架重掷」**先把三格清空**再抽（见 `_stock_shop`）⇒ 原先摆在架上的
+	# 唯一件会回到池里、可能被重新抽上架并**一直占着货架**。这架随机货架若留给后面的用例，
+	# 会让任何 `_item_pool` 断言（如 `_test_bankrupt_shop` 的「破产后唯一道具回池」）看运气。
+	# 随机状态是本用例造的，就地清干净（各用例自理状态是本文件的既有约定）。
+	g.shops = {}
 
 func _test_roster_marks_disconnected_bots(g, net) -> void:
 	print("== 开局名册：淡出期间掉线的玩家应转机器人 ==")

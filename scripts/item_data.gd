@@ -9,9 +9,6 @@ const QUALITY_COLORS := {
 	"蓝": Color(0.36, 0.6, 0.92), "紫": Color(0.66, 0.47, 0.92),
 	"橙": Color(0.96, 0.62, 0.25),
 }
-const SHOP_WEIGHTS := {"白": 40, "绿": 30, "蓝": 20, "紫": 5, "橙": 5}  # 橙 5% 定稿，其余待数值专场
-const FIND_WEIGHTS := {"白": 45, "绿": 30, "蓝": 18, "紫": 5, "橙": 2}  # 失物招领格：白捡的，要比小卖部略涩
-const CHANCE_ITEM_WEIGHTS := {"白": 40, "绿": 30, "蓝": 20, "紫": 8, "橙": 2}  # 机会格的道具卡：略好于失物招领
 const QUALITY_PRICES := {"白": 600, "绿": 1000, "蓝": 1800, "紫": 3000, "橙": 4500}  # 待数值专场
 const REFRESH_BASE := 500   # 小卖部刷新价起点：全局递增、整局不重置（待数值专场）
 const REFRESH_STEP := 300
@@ -20,7 +17,6 @@ const SOIL_DONATE := 400    # 落地焦土自动捐款（待数值专场）；�
 const ITEM_TIMEOUT := 12.0  # 道具阶段发呆兜底
 
 # ---------------- 黑市（§8：仅由机会卡进入，一切消费用地产） ----------------
-const BLACK_WEIGHTS := {"紫": 70, "橙": 30}   # 货架品质权重（紫/橙起步）
 const BLACK_COST := {"紫": 1, "橙": 2}        # 每件货的地皮价
 const BLACK_REFRESH_COST := 1                  # 刷新固定 1 块地皮（不涨价）
 const BLACK_EXIT_COST := 1                     # 出口费 1 块地皮

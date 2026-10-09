@@ -117,21 +117,57 @@ func _run() -> void:
 	_check(g._shop_peer == 0, "机器人离店后会话结束（_shop_peer == 0）")
 	_check(not g.shop_layer.visible, "机器人离店后界面重新收起")
 
-	# ---- ④ 品质权重运行时可变（⑧，小卖部.md §二）----
-	# 权重是对局状态（game.shop_weights），改它要真实影响铺货；且不许污染 ItemData 常量表。
-	print("== 品质权重运行时可变 ==")
+	# ---- ④ 铺货：全池等概率 + 同店三栏去重（2026-10-10 道具重构：人为权重退场）----
+	print("== 铺货：全池等概率、同店三栏去重 ==")
 	g.hp = [_mk_player(1, "甲", 5000)]
 	g.shops = {idx: {"slots": ["", "", ""]}}
-	g.shop_weights = {"白": 0, "绿": 100, "蓝": 0, "紫": 0, "橙": 0}
 	g._stock_shop(idx, true)
-	var all_green := true
-	for sid in g.shops[idx].slots:
-		var iid := String(sid)
-		if iid == "" or String(ItemData.def(iid).quality) != "绿":
-			all_green = false
-			break
-	_check(all_green, "权重全给绿 ⇒ 整架重掷后都是绿货（改权重真实影响铺货）")
-	_check(int(ItemData.SHOP_WEIGHTS["白"]) == 40, "对局权重是独立副本，常量表不被污染")
+	var uniq := {}
+	for sid in (g.shops[idx].slots as Array):
+		if String(sid) != "":
+			uniq[String(sid)] = true
+	_check(uniq.size() == (g.shops[idx].slots as Array).size(),
+		"同一家店三栏不重复（实得 %s）" % str(g.shops[idx].slots))
+	# 已持有的唯一件不再上架（`_item_pool` 的唯一性过滤，与抽选口径无关但属同一条链路）
+	g.hp[0].items = [{"id": "招财猫", "cd": 0}]   # 招财猫 = 白·唯一
+	var leaked := false
+	for i in 40:
+		g.shops[idx].slots = ["", "", ""]
+		g._stock_shop(idx, true)
+		if (g.shops[idx].slots as Array).has("招财猫"):
+			leaked = true
+	_check(not leaked, "已持有的唯一件【招财猫】在任何一次重掷里都不上架")
+
+	# ★ 抽选口径本身：**件数占比就是出现率**（Ruling BG）。上面两条只钉了「去重 / 唯一性过滤」，
+	# 与「等概率」**没有因果关系** —— 按旧「品质权重」抽档照样能满足它们，这一条才证得到。
+	# 档名一律**从 `ItemData.QUALITIES` 派生**（不写字面量档名，见 Ruling BM：T3 跑在改键名之前）。
+	# 判据 = 每档实测占比 vs 该档在可获取池里的件数占比；n=400 时最宽档的二项标准差 ≈2.2%
+	# ⇒ 门槛 80‰ 约 3.6σ。旧商店权重（白40/绿30/蓝20/紫5/橙5）下紫的期望从 ~24% 掉到 5% ⇒ 必红。
+	g.hp[0].items = []   # 清空持有，把池子还原成基准
+	g.shops = {}         # 货架一并清掉：在售件会被 `_item_pool` 排除，留着就不是基准池
+	var base_pool: Array = g._item_pool("")
+	var want := {}
+	for pid in base_pool:
+		var pq := String(ItemData.def(String(pid)).quality)
+		want[pq] = int(want.get(pq, 0)) + 1
+	var hit := {}
+	var n := 0
+	for i in 400:
+		var sid: String = g._stock_one()   # g 是 Node：动态调用推不出类型，显式标 String
+		if sid == "":
+			continue
+		n += 1
+		var sq := String(ItemData.def(sid).quality)
+		hit[sq] = int(hit.get(sq, 0)) + 1
+	_check(n == 400, "可获取池非空 ⇒ 400 次都抽得到（实得 %d）" % n)
+	var drift: Array = []
+	for q in ItemData.QUALITIES:
+		# 整数除法：占比一律换算成「千分比」再比（`(x * 1000) / n` 向零截断），避免浮点
+		var obs: int = int(hit.get(q, 0)) * 1000 / maxi(n, 1)
+		var pool_share: int = int(want.get(q, 0)) * 1000 / maxi(base_pool.size(), 1)
+		if absi(obs - pool_share) > 80:
+			drift.append("%s 实测 %d‰ / 池内占比 %d‰" % [q, obs, pool_share])
+	_check(drift.is_empty(), "400 抽样：各档出现率 ≈ 池内件数占比（偏离过大：%s）" % str(drift))
 
 	if fails == 0:
 		print("SHOP TEST: ALL PASS")

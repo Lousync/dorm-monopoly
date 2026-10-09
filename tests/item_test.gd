@@ -91,11 +91,32 @@ func _test_egg(g) -> void:
 	_check(g.items_consumed.has("蛋蛋节"), "用后焚毁不回池")
 	_check(p0.items.size() == 1 and String(p0.items[0].id) != "蛋蛋节", "使用者拿到 1 份礼物")
 	var q := String(ItemData.def(String(p0.items[0].id)).quality)
-	_check(q == "紫" or q == "橙", "使用者礼物为紫/橙（实得 %s）" % q)
+	# 档位**从 `ItemData.QUALITIES` 派生**（不写字面量档名，见 Ruling BM：本任务跑在改键名之前）
+	var top2: Array = ItemData.QUALITIES.slice(ItemData.QUALITIES.size() - 2)
+	_check(top2.has(q), "使用者礼物为最高的两档（实得 %s；最高两档 = %s）" % [q, str(top2)])
 	_check(p2.money == 1100, "满包玩家改发 ¥100")
 	_check(p1.items.size() == 1 or p1.money == 1100, "普通玩家收到礼物或现金")
 	_check(p3.items.is_empty() and p3.money == 1000, "出局玩家不参与")
 	_check(g._item_pool("").find("蛋蛋节") == -1, "焚毁道具已移出可获取池")
+
+	# ★ Ruling BG：只验「属于最高两档」证明不了「两档等概率」——补一条抽样断言。
+	# 使用者礼物 = 最高两档**档位 50/50**、档内等概率（2026-10-10 重构；原 紫 70% / 橙 30%）。
+	# n=400 时占比二项标准差 2.5%：门槛 40% 距旧口径的弱势档（30%）约 4.4σ、距新口径（50%）4σ。
+	var giver := _mk_player(1, "甲")
+	g.hp = [giver]
+	var tier_hit := {}
+	for i in 400:
+		giver.items = []
+		g._apply_egg_festival(giver)
+		if giver.items.is_empty():
+			continue
+		var tq := String(ItemData.def(String(giver.items[0].id)).quality)
+		tier_hit[tq] = int(tier_hit.get(tq, 0)) + 1
+	var even := true
+	for tq2 in top2:
+		if float(int(tier_hit.get(tq2, 0))) / 400.0 < 0.4:
+			even = false
+	_check(even, "使用者礼物：最高两档档位 50/50 等概率（实得 %s）" % str(tier_hit))
 
 ## 出局/观战玩家显式禁用道具（台账 §三「观战禁用道具」剩余半条 ⑱）：
 ## 破产虽已清空背包，`_use_item` 仍要有一道 alive 守卫，挡住其余一切入口。
@@ -272,10 +293,10 @@ func _test_discover(g) -> void:
 	var other := _mk_player(2, "乙")
 	g.hp = [p, other]
 	p.items = []
-	# 正常流程：返回一件候选内的道具、进包、候选结构合法（≤3 件、彼此不同、全在白池内）。
+	# 正常流程：返回一件候选内的道具、进包、候选结构合法（≤3 件、彼此不同、全在可获取池内）。
 	# 池子先快照：拿到手后唯一道具会立刻退出可获取池，事后查会对不上。
-	var pool_before: Array = g._item_pool("白").duplicate()
-	var id: String = await g._run_discover(p, "白", "失物招领")
+	var pool_before: Array = g._item_pool("").duplicate()   # 全池（新口径不再有「目标品质」）
+	var id: String = await g._run_discover(p, "失物招领")
 	_check(id != "", "「发现」拿到了一件道具")
 	_check(g._discover_offered.size() >= 2 and g._discover_offered.size() <= 3,
 		"候选 2~3 件（池子不足 3 件时给几件算几件）")
@@ -286,7 +307,7 @@ func _test_discover(g) -> void:
 		if not pool_before.has(String(oid)):
 			in_pool = false
 	_check(seen.size() == g._discover_offered.size(), "候选彼此不同")
-	_check(in_pool, "候选全部来自目标品质的可获取池")
+	_check(in_pool, "候选全部来自可获取池（全池）")
 	_check(g._discover_offered.has(id), "拿到的是候选之一")
 	_check(p.items.size() == 1 and String(p.items[0].id) == id, "选中的道具进了背包")
 	# 背包满：不再触发，返回空串
@@ -296,7 +317,7 @@ func _test_discover(g) -> void:
 	var full: int = g._bag_cap(p)   # g 是 Node：动态调用推不出类型，显式标 int
 	while p.items.size() < full:
 		p.items.append({"id": "校园卡", "cd": 0})
-	var none: String = await g._run_discover(p, "白", "失物招领")
+	var none: String = await g._run_discover(p, "失物招领")
 	_check(none == "" and p.items.size() == full, "背包满：不触发发现、背包不变")
 	g.hp = []
 

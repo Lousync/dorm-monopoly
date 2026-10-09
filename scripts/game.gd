@@ -46,7 +46,6 @@ const OP_KIND_LABELS := {
 
 # ---------------- 道具系统（host 状态，详见 doc/game-design/道具系统.md） ----------------
 var shops := {}            # tile_idx -> {slots: [id×3]}，每家小卖部独立货架
-var shop_weights: Dictionary = ItemData.SHOP_WEIGHTS.duplicate()  # 品质权重=运行时状态（小卖部.md §二）：道具/科技/设置可改、改后影响铺货；每局随 _host_setup 重置
 var items_consumed := {}   # 焚毁标记：一次性道具用后不回池（id -> true）
 var refresh_count := 0     # 小卖部全局刷新次数（任何人刷新都让全场变贵，整局不重置）
 var _extra_move := false   # 特浓咖啡：本次落地后再行动一次（_play_turn 每轮重置后消费）
@@ -135,7 +134,7 @@ var card_gallery_flag := false
 var blackshop_enabled := true   # 开局设置开关（面板后续批次接；关闭后机会卡池过滤该事件）
 var _black_peer := 0            # 正在逛黑市的玩家（0 = 无）
 var _black_epoch := 0
-var _black_slots: Array = ["", "", ""]   # 3 栏货架（紫/橙）
+var _black_slots: Array = ["", "", ""]   # 3 栏货架（只出品质最高的两档，池内等概率）
 var _black_pay_mode := ""       # "" / "buy" / "refresh" / "exit"：正在选地皮支付
 var _black_pay_slot := -1
 var _black_pay_need := 0        # 需交地皮数
@@ -518,7 +517,6 @@ func lab_reset() -> void:
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
-	shop_weights = ItemData.SHOP_WEIGHTS.duplicate()   # 权重是局内状态，不是跨局设置
 	refresh_count = 0
 	items_consumed = {}
 	for i in GameData.TILES.size():
@@ -581,7 +579,6 @@ func _host_setup() -> void:
 	for i in GameData.TILES.size():
 		htiles.append({"owner": GameData.NO_OWNER, "level": 0})
 	shops = {}
-	shop_weights = ItemData.SHOP_WEIGHTS.duplicate()   # 权重是局内状态，不是跨局设置
 	refresh_count = 0
 	blackshop_enabled = _settings.black_on   # 黑市开关：关 = 机会卡「黑市开张」不发
 	for i in GameData.TILES.size():
@@ -1039,24 +1036,34 @@ func _close_tech_offer() -> void:
 	_tech_ok = null
 
 # ================= 房主：「发现」三选一（术语表.md） =================
-# 触发载体 = 失物招领格：按招领权重定品质，翻出 3 件候选，只有本人看得到（私密 RPC），
-# 选中入包（受背包上限）；bot 按品质价自动选、超时随机兜底。「不限时」档不自动关。
+# 触发载体 = 失物招领格：从**可获取池**等概率翻出 3 件候选（2026-10-10 重构：人为权重退场），
+# 只有本人看得到（私密 RPC），选中入包（受背包上限）；bot 按品质价自动选、超时随机兜底。
+# 「不限时」档不自动关。
 # 大卡复用 ItemCard.SIZE_LARGE（道具系统.md §十二：发现三选一用大卡）。
 
-## 「发现」三选一主流程：返回拿到的道具 id（"" = 没拿到：背包满 / 池空）
-func _run_discover(p: Dictionary, quality: String, src: String) -> String:
+## 「发现」三选一主流程：返回拿到的道具 id（"" = 没拿到：背包满 / 池空）。
+## `guarantee` = 非空时，候选里**保底一件**该档（池里有的话）—— 淘宝达人用，键名随新四档。
+func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 	if (p.get("items", []) as Array).size() >= _bag_cap(p):
 		_log("%s 背包已满，与一次「发现」擦肩而过" % p.name, "#8a90a5")
 		return ""
-	# 目标品质凑不齐 3 件候选时自动向下降档（与失物招领旧口径一致）
-	var qi: int = ItemData.QUALITIES.find(quality)
-	while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).size() < 3:
-		qi -= 1
-	var pool := _item_pool(ItemData.QUALITIES[qi])
+	# 全池等概率、抽最多 3 件不重复；不足 3 件就给多少算多少（2026-10-10：原「降档凑数」作废）。
+	var pool: Array = _item_pool("")
 	if pool.is_empty():
 		return ""
 	pool.shuffle()
-	var ids: Array = pool.slice(0, mini(3, pool.size()))
+	var ids: Array = []
+	if guarantee != "":
+		for gid in pool:
+			if String(ItemData.def(String(gid)).quality) == guarantee:
+				ids.append(String(gid))
+				_log("【%s】%s 的候选里保底一件【%s】档" % [src, p.name, guarantee], "#f0c064")
+				break
+	for gid in pool:
+		if ids.size() >= 3:
+			break
+		if not ids.has(String(gid)):
+			ids.append(String(gid))
 	_pending_token += 1
 	var token := _pending_token
 	_discover_pick = {"token": -1, "id": ""}
@@ -1939,11 +1946,8 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 						await _await_card_confirm(p)
 					await _apply_card(p, card)
 				"item":
-					var q := _roll_quality(ItemData.CHANCE_ITEM_WEIGHTS.duplicate())
-					var qi: int = ItemData.QUALITIES.find(q)
-					while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).is_empty():
-						qi -= 1   # 缺货向下降档（口径同失物招领）
-					var got := _grant_item_of_quality(p, ItemData.QUALITIES[qi], "道具卡")
+					# 全池等概率抽一件（2026-10-10 重构：权重退场）；唯一池过滤 / 满包作废照旧。
+					var got := _grant_item_of_random(p, "道具卡")
 					if String(got) != "":
 						s_card.rpc("【道具卡】%s 拿到了【%s】！" % [p.name, got], "good", "道具卡", got)
 						await _await_card_confirm(p)
@@ -1966,19 +1970,10 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 							_ab_end_active()
 						await _ab_trigger(p, ab_id)
 		"item":
-			# 失物招领 = 「发现」三选一（术语表.md）：按招领权重定品质，翻出三件候选私密挑一件。
-			# 品质缺货向下降档（口径同旧版），背包满 / 池空则落空。
-			var q := _roll_quality(ItemData.FIND_WEIGHTS)
-			var qi: int = ItemData.QUALITIES.find(q)
-			if _has_tech(p, "淘宝达人"):
-				# 淘宝达人（钻石科技）：品质保底紫档（与「眼尖手快」取高不叠算；缺货仍向下降档）
-				var zi: int = ItemData.QUALITIES.find("紫")
-				if qi < zi:
-					qi = zi
-					_log("【淘宝达人】%s 的寻宝眼光保底紫档" % p.name, "#f0c064")
-			while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).is_empty():
-				qi -= 1
-			var found := await _run_discover(p, ItemData.QUALITIES[qi], "失物招领")
+			# 失物招领 = 「发现」三选一（术语表.md）：全池等概率抽最多 3 件不重复（2026-10-10 重构）。
+			# 科技「淘宝达人」的保底改为「候选里保底一件紫档」（原「品质保底紫档」在没有档位抽选的
+			# 新口径下无处着力 —— 见 §5.2 与 小卖部.md）。背包满 / 池空则落空。
+			var found := await _run_discover(p, "失物招领", "紫" if _has_tech(p, "淘宝达人") else "")
 			if String(found) != "":
 				# 结果全员公示（背包本就公开），演这张道具的卡面：与机会卡同一段演出
 				_log("【失物招领】%s 发现了【%s】！" % [p.name, found], "#74d188")
@@ -2537,6 +2532,21 @@ func _grant_card_item(p: Dictionary, id: String) -> void:
 		return
 	if _grant_item(p, id):
 		_log("%s 从机会卡获得道具【%s】" % [p.name, id], "#74d188")
+
+## 从**可获取池**等概率发一件道具（2026-10-10 起取代「按权重定档 → 按档发」两步走）。
+## 背包满 / 池空则落空，返回 ""。`src` 只进战报文案。
+func _grant_item_of_random(p: Dictionary, src := "机会卡") -> String:
+	if p.items.size() >= _bag_cap(p):
+		_log("%s 背包已满，%s的道具放不下了" % [p.name, src], "#8a90a5")
+		return ""
+	var pool: Array = _item_pool("")
+	if pool.is_empty():
+		_log("%s 想领道具，可惜一件都没货" % p.name, "#8a90a5")
+		return ""
+	var id: String = String(pool[randi_range(0, pool.size() - 1)])
+	_grant_item(p, id)
+	_log("%s 从%s获得道具【%s】" % [p.name, src, id], "#74d188")
+	return id
 
 ## 按品质从可用池随机发一件道具（背包满 / 缺货则落空，返回 ""）。
 ## src = 来源名（「机会卡」/「失物招领」），只进战报文案。
@@ -5320,35 +5330,33 @@ func _item_pool(quality: String) -> Array:
 		out.append(String(id))
 	return out
 
-## 按权重表抽品质（小卖部铺货传每局状态 `shop_weights`，失物招领格传 `FIND_WEIGHTS`）。
-## 权重表必须是调用方手里的运行时副本 —— 不给默认参数，防止顺手把 ItemData.SHOP_WEIGHTS
-## 常量本身传进来被改掉。
-func _roll_quality(weights: Dictionary) -> String:
-	var total := 0
-	for q in weights:
-		total += int(weights[q])
-	var r := randi_range(0, maxi(total - 1, 0))
-	for q in weights:
-		r -= int(weights[q])
-		if r < 0:
-			return q
-	return "白"
+## 取「非空」的货位（同店三栏去重用）。
+func _filled_slots(arr: Array) -> Array:
+	var out: Array = []
+	for sid in arr:
+		if String(sid) != "":
+			out.append(String(sid))
+	return out
 
-func _stock_one() -> String:
-	var q := _roll_quality(shop_weights)
-	if q == "橙" and _item_pool("橙").is_empty():
-		q = "紫"  # 橙池空并入紫（定稿）
-	var pool := _item_pool(q)
+## 小卖部铺一件：从**可获取池**（`_item_pool("")`：已排除隐藏件 / 已焚毁 / 已被持有的唯一件 /
+## 全部货架在售件）等概率抽一件。`exclude` = 本店已在售的那几件（同店三栏不重复）。
+## 2026-10-10 道具重构：人为权重退场 —— **件数占比就是出现率**，稀有度门闸整体搬到价格与刷新价。
+func _stock_one(exclude: Array = []) -> String:
+	var pool: Array = _item_pool("").filter(func(id: String) -> bool: return not exclude.has(id))
 	if pool.is_empty():
 		return ""
-	return pool[randi_range(0, pool.size() - 1)]
+	return String(pool[randi_range(0, pool.size() - 1)])
 
 func _stock_shop(idx: int, full := false) -> void:
 	var arr: Array = shops[idx].slots
+	if full:
+		# full = 整架重掷（进店 / 花刷新价）：三个货位全部换新，而非只补空位。
+		# 先清空，免得拿「上一架」的在售旧值去给自己去重（那会让某件旧货被无谓地排除）。
+		for i in arr.size():
+			arr[i] = ""
 	for i in arr.size():
-		# full = 整架重掷（进店 / 花刷新价）：三个货位全部换新，而非只补空位
-		if full or String(arr[i]) == "":
-			arr[i] = _stock_one()
+		if String(arr[i]) == "":
+			arr[i] = _stock_one(_filled_slots(arr))
 
 func _item_turn_start(p: Dictionary) -> void:
 	var cap := _stamina_cap(p)
@@ -6201,32 +6209,26 @@ func _prop_indices_sorted(peer: int) -> Array:
 		return int(GameData.TILES[a].price) < int(GameData.TILES[b].price))
 	return out
 
-func _black_roll_quality() -> String:
-	var total := 0
-	for q in ItemData.BLACK_WEIGHTS:
-		total += int(ItemData.BLACK_WEIGHTS[q])
-	var r := randi_range(0, maxi(total - 1, 0))
-	for q in ItemData.BLACK_WEIGHTS:
-		r -= int(ItemData.BLACK_WEIGHTS[q])
-		if r < 0:
-			return q
-	return "紫"
-
-func _black_stock_one() -> String:
-	var q := _black_roll_quality()
-	if _item_pool(q).is_empty():
-		q = "橙" if q == "紫" else "紫"
-	var pool := _item_pool(q)
-	if pool.is_empty():
+## 黑市货架一件：**档位限定保留（只出最好的两档），池内等概率**（2026-10-10 重构：权重退场）。
+## 档位**从 `ItemData.QUALITIES` 派生**、不写字面量（Ruling BM：本任务跑在档位改名之前）。
+## 某档池空则只用另一档 —— 合并成一个池再抽，这条自动成立，不需要额外的「互补」分支。
+func _black_stock_one(exclude: Array = []) -> String:
+	var best2: Array = ItemData.QUALITIES.slice(ItemData.QUALITIES.size() - 2)
+	var cands: Array = []
+	for q in best2:
+		for id in _item_pool(String(q)):
+			if not exclude.has(String(id)):
+				cands.append(String(id))
+	if cands.is_empty():
 		return ""
-	return pool[randi_range(0, pool.size() - 1)]
+	return String(cands[randi_range(0, cands.size() - 1)])
 
 func _black_stock() -> void:
 	if _black_slots.size() != 3:
 		_black_slots = ["", "", ""]
 	for i in _black_slots.size():
 		if String(_black_slots[i]) == "":
-			_black_slots[i] = _black_stock_one()
+			_black_slots[i] = _black_stock_one(_filled_slots(_black_slots))
 
 func _run_blackshop(p: Dictionary) -> void:
 	_black_epoch += 1
@@ -6475,10 +6477,14 @@ func c_shop_leave() -> void:
 		return
 	_shop_leave(multiplayer.get_remote_sender_id())
 
-## 蛋蛋节：全员送礼（规则见 doc/game-design/道具图鉴.md：他人白/绿/蓝三档均分，
-## 使用者紫 70%/橙 30%；礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
+## 蛋蛋节：全员送礼（规则见 doc/game-design/道具图鉴.md：他人 **白/蓝 两档等概率**，
+## 使用者 **紫/金 两档等概率** —— **档位限定 = 定位，不是概率加权**，与黑市同口径；
+## 礼物取自当前可获取池，满包改发 ¥100，池空同额兜底）
+## 档位一律**从 `ItemData.QUALITIES` 派生**、不写字面量（Ruling BM：本任务跑在档位改名之前）。
 func _apply_egg_festival(p: Dictionary) -> void:
 	_log("%s 点燃了【蛋蛋节】，礼物撒满全场！" % p.name, "#f0a0c0")
+	var best2: Array = ItemData.QUALITIES.slice(ItemData.QUALITIES.size() - 2)   # 品质最高的两档
+	var low2: Array = ItemData.QUALITIES.slice(0, 2)                              # 品质最低的两档
 	for o in hp:
 		if int(o.peer) == int(p.peer) or not bool(o.alive):
 			continue
@@ -6486,7 +6492,7 @@ func _apply_egg_festival(p: Dictionary) -> void:
 			o.money = int(o.money) + 100
 			_log("%s 背包已满，改收 %s 现金" % [o.name, GameData.fmt_money(100)], "#74d188")
 			continue
-		var q: String = ["白", "绿", "蓝"][randi_range(0, 2)]
+		var q: String = String(low2[randi_range(0, 1)])   # 他人：最低两档等概率（2026-10-10 重构）
 		var pool := _item_pool(q)
 		if pool.is_empty():
 			o.money = int(o.money) + 100
@@ -6495,10 +6501,10 @@ func _apply_egg_festival(p: Dictionary) -> void:
 		var id: String = pool[randi_range(0, pool.size() - 1)]
 		_grant_item(o, id)
 		_log("%s 收到礼物【%s】" % [o.name, id], "#74d188")
-	var my_q: String = "紫" if randi_range(1, 100) <= 70 else "橙"
+	var my_q: String = String(best2[randi_range(0, 1)])   # 自己：最高两档等概率
 	var my_pool := _item_pool(my_q)
 	if my_pool.is_empty():
-		my_pool = _item_pool("紫") + _item_pool("橙")
+		my_pool = _item_pool(String(best2[0])) + _item_pool(String(best2[1]))
 	if not my_pool.is_empty():
 		var id2: String = my_pool[randi_range(0, my_pool.size() - 1)]
 		_grant_item(p, id2)
