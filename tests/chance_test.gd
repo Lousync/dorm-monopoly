@@ -93,6 +93,7 @@ func _run() -> void:
 	_test_iface(g)
 	_test_candidates(g)
 	_test_enter_exit(g)
+	_test_spectator(g)
 	_test_seat_click(g)
 	_test_cancel(g)
 	_test_refresh_keeps_card(g)
@@ -137,18 +138,47 @@ func _test_candidates(g) -> void:
 	# 自己名下有地也照样不列自己（排除自己在前，与"有没有地"无关）
 	_check(not all.has(1) and not seize.has(1), "自己永远不是候选")
 
+## brief 让首参传 `NO_PEER` 时，`s_card_target` 分不出「我是抽卡者」与「我是旁观者」⇒ **全员**
+## 都进了选目标态、都挂了提示条。首参本来就是为这件事准备的（`owner_peer`）。
+func _test_spectator(g) -> void:
+	print("== 旁观者不进态 ==")
+	_table(g)   # my_peer = 1
+	_check(g.target_hint != null, "提示条控件在（否则下面那条断言是空的）")
+	if g.target_hint != null:
+		g.target_hint.visible = false
+	g.s_card_target.rpc(2, "steal_from", [1, 3], false)   # 抽卡者是 peer 2，本机是 peer 1
+	_check(g._tgt_card == "", "旁观者不进态（判别位仍为空，实得「%s」）" % g._tgt_card)
+	_check(g._tgt_stage == "", "旁观者不挂选目标阶段（实得「%s」）" % g._tgt_stage)
+	_check(g._hl_peers.is_empty(), "旁观者不点亮任何候选人")
+	_check(g.target_hint == null or not g.target_hint.visible, "旁观者不挂提示条")
+	# 抽卡者那一端照旧进态
+	g.s_card_target.rpc(1, "steal_from", [2, 3], false)
+	_check(g._tgt_card == "steal_from" and g._tgt_stage == "peer", "抽卡者本人照旧进态")
+	_check(g.target_hint == null or g.target_hint.visible, "抽卡者本人照旧挂提示条")
+	# 收尾包一视同仁：旁观者哪怕没进过态也照收一遍（不报错、也不清出别的花来）
+	g.s_card_target.rpc(2, "", [], true)
+	_check(g._tgt_card == "" and g._tgt_stage == "" and g._hl_peers.is_empty(), "收尾包对旁观者也无害")
+	# 「只有抽卡者进态」之后，旁观者那端的另外三条路径也应当一切照常（`_tgt_card` 恒为空）：
+	g._target_pick = 5
+	g._on_seat_clicked(3)          # 立牌点击：不是选目标态 ⇒ 既不产目标、也不进卡态
+	_check(g._target_pick == 5 and g._tgt_card == "", "旁观者点立牌不产出目标、也不进卡态")
+	g._refresh_action_button()     # `_refresh_action_button` 那条清理：旁观者与从前一模一样
+	_check(g._tgt_stage == "" and g._tgt_card == "", "旁观者过一遍广播清理仍是无事态")
+	g._cancel_target()             # 取消路径：没有卡态 ⇒ 不回报房主、不碰哨兵
+	_check(g._target_pick == 5, "旁观者取消路径不碰卡的哨兵")
+
 func _test_enter_exit(g) -> void:
 	print("== 进 / 退选目标态 ==")
 	_table(g)
 	g._tgt_slot = 0   # 故意先摆一个"道具槽位"：卡态必须把它归 -1，否则 _target_item_id() 会越界
-	g.s_card_target.rpc(GameData.NO_PEER, "steal_from", [2, 3], false)
+	g.s_card_target.rpc(1, "steal_from", [2, 3], false)
 	_check(g._tgt_card == "steal_from", "判别位记下字段名")
 	_check(g._tgt_stage == "peer", "复用既有的选玩家阶段")
 	_check(g._tgt_slot == -1, "卡态下 _tgt_slot 归 -1")
 	_check(g._tgt_peer == -1, "两段式的 _tgt_peer 也归 -1")
 	_check(g._card_target_peers == [2, 3], "候选名单记下来")
 	_check(g._hl_peers == [2, 3], "候选人点亮（判据仍是唯一一份 _hl_peers）")
-	g.s_card_target.rpc(GameData.NO_PEER, "", [], true)
+	g.s_card_target.rpc(1, "", [], true)
 	_check(g._tgt_card == "" and g._tgt_stage == "" and g._tgt_slot == -1, "收尾清干净")
 	_check(g._hl_peers.is_empty(), "收尾熄灭高亮")
 
@@ -197,7 +227,7 @@ func _test_cancel(g) -> void:
 func _test_refresh_keeps_card(g) -> void:
 	print("== 状态广播不冲掉卡选目标态 ==")
 	_table(g)
-	g.s_card_target.rpc(GameData.NO_PEER, "steal_from", [2, 3], false)
+	g.s_card_target.rpc(1, "steal_from", [2, 3], false)
 	# `_refresh_action_button`（每次状态广播经 `_refresh_actions` 推一遍）里有"非道具阶段收掉
 	# 未完成的选目标态"那条清理 —— 它判的是 `await == "item"`，卡选目标态**不是**那种阶段。
 	# 不排除的话，窗口期里任何一次广播（别人丢张牌、掉线）都会把这次选目标当场收掉，

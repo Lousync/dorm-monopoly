@@ -6378,15 +6378,19 @@ func _on_seat_clicked(peer: int) -> void:
 
 # ---------------- 卡选目标（批 2 §三）：复用同一套状态机，判别位换成 `_tgt_card` ----------------
 
-## 卡选目标态：房主 → 全员（`cands` = 此刻可选 peer，客户端照着点亮立牌 / 立牌金边）。
+## 卡选目标态：房主 → 全员（`cands` = 此刻可选 peer）。
 ## `done=true` 收尾（熄灭高亮、收起提示条）。两半都走**既有**的 `_push_peer_highlight`，
 ## 于是"哪几块亮着"与"点谁真的有反应"（`_on_seat_clicked` 的卡分支照 `_card_target_peers` 判）
 ## 依旧同源。
 ##
-## `owner_peer` 目前只随包下发、不做过滤（判据在 `_await_card_target` 那侧的 `_awaiting_card_target`）。
+## `owner_peer` = **抽卡者**：进态**只给这一端**。选目标只有他能作答（点选另有一道归属校验拦着，
+## 见 `c_card_target`），旁观者既没得点、也不该看到"选一位室友"这条提示条 —— 广播给全员是
+## `call_local` 的机制使然，不是语义（原先首参传 `NO_PEER` 时全员都进态、都挂提示条）。
 @rpc("authority", "call_local", "reliable")
 func s_card_target(owner_peer: int, field: String, cands: Array, done: bool) -> void:
 	if done:
+		# 收尾对**所有人**一视同仁：只有抽卡者进过态，但"谁进过态"不在这里再判一遍 ——
+		# 判错一次就是一块摘不掉的金边、一条收不起的提示条。
 		_tgt_card = ""
 		_tgt_stage = ""
 		_tgt_peer = -1
@@ -6398,6 +6402,8 @@ func s_card_target(owner_peer: int, field: String, cands: Array, done: bool) -> 
 		if board != null:
 			board.set_select_tiles([])
 		return
+	if owner_peer != my_peer:
+		return   # 旁观者：不进态、不挂提示、不点亮
 	_tgt_card = field
 	_tgt_slot = -1
 	_tgt_peer = -1
@@ -6433,7 +6439,8 @@ func _await_card_target(p: Dictionary, field: String) -> Dictionary:
 	_target_pick = GameData.NO_PEER
 	_card_target_ack = false
 	_awaiting_card_target = int(p.peer)
-	s_card_target.rpc(GameData.NO_PEER, field, cands, false)
+	# 首参 = **抽卡者**：只有他那一端进态（见 `s_card_target`），旁观者什么都不挂
+	s_card_target.rpc(_awaiting_card_target, field, cands, false)
 	if _is_managed(p):
 		await _wait(0.6)
 		if _target_pick == GameData.NO_PEER:
@@ -6442,7 +6449,7 @@ func _await_card_target(p: Dictionary, field: String) -> Dictionary:
 		# `alive` 的语义是"**还**在等"（同 `_ask` / `_await_card_confirm`）—— 等的是**作答**而不是
 		# "选到了人"：取消传回的就是 `NO_PEER`，拿 `_target_pick` 当判据的话取消也要空等一整窗。
 		await _await_turn_window("card", func() -> bool: return not _card_target_ack)
-	s_card_target.rpc(GameData.NO_PEER, "", [], true)   # 收尾（第 4 参 = 收）
+	s_card_target.rpc(_awaiting_card_target, "", [], true)   # 收尾（第 4 参 = 收）
 	var pick := _target_pick
 	_target_pick = GameData.NO_PEER
 	_card_target_ack = false
