@@ -172,6 +172,7 @@ doc/                   设计文档与原型（.md 为活文档，.html/.drawio 
     plans/             实施计划（随版本开发，合并后删除）
   screenshots/         README 用的截图（**受版本控制**；`shots/` 那份是临时产物）
 tests/                 见下一节
+tools/                 构建期工具（**不进游戏**）：`gen_gallery.gd` 图鉴页生成器 + 其 HTML 模板
 ```
 
 ## 文档导航
@@ -182,6 +183,9 @@ tests/                 见下一节
   （棋盘与地产 / 事件卡 / 经济与胜负 / 小卖部 / 黑市 / 赌场 / 道具系统 / 道具图鉴 /
   开局科技 / 畸变 / 开局设置；另有 `设计决策留痕.md`；交互原型定稿存档在
   `doc/game-design/prototype/`，`.html`/`.drawio`）
+- **图鉴页**：`doc/game-design/图鉴.html`（**生成产物，勿手改**）—— 全部事件卡 / 道具 / 科技 /
+  畸变 **共 179 条**的可搜索检索页，浏览器直接打开。改数据后跑
+  `godot --headless --path . --script tools/gen_gallery.gd` 重新生成（CI 有一道闸盯着它过期）
 - **工程与协作**：`doc/development/`（架构总览 · 联机协议 · 上手指南 · 开发台账 · 未完成项-交接 · 道具试验场 · 3D 房间设计）
 - **实施计划**：`doc/development/plans/`（随版本开发，合并进 `main` 后删除）
 - **版本变更**：`CHANGELOG.md`（每版改了什么、修了哪些缺陷）

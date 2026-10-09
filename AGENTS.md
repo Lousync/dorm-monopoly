@@ -40,9 +40,11 @@
 | `开局科技.md` | 开局三选一科技机制 + 图鉴 |
 | `畸变.md` | 全场畸变机制 + 图鉴 + 候选草案 |
 | `设计决策留痕.md` | 讨论过程、拍板理由、当时的备选方案与日期（**不是当前事实**） |
+| `图鉴.html` | **生成产物，勿手改**（唯一的非 `.md` 活文件）：事件卡 / 道具 / 科技 / 畸变 的检索页。由 `tools/gen_gallery.gd` 从数据表 + `道具图鉴.md` 生成，浏览器直接打开 |
 
 **原型文件**收在 `doc/game-design/prototype/` 子目录（`.html`/`.drawio`）——**该子目录只放定稿存档、
-不随实现更新**，与 `game-design/` 顶层的活文档 `.md` 分开放。`布局原型-玩家区与选项菜单.html`、
+不随实现更新**，与 `game-design/` 顶层的活文档 `.md` 分开放。
+（顶层另有一份 `图鉴.html`，是**生成产物**、不是手写原型，别混进 `prototype/`，也别手改它。）`布局原型-玩家区与选项菜单.html`、
 `布局原型-四人围桌.drawio` 是**定稿存档（2026-10-01）**——原型记录的是当时谈定的交互，
 **可能与现状不一致**（例如原型里的「☰ 选项」按钮后来已改名「⏸ 暂停」）。
 要写代码请以 `game-design/*` 与现有实现为准，不要把原型当成活的规范逐条对照。
@@ -111,6 +113,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/lab_case_test.gd # 道具试验场用例（保存/回放逐项还原）
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
+& $G --headless --path . --script tools/gen_gallery.gd  # 图鉴页生成（改了数据表 / 道具图鉴.md 后**必须重跑**）
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
 
@@ -243,6 +246,12 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 - 机制/数值改动 → 同步 `doc/game-design/*`；协议/架构改动 → 同步 `doc/development/*`。
 - **逐件道具的唯一来源是 `doc/game-design/道具图鉴.md`**；`道具系统.md` 只讲机制与进度，不重复逐件表。
+- **动了任何一张玩法数据表**（`game_data.gd` 的 `EVENTS` / `item_data.gd` 的 `ITEMS` /
+  `tech_data.gd` 的 `TECHS` / `aberration_data.gd` 的 `ABERRATIONS`）**或 `道具图鉴.md`**，
+  都要重跑 `tools/gen_gallery.gd` 重新生成 `doc/game-design/图鉴.html` 并一并提交 ——
+  CI 有一道「重新生成后 `git diff --exit-code`」的闸，过期即红（见 §三）。
+  这页是给团队当参考查的，**悄悄过时比没有更糟**（有人会拿它当准）。
+  生成器自己会打印「代码有文档没写 / 文档有代码没写 / 卡面文案不一致」三类缺项，别忽略它。
 - 新想法（未排期）→ 登记到 `doc/development/未完成项-交接.md`（**「还剩什么」的唯一权威**，见 §七）；
   讨论过程、拍板理由与备选方案写进 `doc/game-design/设计决策留痕.md`。
   批次推进过程中的记录留在 `doc/development/开发台账.md`——它**只记「做到哪了」，不再收待办**。
