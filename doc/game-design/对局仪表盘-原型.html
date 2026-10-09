@@ -86,17 +86,6 @@
     padding:5px 14px;border-radius:999px;font-size:13px;color:#f0c064;
     background:rgba(30,24,14,.9);border:1px solid #f5b34266;box-shadow:0 6px 18px #0008;pointer-events:none}
 
-  /* 玩家纵览（左列，落在选项之下） */
-  .rail{position:absolute;left:16px;top:86px;width:200px;display:flex;flex-direction:column;gap:7px;
-    pointer-events:none}
-  .prow{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px}
-  .prow .nm{font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .prow .money{font-size:12.5px;color:var(--accent)}
-  .prow .meta{font-size:10.5px;color:var(--dim);text-align:right;line-height:1.4}
-  .prow.turn{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 20px #f5b34233;
-    background:linear-gradient(180deg,rgba(60,52,35,.96),rgba(36,33,26,.96))}
-  .prow.turn .nm{color:var(--accent-hi);font-weight:700}
-  .prow.dead{opacity:.45}
   .tag{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid #ffffff22;color:var(--dim)}
   .tag.sleep{color:#c9a6ff;border-color:#c9a6ff66}
   .tag.bot{color:#8fb7f2;border-color:#8fb7f255}
@@ -115,8 +104,8 @@
 </head>
 <body>
   <div class="proto-head">
-    <h1>对局仪表盘 · 原型（融合版）</h1>
-    <span class="sub">顶部指挥带把「第几轮 / 谁在行动 / 到哪个阶段 / 还剩多久」与暂停·规则·战报融成一条</span>
+    <h1>对局仪表盘 · 原型</h1>
+    <span class="sub">顶部仪表盘横条（选项右侧的一条带）：第几轮 / 谁在行动 / 到哪个阶段 / 还剩多久</span>
     <span class="warn">← 草稿，欢迎推翻</span>
   </div>
 
@@ -153,9 +142,6 @@
 
     <!-- 畸变横幅：横条之下、居中 -->
     <div class="abanner" id="abanner">🌀 畸变生效中：断网·剩 3 回合</div>
-
-    <!-- 右侧玩家纵览（落在横条之下） -->
-    <div class="rail" id="rail"></div>
   </div>
 
   <!-- 控制条（仅原型演示） -->
@@ -230,22 +216,6 @@ function render(){
   const who = (w.who==="轮他") ? p.name : w.who;
   wait.innerHTML = `<span class="pill">${who}</span> ${w.text}` +
     (w.time ? ` · 剩 <span class="t">${w.time}s</span>` : "");
-
-  // 玩家纵览
-  const rail = document.getElementById("rail");
-  rail.innerHTML = "";
-  PLAYERS.forEach((pl,i)=>{
-    const row = document.createElement("div");
-    row.className = "card prow" + (i===pi?" turn":"") + (pl.status==="dead"?" dead":"");
-    let tag = "";
-    if(pl.status==="sleep") tag = '<span class="tag sleep">休眠</span>';
-    if(pl.status==="bot")   tag = '<span class="tag bot">托管</span>';
-    row.innerHTML =
-      `<span class="dot" style="color:${pl.color};background:${pl.color}"></span>`+
-      `<span class="nm">${pl.name}</span>${tag}`+
-      `<span class="meta"><span class="money">¥${pl.money.toLocaleString()}</span><br>地 ${pl.props} · 力 ${pl.stamina}</span>`;
-    rail.appendChild(row);
-  });
 
   document.getElementById("hint").textContent =
     `第 ${round}/30 轮 · 轮到「${p.name}」 · 阶段：${PHASES[phase].name}`;

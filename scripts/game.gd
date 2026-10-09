@@ -6314,10 +6314,19 @@ func _open_player_popup(peer: int) -> void:
 		"cap": _stamina_cap(p), "bag_cap": _bag_cap(p),
 		"alive": bool(p.get("alive", true)),
 		"color_idx": int(p.get("color", 0)), "rank": _rank_of(peer),
+		"props": _state_props(peer),
 		"items": p.get("items", []),
 		# 已选科技（§六）：名字 + 描述由 player_popup 显示（空串 / 出局则不显）
 		"tech": String(p.get("tech", "")),
 	})
+
+## 某玩家名下地皮数（读已同步的 `st.tiles`，客户端也准）。喂玩家道具弹窗的「地皮」指标。
+func _state_props(peer: int) -> int:
+	var n := 0
+	for t in st.get("tiles", []):
+		if int((t as Dictionary).get("owner", GameData.NO_OWNER)) == peer:
+			n += 1
+	return n
 
 ## 某玩家的名次（`standing` 里的 rank；查不到给 0 = 不画徽章）。
 ## 批次 12 D1 起读 `_standing_by_peer` **那张表**，不再回头去条里翻：四角条只剩「我」一条之后，

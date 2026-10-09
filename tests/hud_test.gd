@@ -504,9 +504,6 @@ func _run() -> void:
 	# await=roll ⇒ stepper 停在第 1 段「① 掷轮盘」
 	_check(int(g.dashboard._phase) == 1,
 		"阶段 stepper 停在「① 掷轮盘」（实得 %d）" % int(g.dashboard._phase))
-	# 右侧纵览：列全 4 家（peer 1..4）
-	_check(g.dashboard._rows.size() == 4,
-		"右侧纵览列出全部玩家（实得 %d）" % g.dashboard._rows.size())
 	# 等待提示：roll 环节 + 限时窗口补一条后显示剩余秒
 	g.s_op_timer("roll", 30.0, 30.0, 2)
 	g.dashboard.refresh()
@@ -516,7 +513,7 @@ func _run() -> void:
 		"限时窗口显示剩余秒（实得 %s）" % String(g.dashboard.wait_time.text))
 	g.s_op_timer("", 0.0, 0.0, -1)
 	g.dashboard.refresh()
-	# 落点：横条内容（回合卡 / 等待行）不与三个角按钮重叠 —— 左右各留了空位让按钮"坐进"横条两端。
+	# 落点：横条是「暂停」右侧的一条带、右端让开「规则说明 / 战报」⇒ 内容不与三个角按钮重叠。
 	var dash_hit := 0
 	for pair in [[g.dashboard.round_n, g.opt_btn], [g.dashboard.steps_row, g.log_toggle],
 			[g.dashboard.steps_row, g.rules_btn]]:
@@ -1762,6 +1759,10 @@ func _run() -> void:
 	_check(g._rank_of(1) == 2, "名次表里甲排第 2（`_rank_of` 改读 `_standing_by_peer` 之后仍准，实得 %d）" % g._rank_of(1))
 	var pop_labels: Array = _popup_labels(g.player_popup)
 	_check(pop_labels.has("2"), "弹窗里画出了甲的名次徽章「2」（实测标签 %s）" % str(pop_labels))
+	# 地皮数（2026-10-09）：从被删除的「玩家纵览」收进弹窗 —— fixture 给甲(peer 1)一块「一号楼」。
+	_check(g._state_props(1) == 1, "甲名下 1 块地皮（`_state_props` 读 st.tiles，实得 %d）" % g._state_props(1))
+	_check(pop_labels.has("现金 %s · 地皮 1 块" % GameData.fmt_money(12000)),
+		"弹窗里写了现金 + 地皮数（实测标签 %s）" % str(pop_labels))
 	g.player_popup.close()
 	_check(not g.player_popup.is_open(), "关闭后收起")
 	# 反向：不存在的玩家不该开（人少了 / 自己不在名册时不崩）

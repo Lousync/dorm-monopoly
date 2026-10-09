@@ -4,14 +4,14 @@ extends Node
 ## 挂在屏幕层 `hud` 上，与左上「暂停」/右上「战报·规则」同层。
 ##
 ## 动机：把「第几轮 / 轮到谁 / 到哪个阶段 / 还剩多久」从散落多处收拢成一条顶部指挥带
-##（回合卡 + 当前行动 + 阶段 stepper + 等待提示）+ 左侧玩家纵览。
+##（回合卡 + 当前行动 + 阶段 stepper + 等待提示）。
 ##
 ## 数据**全部读已同步的 `st` 与 `_op_*`**（`s_state` / `s_op_timer` 推的那份）——
 ## 客户端（非房主）也准，**不需要任何新协议**。
 ##
-## 施工落位（2026-10-09 用户 drawio 定稿，只取布局、不照比例）：左边一列自上而下 =
-## **暂停（选项）→ 玩家纵览**；顶部**仪表盘横条**是「选项」右侧的一条带（不铺到选项背后），
-## 右端让开「规则说明 / 战报」。畸变横幅与战报气泡挪到横条下方，互不打架。
+## 施工落位（2026-10-09 用户 drawio 定稿，只取布局、不照比例）：顶部**仪表盘横条**是「暂停（选项）」
+## 右侧的一条带（不铺到选项背后），右端让开「规则说明 / 战报」。畸变横幅与战报气泡挪到横条下方，
+## 互不打架。**玩家纵览已按用户要求删除**（改为在玩家道具弹窗里看地皮数，见 `player_popup.gd`）。
 ##
 ## 底部那排「控制按钮」只是原型演示用，**这里不要**（见 `doc/game-design/对局仪表盘-原型.html`）。
 
@@ -30,11 +30,6 @@ const BAR_BOTTOM := 76.0
 const BAR_LEFT_HOST := 104.0
 const BAR_LEFT_CLIENT := 276.0
 const BAR_RIGHT := -258.0
-## 左侧玩家纵览的落位（贴左、在横条之下、底部让开左下角「我」的身家条）。
-const RAIL_TOP := 84.0
-const RAIL_W := 196.0
-const RAIL_X := 12.0
-const RAIL_BOTTOM_MARGIN := 158.0
 
 var g: Node
 var host: Control               # 屏幕层容器（`g.hud_layer`）—— 控件挂它才拿得到正确尺寸
@@ -54,12 +49,6 @@ var wait_pill: Label
 var wait_text: Label
 var wait_time: Label
 
-# ---- 右侧纵览 ----
-var rail: VBoxContainer
-var rail_title: Label
-var _rows: Dictionary = {}      # peer -> row dict
-var _rail_sig := ""
-
 # ---- 阶段推进追踪（按「回合/行动者」为键，单调前进）----
 var _phase := 0
 var _turn_key := ""
@@ -70,15 +59,12 @@ func setup() -> void:
 	if host == null:
 		return
 	_build_bar()
-	_build_rail()
 
-## 整体隐藏（道具试验场等复用 game 的场景用）：关掉刷新并收掉两块。
+## 整体隐藏（道具试验场等复用 game 的场景用）：关掉刷新并收掉横条。
 func hide_all() -> void:
 	enabled = false
 	if bar != null and is_instance_valid(bar):
 		bar.visible = false
-	if rail != null and is_instance_valid(rail):
-		rail.visible = false
 
 # ================= 建 =================
 
@@ -221,23 +207,6 @@ func _style_step(i: int, state: int) -> void:
 		lb.remove_theme_font_override("font")
 		dot.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0.29, 0.32, 0.38), 4))
 
-func _build_rail() -> void:
-	rail = VBoxContainer.new()
-	# 左侧一列：贴左缘、在横条之下，底边让开左下角「我」的身家条（锚到屏幕底）。
-	rail.anchor_left = 0.0
-	rail.anchor_right = 0.0
-	rail.anchor_top = 0.0
-	rail.anchor_bottom = 1.0
-	rail.offset_left = RAIL_X
-	rail.offset_right = RAIL_X + RAIL_W
-	rail.offset_top = RAIL_TOP
-	rail.offset_bottom = -RAIL_BOTTOM_MARGIN
-	rail.add_theme_constant_override("separation", 6)
-	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	host.add_child(rail)
-	rail_title = UIKit.label("玩家纵览", 11, UIKit.TEXT_DIM)
-	rail.add_child(rail_title)
-
 func _vline() -> ColorRect:
 	var v := ColorRect.new()
 	v.color = Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.55)
@@ -262,7 +231,6 @@ func refresh() -> void:
 	var phase := String(st.get("phase", ""))
 	var running := phase == "playing"
 	bar.visible = running
-	rail.visible = running
 	if not running:
 		return
 
@@ -310,9 +278,6 @@ func refresh() -> void:
 
 	# ③ 等待提示
 	_set_wait(st, await_s, op_kind)
-
-	# ④ 右侧纵览
-	_refresh_rail(st, turn_peer)
 
 func _set_wait(st: Dictionary, await_s: String, op_kind: String) -> void:
 	var op_left := float(g.get("_op_left"))
@@ -394,131 +359,6 @@ func _actor_tag(p: Dictionary, turn_peer: int) -> String:
 	elif bool(p.get("bot", false)):
 		bits.append("托管")
 	return " · ".join(bits)
-
-func _refresh_rail(st: Dictionary, turn_peer: int) -> void:
-	var players: Array = st.get("players", [])
-	var tiles: Array = st.get("tiles", [])
-	var sig := "%d" % turn_peer
-	for p in players:
-		sig += "|%d,%d,%d,%d,%d,%d,%d" % [int(p.get("peer", 0)), int(p.get("money", 0)),
-			int(p.get("stamina", 0)), int(p.get("color", 0)), 1 if bool(p.get("alive", true)) else 0,
-			int(p.get("sleep", 0)), 1 if bool(p.get("bot", false)) else 0]
-	# 地块归属进签名（地皮数会变）
-	var props := {}
-	for i in tiles.size():
-		var o := int((tiles[i] as Dictionary).get("owner", GameData.NO_OWNER))
-		if o != GameData.NO_OWNER:
-			props[o] = int(props.get(o, 0)) + 1
-	for p in players:
-		sig += "|%d" % int(props.get(int(p.get("peer", 0)), 0))
-	if sig == _rail_sig:
-		return
-	_rail_sig = sig
-
-	# 复用已有行（题目不变就不重建）；玩家集合变化时重建。
-	var want := {}
-	for p in players:
-		want[int(p.get("peer", 0))] = true
-	for peer in _rows.keys():
-		if not want.has(peer):
-			(_rows[peer].root as Control).queue_free()
-			_rows.erase(peer)
-	for pi in players.size():
-		var p: Dictionary = players[pi]
-		var peer := int(p.get("peer", 0))
-		if not _rows.has(peer):
-			_rows[peer] = _make_row(peer)
-		_fill_row(_rows[peer], p, int(props.get(peer, 0)), turn_peer)
-	# 顺序：按 players 顺序重排
-	for pi in players.size():
-		var peer2 := int((players[pi] as Dictionary).get("peer", 0))
-		if _rows.has(peer2):
-			rail.move_child((_rows[peer2].root as Control), pi + 1)
-
-func _make_row(peer: int) -> Dictionary:
-	var root := UIKit.panel_container(Color(0.085, 0.095, 0.138, 0.82), 10,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 3)
-	root.mouse_filter = Control.MOUSE_FILTER_STOP
-	root.set_meta("peer", peer)
-	root.gui_input.connect(func(ev: InputEvent) -> void:
-		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
-				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			g._on_corner_bar_clicked(int(root.get_meta("peer", GameData.NO_PEER)))
-	)
-	rail.add_child(root)
-	var m := UIKit.margins(9, 9, 6, 6)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(m)
-	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 8)
-	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(hb)
-	var slot := Control.new()
-	slot.custom_minimum_size = Vector2(16, 16)
-	slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hb.add_child(slot)
-	var mid := VBoxContainer.new()
-	mid.add_theme_constant_override("separation", 1)
-	mid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hb.add_child(mid)
-	var nm := UIKit.label("", 13, UIKit.TEXT)
-	nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	nm.custom_minimum_size = Vector2(72, 0)
-	mid.add_child(nm)
-	var tg := UIKit.label("", 10, UIKit.TEXT_DIM)
-	mid.add_child(tg)
-	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", 1)
-	right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hb.add_child(right)
-	var mn := UIKit.label("", 12, UIKit.ACCENT)
-	mn.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right.add_child(mn)
-	var meta := UIKit.label("", 10, UIKit.TEXT_DIM)
-	meta.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right.add_child(meta)
-	return {"root": root, "peer": peer, "slot": slot, "chip": null, "chip_color": -999,
-		"name_l": nm, "tag_l": tg, "money_l": mn, "meta_l": meta, "active": false, "alive": true}
-
-func _fill_row(row: Dictionary, p: Dictionary, props: int, turn_peer: int) -> void:
-	var peer := int(p.get("peer", 0))
-	var col := _color_of(p)
-	if row.chip == null or int(row.chip_color) != int(p.get("color", 0)):
-		for c in (row.slot as Control).get_children():
-			c.queue_free()
-		row.chip = UIKit.chip(col, 14)
-		(row.slot as Control).add_child(row.chip)
-		row.chip_color = int(p.get("color", 0))
-	var alive := bool(p.get("alive", true))
-	(row.root as Control).modulate.a = 1.0 if alive else 0.45
-	(row.name_l as Label).text = String(p.get("name", "?"))
-	(row.name_l as Label).add_theme_color_override("font_color",
-		UIKit.TEXT_DIM if not alive else (UIKit.ACCENT if peer == turn_peer else UIKit.TEXT))
-	var tags := PackedStringArray()
-	if int(p.get("sleep", 0)) > 0:
-		tags.append("休眠")
-	elif bool(p.get("bot", false)):
-		tags.append("托管")
-	if not alive:
-		tags.append("出局")
-	(row.tag_l as Label).text = " ".join(tags)
-	(row.tag_l as Label).visible = tags.size() > 0
-	(row.money_l as Label).text = "已出局" if not alive else GameData.fmt_money(int(p.get("money", 0)))
-	(row.meta_l as Label).text = "地 %d · 力 %d" % [props, int(p.get("stamina", 0))]
-	var active := peer == turn_peer and alive
-	if bool(row.active) != active:
-		row.active = active
-		var bg := Color(0.085, 0.095, 0.138, 0.82)
-		var border := Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7)
-		if active:
-			bg = Color(0.235, 0.205, 0.135, 0.95)
-			border = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.95)
-		(row.root as Control).add_theme_stylebox_override("panel",
-			UIKit.card_stylebox(bg, 10, border, 1, 3))
 
 # ================= 小工具 =================
 
