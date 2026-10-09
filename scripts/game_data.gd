@@ -225,7 +225,8 @@ static func events_for() -> Array:
 ## 而它读不到 `game.gd` —— 抄一份就是**会烂的第二来源**（卡型配色会跟演出悄悄不一致）。
 static func card_kind(card: Dictionary) -> String:
 	# 2026-10-09 批 2（T9~T13）的 15 个新字段：送监单列 jail、位移归 move、抉择与情报归
-	# info、目标类与地皮类归 good（都是对**抽卡者**有利的那一侧）。整块插在 `go_jail` 之前
+	# info、目标类与地皮类归 good（都是对**抽卡者**有利的那一侧；中性的 `seize_tile:"swap"`
+	# 不在此列、归 move，见下面那两行）。整块插在 `go_jail` 之前
 	# ——它们按 机会卡.md §三 的结算次序本来就排在 go_jail 之后，但配色取更重的那一类。
 	# `jail_to`（送**别人**去宿委会）又排在最前、先于 `go_jail`（自己进去）：今天还没有同时
 	# 带两者的卡，但这是契约，别把顺序调换。
@@ -234,9 +235,14 @@ static func card_kind(card: Dictionary) -> String:
 	if card.has("choices") or card.has("peek_deck") or card.has("shuffle_deck") or card.has("bury_deck"):
 		return "info"
 	if card.has("steal_from") or card.has("charge_to") or card.has("each_from_target") \
-			or card.has("steal_item_from") or card.has("seize_tile") or card.has("force_buy_tile"):
+			or card.has("steal_item_from") or card.has("force_buy_tile") \
+			or card.get("seize_tile", "") == "take":
 		return "good"
-	if card.has("swap_pos") or card.has("pull_target") or card.has("push_back") or card.has("shuffle_pos"):
+	# `seize_tile:"swap"` **要与 `seize_tile:"take"` 分开判**（2026-10-09 T15 修）：
+	# 互换是**中性**（一 debuff 一 buff 相抵，香皂也无效 —— 见 `机会卡.md` §四），
+	# 拿它跟"没收他的房产"同色（💰收益）是玩家可见的错话。归 `move`，与同族的 `swap_pos` 同色。
+	if card.has("swap_pos") or card.has("pull_target") or card.has("push_back") \
+			or card.has("shuffle_pos") or card.has("seize_tile"):
 		return "move"
 	if card.has("go_jail"):
 		return "jail"

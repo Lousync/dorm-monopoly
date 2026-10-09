@@ -372,6 +372,8 @@ var at_rounds := 3
 var at_tier := ""    # --tier= 指定的挡位（客户端 autotest 据此断言收到了正确的快照）
 var _at_roll_epoch := -1
 var _at_card_done := false     # 自动回归：本张抽卡演出的「确定」已经代点过（按钮收起时复位）
+var _at_choice_done := false   # 同上，抉择卡那一排按钮：已经代点过第一枚（按钮收起时复位）
+var _at_target_done := false   # 同上，卡选目标态：已经代选过一个（退出选目标态时复位）
 var _at_client_done := false   # 客户端 autotest 已收尾（防 quit() 生效前重复打印）
 
 var lab_mode := false   # 道具试验场模式：建好局面但不跑回合循环
@@ -4559,6 +4561,38 @@ func _at_auto_card_confirm() -> void:
 	if deck_reveal != null and is_instance_valid(deck_reveal) and deck_reveal.is_confirm_visible():
 		_on_card_confirm()
 
+## 自动回归：抉择卡那一排按钮亮出来之后代点第一枚（与 `_at_auto_card_confirm` 同类，只是触发源
+## 换成抉择按钮）。**走 `_on_card_choice`**：它自己会分「房主直接落 / 客户端回 `c_choice`」，
+## 于是客户端那一趟真的把 `c_choice` 走一趟回程。
+##
+## 为什么必须有这一支：带 `choices` 的卡**不走** `_await_card_confirm`（分支按钮就是它的「确定」），
+## 所以 `_at_auto_card_confirm` 那条救不到它 —— 客户端抽到抉择卡只能空等满一个操作窗口
+##（`Engine.time_scale` 3 倍速下 ≈8.3s）再由房主取第一项（T12 报告 §六.3 登记的缺口）。
+## 取的也是**第一项**，与房主侧 bot / 超时的兜底同一个落点。
+func _at_auto_card_choice() -> void:
+	await get_tree().create_timer(0.4).timeout
+	if not is_inside_tree():
+		return
+	if deck_reveal != null and is_instance_valid(deck_reveal) and deck_reveal.is_choice_visible():
+		_on_card_choice(0)
+
+## 自动回归：进卡选目标态之后代选一个（同族第三条）。**走 `_on_seat_clicked`** —— 那正是玩家
+## 点名册条 / 立牌的同一条后果函数，连带跑掉"是不是我的可选目标"那道判据（不另开旁路）。
+##
+## 挑 `_card_target_peers[0]`：客户端没有房主的 `hp`/`htiles`，挑不出"谁钱最多 / 地最多"；
+## 而候选表本来就按 peer 升序（`_card_target_candidates` 顺着 `hp` 走）⇒ 第一个正是房主侧
+## `_card_target_bot_pick` 在客户端这份数据上会选的那个（并列取 peer 最小）。**不是"谁都能替别人答"**：
+## `s_card_target` 只给抽卡者那一端进态（它开头那道 `owner_peer != my_peer`）⇒ `_tgt_card` 非空
+## 就说明本机就是该作答的人；另有一道 `c_card_target` 的归属校验兜着。
+func _at_auto_card_target() -> void:
+	await get_tree().create_timer(0.4).timeout
+	if not is_inside_tree():
+		return
+	# 延时里状态可能已经收了（房主超时 / 掉线）：再核一遍，别对着空气作答
+	if _tgt_card == "" or _tgt_stage != "peer" or _card_target_peers.is_empty():
+		return
+	_on_seat_clicked(int(_card_target_peers[0]))
+
 ## 右下角动作按钮的状态（唯一来源是 st，客户端也准）：每次状态广播推一遍。
 ##
 ## 三态（见 批次7-设计 §5.2）：
@@ -7376,6 +7410,24 @@ func _process(_delta: float) -> void:
 				_at_auto_card_confirm()
 		else:
 			_at_card_done = false
+		# 抉择卡那一排按钮（2026-10-09 T15 补）：判据必须是 `is_choice_visible()`，
+		# **不能拿 `is_confirm_visible()` 代** —— 带 `choices` 的卡不走 `_await_card_confirm`，
+		# 那枚「确定」根本不亮（两者互斥，见 `deck_reveal._update_btn`）。
+		if deck_reveal.is_choice_visible():
+			if not _at_choice_done:
+				_at_choice_done = true
+				_at_auto_card_choice()
+		else:
+			_at_choice_done = false
+	# 卡选目标态（同批）：`s_card_target` 只给**抽卡者那一端**进态 ⇒ `_tgt_card` 非空就说明
+	# "本机就是该作答的人"，这条钩子天然只对本机自己那张生效，不会替别人答题。
+	# 它不挂在 `deck_reveal` 上：选目标态可以独立于演出存在（演出早收了、态还挂着等作答）。
+	if at_mode != "" and _tgt_card != "" and _tgt_stage == "peer" and not _card_target_peers.is_empty():
+		if not _at_target_done:
+			_at_target_done = true
+			_at_auto_card_target()
+	else:
+		_at_target_done = false
 	if dev.enabled:
 		dev.refresh_panel()
 

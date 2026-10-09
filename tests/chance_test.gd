@@ -111,6 +111,7 @@ func _run() -> void:
 	await _test_no_candidates(g)
 	await _test_managed(g)
 	await _test_at_mode(g)
+	await _test_at_client_auto(g)
 	_test_target_disconnect(g)
 	await _test_target_fields(g)
 	await _test_tile_move_fields(g)
@@ -136,9 +137,10 @@ func _has_prop(g, nm: String) -> bool:
 func _test_iface(g) -> void:
 	print("== 接口齐备 ==")
 	for nm in ["_tgt_card", "_card_target_peers", "_target_pick", "_card_target_ack",
-			"_awaiting_card_target"]:
+			"_awaiting_card_target", "_at_choice_done", "_at_target_done"]:
 		_check(_has_prop(g, nm), "成员 %s 在位" % nm)
-	for nm in ["_await_card_target", "_card_target_candidates"]:
+	for nm in ["_await_card_target", "_card_target_candidates",
+			"_at_auto_card_choice", "_at_auto_card_target"]:
 		_check(g.has_method(nm), "方法 %s 在位" % nm)
 	for nm in ["s_card_target", "c_card_target"]:
 		_check(g.has_method(nm), "RPC %s 在位" % nm)
@@ -368,6 +370,73 @@ func _test_at_mode(g) -> void:
 	_check(saw.is_empty(), "同样没开真人那一扇窗口（实得 %s）" % str(saw))
 	_check(ms_choice < 2000, "同样是短暂延时（实耗 %d ms）" % ms_choice)
 	_check(g._awaiting_card == 0 and g._choice_pick == -1, "收尾干净（归属位与判别位复位）")
+
+## 自动回归**客户端侧**那两条钩子（挂在 `_process` 上，形状照 `_at_auto_card_confirm`）：
+## 本机抽到抉择卡时按钮一亮就代点第一枚、进卡选目标态就代选一个 —— 让 `c_choice` /
+## `c_card_target` 的回程在自动回归里**真的走一趟**（客户端没人点的那张卡，原先只能靠超时收场）。
+##
+## 判据 = 钩子跑完那两个判别位真的被写上（`_choice_pick` / `_card_target_ack`）。
+## 再加一条**反向**：`at_mode` 关着时一个都不许动（真人对局里这是玩家自己的活）。
+func _test_at_client_auto(g) -> void:
+	print("== 自动回归（客户端侧）：代点抉择 / 代选目标 ==")
+	_setup(g, [_mk_player(1, "甲"), _mk_player(2, "乙"), _mk_player(3, "丙")], _fresh_tiles())
+	var dr = g.deck_reveal
+	if dr == null:
+		return   # 存在性闸已经报过红了
+	g.at_mode = "client"
+	# --- 抉择：按钮亮着 ⇒ 代点第 0 枚 ---
+	g._at_choice_done = false
+	g._awaiting_card = 1         # 正等着本机（1）作答
+	g._choice_pick = -1
+	dr.show_card("机会", "info", "测试：抉择卡")
+	dr.tick(dr.CARD_TIME + 0.05)   # 推出停留段：卡停住、按钮才有出镜的资格
+	g.s_card_choices.rpc(["包庇", "告密"], 1)
+	_check(dr.is_choice_visible(), "（前置）抉择按钮亮着")
+	var fired := await _wait_until(func() -> bool: return int(g._choice_pick) >= 0, 3.0)
+	_check(fired and int(g._choice_pick) == 0,
+		"按钮一亮就代点**第一枚**（实得 %d）" % int(g._choice_pick))
+	g.s_card_choices.rpc([], 1)
+	# --- 卡选目标：进态 ⇒ 代选一个 ---
+	g._at_target_done = false
+	g.s_card_target.rpc(1, "steal_from", [2, 3], false)   # 抽卡者是本机（1）⇒ 只有它进态
+	_check(g._tgt_card == "steal_from" and g._tgt_stage == "peer", "（前置）本机进了选目标态")
+	fired = await _wait_until(func() -> bool: return bool(g._card_target_ack), 3.0)
+	_check(fired and int(g._target_pick) == 2,
+		"进去就代选一个（候选表第一个 = peer 2，实得 %d）" % int(g._target_pick))
+	g.s_card_target.rpc(1, "", [], true)
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)
+	# --- 反向：`at_mode` 关着 ⇒ 两条都不许动 ---
+	g.at_mode = ""
+	g._at_choice_done = false
+	g._at_target_done = false
+	g._awaiting_card = 1
+	g._choice_pick = -1
+	g._target_pick = GameData.NO_PEER
+	g._card_target_ack = false
+	dr.show_card("机会", "info", "测试：抉择卡")
+	dr.tick(dr.CARD_TIME + 0.05)
+	g.s_card_choices.rpc(["包庇", "告密"], 1)
+	g.s_card_target.rpc(1, "steal_from", [2, 3], false)
+	await _wait_until(func() -> bool: return false, 1.2)   # 干等一段（钩子若在，这会儿早该动了）
+	_check(int(g._choice_pick) == -1, "at_mode 关着 ⇒ 抉择不代点（实得 %d）" % int(g._choice_pick))
+	_check(not g._card_target_ack, "at_mode 关着 ⇒ 目标不代选")
+	g.s_card_choices.rpc([], 1)
+	g.s_card_target.rpc(1, "", [], true)
+	g._awaiting_card = 0
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)
+
+## 逐帧等到 `cond` 成立（或跑满 `sec` 秒）⇒ 返回是否等到。两条自动回归钩子挂在 `_process` 上、
+## 各自带一段延时，单进程测试只能这么等（同 `_answer_choice_when_waiting`：测试里拿不到
+## 挂起的协程句柄）。**按秒而不是按帧数收口**：headless 的帧率不封顶，帧数在这台机器上没意义。
+func _wait_until(cond: Callable, sec: float) -> bool:
+	var t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t0 < int(sec * 1000.0):
+		await process_frame
+		if cond.call():
+			return true
+	return cond.call()
 
 ## 旁路观察（不 await，写法同 `_answer_choice_when_waiting` 那条）：逐帧看 `_op_kind` —— 只有
 ## `_await_turn_window` 会把操作窗口开出来（`_op_timer_send` ⇒ `s_op_timer` ⇒ `_op_kind = kind`）。
@@ -1333,9 +1402,12 @@ func _test_kind_and_dist(g) -> void:
 		"steal_item_from": true, "seize_tile": "take", "force_buy_tile": 33}
 	for f in good_f:
 		_check(_kind_of(f, good_f[f]) == "good", "%s ⇒ good（目标 / 地皮类：对抽卡者有利）" % f)
-	var move_f := {"swap_pos": true, "pull_target": true, "push_back": 2, "shuffle_pos": true}
+	# `seize_tile:"swap"` 也在这一族（2026-10-09 T15）：互换是**中性**（香皂也无效，见 §四），
+	# 不能跟 `seize_tile:"take"`（没收他的房产）同色 —— 那是玩家可见的错话。
+	var move_f := {"swap_pos": true, "pull_target": true, "push_back": 2, "shuffle_pos": true,
+		"seize_tile": "swap"}
 	for f in move_f:
-		_check(_kind_of(f, move_f[f]) == "move", "%s ⇒ move（位移类）" % f)
+		_check(_kind_of(f, move_f[f]) == "move", "%s ⇒ move（位移 / 中性）" % f)
 	var info_f := {"choices": [{"t": "甲"}], "peek_deck": 2, "shuffle_deck": true, "bury_deck": true}
 	for f in info_f:
 		_check(_kind_of(f, info_f[f]) == "info", "%s ⇒ info（抉择 / 情报类）" % f)
