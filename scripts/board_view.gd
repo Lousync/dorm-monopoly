@@ -130,14 +130,17 @@ var _peers_info := {}          # peer -> {name, color, worth, rank, alive}
 var _select_tw: Tween          # 「可选中」高亮的呼吸补间
 var _owner_color_map := {}     # peer -> Color（render 时刷新）
 
-# 镜头对点跟随（抽卡时对准牌堆）
+# 镜头对点跟随（掷点时对准转盘 / 拉近某格）
 var _has_follow_pt := false
 var _follow_pt := Vector2.ZERO
-var _deck_pos := {}            # "机会"/"命运" -> world 中心
 ## 抽卡演出的**画布内**那套（卡片 / 相位计时 / 抽出起点 / 推近与还原）已随批次 8
 ## 整段搬到屏幕层的 `DeckReveal`（scripts/deck_reveal.gd）。这里不再有 `_deck_card` /
 ## `_deck_t` / `_deck_from` / `deck_top_provider` 等成员：演出不再动 2D 相机，
-## 也不再需要"从实体摞顶面抽出"的起点供给。印在桌垫上的两摞卡背图案（`_build_deck`）保留。
+## 也不再需要"从实体摞顶面抽出"的起点供给。
+## **牌堆整套已退场**（2026-10-09「机会格统一」）：印在桌垫上的两摞卡背图案与桌面上的两摞
+## 实体摞一起删净 ⇒ `_deck_pos` 与那三个只为"实体摞贴合印刷图案"存在的查询
+##（`deck_center` / `deck_screen_pos` / `deck_screen_size`）也随之删掉。抽卡演出**本来就不动
+## 2D 相机**（见上面），所以这里没有镜头改动。
 
 # 中央转盘（替代骰子的点数来源）
 var _wheel: WheelView
@@ -419,8 +422,9 @@ class TableDecor extends Control:
 			draw_circle(pt, 2.8 if big else 1.3,
 				Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.32 if big else 0.15))
 
-## 棋盘中央内区布局（仿实体桌游）：深绿绒面嵌板 + 金色装饰，中央「机会」「命运」
-## 两个牌堆，事件卡从对应牌堆抽出展示。
+## 棋盘中央内区布局（仿实体桌游）：深绿绒面嵌板 + 金色装饰 + 正中的转盘。
+##（原先中央还印着「机会」「命运」两摞卡背 —— 已随 2026-10-09「机会格统一」退场：事件牌堆
+## 合成一副之后桌面上没有第二摞可印了，见本类头部「牌堆整套已退场」那段。）
 func _build_interior() -> void:
 	var c := WORLD * 0.5 + BOARD_OFFSET
 
@@ -478,63 +482,7 @@ func _build_interior() -> void:
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(sub)
 
-	_build_deck("机会", Vector2(c.x - 560, c.y), UIKit.ACCENT)
-	_build_deck("命运", Vector2(c.x + 560, c.y), Color(0.66, 0.56, 0.95))
 	_build_wheel(c)
-
-## 一个牌堆：区域底板 + 三层错位卡背 + 牌名 + 小字说明
-##
-## 卡背尺寸与错缝量是**常量**（`DECK_CARD_*`）：`deck_screen_size` 要用同一份数算"整体脚印"，
-## 两处各写一个 90/135/6 就是两处会漂开的数。
-func _build_deck(dname: String, center: Vector2, accent: Color) -> void:
-	_deck_pos[dname] = center
-	var zone := Panel.new()
-	zone.position = center - Vector2(140, 90)
-	zone.size = Vector2(280, 180)
-	zone.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	zone.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.095, 0.105, 0.15, 0.62), 20,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 4))
-	_world.add_child(zone)
-
-	# 牌堆：3 张竖版卡背错位叠放（用同一套 CC0 卡背图案；抽卡就是从这上面抽走一张）
-	for i in 3:
-		var card := TextureRect.new()
-		card.texture = _deck_back_tex(dname)
-		card.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		card.stretch_mode = TextureRect.STRETCH_SCALE
-		card.modulate = Color(1, 1, 1, 0.55 + 0.22 * float(i))   # 越靠上越实，做出堆叠感
-		# 落点 = center 左上再错缝。x 取半张宽（45 = DECK_CARD_W / 2）；**y 写 66 而不是 67.5**
-		#（= 半张高）—— 那 1.5 像素是既有的、没写理由的偏移，**本波不动它**：改它会动印刷图案，
-		# 而印刷图案一动，`deck_screen_size` 的口径与 3D 侧的贴合都得跟着重核。
-		card.position = center - Vector2(DECK_CARD_W * 0.5, 66.0) \
-			+ Vector2(DECK_CARD_OFF, DECK_CARD_OFF) * float(2 - i)
-		card.size = Vector2(DECK_CARD_W, DECK_CARD_H)
-		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_world.add_child(card)
-
-	# 牌堆名压在堆叠中央：垫一块深色小牌，压在花纹上也读得清
-	var tplate := UIKit.panel_container(Color(0.05, 0.055, 0.08, 0.84), 8,
-		Color(accent.r, accent.g, accent.b, 0.6), 1, 2)
-	tplate.position = center - Vector2(48, 15)
-	tplate.size = Vector2(96, 30)
-	tplate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_world.add_child(tplate)
-	var tm := UIKit.margins(6, 6, 3, 3)
-	tm.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tplate.add_child(tm)
-	var t := UIKit.label(dname, 18, accent)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tm.add_child(t)
-
-	var cap := UIKit.label("落在【%s】格时从这里抽卡" % dname, 14,
-		Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.7))
-	cap.position = center - Vector2(132, -78)
-	cap.size = Vector2(264, 20)
-	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_world.add_child(cap)
 
 ## 中央转盘：点数来源，掷点时镜头对准它
 func _build_wheel(center: Vector2) -> void:
@@ -572,58 +520,19 @@ func spin_wheel(value: int, restore_peer := GameData.NO_PEER) -> void:
 func is_wheel_spinning() -> bool:
 	return _wheel != null and _wheel.spinning
 
-func deck_center(deck: String) -> Vector2:
-	return _deck_pos.get(deck, WORLD * 0.5)
-
-## **印在桌垫上**那摞卡背（`_build_deck` 画的那块）在**画布像素**里的落点 ——
-## 与 `wheel_screen_pos` / `tile_screen_pos` 同一条链、同一口径（都是
-## `global_position + _view_from_world(某局部点)`；board 住在 SubViewport 原点，两者数值相等）。
-##
-## 为什么要有这个公开入口（批次 6 Task 3）：3D 侧的实体摞要接住的正是这块印刷图案，
-## 而 `game._refresh_board_followers` 原先自己拼 `board._view_from_world(board.deck_center(...))`
-## —— **漏了 `global_position` 那一项、还调了私有方法**。只因 board 在 SubViewport 原点才没出事；
-## 换个位置（或谁把这条链复制到别处）就会静默漂开。**跟图案走的物件一律走这个入口**。
-func deck_screen_pos(deck: String) -> Vector2:
-	return global_position + _view_from_world(deck_center(deck))
-
-## 一摞牌堆里**单张卡背**的尺寸与三张之间错开的量（`_world` 局部单位，见 `_build_deck`）。
-## 只在这里写一次：`_build_deck` 画它、`deck_screen_size` 用它算"整体脚印"，两处各写一个
-## 90/135/6 就是两处会悄悄漂开的数。
-const DECK_CARD_W := 90.0
-const DECK_CARD_H := 135.0
-const DECK_CARD_OFF := 6.0
-
-## 印在桌垫上那摞卡背的**整体脚印**（画布像素：宽 × 进深）—— 与 `wheel_screen_radius` 同形
-##（那个给"转盘在画布上的半径"，这个给"牌堆在画布上的脚印"）。
-##
-## 单张 90×135、3 张各错 (6,6) ⇒ 整体 **102×147**（`_world` 局部单位）；而 `_world` 带**镜头倍率**
-##（`_apply_cam`: `_world.scale = _zoom`）⇒ 落到画布上只有 `102×147 × _zoom`。取景 /
-## 人数变化都会改 `_zoom`（**滚轮不改**：滚轮只推 3D 视角）。
-##
-## 为什么要有这个入口（终审修复波 F）：3D 侧的实体摞要**盖住印着的这块图案**，跟图案走的
-## 第一件（转盘轮缘）早就在尺寸上也跟着 `_zoom` 走（`wheel_screen_radius`），第二件（牌堆）
-## 原先**只跟位置、尺寸写死世界常数** ⇒ 取景一变印刷图案整体胀大、摞不动，
-## 只盖住图案的约四分之一（面积比）—— 而那一刻正是玩家盯着牌堆的时候。
-## 两个"跟印刷"的物件从此同一条口径：位置与尺寸都由 BoardView 报，3D 侧只负责换算。
-func deck_screen_size(deck: String) -> Vector2:
-	if not _deck_pos.has(deck):
-		return Vector2.ZERO
-	return Vector2(DECK_CARD_W + DECK_CARD_OFF * 2.0,
-		DECK_CARD_H + DECK_CARD_OFF * 2.0) * _zoom
-
 ## 抽卡演出的相位动画 / 卡面构建 / 推近整段（`_tick_deck_card`、`_show_deck_face`、
 ## `_ease_out_back`、`_refresh_deck_from`、`is_showing_deck_card`、`play_deck_card`、
 ## `CARD_SIZE`、`_make_card_art`、`_card_face_front`、`_card_face_back`）已随批次 8
 ## 搬到屏幕层的 `DeckReveal`（scripts/deck_reveal.gd）。**本类不再演抽卡**：演出不动 2D 相机，
-## 所以这里连"推近倍数 / 相位时长 / 抽出起点"都不需要了。印在桌垫上的两摞卡背图案
-##（`_build_deck`，用下面的 `_deck_back_tex`）与两摞实体牌堆（`TableProps`）都原样保留。
+## 所以这里连"推近倍数 / 相位时长 / 抽出起点"都不需要了。
+## **牌堆那两样（印在桌垫上的卡背图案 / 桌面上的实体摞）已随 2026-10-09「机会格统一」退场**：
+## 事件牌堆合成一副之后桌面上不再有第二摞，本类连 `_deck_back_tex` 都不留了。
 
-## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）。
-## 现在只服务于**印在桌垫上的**那两摞卡背图案（`_build_deck`）—— 抽卡演出的那张卡
-## 由 `DeckReveal` 自己取素材（同一个来源）。
-func _deck_back_tex(deck: String) -> Texture2D:
-	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
-		else "res://assets/cards/atlas_back_blue_brown.svg")
+## 原先这里还有 `_deck_back_tex`（挑「机会」/「命运」那两套 CC0 Atlas 卡背，供印在桌垫上的
+## 两摞卡背图案用；素材来源见根目录 `LICENSE` 的第三方素材登记）。牌堆一退场它就没有调用方了，
+## 连函数一并删掉 —— **素材文件本身留着不动**（删素材是另一个决定：要连同 `LICENSE` 的登记
+## 一起处理）。`assets/icons/fate.png` 也是这一档：它在统一机会格那一波就已不再被引用。
+## 抽卡演出那张卡的卡背由 `DeckReveal._deck_back_tex` 自己取，与本类无关。
 
 ## 2D 镜头的「取景键」（缩放 + 注视点）—— 给"跟图案的实体"判**镜头动过没有**用
 ##（`game._process` 按它补推：镜头逐帧在动、而那条重推原先只挂在状态广播上）。
@@ -632,12 +541,12 @@ func _deck_back_tex(deck: String) -> Texture2D:
 func cam_key() -> Vector3:
 	return Vector3(_zoom, _center.x, _center.y)
 
-## 当前行动者光环在**画布像素**下的半径。光环压着格子 ⇒ 与转盘轮缘 / 两摞牌堆同一条口径
+## 当前行动者光环在**画布像素**下的半径。光环压着格子 ⇒ 与转盘轮缘同一条口径
 ##（位置与尺寸都跟 2D 相机：`_world` 局部尺寸 32 是原来那枚 64×64 Panel 的半径，
 ##  过一遍镜头变换就是它在画布上的半径）—— 3D 侧拿它量真变换换算成世界半径
 ##（`table_props._apply_ring_size`），取景一变环就跟着改，不会与格子脱开。
 ##
-## 为什么用"量真变换"而不是直接给 `32 × _zoom`：同 `deck_screen_size` 那条 ——
+## 为什么用"量真变换"而不是直接给 `32 × _zoom`：同 `table_props.build_wheel` 量半径那条 ——
 ## 画布像素与世界之间隔着贴图窗口（`TEX_WINDOW_PX`）与桌面尺寸两个旋钮，写死换算常数会静默失配。
 const RING_R_WORLD := 32.0      # `_world` 局部半径（原 2D 光环 Panel 的 64×64 的一半）
 func token_ring_radius_px() -> float:
@@ -648,7 +557,7 @@ func token_ring_radius_px() -> float:
 #
 # 每格右下那条带里原先画着的那座房子（`HouseIcon`，见 `_build_tiles` —— **那份 2D 绘制已随本
 # 任务删掉**，现在房子只有 3D 薄牌这一份）。这里报的是它**该在哪儿、该有多大**：R4 裁定房子
-# 压在格子上 ⇒ 位置与尺寸都跟印刷口径（与转盘轮缘 / 两摞牌堆 / 行动光环同一条）。
+# 压在格子上 ⇒ 位置与尺寸都跟印刷口径（与转盘轮缘 / 行动光环同一条）。
 # **改这两条常量就得连房子薄牌的观感一起重核。**
 
 ## 房子在**格子内**的相对位置与尺寸（`_world` 局部像素；与 `_build_tiles` 里那个
@@ -664,13 +573,13 @@ func house_anchor(idx: int) -> Vector2:
 	return tile_pos(idx) + Vector2(GAP, GAP) + HOUSE_LOCAL_POS + HOUSE_LOCAL_SIZE * 0.5
 
 ## 房子图案在**画布**上的落点（中心）—— `house_anchor` 过一遍 2D 镜头变换，与
-## `tile_screen_pos` / `deck_screen_pos` / `wheel_screen_pos` / `token_screen_pos` **同一条链**
+## `tile_screen_pos` / `wheel_screen_pos` / `token_screen_pos` **同一条链**
 ##（`global_position + _view_from_world(局部点)`）。3D 侧摆房子用**它**，不用 `house_anchor` ——
 ## 房子画在 `_world` 里、带着镜头变换，拿局部坐标摆会整体偏开（T1 的棋子就那么偏过一格）。
 func house_screen_pos(idx: int) -> Vector2:
 	return global_position + _view_from_world(house_anchor(idx))
 
-## 房子图案在**画布**上的尺寸（宽 × 高）—— 与 `deck_screen_size` 同形：
+## 房子图案在**画布**上的尺寸（宽 × 高）—— 与 `wheel_screen_radius` 同形：
 ## `_world` 局部尺寸 × `_zoom`（`_apply_cam` 给 `_world.scale` 的就是它）。
 ## 3D 侧的薄牌要**盖住**这块图案 ⇒ 尺寸也得跟（只跟位置不跟尺寸的话，取景一变就盖不住）。
 ## 3D 侧仍走「量真变换」把这两个画布像素折成世界单位（见 `table_props._apply_house_size`）。
@@ -724,7 +633,7 @@ func _process(delta: float) -> void:
 			_wheel_restore = GameData.NO_PEER
 	_apply_cam()
 
-## 镜头平滑推向某个世界坐标点（棋子中心 / 牌堆）
+## 镜头平滑推向某个世界坐标点（棋子中心 / 转盘）
 func _pan_toward(world_center: Vector2, delta: float) -> void:
 	_center = _center.lerp(_clamp_center(world_center), 1.0 - exp(-6.0 * delta))
 
@@ -770,7 +679,7 @@ func focus_grid(idx: int, zoom: float, hard := true) -> void:
 		_center_target = _center
 	_apply_cam()
 
-## 镜头跟随一个世界坐标点（抽卡时对准牌堆）
+## 镜头跟随一个世界坐标点（掷轮时对准转盘 / 摆拍拉近某格）
 ## （`focus_point_zoom` 已随批次 8 删除：它唯一的调用方是抽卡推近，而演出已搬到屏幕层
 ##  `DeckReveal`、不再动 2D 相机。要"对准某点"用 `focus_point`。）
 func focus_point(world_pt: Vector2, hard := false) -> void:
@@ -819,7 +728,7 @@ func _gui_input(ev: InputEvent) -> void:
 				_press_pos = mb.position
 			elif _dragging:
 				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
-					# 座位卡已拆（批次 5 Task 2）：画布里只剩棋盘与牌堆，左键单击 = 点格子。
+					# 座位卡已拆（批次 5 Task 2）：画布里只剩棋盘，左键单击 = 点格子。
 					# 「点玩家选目标」从批次 9 起走**屏幕层的身家条 / 名册行**（落点史：屏幕四角条（批次 9）
 					# → 名册条右上（批次 12 D）→ **名册条左上角「暂停」旁**（批次 13 ②）；
 				# `game._on_corner_bar_clicked`），
@@ -866,7 +775,7 @@ func set_hover(idx: int) -> void:
 	# 名字 / 身家 / 操作倒计时改由**屏幕层的身家条 + 名册条**承担（公开背包批次 9 起另有
 	# 玩家道具弹窗、选目标批次 12 D 起改点名册条、**批次 13 ② 起名册条在左上角「暂停」旁**；
 	# 中间那层桌上 3D 立牌也随批次 9 退场）。
-	# 画布里从此只剩棋盘与两摞牌堆（牌垫阶段按钮也已在批次 7 退场：画布里再无按钮）。
+	# 画布里从此只剩棋盘（牌垫阶段按钮也已在批次 7 退场、两摞牌堆已随 2026-10-09 退场：画布里再无按钮、无牌堆）。
 	#
 	# 注意下面几条**保留的接口**：它们今天没有座位卡可落点了，但玩法侧仍在调，
 	# 按批次 3 的先例「保留接口 + 加注说明」，不删。
@@ -1142,7 +1051,7 @@ func _animate_tile(i: int, hovered: bool) -> void:
 ## 程序绘制的 `HouseIcon` Control、`render` 里按等级差调 `_set_house`（含"装修成功弹一下"的
 ## 2D 缩放补间）——**整段删除，接口不留空壳**：3D 侧的能力是
 ## `TableProps.set_houses(levels)`（等级 → 烘好的等级纹理，`0` = 不摆），
-## 位置与尺寸取自下面三个只读查询（**压在印着的那座房子上** ⇒ 与轮缘 / 牌堆 / 光环同一条口径）。
+## 位置与尺寸取自下面三个只读查询（**压在印着的那座房子上** ⇒ 与轮缘 / 光环同一条口径）。
 ## **画法只留一份**：`HouseIcon` 这个类搬到 `TableProps` 里去了（烘纹理要跑它的 `_draw`，
 ## 复制一份就会与桌垫上原来的形状/配色漂开）—— `layout_test` 有"本类不再带 HouseIcon"的反向契约。
 
@@ -1185,7 +1094,7 @@ func tile_screen_pos(idx: int) -> Vector2:
 	return global_position + _view_from_world(tile_pos(idx) + Vector2(TILE, TILE) * 0.5)
 
 ## 某格 + 某槽位的**棋子落点**在**画布**上的坐标：`slot_anchor` 过一遍 2D 镜头变换 ——
-## 与 `tile_screen_pos` / `deck_screen_pos` / `wheel_screen_pos` **同一条链**
+## 与 `tile_screen_pos` / `wheel_screen_pos` **同一条链**
 ##（`global_position + _view_from_world(局部点)`）。3D 侧摆棋子用**它**，不用 `slot_anchor`。
 ##
 ## **为什么差这一步就不能用 `slot_anchor`**：棋子要坐在**印在桌垫上的**那一格上，而格子画在
@@ -1193,7 +1102,7 @@ func tile_screen_pos(idx: int) -> Vector2:
 ## `_world.position = 可视中心 - 注视点 × _zoom`）。`slot_anchor` 给的是**局部**坐标 ——
 ## 只有"镜头在原点、倍率 1"时才等于印刷位置；全景取景下它离印刷位置差着
 ## **约 (37, 134) 画布像素（≈ 一格）**，棋子会整体偏到别的格上（批次 11 Task 1 出图逮到：
-## 小人/光环离自己那格一格远）。同 `deck_screen_pos` 那条注释说的"漏了 global_position 那一项"
-## 是同一类错，只是这里的漏项是**整个镜头变换**。
+## 小人/光环离自己那格一格远）。同 `tile_screen_pos` / `wheel_screen_pos` 那几条说的"漏了链上的某一项"
+## 是同一类错（批次 6 Task 3 那次漏的是 `global_position`），只是这里的漏项是**整个镜头变换**。
 func token_screen_pos(idx: int, slot: int) -> Vector2:
 	return global_position + _view_from_world(slot_anchor(idx, slot))

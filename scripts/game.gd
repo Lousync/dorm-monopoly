@@ -1901,7 +1901,9 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 			match _roll_chance_kind():
 				"card":
 					var card: Dictionary = _draw_chance_card()
-					# 仿桌游：机会卡从棋盘中央牌堆抽出展示
+					# 机会卡从**机会牌堆**（`_draw_chance_card`：预生成洗牌的那一副）抽一张、
+					# 交抽卡演出展示 —— 演出在屏幕层（批次 8 起），棋盘上早已没有实体牌堆
+					#（那两摞已随 2026-10-09「机会格统一」退场）。
 					s_card.rpc(String(card.t), GameData.card_kind(card), "机会")
 					_log("%s 抽到机会卡：%s" % [p.name, card.t])
 					# 批次 12 C2：演出停在 HOLD 等抽卡者点「确定」，**效果在确认之后才落地**。
@@ -3421,19 +3423,23 @@ func _await_card_confirm(p: Dictionary) -> void:
 
 # ================= 界面刷新 =================
 
-## 「跟印刷图案走」的两件实体（转盘轮缘 / 两摞牌堆）此刻能不能算：3D 物件层在、
-## board 也已取景（布局还没跑时 `wheel_screen_pos` / `deck_screen_pos` 全是错的 ——
+## 「跟印刷图案走」的实体（转盘轮缘等）此刻能不能算：3D 物件层在、
+## board 也已取景（布局还没跑时 `wheel_screen_pos` 之类的值全是错的 ——
 ## 判据与 fit_overview 的触发条件同源）。
 func _board_follow_ready() -> bool:
 	return table3d != null and table3d.table_props != null and board != null \
 		and board.size.x > 10.0
 
-## 把**跟着桌垫印刷图案走**的两件实体重摆一遍：转盘轮缘 + 两摞牌堆。
+## 把**跟着桌垫印刷图案走**的实体重摆一遍：转盘轮缘。
 ##
-## 为什么是这两件、为什么位置每次都要重算：它们是「压在画着**同一个物体**的印刷图案上」那一类
-##（轮缘压着桌垫上画出来的轮盘、牌堆压着桌垫上画出来的卡背）—— 图案随 2D 取景（`_zoom` /
-## `_center`）走，实体不跟就会脱开。位置一律走 `board.*_screen_pos()` 那几个公开入口
-##（内部就是 `global_position + _view_from_world(...)`，见 `deck_screen_pos` 那段）。
+## 为什么是它、为什么位置每次都要重算：它压在画着**同一个物体**的印刷图案上
+##（轮缘压着桌垫上画出来的轮盘）—— 图案随 2D 取景（`_zoom` / `_center`）走，实体不跟就会脱开。
+## 位置一律走 `board.wheel_screen_pos()` / `board.wheel_screen_radius()` 这类公开入口
+##（内部就是 `global_position + _view_from_world(...)`）。
+##（**原先这一批还有"两摞实体牌堆"**：位置走 `board.deck_screen_pos()`、尺寸走
+##  `board.deck_screen_size()` —— 同一个理由（它要盖住印着的那摞卡背）。2026-10-09「机会格统一」
+##  后桌面上只剩一副机会牌堆，印刷图案与实体摞一起退场，那两项查询随之删净 —— 见
+##  `scripts/table_props.gd` 里那段退场说明。）
 ##
 ## 幂等（只改 transform / mesh 尺寸，不重建节点）⇒ **每条路都能调**：
 ##   * 状态广播（`_refresh_table_props`）—— 数据变了的那一条（常态）；
@@ -3446,16 +3452,10 @@ func _board_follow_ready() -> bool:
 ## 注意**滚轮推移视角不算在内** —— 那是 TableView3D 的 3D 相机（`set_view` 改的是**视角推移**，
 ## 批次 4 起已取消推拉），只改相机的俯角与到桌心的距离，不碰 2D 的 `_zoom`，
 ## 桌垫图案与实物一起原样不动（3D 端点变化不改变画布像素口径）。「谁跟相机、谁不跟」见
-## table_props.gd 文件头的摆放约定：**跟 2D 相机的是四件 + 棋子的位置**（本函数这两件、`_refresh_tokens`
+## table_props.gd 文件头的摆放约定：**跟 2D 相机的是三件 + 棋子的位置**（本函数这一件、`_refresh_tokens`
 ## 里的光环与棋子、`_refresh_houses` 里的房子 —— 它们都压在印刷图案上），手牌是画布常量的实物、不跟。
 func _refresh_board_followers() -> void:
 	table3d.table_props.build_wheel(board.wheel_screen_pos(), board.wheel_screen_radius())
-	# 牌堆：**位置与尺寸都跟印刷图案**（`deck_screen_pos` / `deck_screen_size`，同轮缘那一套）。
-	# 尺寸是修复波 F 补的：取景一变印刷卡背整体放大/缩小，只跟位置的话摞会盖不住它。
-	table3d.table_props.build_decks({
-		"机会": board.deck_screen_pos("机会"),
-		"命运": board.deck_screen_pos("命运")},
-		board.deck_screen_size("机会"))
 
 ## 棋子（小人）与当前行动者光环：**都住在 3D 的 `TableProps` 里**（批次 11 Task 1 搬进去的，
 ## 原先由 `board.render` 在画布上建 2D Control —— 那份已整段删除）。
@@ -3463,7 +3463,7 @@ func _refresh_board_followers() -> void:
 ## 数据来源与判据一字未改：棋子 = `st.players` 的 `peer / color(槽位) / pos(格号)`；
 ## 光环 = `st.turn`（`phase == "ended"` ⇒ 收起，哨兵是 `GameData.NO_PEER`，**不是 -1**
 ## —— 机器人 peer 从 -1 起编号；旧代码那处写的 `_set_ring(-1)` 会把机器人 peer -1 误当行动者）。
-## `set_tokens` 幂等、`set_ring` 幂等，所以每次广播都推一遍（同轮缘 / 牌堆那两件）。
+## `set_tokens` 幂等、`set_ring` 幂等，所以每次广播都推一遍（同轮缘那一件）。
 ##
 ## 为什么在 `_refresh_table_props` 里排得**靠前**（`mine.is_empty()` 那道早退之前）：
 ## 棋子与光环是"全员可见"的状态，与"我自己在不在名册里"无关 —— 掉线重连时也该看得见别人走子。
@@ -3486,7 +3486,7 @@ func _refresh_tokens() -> void:
 ##
 ## 数据来源与判据一字未改：`st.tiles[i].level`（`0` = 未装修 / 无主 ⇒ 不摆）。
 ## 房子**压在格子上** ⇒ 位置与尺寸都跟印刷图案（`board.house_screen_pos` / `house_screen_size`），
-## 与轮缘 / 牌堆 / 光环同一条口径 —— 所以它也必须在**镜头动过的那一帧**被重推
+## 与轮缘 / 光环同一条口径 —— 所以它也必须在**镜头动过的那一帧**被重推
 ##（`_refresh_followers_if_cam_moved` 里与棋子同一批，见那里的注释）。
 ##
 ## **等级表缓存在本节点**（`_house_levels`）：逐帧那条路每帧都会走这里，每帧现造一个 56 元素的
@@ -3527,14 +3527,14 @@ func _token_screen_pos(peer: int, idx: int = -1) -> Vector2:
 ## 初值 `Vector3.INF` ⇒ 第一次一定推一次（`is_equal_approx(INF)` 为假）。
 var _follow_cam_key := Vector3.INF
 
-## 镜头动过就补推一次"跟图案"的那批（轮缘 / 两摞牌堆 / 棋子 / 光环）。
+## 镜头动过就补推一次"跟图案"的那批（轮缘 / 棋子 / 光环 / 房子）。
 ##
 ## **为什么需要它**（批次 11 T1 审查 Important #1）：这四件的世界位置是按**摆放那一刻**的镜头算的
 ##（它们要落在**印在桌垫上**的图案上，见 table_props 文件头"摆放约定"），而 2D 相机是**逐帧**在动的
 ## —— `board._process` 的自动跟随 `_pan_toward` 每帧把 `_center` 推向行动棋子（`fit_overview` /
 ## `focus_grid` 也会改取景）。只挂状态广播的话，"镜头动了但没有广播"的那一段里印在 `_world` 里的
 ## 格子会整体滑动、而实物纹丝不动（实测约半格、~1s 衰减）——
-## 对旧 2D 棋子（它活在 `_world` 里、任何时刻都钉在格子上）来说是**回归**；轮缘 / 牌堆则是老毛病。
+## 对旧 2D 棋子（它活在 `_world` 里、任何时刻都钉在格子上）来说是**回归**；轮缘则是老毛病。
 ##
 ## **镜头静止时零开销**：只比三个浮点数就早退（`_process` 每帧调它）。
 ## 与 `_refresh_table_props` 的关系：那边是广播路径（数据也变了），这边只补"镜头变了"这一半；
@@ -3552,7 +3552,7 @@ func _refresh_followers_if_cam_moved() -> void:
 
 ## 桌面实体物件的刷新挂点：把物件重新贴回桌垫坐标（手牌也在这里）。
 ##
-## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那几件（轮缘 / 牌堆 / 棋子与光环 /
+## 为什么**每次状态广播**都要刷、而不是建一次就完：跟图案走的那几件（轮缘 / 棋子与光环 /
 ## 装修房子）见 `_refresh_board_followers` / `_refresh_tokens` / `_refresh_houses`；
 ## 其余物件（手牌）也一律幂等，每次广播重贴一遍没有代价。它们读的都是**已同步**的状态
 ##（客户端也能算）。

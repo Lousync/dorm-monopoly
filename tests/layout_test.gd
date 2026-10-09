@@ -711,7 +711,7 @@ func _run() -> void:
 
 	# ---- 批次 6 Task 1 → 批次 13 ⑦⑧：台灯（唯一主光源）+ 桌面照度均匀 ----
 	# 观感的主角仍是**光**：全场只有一盏 `OmniLight3D`（`lamp_light`），它同时是**唯一**的
-	# 投影源（手牌 / 牌堆 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：
+	# 投影源（手牌 / 转盘 / 棋子 / 房子的影子全来自它）。可执行的判据：
 	#   ① 全场只有这一盏、开着阴影；② 暖色；③ 吊在桌面上方；
 	#   ④ 它的**平面落点**在桌垫窗口之外（光不许压在棋盘上 —— 批次 13 ⑦⑧"只抬 y、不动水平"
 	#      那条裁定就是为它让的路）；⑤ **远端角落在射程的 0.9 以内**（射程之外照度归零 ⇒ 桌角
@@ -752,7 +752,7 @@ func _run() -> void:
 			lights.append(n)
 		# 【一期 Task 8】从"只有一盏灯"改成"**只有一处投影源**" —— 房间需要补光（`Room/FillLight`，
 		# 见 `room.gd.FILL_LIGHT_POS`），但**投影必须仍然唯一**：第二张阴影图 = 性能与氛围
-		# 两头不讨好（那盏吊灯仍是手牌 / 牌堆 / 转盘 / 棋子 / 房子所有影子的唯一来源）。
+		# 两头不讨好（那盏吊灯仍是手牌 / 转盘 / 棋子 / 房子所有影子的唯一来源）。
 		# ⚠ **这不是放宽**：原来那条"只有一盏灯"守的有一半是这件事，另一半（**灯共几盏**）
 		# 由下面「补光恰好一盏」那组断言守着 —— 原注释在这里写"它被下面那条『补光不碰桌面』
 		# 接住了"，**那句是错的**（终审 F2 改正）：补光**缺席**时"不碰桌面"恰恰是最松的一条
@@ -763,7 +763,7 @@ func _run() -> void:
 				casters.append(n)
 		_check(casters.size() == 1 and casters[0] == lamp_l,
 			"全场只有一处投影源（实得 %d 处；灯共 %d 盏）" % [casters.size(), lights.size()])
-		_check(lamp_l.shadow_enabled, "台灯开着阴影（手牌 / 牌堆才投得出影子）")
+		_check(lamp_l.shadow_enabled, "台灯开着阴影（桌上的实物才投得出影子）")
 		_check(lamp_l.light_color.r > lamp_l.light_color.b + 0.1, "台灯是暖色（r 明显大于 b）")
 		var lp: Vector3 = lamp_l.global_position
 		_check(lp.y > t3.table_mesh.global_position.y + 1.0,
@@ -997,7 +997,7 @@ func _run() -> void:
 	# 批次 5 Task 2：座位栏退场，画布不再需要为它们预留 —— 窗口从"整张画布"
 	# 收到"桌垫"（`BoardView.MAT_RECT`）。批次 2 的 T4c 之所以把窗口恢复成整张画布，
 	# 是因为当时上家座位栏会落到窗口之外、既看不见也点不到；座位栏一走，这条约束随之解除。
-	# 窗口是否覆盖了该覆盖的东西，由下面「两条牌堆都在窗口内」那段钉住。
+	# 窗口是否覆盖了该覆盖的东西，由下面「棋盘整块在窗口内」那段钉住。
 	var win: Rect2 = t3.TEX_WINDOW_PX
 	_check(win.position.x >= 0.0 and win.position.y >= 0.0
 			and win.position.x + win.size.x <= 2048.0 and win.position.y + win.size.y <= 2048.0,
@@ -1679,7 +1679,7 @@ func _run() -> void:
 	t3.on_table_click = Callable()
 
 	# ---- 批次 3 Task 1：3D 物件层地基 ----
-	# props 是实体物件（转盘 / 两摞牌堆 / 手牌）的父节点，与桌垫**共用同一套 UV 坐标系**：
+	# props 是实体物件（转盘 / 手牌 / 棋子 / 房子等）的父节点，与桌垫**共用同一套 UV 坐标系**：
 	# 物件摆位一律走 canvas_px_to_world（画布像素 → 桌面世界），而不是另立一套坐标。
 	# 这条往返就是"共用坐标系"的可执行定义 —— 两套坐标系一旦漂移，往返立刻对不上。
 	# 同时钉住 y：画布中心落在桌面上、与桌垫齐平，物件才不会浮空或陷进桌子。
@@ -2293,160 +2293,17 @@ func _run() -> void:
 	t3.snap_view(0.0)
 	await process_frame
 
-	# ---- 批次 6 Task 2：机会 / 命运两摞实体牌堆 ----
-	# 桌垫上最后两处"贴片"（画布上印着的那两摞卡背）实体化。钉四件事：
-	#   ① 两摞都在、都**有厚度**（叠层 > 1 —— 一块等厚方砖不算"一摞牌"）；
-	#   ② 落点与印在桌垫上的那摞卡背**重合**（走 `board.deck_screen_pos()` —— 与轮缘 / 手牌
-	#      同一条 chain：`global_position + _view_from_world(...)`；这里也是 layout_test 后面那段
-	#      "牌堆在窗口内"用的口径。**别再自己拼 `_view_from_world`** —— 它是私有方法、且容易漏
-	#      `global_position` 那一项，批次 6 Task 3 把这条链收进了公开入口）；
-	#   ③ 材质是**不透明档**（批次 4 的教训：ALPHA 混合进透明队列、不写深度、投影就废了）；
-	#   ④ 幂等（状态广播每次都调，节点池只建一次）。
-	# 身份（哪摞是机会、哪摞是命运）走摞顶面平贴的 Label3D：文字 + 配色两重信号。
-	print("== 实体牌堆：两摞有厚度的牌，落在画布牌堆中心上 ==")
-	var tpD = t3.table_props
-	if tpD == null:
-		_check(false, "TableProps 未就绪，牌堆断言整段跳过")
-	else:
-		t3.board.fit_overview(true)
-		var deck_names := ["机会", "命运"]
-		var deck_px := {}
-		for dn in deck_names:
-			deck_px[dn] = t3.board.deck_screen_pos(dn)
-		# 脚印与中心都从 BoardView 取（修复波 F：尺寸也要跟印刷图案）——
-		# **不写死世界尺寸**：写死就等于把"摞该多大"的实现重述一遍，跟没跟取景都看不出来。
-		# 红跑（`deck_screen_size` 还没实现）时不硬调：判红后走老的一条路（同本文件
-		# `t3.get("lamp_light")` 那条的写法 —— 少一次脚本错误、后面的断言照跑）。
-		var f_ok: bool = t3.board.has_method("deck_screen_size")
-		var deck_sz := Vector2.ZERO
-		if f_ok:
-			deck_sz = t3.board.deck_screen_size("机会")
-			tpD.build_decks(deck_px, deck_sz)
-		else:
-			_check(false, "BoardView 没有 deck_screen_size（修复波 F 未实现）")
-			tpD.build_decks(deck_px)
-		var dr: Node = tpD.get_node_or_null("Decks")
-		_check(dr != null, "牌堆父节点在（build_decks 时建）")
-		if dr == null:
-			_check(false, "牌堆父节点缺了，后半段跳过")
-		else:
-			_check(dr.get_child_count() == 2, "两摞都在（实得 %d 摞）" % dr.get_child_count())
-			var bodies := {}
-			for dn in deck_names:
-				var droot: Node3D = dr.get_node_or_null("Deck_%s" % dn) as Node3D
-				_check(droot != null, "「%s」那一摞在" % dn)
-				if droot == null:
-					continue
-				# ① 有厚度：层数 > 1 + 叠起来的高度
-				var layers: Array = []
-				for ch in droot.get_children():
-					var mi := ch as MeshInstance3D
-					if mi != null and mi.mesh is BoxMesh:
-						layers.append(mi)
-				_check(layers.size() > 1, "「%s」是叠出来的（%d 层）" % [dn, layers.size()])
-				var lo := INF
-				var hi := -INF
-				var opaque := true
-				var shadows := true
-				for mi in layers:
-					var bm: BoxMesh = (mi as MeshInstance3D).mesh as BoxMesh
-					lo = minf(lo, (mi as MeshInstance3D).global_position.y - bm.size.y * 0.5)
-					hi = maxf(hi, (mi as MeshInstance3D).global_position.y + bm.size.y * 0.5)
-					var m := (mi as MeshInstance3D).material_override as StandardMaterial3D
-					if m == null or m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
-						opaque = false
-					if (mi as MeshInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
-						shadows = false
-					bodies[dn] = m
-				_check(hi - lo > 0.03, "「%s」有厚度（叠起来 %.3f 世界单位高）" % [dn, hi - lo])
-				_check(opaque, "「%s」的材质是不透明档（写深度、投得出影子）" % dn)
-				_check(shadows, "「%s」的层都投影（实体的影子是台灯那盏灯给的）" % dn)
-				# ② 落点 = 画布上那摞卡背的位置（反算回画布像素再比 —— 不把换算公式重述一遍）
-				var back: Vector2 = t3.world_to_canvas_px(droot.global_position)
-				_check(back.distance_to(deck_px[dn]) < 1.0,
-					"「%s」落在画布牌堆中心上（实得 %s，期望 %s）" % [dn, back, deck_px[dn]])
-				# ②b **脚印**也 = 印在桌垫上那摞卡背的整体脚印（修复波 F）。量法同轮缘那条：
-				# 把共用 mesh 的宽 / 进深折回**画布像素**再比（走真反变换，不拿"世界尺寸 × 常数"
-				# 去比 —— 那是把实现的换算重述一遍，常数错成什么值都照样绿）。
-				# 尺寸不跟取景时这里就红：全景下它本该是 `board.deck_screen_size`（= 102×147 × _zoom）。
-				var bm_f: BoxMesh = (layers[0] as MeshInstance3D).mesh as BoxMesh
-				var foot_x: float = t3.world_to_canvas_px(
-					droot.global_position + Vector3(bm_f.size.x, 0.0, 0.0)).distance_to(back)
-				var foot_z: float = t3.world_to_canvas_px(
-					droot.global_position + Vector3(0.0, 0.0, bm_f.size.z)).distance_to(back)
-				_check(absf(foot_x - deck_sz.x) < 1.0 and absf(foot_z - deck_sz.y) < 1.0,
-					"「%s」的脚印 == 印着那摞卡背的整体脚印（实得 %.1f×%.1f，期望 %.1f×%.1f 画布像素）"
-						% [dn, foot_x, foot_z, deck_sz.x, deck_sz.y])
-				# 底**就落在桌面上**（批次 6 Task 3 起：不再加 `PROPS_Y` —— 一摞牌是"躺在桌上的"，
-				# 抬起来只会让它在屏幕上相对印刷图案往远端漂，见 table_props.DECK_SIZE 那段）。
-				# 局部原点 = 这摞在地面的落点，而层 0 抬半层高 ⇒ root.y == 桌面 即"最下层躺在桌上"。
-				_check(absf(droot.global_position.y - t3.table_mesh.global_position.y) < 0.001,
-					"「%s」的底落在桌面上、不浮空（y=%.3f，桌面 %.3f）"
-						% [dn, droot.global_position.y, t3.table_mesh.global_position.y])
-				_check(lo >= t3.table_mesh.global_position.y - 0.001,
-					"「%s」最下一层的底面不低于桌面（%.3f ≥ %.3f）"
-						% [dn, lo, t3.table_mesh.global_position.y])
-				# 身份：摞顶面平贴的 Label3D 写着牌名
-				var lab := droot.get_node_or_null("Name") as Label3D
-				_check(lab != null and String(lab.text) == dn,
-					"「%s」摞上写着牌名（实得「%s」）" % [dn, String(lab.text) if lab != null else "无"])
-			# 配色分得开 = 比 **albedo_color 真的不同**（批次 6 Task 3 改）：原来比的是**材质实例
-			# 身份**，而代码每摞新建一份 `StandardMaterial3D` ⇒ 即便两个 albedo 完全相同也恒不等，
-			# 这条断言**不可能因它声称的原因失败**。再进一步：各自等于预期那一份配色条目
-			#（改错映射、两摞对调都会红）。
-			var got_jh: Color = (bodies.get("机会") as StandardMaterial3D).albedo_color \
-				if bodies.get("机会") != null else Color.BLACK
-			var got_my: Color = (bodies.get("命运") as StandardMaterial3D).albedo_color \
-				if bodies.get("命运") != null else Color.BLACK
-			var want_jh: Color = tpD.DECK_BODY_COLORS["机会"]
-			var want_my: Color = tpD.DECK_BODY_COLORS["命运"]
-			_check(got_jh != got_my, "两摞的配色分得开（机会 %s / 命运 %s）" % [got_jh, got_my])
-			_check(got_jh == want_jh and got_my == want_my,
-				"两摞各用自己那一份配色（机会 %s / 命运 %s）" % [want_jh, want_my])
-			# ④ 幂等：重复调用只重摆、不重建节点树
-			var first_root: Node = dr.get_child(0)
-			var first_kids: int = (first_root as Node3D).get_child_count()
-			tpD.build_decks(deck_px)
-			_check(dr.get_child_count() == 2 and dr.get_child(0) == first_root,
-				"重复调用不重建节点（实得 %d 摞）" % dr.get_child_count())
-			_check((first_root as Node3D).get_child_count() == first_kids,
-				"摞里的层数一字未变（%d）" % (first_root as Node3D).get_child_count())
-
-			# ②c 尺寸**跟着取景**（修复波 F 的实质）：把 2D 镜头推近（抽卡那 ≥2× 推近的**同一件事**
-			# —— 都是同一个 `_zoom`），重报脚印之后摞必须跟着胀。**只跟位置不跟尺寸时这条会红**
-			#（正是"抽卡推近下摞只盖住印刷图案约四分之一"那个病）。量法同轮缘那条
-			#「画面半径变大后轮缘跟着放大」：比的是同一个节点 / 同一份 mesh，不重建。
-			if not f_ok:
-				_check(false, "BoardView 没有 deck_screen_size，②c（尺寸跟取景）整段跳过")
-			else:
-				t3.board.fit_overview(true)
-				await process_frame
-				var px0 := {}
-				for dn2 in deck_names:
-					px0[dn2] = t3.board.deck_screen_pos(dn2)
-				tpD.build_decks(px0, deck_sz)
-				var zoom0: float = deck_sz.x
-				var deck0: Node3D = dr.get_node("Deck_机会") as Node3D
-				var w0: float = (deck0.get_child(0) as MeshInstance3D).mesh.size.x
-				t3.board.focus_grid(27, 2.0, true)      # 全景的 2 倍 —— 抽卡推近的同一档
-				await process_frame
-				var sz1: Vector2 = t3.board.deck_screen_size("机会")
-				_check(sz1.x > zoom0 * 1.5,
-					"推近之后印着的那摞卡背脚印跟着变大（%.1f → %.1f 画布像素）" % [zoom0, sz1.x])
-				var px1 := {}
-				for dn3 in deck_names:
-					px1[dn3] = t3.board.deck_screen_pos(dn3)
-				tpD.build_decks(px1, sz1)
-				var w1: float = (deck0.get_child(0) as MeshInstance3D).mesh.size.x
-				_check(w1 > w0 * 1.5,
-					"实体的尺寸跟着胀（%.3f → %.3f 世界单位，须 > 1.5 倍 —— 只跟位置不跟尺寸时它一字不变）"
-						% [w0, w1])
-				_check(deck0.get_child_count() == (dr.get_child(0) as Node3D).get_child_count(),
-					"跟取景重报尺寸也不重建节点（%d 层）" % deck0.get_child_count())
-				# 收尾：把取景与实体都放回全景（后面还有断言读这些坐标）
-				t3.board.fit_overview(true)
-				await process_frame
-				tpD.build_decks(px0, t3.board.deck_screen_size("机会"))
+	# ---- 反向契约：机会 / 命运两摞牌堆（印在桌垫上的图案 + 桌面上的实体）已整体退场 ----
+	# 2026-10-09「机会格统一」：两副事件牌堆合成一副机会牌堆，桌面上那两摞随之没了 ——
+	# 印在桌垫上的两摞卡背图案（`board_view._build_deck`）与桌面上的两摞实体摞
+	#（`TableProps.build_decks`）一起退场，只服务于「实体摞贴合印刷图案」的那三个查询
+	#（`deck_center` / `deck_screen_pos` / `deck_screen_size`）随之删净。
+	# **写成反向契约、不直接删掉旧的正面断言**：删了就是"没人守"—— 谁把牌堆加回来都不会红；
+	# 这三条钉的是「入口已不存在」，加回来（哪怕只加个空壳）先红。
+	print("== 反向契约：桌面两摞牌堆（印刷图案 + 3D 实体）已整体退场 ==")
+	_check(not t3.board.has_method("deck_screen_pos"), "BoardView 不再有 deck_screen_pos")
+	_check(not t3.board.has_method("deck_screen_size"), "BoardView 不再有 deck_screen_size")
+	_check(not t3.table_props.has_method("build_decks"), "TableProps 不再有 build_decks")
 
 	# 坐标系约定：画布下方（y 大）= 近端。相机在 +z（table_3d.CAM_DIST 沿 +z 摆），
 	# 而 canvas_px_to_world 走 world_to_uv（uv.y = z/进深 + 0.5）—— 整体 z 翻转的话这条会红。
@@ -2571,7 +2428,7 @@ func _run() -> void:
 			_check(emit_ok, "棋子牌身 / 正面都开着自发光（牌身 %.2f / 正面 %.2f）"
 				% [pmatA.emission_energy_multiplier if pmatA != null else -1.0,
 					fmatM.emission_energy_multiplier if fmatM != null else -1.0])
-		# 位置 = 与**印在桌垫上的**那一格同一条链：`tile_screen_pos` / `deck_screen_pos` /
+		# 位置 = 与**印在桌垫上的**那一格同一条链：`tile_screen_pos` /
 		# `wheel_screen_pos` 的那条（`global_position + _view_from_world(局部点)`）—— 也就是
 		# `board.token_screen_pos(idx, slot)`。量法：把棋子的世界落点过真反变换折回画布像素比。
 		# **不能拿 `slot_anchor` 的局部坐标比**：那是"镜头在原点、倍率 1"那一档的位置，
@@ -2897,7 +2754,7 @@ func _run() -> void:
 				var hb_bot: Vector3 = h0.get_node("Plate").global_transform * Vector3(0.0, -bm0.size.y * 0.5, 0.0)
 				_check(hb_top.z < hb_bot.z, "顶边比板底更靠远端（后倾 ⇒ 2D 端近正俯视也看得见一块面）")
 				_check(is_same(bm0, bm5), "56 格共用**一份 BoxMesh**（不是一格格新建 mesh）")
-			# 位置 = 与**印在桌垫上的**那座房子同一条链（`tile_screen_pos` / `deck_screen_pos` /
+			# 位置 = 与**印在桌垫上的**那座房子同一条链（`tile_screen_pos` /
 			# `wheel_screen_pos` 那条：`global_position + _view_from_world(局部点)`）。
 			# **不能拿格内局部坐标比**：那是"镜头在原点、倍率 1"那一档的位置（T1 的棋子照字面
 			# 实现就偏了整整一格）—— 下面第一条前提就是钉这个。
@@ -3013,9 +2870,9 @@ func _run() -> void:
 	# 它们守的是"指向性道具点得到人"，而那个入口随批次 9 挪到**屏幕层的四角身家条**
 	#（Task 2 起可点、Task 3 接上选目标高亮；hud_test 里那两条断言守着）。这里只剩两条：
 	#   ① 反向契约：座位卡那一套真的没了、也没有留下四条空栏；
-	#   ② 窗口必须覆盖**棋盘与两摞牌堆**（可见且可点到）——批次 2 的 T4c 就是踩了这个坑
+	#   ② 窗口必须覆盖**棋盘**（可见且可点到）——批次 2 的 T4c 就是踩了这个坑
 	#     （窗口裁过头 ⇒ 画布内有、桌面上看不见也点不到）才把窗口恢复成整张画布的。
-	print("== 座位卡退场：画布里没有座位栏，棋盘与牌堆仍在窗口内 ==")
+	print("== 座位卡退场：画布里没有座位栏，棋盘仍在窗口内 ==")
 	var t4 = load("res://scripts/table_3d.gd").new()
 	root.add_child(t4)
 	await process_frame
@@ -3030,24 +2887,13 @@ func _run() -> void:
 		"牌垫阶段按钮层已随批次 7 退场（谁把它加回来，这条先红）")
 	_check(b4.get("_seats") == null and b4.get("_seat_of_peer") == null,
 		"座位卡的表（_seats / _seat_of_peer）已从 BoardView 上删净")
-	# ② 棋盘 + 两摞牌堆都得在窗口内（画布口径），且窗口在画布内
+	# ② 棋盘必须整块在窗口内（画布口径），且窗口在画布内
+	#（原先此处还遍历 `deck_screen_pos` 量两摞牌堆的中心 / 底板在不在窗口内 —— 牌堆已整体退场
+	#  （见上面那条反向契约），那段遍历随之一并删掉。）
 	var chest4 := Rect2(b4._view_from_world(b4.BOARD_OFFSET),
 		b4._view_from_world(b4.BOARD_OFFSET + b4.WORLD) - b4._view_from_world(b4.BOARD_OFFSET))
 	_check(vp4.encloses(chest4), "棋盘整块落在画布内（%s）" % chest4)
 	_check(win4.encloses(chest4), "棋盘整块落在纹理窗口内（可见且可点）")
-	var deck_out := 0
-	var deck_zone_out := 0
-	for d in ["机会", "命运"]:
-		var dc: Vector2 = b4.deck_screen_pos(d)
-		# 牌堆底板 280×180（见 board_view._build_deck），要整块在窗口里
-		var zone := Rect2(dc - Vector2(140.0, 90.0), Vector2(280.0, 180.0))
-		if not win4.has_point(dc):
-			deck_out += 1
-		if not win4.encloses(zone):
-			deck_zone_out += 1
-		print("    牌堆 %s：中心（画布）%s 底板 %s" % [d, dc, zone])
-	_check(deck_out == 0, "两摞牌堆的中心都在纹理窗口内（窗口外 %d 摞）" % deck_out)
-	_check(deck_zone_out == 0, "两摞牌堆的底板整块在纹理窗口内（越界 %d 摞）" % deck_zone_out)
 	t4.queue_free()
 
 	if fails == 0:
