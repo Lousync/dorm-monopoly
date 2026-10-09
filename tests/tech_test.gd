@@ -61,7 +61,8 @@ func _run() -> void:
 		"随机定档只会抽到三档之内（实得 %s）" % str(seen.keys()))
 	_check(seen.size() == TechData.TIERS.size(),
 		"随机定档抽 600 次三档都出现过（不是死抽一档，实得 %d 档）" % seen.size())
-	_check((TechData.pool("白银") as Array).size() == 20, "白银池 20 条")
+	# 2026-10-10 批 1 审查 I4：「眼尖手快」标 implemented:false ⇒ 移出抽取池 ⇒ 白银可用池 20 → 19
+	_check((TechData.pool("白银") as Array).size() == 19, "白银池 19 条（「眼尖手快」未实装、已移出池）")
 	_check((TechData.pool("黄金") as Array).size() == 19, "黄金池 19 条（样板房弃案留空）")
 	_check((TechData.pool("钻石") as Array).size() == 20, "钻石池 20 条")
 	var ok3 := true

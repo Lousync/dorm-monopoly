@@ -1064,6 +1064,9 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 			break
 		if not ids.has(String(gid)):
 			ids.append(String(gid))
+	# 保底件是**先 append** 进来的，若不洗就永远落在候选第一位 ⇒ 白送一条「哪张是保底」的
+	# UI 提示（不影响公平，只是露了牌）。发卡前洗一次，位置与是否保底脱钩（2026-10-10 批 1 审查 M2）。
+	ids.shuffle()
 	_pending_token += 1
 	var token := _pending_token
 	_discover_pick = {"token": -1, "id": ""}
@@ -6399,8 +6402,12 @@ func _bot_blackshop(p: Dictionary) -> void:
 		var cost := int(ItemData.BLACK_COST.get(String(ItemData.def(id).quality), 1))
 		if props.size() - cost < 1:
 			continue
-		# 黑市比价**按档价**（`QUALITY_PRICES`）而非 `item_price`：这里一切用**地皮**计价，
-		# 单件现金覆盖（二青会酒寒暑）在黑市不适用，货又只有紫 / 金两档 ⇒ 按档价排就是「金优先」。
+		# 黑市比价**按档价**（`QUALITY_PRICES`）而非 `item_price`：
+		# ① 这里一切用**地皮**计价，单件现金覆盖（二青会酒寒暑）在黑市不适用；
+		# ② 货又只有紫 / 金两档 ⇒ 按档价排就是「金优先」。
+		# ③ 若改读 `item_price`：二青会（紫档、单件覆盖 ¥8000）会与**金档价 ¥8000 持平**，
+		#    而下面的比较器是严格 `>` ⇒ 两件并列时退化成「看货位顺序」，不是真正的「取最值」。
+		#    真正该排的是 `item_price / BLACK_COST[quality]`（每块地皮买到多少价值）—— 那是**批 2 的活**。
 		# 判过是对的（2026-10-10 道具重构），别再当 bug 改成 `item_price`。
 		var val := int(ItemData.QUALITY_PRICES.get(String(ItemData.def(id).quality), 0))
 		if val > best_val:

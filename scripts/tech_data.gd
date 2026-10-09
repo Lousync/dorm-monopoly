@@ -40,8 +40,12 @@ const TECHS := {
 		"desc": "小卖部购买道具每件立减 ¥200。", "implemented": true},
 	"摸鱼时刻": {"tier": TIER_SILVER,
 		"desc": "你掷出 0（原地待命）时 +¥500。", "implemented": true},
+	# 2026-10-10 标未实装（批 1 审查 I4）：全仓没有它的实现——不是漏了挂载，是从未写过；
+	# 且 `implemented: false` 会经 `TechData.pool` 把它**排除出抽取池**（不会再被任何一局选到），
+	# 所以「选到它 = 白选」这一条自此不成立。效果重定义（「+1 档」在全池等概率下无处着力）
+	# 是设计决定，登记在 `doc/development/未完成项-交接.md` ㉖，不在这里发明。
 	"眼尖手快": {"tier": TIER_SILVER,
-		"desc": "失物招领捡到的道具品质 +1 档（金封顶）。", "implemented": true},
+		"desc": "失物招领捡到的道具品质 +1 档（金封顶）。", "implemented": false},
 	"装修返现": {"tier": TIER_SILVER,
 		"desc": "你升级地皮时每级 +¥150。", "implemented": true},
 	"赌场熟客": {"tier": TIER_SILVER,
@@ -145,7 +149,7 @@ const TECHS := {
 	"接收大员": {"tier": TIER_DIAMOND,
 		"desc": "有玩家破产出局时，你可按 5 折优先收购其任意几块地皮（每局限 1 次）。", "implemented": true},
 	"淘宝达人": {"tier": TIER_DIAMOND,
-		"desc": "你落在失物招领格时，捡到的道具品质保底紫档（与「眼尖手快」取高不叠算）。", "implemented": true},
+		"desc": "你落在失物招领格时，候选里保底一件紫档（池里有紫就保证出现在候选里）。", "implemented": true},
 }
 
 static func def(name: String) -> Dictionary:

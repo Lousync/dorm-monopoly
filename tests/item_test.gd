@@ -66,6 +66,7 @@ func _run() -> void:
 	_test_bot_pricing(g)
 	await _test_soil(g)
 	await _test_discover(g)
+	await _test_taobao_guarantee(g)
 	if fails == 0:
 		print("ITEM TEST: ALL PASS")
 		quit(0)
@@ -477,6 +478,68 @@ func _test_discover(g) -> void:
 		p.items.append({"id": "校园卡", "cd": 0})
 	var none: String = await g._run_discover(p, "失物招领")
 	_check(none == "" and p.items.size() == full, "背包满：不触发发现、背包不变")
+	g.hp = []
+
+## 科技「淘宝达人」的保底（2026-10-10 道具重构 I3）：候选里**保底一件紫档**（池里有紫就保证出现）。
+## 池子收成「1 紫 + 3 非紫」四件时三种口径的区分力：
+##   · 新口径（全池等概率 + 保底）：每轮候选都是 3 件、且必含那件紫 ⇒ 全绿；
+##   · 保底被摘掉（回归）：3 选 2 漏掉那件紫的概率 = 1/4 ⇒ 8 轮全绿的 chance 只有 0.25^8 ≈ 1.5e-5 ⇒ 必红；
+##   · 批 1 之前（第三参 = 品质，整池只抽紫）：候选只有那件紫、件数 1 ⇒ 件数/非紫两条必红。
+## 用 bot 走 `_run_discover`（不发 UI，只为拿 `_discover_offered`）。
+func _test_taobao_guarantee(g) -> void:
+	print("== 淘宝达人保底（候选保底一件紫） ==")
+	var p := _mk_player(1, "甲")
+	p.bot = true
+	g.hp = [p]
+	p.items = []
+	# 以**当前真实池**为基准挑（前面用例可能已占用唯一件）：1 紫 + 3 非紫
+	var live: Array = g._item_pool("")
+	var purple_id := ""
+	var others: Array = []
+	for id in live:
+		var q := String(ItemData.def(String(id)).quality)
+		if q == "紫" and purple_id == "":
+			purple_id = String(id)
+		elif q != "紫" and others.size() < 3:
+			others.append(String(id))
+		if purple_id != "" and others.size() >= 3:
+			break
+	_check(purple_id != "" and others.size() == 3,
+		"前置：池里凑得出 1 紫 + 3 非紫（紫=%s 非紫=%d）" % [purple_id, others.size()])
+	if purple_id == "" or others.size() < 3:
+		g.hp = []
+		return
+	# 只留这四件，其余一律焚毁 ⇒ 可获取池收成 4 件（本用例收摊时还原）
+	var keep := {purple_id: true}
+	for oid in others:
+		keep[String(oid)] = true
+	var saved_burn: Dictionary = g.items_consumed
+	var burn := {}
+	for id in ItemData.ITEMS:
+		if not keep.has(String(id)):
+			burn[String(id)] = true
+	g.items_consumed = burn
+	_check(g._item_pool("").size() == 4, "池子收成 4 件（实得 %d）" % g._item_pool("").size())
+	var size_ok := true
+	var all_have_purple := true
+	var saw_non_purple := false
+	for i in 8:
+		p.items = []   # 每轮清背包：唯一件不占池、也不撑满背包
+		await g._run_discover(p, "失物招领", "紫")
+		if g._discover_offered.size() != 3:
+			size_ok = false
+		var has_p := false
+		for oid in g._discover_offered:
+			if String(ItemData.def(String(oid)).quality) == "紫":
+				has_p = true
+			else:
+				saw_non_purple = true
+		if not has_p:
+			all_have_purple = false
+	_check(size_ok, "每轮候选都是 3 件（全池 4 件等概率 + 保底）")
+	_check(all_have_purple, "每轮候选里都保底一件紫档（8 轮全绿）")
+	_check(saw_non_purple, "候选里出现过非紫件（不是旧口径「整池只抽紫」）")
+	g.items_consumed = saved_burn
 	g.hp = []
 
 func _test_soil(g) -> void:

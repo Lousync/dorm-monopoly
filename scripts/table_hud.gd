@@ -380,7 +380,11 @@ static func build_play_ui(g: Node) -> void:
 	var bbv := VBoxContainer.new()
 	bbv.add_theme_constant_override("separation", 6)
 	bbm.add_child(bbv)
-	bbv.add_child(UIKit.label("☠ 黑市 · 只收地皮（紫1 / 金2 / 刷新1 / 出口1）", 13, Color(0.85, 0.55, 0.95)))
+	# 四个数一律读常量：原先写死成「金2」，T4 把 `BLACK_COST["金"]` 抬到 3 后没人跟上，
+	# 玩家进店看到「金 2 块」而实际收 3 块（同 `rules_text.gd` 黑市那行的既有写法）。
+	bbv.add_child(UIKit.label("☠ 黑市 · 只收地皮（紫%d / 金%d / 刷新%d / 出口%d）" % [
+		ItemData.BLACK_COST["紫"], ItemData.BLACK_COST["金"],
+		ItemData.BLACK_REFRESH_COST, ItemData.BLACK_EXIT_COST], 13, Color(0.85, 0.55, 0.95)))
 	g.black_btns = []
 	for i in 3:
 		var bb := UIKit.button("买", 12)
