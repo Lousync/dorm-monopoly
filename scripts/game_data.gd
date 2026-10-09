@@ -181,7 +181,7 @@ const EVENTS := [
 static func events_for() -> Array:
 	return EVENTS.duplicate()
 
-## 抽卡演出的**卡型**（决定卡面配色）：good / bad / move / jail / info 五类（事件卡.md §三）。
+## 抽卡演出的**卡型**（决定卡面配色）：good / bad / move / jail / info 五类（机会卡.md §三）。
 ## 判定按字段优先级，顺序有意义（一张卡可能同时有 money 与 move_steps，先命中的说话）。
 ## 2026-10-09 从 `game.gd._card_kind()` 挪来：图鉴生成器（`--script` 跑）要复用它，
 ## 而它读不到 `game.gd` —— 抄一份就是**会烂的第二来源**（卡型配色会跟演出悄悄不一致）。

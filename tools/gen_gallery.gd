@@ -38,7 +38,7 @@ const SOURCES := [
 const QUALITY_CHARS := "白绿蓝紫橙"
 
 ## `GameData.card_kind()` 的五个卡型 → 中文 / 配色 / 图案（配色与抽卡演出的
-## `s_card.rpc(..., kind, ...)` 同一套语义，见 事件卡.md §三）
+## `s_card.rpc(..., kind, ...)` 同一套语义，见 机会卡.md §三）
 const KIND_LABEL := {"good": "收益", "bad": "损失", "move": "移动", "jail": "查寝", "info": "其他"}
 const KIND_COLOR := {"good": "#7ddc9b", "bad": "#f08b7a", "move": "#7cc4f0", "jail": "#f0c064", "info": "#9fb3c0"}
 const KIND_GLYPH := {"good": "💰", "bad": "💸", "move": "🚶", "jail": "🚨", "info": "ℹ️"}
@@ -119,7 +119,7 @@ func deck_of(card: Dictionary) -> String:
 	return "机会专属" if card.has("only") else "通用"
 
 
-## 逐字段把效果摊成「键 / 值」行。顺序照 事件卡.md §三 的结算顺序，
+## 逐字段把效果摊成「键 / 值」行。顺序照 机会卡.md §三 的结算顺序，
 ## 所以一张多效果卡在页面上读起来跟结算顺序一致。
 func _card_rows(card: Dictionary) -> Array:
 	var rows: Array = []
@@ -147,7 +147,7 @@ func _card_rows(card: Dictionary) -> Array:
 	return rows
 
 
-## 香皂（免疫标签）对这张卡意味着什么 —— 口径照 事件卡.md §四「免疫点」，
+## 香皂（免疫标签）对这张卡意味着什么 —— 口径照 机会卡.md §四「免疫点」，
 ## **由字段推出、不从文档抄**：那三条规则是完备的，抄一份就多一个会烂的地方。
 ## 收益 / 中性卡也**照出一行**「不受影响」：查手册的人问的就是「这张卡香皂管不管」，
 ## 空着等于没回答。
