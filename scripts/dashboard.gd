@@ -4,14 +4,14 @@ extends Node
 ## 挂在屏幕层 `hud` 上，与左上「暂停」/右上「战报·规则」同层。
 ##
 ## 动机：把「第几轮 / 轮到谁 / 到哪个阶段 / 还剩多久」从散落多处收拢成一条顶部指挥带
-##（回合卡 + 当前行动 + 阶段 stepper + 等待提示）+ 右侧玩家纵览。
+##（回合卡 + 当前行动 + 阶段 stepper + 等待提示）+ 左侧玩家纵览。
 ##
 ## 数据**全部读已同步的 `st` 与 `_op_*`**（`s_state` / `s_op_timer` 推的那份）——
 ## 客户端（非房主）也准，**不需要任何新协议**。
 ##
-## 施工落位（融合，2026-10-09 用户拍板）：顶部横条与现有「暂停 / 战报·规则」按钮同一条
-## 带上——横条铺满顶部（玻璃底），中间放仪表盘内容，左右各留出一段空位让现有按钮"坐进"
-## 横条两端（按钮本身位置一字未动）。畸变横幅与战报气泡挪到横条下方，互不打架。
+## 施工落位（2026-10-09 用户 drawio 定稿，只取布局、不照比例）：左边一列自上而下 =
+## **暂停（选项）→ 玩家纵览**；顶部**仪表盘横条**是「选项」右侧的一条带（不铺到选项背后），
+## 右端让开「规则说明 / 战报」。畸变横幅与战报气泡挪到横条下方，互不打架。
 ##
 ## 底部那排「控制按钮」只是原型演示用，**这里不要**（见 `doc/game-design/对局仪表盘-原型.html`）。
 
@@ -25,10 +25,16 @@ const STEP_TODO := 2
 ## 顶条高度（屏幕像素）：`table_hud.build_play_ui` 里量过，横条 y 8..76。
 const BAR_TOP := 8.0
 const BAR_BOTTOM := 76.0
-## 右侧纵览的落位（贴右、在横条之下）。
+## 顶条左右端：左端在「暂停」右侧（房主）/「暂停 + 网络质量」右侧（客户端）；右端让开
+## 「规则说明 / 战报」（其最左缘 ≈ 屏宽 −250）。
+const BAR_LEFT_HOST := 104.0
+const BAR_LEFT_CLIENT := 276.0
+const BAR_RIGHT := -258.0
+## 左侧玩家纵览的落位（贴左、在横条之下、底部让开左下角「我」的身家条）。
 const RAIL_TOP := 84.0
 const RAIL_W := 196.0
-const RAIL_RIGHT := 12.0
+const RAIL_X := 12.0
+const RAIL_BOTTOM_MARGIN := 158.0
 
 var g: Node
 var host: Control               # 屏幕层容器（`g.hud_layer`）—— 控件挂它才拿得到正确尺寸
@@ -80,8 +86,10 @@ func _build_bar() -> void:
 	bar = UIKit.panel_container(UIKit.PANEL_GLASS, 12,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.8), 1, 6)
 	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	bar.offset_left = 8.0
-	bar.offset_right = -8.0
+	# 横条是「选项」右侧的一条带：左端让开暂停（房主）/ 暂停 + 网络质量（客户端），
+	# 右端让开「规则说明 / 战报」。不再铺满整宽（原先把两端盖住、靠内部空位避让）。
+	bar.offset_left = BAR_LEFT_HOST if g.multiplayer.is_server() else BAR_LEFT_CLIENT
+	bar.offset_right = BAR_RIGHT
 	bar.offset_top = BAR_TOP
 	bar.offset_bottom = BAR_BOTTOM
 	# 不吃鼠标：横条只是浮在画面上，别挡住它下面（顶部那条）棋盘的可点内容。
@@ -94,9 +102,6 @@ func _build_bar() -> void:
 	hb.add_theme_constant_override("separation", 14)
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	m.add_child(hb)
-
-	# 左端让位：给左上角「暂停」（12..92）与客户端「网络质量」（100..268）留出空位。
-	hb.add_child(UIKit.hspace(272))
 
 	# ① 回合卡
 	var rv := VBoxContainer.new()
@@ -171,11 +176,6 @@ func _build_bar() -> void:
 	wait_time.add_theme_font_override("font", UIKit.font_bold())
 	wwrow.add_child(wait_time)
 
-	hb.add_child(_vline())
-
-	# 右端让位：给右上角「规则说明 / 战报」（约屏宽 −12 起、向左约 250 像素）留出空位。
-	hb.add_child(UIKit.hspace(244))
-
 func _build_steps() -> void:
 	for i in PHASES.size():
 		if i > 0:
@@ -223,11 +223,15 @@ func _style_step(i: int, state: int) -> void:
 
 func _build_rail() -> void:
 	rail = VBoxContainer.new()
-	rail.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	rail.offset_left = -RAIL_RIGHT - RAIL_W
-	rail.offset_right = -RAIL_RIGHT
+	# 左侧一列：贴左缘、在横条之下，底边让开左下角「我」的身家条（锚到屏幕底）。
+	rail.anchor_left = 0.0
+	rail.anchor_right = 0.0
+	rail.anchor_top = 0.0
+	rail.anchor_bottom = 1.0
+	rail.offset_left = RAIL_X
+	rail.offset_right = RAIL_X + RAIL_W
 	rail.offset_top = RAIL_TOP
-	rail.offset_bottom = 660.0
+	rail.offset_bottom = -RAIL_BOTTOM_MARGIN
 	rail.add_theme_constant_override("separation", 6)
 	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.add_child(rail)

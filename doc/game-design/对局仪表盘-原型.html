@@ -36,18 +36,19 @@
   .stage .felt:after{content:"（这里是对局棋盘 / 3D 桌面）";position:absolute;inset:0;display:flex;
     align-items:center;justify-content:center;color:#4a5468;font-size:14px}
 
-  /* ── 融合顶部指挥带：与暂停 / 规则 / 战报同一条带 ── */
-  .bar{position:absolute;top:10px;left:16px;right:16px;height:66px;
+  /* ── 布局（对齐 drawio：左列 选项 → 玩家纵览；顶部仪表盘横条在选项右侧；右上 规则/战报）── */
+  .options{position:absolute;top:10px;left:16px;display:flex;align-items:center;gap:8px;pointer-events:auto}
+  .cornerR{position:absolute;top:10px;right:16px;display:flex;align-items:center;gap:8px;pointer-events:auto}
+  .bar{position:absolute;top:10px;left:120px;right:280px;height:66px;
     display:flex;gap:14px;align-items:stretch;pointer-events:none}
   .card{background:linear-gradient(180deg,rgba(47,52,65,.96),rgba(33,37,47,.96));
     border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 26px #0009,inset 0 1px 0 #ffffff10;}
   .card.pad{padding:8px 12px;display:flex;align-items:center;gap:12px}
-  /* 现有按钮"坐进"横条两端（实现里它们位置一字未动，横条只是把它们纳入同一条带） */
+  /* 现有按钮（选项 / 规则 / 战报）：实现里位置一字未动，横条只让开它们 */
   .ibar{pointer-events:auto;background:linear-gradient(180deg,#343a48,#262b36);
     border:1px solid var(--border);border-radius:10px;color:var(--text);font:inherit;font-size:13px;
     padding:7px 12px;cursor:pointer}
   .ibar:hover{border-color:var(--accent)}
-  .zoneL,.zoneR{display:flex;align-items:center;gap:8px}
   .spacer{flex:1 1 auto}
 
   /* 轮次卡 */
@@ -85,8 +86,8 @@
     padding:5px 14px;border-radius:999px;font-size:13px;color:#f0c064;
     background:rgba(30,24,14,.9);border:1px solid #f5b34266;box-shadow:0 6px 18px #0008;pointer-events:none}
 
-  /* 玩家纵览（右侧竖排，落在横条之下） */
-  .rail{position:absolute;right:16px;top:86px;width:200px;display:flex;flex-direction:column;gap:7px;
+  /* 玩家纵览（左列，落在选项之下） */
+  .rail{position:absolute;left:16px;top:86px;width:200px;display:flex;flex-direction:column;gap:7px;
     pointer-events:none}
   .prow{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px}
   .prow .nm{font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -122,12 +123,17 @@
   <div class="stage">
     <div class="felt"></div>
 
-    <!-- 融合顶部指挥带：左端暂停、右端规则/战报与横条同带 -->
-    <div class="bar">
-      <div class="zoneL">
-        <button class="ibar">⏸ 暂停</button>
-      </div>
+    <!-- 左上：选项（暂停） -->
+    <div class="options"><button class="ibar">⏸ 暂停</button></div>
 
+    <!-- 右上：规则 / 战报 -->
+    <div class="cornerR">
+      <button class="ibar">规则说明</button>
+      <button class="ibar">战报 ▾</button>
+    </div>
+
+    <!-- 顶部仪表盘横条：选项右侧的一条带（不铺到选项背后） -->
+    <div class="bar">
       <div class="card pad round">
         <div class="label">回合 / ROUND</div>
         <div class="big"><span class="n" id="roundN">1</span><span class="of">/ 30</span></div>
@@ -142,13 +148,6 @@
         </div>
         <div class="steps" id="steps"></div>
         <div class="wait" id="wait"></div>
-      </div>
-
-      <div class="spacer"></div>
-
-      <div class="zoneR">
-        <button class="ibar">规则说明</button>
-        <button class="ibar">战报 ▾</button>
       </div>
     </div>
 
