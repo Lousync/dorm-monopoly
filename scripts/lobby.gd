@@ -31,9 +31,12 @@ var _set_ab_cond_sw: UIKit.Switch        # 畸变条件触发
 var _set_cash_edit: LineEdit             # 起始资金
 var _set_salary_edit: LineEdit           # 起点补贴
 var _set_wincash_edit: LineEdit          # 目标现金金额
+# 条件显隐的两块（用户 2026-10-09）：整行 / 整块跟着主选项走，由 `_sync_conditional_rows()` 统一刷
+var _set_wincash_row: HBoxContainer       # 目标现金：仅 win = 目标现金 时显示
+var _set_tech_tier_box: VBoxContainer     # 科技等级：仅科技开关打开时显示
 var _set_tier := GameSettings.TIER_CURRENT
-var _set_tech := false   # 开局科技开关（发车前配置；对局内不可改）
-var _set_tech_tier := GameSettings.TECH_TIER_RANDOM   # 科技等级：random = 掷骰；其余 = 指定
+var _set_tech := true    # 开局科技开关（发车前配置；对局内不可改。默认开 = `GameSettings` 那份默认）
+var _set_tech_tier := GameSettings.TECH_TIER_RANDOM   # 科技等级：random = 系统随机选一档；其余 = 指定
 var _set_liq := true
 var _set_rounds := 30
 var _set_win := "rounds"
@@ -330,12 +333,13 @@ func _build_settings_dialog() -> void:
 	eb.add_child(_num_row("起始资金（每人开局现金）", _set_cash_edit))
 	eb.add_child(_num_row("起点补贴（踏过 / 停在起点的工资）", _set_salary_edit))
 	_set_liq_sw = UIKit.switch_toggle(_set_liq, func(on: bool) -> void: _set_liq = on)
-	# 文案要点（用户 2026-10-09 问过"这个限时能不能调"）：那个「限时」就是「操作限时」里的
-	# **「决定」档**（与买地 / 装修 / 抽卡确认同一个窗口），没有第二个旋钮 ⇒ 文案里必须点明来源。
-	# 那句括注**自己折一行**（`\n`）：本行标签宽约 40 字，硬折会把「操作限时」从中间劈开
-	#（实测折在"「操作限 / 时」"上），显式换行才落得干净。
+	# 文案（用户 2026-10-09）：条目名「破产变卖保底」→「破产变卖」，比例 30% → 50%，
+	# 原括注（回收公式 + 「窗口 = 操作限时」）整句删除 —— 窗口来源在第二节「操作限时」的
+	# 说明里已写明"破产变卖自选"按本档计时，这一行不必重复。
+	# 比例**不写死**：读 `GameData.LIQ_RATE`，改比例时这里自动跟上。
 	eb.add_child(_ctrl_row(
-		"破产变卖保底：付不起时可限时变卖地皮凑差价\n（回收 = 投入 × 30%；窗口 = 「操作限时」的决定档，默认 25 秒）",
+		"破产变卖：付不起钱时可变卖地皮凑差价，可回收地皮价值（含房屋）的 %d%%"
+			% int(round(GameData.LIQ_RATE * 100.0)),
 		_set_liq_sw))
 
 	# —— B · 回合与节奏 ——
@@ -351,7 +355,7 @@ func _build_settings_dialog() -> void:
 			UIKit.chip_select(_set_chips, id),
 		{GameSettings.TIER_CURRENT: GameSettings.TIER_CURRENT_HINT})
 	pb.add_child(_set_chips)
-	pb.add_child(_note("回合上限：到轮未分胜负则按身家结算"))
+	pb.add_child(_note("回合上限：轮次结束后未分胜负则按总资产排名"))
 	_set_rounds_chips = UIKit.chip_row(GameSettings.ROUNDS_SW, GameSettings.ROUNDS_LABELS,
 		func(id: String) -> void:
 			_set_rounds = 0 if id == "none" else int(id)
@@ -362,38 +366,49 @@ func _build_settings_dialog() -> void:
 	var win := UIKit.section_box("胜利条件")
 	sv.add_child(win)
 	var wb := win.body()
-	wb.add_child(_note("先达成者立即获胜，本局随即结算"))
+	# 顶上原有一句说明「先达成者立即获胜，本局随即结算」，按用户 2026-10-09 去掉
 	_set_win_chips = UIKit.chip_row(GameSettings.WIN_MODES, GameSettings.WIN_LABELS,
 		func(id: String) -> void:
 			_set_win = id
-			UIKit.chip_select(_set_win_chips, id))
+			UIKit.chip_select(_set_win_chips, id)
+			_sync_conditional_rows())   # 目标现金那一行跟着主选项显隐
 	wb.add_child(_set_win_chips)
-	wb.add_child(_num_row("目标现金（仅「目标现金」模式生效）", _set_wincash_edit))
+	# 目标现金金额：**只在 win = 目标现金 时出现**（用户 2026-10-09）——
+	# 其余模式下这个数字没有任何消费方，常显只会让人以为它一直生效。
+	_set_wincash_row = _num_row("目标现金", _set_wincash_edit)
+	wb.add_child(_set_wincash_row)
 
 	# —— 道具 / 商店 / 赌场 ——
 	var shops := UIKit.section_box("道具 / 商店 / 赌场")
 	sv.add_child(shops)
 	var shb := shops.body()
+	# 三行只留名字，括注（关掉之后会发生什么）按用户 2026-10-09 全部去掉
 	_set_shop_sw = UIKit.switch_toggle(_set_shop, func(on: bool) -> void: _set_shop = on)
-	shb.add_child(_ctrl_row("小卖部（关 = 店面歇业，机会卡「进店」也不发）", _set_shop_sw))
+	shb.add_child(_ctrl_row("小卖部", _set_shop_sw))
 	_set_black_sw = UIKit.switch_toggle(_set_black, func(on: bool) -> void: _set_black = on)
-	shb.add_child(_ctrl_row("黑市（关 = 机会卡「黑市开张」不发）", _set_black_sw))
+	shb.add_child(_ctrl_row("黑市", _set_black_sw))
 	_set_casino_sw = UIKit.switch_toggle(_set_casino, func(on: bool) -> void: _set_casino = on)
-	shb.add_child(_ctrl_row("宿舍赌场（关 = 赌场格歇业）", _set_casino_sw))
+	shb.add_child(_ctrl_row("宿舍赌场", _set_casino_sw))
 
 	# —— 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡 ——
 	var tech := UIKit.section_box("开局科技")
 	sv.add_child(tech)
 	var tb := tech.body()
-	_set_tech_sw = UIKit.switch_toggle(_set_tech, func(on: bool) -> void: _set_tech = on)
-	tb.add_child(_ctrl_row("每人三选一（关 = 本局不定档、不选卡）", _set_tech_sw))
-	# 科技等级（2026-10-07）：随机 = 掷骰定档；指定 = 本局固定该档（仅科技开启时生效）
-	tb.add_child(_note("等级（仅科技开启时生效）"))
+	_set_tech_sw = UIKit.switch_toggle(_set_tech, func(on: bool) -> void:
+		_set_tech = on
+		_sync_conditional_rows())   # 等级选择跟着开关显隐
+	tb.add_child(_ctrl_row("开局时每人三选一，科技整局游戏生效", _set_tech_sw))
+	# 科技等级（2026-10-07）：随机 = 系统随机选一档；指定 = 本局固定该档。
+	# **整块只在开关打开时露出**（用户 2026-10-09）—— 关着的时候这个选择没有任何消费方。
+	_set_tech_tier_box = VBoxContainer.new()
+	_set_tech_tier_box.add_theme_constant_override("separation", 7)
+	tb.add_child(_set_tech_tier_box)
+	_set_tech_tier_box.add_child(_note("等级：随机 = 系统随机选一档；白银 / 黄金 / 钻石 = 本局固定该档"))
 	_set_tech_tier_chips = UIKit.chip_row(GameSettings.TECH_TIERS, GameSettings.TECH_TIER_LABELS,
 		func(id: String) -> void:
 			_set_tech_tier = id
 			UIKit.chip_select(_set_tech_tier_chips, id))
-	tb.add_child(_set_tech_tier_chips)
+	_set_tech_tier_box.add_child(_set_tech_tier_chips)
 
 	# —— 畸变 ——
 	var ab := UIKit.section_box("畸变")
@@ -477,6 +492,16 @@ func _sync_panel() -> void:
 	UIKit.chip_select(_set_chips, _set_tier)
 	UIKit.chip_select(_set_ab_chips, _set_ab_freq)
 	UIKit.chip_select(_set_ab_dur_chips, str(_set_ab_dur))
+	_sync_conditional_rows()
+
+## 条件显隐（用户 2026-10-09）：跟着主选项走的两块。
+##   * **目标现金金额**：仅 `_set_win == "cash"` 时显示；
+##   * **科技等级选择**：仅 `_set_tech` 打开时显示。
+## 三个调用点：开弹窗（`_sync_panel()`）、点胜利条件 chip、拨科技开关 —— 都要过这里，
+## 否则关了弹窗再开、或先改主选项，副项会停在上一轮的状态。
+func _sync_conditional_rows() -> void:
+	_set_wincash_row.visible = _set_win == "cash"
+	_set_tech_tier_box.visible = _set_tech
 
 ## LineEdit 只留数字（防空串 / 杂字符进 int 解析）
 func _read_num(edit: LineEdit) -> int:

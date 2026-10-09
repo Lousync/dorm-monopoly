@@ -157,9 +157,10 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   左右、不再打架**；**批次 13 辛 ② 起战报栏顶边已收到 52**（贴在两枚按钮之下），这张图用来核那一条；
   `abshow` → 把房主的 `_ab_active` 写一条畸变再 `_broadcast_state()`，让**顶部居中的畸变横幅**
   亮起来核对落位与不重叠（批次 12 D；如 `xx_abshow_table_plain.png`）；
-  `techroll` → 播**开局科技骰子定档演出**（屏幕层，`_show_tech_dice`），停在「骰面定格 + 等级
-  横幅」那一刻（如 `xx_techroll_table_plain.png`）——核对骰面点数 / 等级配色 / 落位；
-  文件名再带 `fixed` 则拍**房主指定等级**那一档（无骰面、直接亮横幅）。
+  `techroll` → 播**开局科技定档演出**（屏幕层，`_show_tech_tier`），停在「等级横幅」那一刻
+  （如 `xx_techroll_table_plain.png`）——核对等级配色 / 落位。**2026-10-09 起演出无骰面**
+  （骰子绘制已删），随机与房主指定是同一种演出 ⇒ 文件名带不带 `fixed` 已无区别
+  （分支名 `techroll` 保留，多处文档按它引用，别顺手改名）。
   注：`tilt` / `view2d` 只动 3D 视角；SubViewport 里的 2D 相机（`focus_grid` 那一套）不受影响。
   **两条都会顺带推动手牌淡出**（`view2d` 端手里牌本就看不见）：想拍"手里有牌"，文件名别带
   `tilt` / `view2d` —— 否则会拿到一张空手牌，并当成 bug 去查。

@@ -6,6 +6,12 @@ class_name GameData
 const MAX_PLAYERS := 4
 const START_MONEY := 20000
 const SALARY := 4500
+## 破产变卖保底的回收比例：**回收 = 地皮价值（含房屋）× 本比例**，
+## 其中地皮价值 = 地价 + 等级 × 升级费（= 该地累计投入，与 `_net_worth` 同一口径）。
+## 2026-10-09 用户拍板 30% → **50%**。
+## **唯一来源**：`game.gd` 的结算与变卖面板、大厅「游戏设置」弹窗的文案都读它 ——
+## 弹窗按 `int(LIQ_RATE * 100)` 显示百分数，别在任何文案里写死（同 TRUST_FUND 那条教训）。
+const LIQ_RATE := 0.50
 ## 绿货「信托基金」每回合开始进账（回合开始结算里发，见 道具图鉴.md）。
 ## **唯一来源**：game.gd 发钱与 rules_text 面板文案都读它——曾各写各的，面板一度显示成 +100。
 const TRUST_FUND := 200

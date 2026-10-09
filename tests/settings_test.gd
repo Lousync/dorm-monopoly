@@ -37,11 +37,12 @@ func _test_object() -> void:
 	var s := GameSettings.new()
 	_check(s.start_cash == GameData.START_MONEY, "起始资金默认 = START_MONEY")
 	_check(s.start_salary == GameData.SALARY, "起点补贴默认 = SALARY")
-	_check(s.liq_on, "破产变卖保底默认开（唯一的「默认 ≠ 现状」例外）")
+	_check(s.liq_on, "破产变卖保底默认开（例外一：「默认 ≠ 现状」）")
 	_check(s.max_rounds == 30 and s.win_mode == "rounds" and s.win_cash == 50000,
-		"回合上限 30 / 胜利条件到轮结算 / 目标现金 5 万 默认")
+		"回合上限 30 / 胜利条件总资产排名 / 目标现金 5 万 默认")
 	_check(s.shop_on and s.black_on and s.casino_on, "小卖部 / 黑市 / 赌场默认开")
-	_check(s.tech_tier == GameSettings.TECH_TIER_RANDOM, "科技等级默认 = 随机（掷骰定档）")
+	_check(s.tech_on, "开局科技默认开（例外二：「默认 ≠ 现状」，2026-10-09 用户定）")
+	_check(s.tech_tier == GameSettings.TECH_TIER_RANDOM, "科技等级默认 = 随机")
 	var c := s.copy()
 	c.start_cash = 40000
 	c.win_mode = "cash"
@@ -53,17 +54,27 @@ func _test_object() -> void:
 	var b := GameSettings.new()
 	b.start_cash = -5
 	b.start_salary = 999999
-	b.max_rounds = 45
+	b.max_rounds = 47
 	b.win_mode = "bogus"
 	b.win_cash = 99999999
 	b.tech_tier = "bogus"
 	b.clamp_all()
 	_check(b.start_cash == 0, "起始资金负数钳到 0")
 	_check(b.start_salary == GameSettings.SALARY_MAX, "起点补贴越界钳到上限")
-	_check(b.max_rounds == 30, "回合上限非法档位（45）回落 30")
+	_check(b.max_rounds == 30, "回合上限非法档位（47）回落 30")
 	_check(b.win_mode == "rounds", "胜利条件非法值回落 rounds")
 	_check(b.win_cash == GameSettings.WIN_CASH_MAX, "目标现金越界钳到上限")
 	_check(b.tech_tier == GameSettings.TECH_TIER_RANDOM, "科技等级非法值回落 random")
+	# 回合上限档位 2026-10-09 改为 30 / 45 / 60 / 80 / 不限 —— 逐个钉住（原写死 30/60/90）
+	for legal in [30, 45, 60, 80, 0]:
+		var d := GameSettings.new()
+		d.max_rounds = legal
+		d.clamp_all()
+		_check(d.max_rounds == legal, "回合上限 %d 是合法档位" % legal)
+	var e := GameSettings.new()
+	e.max_rounds = 90
+	e.clamp_all()
+	_check(e.max_rounds == 30, "回合上限 90 已换掉（原档位）→ 回落 30")
 
 ## 经济设置生效 + 变卖保底（房间口径见 doc/game-design/经济与胜负.md §三/§四）
 func _test_economy_and_liq() -> void:
@@ -122,8 +133,10 @@ func _test_economy_and_liq() -> void:
 	var i2 := _prop_idx(1)
 	g.htiles[i1] = {"owner": 1, "level": 1}
 	g.htiles[i2] = {"owner": 1, "level": 1}
-	var v1 := int(round(float(int(GameData.TILES[i1].price) + GameData.upgrade_cost(i1)) * 0.30))
-	var v2 := int(round(float(int(GameData.TILES[i2].price) + GameData.upgrade_cost(i2)) * 0.30))
+	# 回收价按 `GameData.LIQ_RATE` 算 —— **别写死比例**：这里原写的是 0.30，
+	# 2026-10-09 比例改 50% 时就成了唯一漏网的那处（其余调用点都读常量）。
+	var v1 := int(round(float(int(GameData.TILES[i1].price) + GameData.upgrade_cost(i1)) * GameData.LIQ_RATE))
+	var v2 := int(round(float(int(GameData.TILES[i2].price) + GameData.upgrade_cost(i2)) * GameData.LIQ_RATE))
 	_check(mini(v1, v2) >= 1000, "前置：最便宜一块的回收价已够覆盖 1000 应付款（%d / %d）" % [v1, v2])
 	await g._pay(seller, 1000, payee)
 	_check(bool(seller.alive), "变卖保底：凑足应付款后不出局")

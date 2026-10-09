@@ -1,6 +1,6 @@
 class_name GameSettings
 ## 开局设置对象：房主配置、随开局下发（见 doc/game-design/开局设置.md）。
-## 默认值 = 当前常量（「不配置即现状」是硬约定；唯一例外：破产变卖保底默认开）。
+## 默认值 = 当前常量（「不配置即现状」是硬约定；**两处例外**：破产变卖保底、开局科技都默认开）。
 ## 房主在大厅写这份对象，game.gd 的 `_settings` 拿的是 copy() 副本；
 ## 客户端经状态快照逐字段同步（见 game.gd s_state）。
 
@@ -40,14 +40,15 @@ var ab_cond := true   # 是否允许条件型畸变触发
 const TECH_SW: Array[String] = ["off", "on"]
 const TECH_SW_LABELS := {"off": "关", "on": "开"}
 
-var tech_on := false  # 科技开关（默认关）
+## 科技开关：**默认开**（用户 2026-10-09 定）—— 与 `liq_on` 并列，都是「默认值 ≠ 现状」的例外。
+var tech_on := true
 
-# 开局科技等级：随机 = 掷骰定档（1~2 白银 / 3~4 黄金 / 5~6 钻石）；其余 = 房主指定该档（2026-10-07）
+# 开局科技等级：随机 = 系统等概率选一档；其余 = 房主指定该档（2026-10-07）
 const TECH_TIER_RANDOM := "random"
 const TECH_TIERS: Array[String] = [TECH_TIER_RANDOM, "白银", "黄金", "钻石"]
-const TECH_TIER_LABELS := {"random": "随机（掷骰）", "白银": "白银", "黄金": "黄金", "钻石": "钻石"}
+const TECH_TIER_LABELS := {"random": "随机", "白银": "白银", "黄金": "黄金", "钻石": "钻石"}
 
-var tech_tier := TECH_TIER_RANDOM   # "random" = 掷骰；其余 = 指定等级
+var tech_tier := TECH_TIER_RANDOM   # "random" = 系统随机选一档；其余 = 指定等级
 
 # ---- A · 经济（开局设置.md §二；数值默认 = GameData 常量） ----
 const CASH_MIN := 0
@@ -59,18 +60,19 @@ const SW_LABELS := {"off": "关", "on": "开"}
 
 var start_cash := GameData.START_MONEY    # 起始资金（0 ~ 99999）
 var start_salary := GameData.SALARY       # 起点补贴（0 ~ 20000）
-var liq_on := true    # 破产变卖保底（唯一例外于「默认 = 现状」：2026-10-04 定稿即默认开）
+var liq_on := true    # 破产变卖保底（例外一于「默认 = 现状」：2026-10-04 定稿即默认开）
 
-# ---- B · 回合与节奏：回合上限档位制（30 默认 / 60 / 90 / 不限）；0 = 不限 ----
-const ROUNDS_SW: Array[String] = ["30", "60", "90", "none"]
-const ROUNDS_LABELS := {"30": "30 轮", "60": "60 轮", "90": "90 轮", "none": "不限"}
+# ---- B · 回合与节奏：回合上限档位制（30 默认 / 45 / 60 / 80 / 不限）；0 = 不限 ----
+# 档位由用户 2026-10-09 定为 30 / 45 / 60 / 80 / 不限（原 30 / 60 / 90 / 不限）。
+const ROUNDS_SW: Array[String] = ["30", "45", "60", "80", "none"]
+const ROUNDS_LABELS := {"30": "30 轮", "45": "45 轮", "60": "60 轮", "80": "80 轮", "none": "不限"}
 
 var max_rounds := 30
 
 # ---- C · 胜利条件（单选主选项 + 联动子项；开局设置.md §四） ----
 const WIN_MODES: Array[String] = ["rounds", "cash", "last"]
 const WIN_LABELS := {
-	"rounds": "到轮身家结算",
+	"rounds": "总资产排名",
 	"cash": "目标现金",
 	"last": "最后存活",
 }
@@ -89,8 +91,10 @@ var casino_on := true   # 赌场开关：关 = 赌场格歇业
 func clamp_all() -> void:
 	start_cash = clampi(start_cash, CASH_MIN, CASH_MAX)
 	start_salary = clampi(start_salary, SALARY_MIN, SALARY_MAX)
-	# 回合上限是档位制（30/60/90/不限=0），非法值回落默认 30
-	if max_rounds != 0 and max_rounds != 30 and max_rounds != 60 and max_rounds != 90:
+	# 回合上限是档位制（30/45/60/80/不限=0），非法值回落默认 30。
+	# 判据直接读 `ROUNDS_SW` —— 别再手抄一份数字：原写法抄的是 30/60/90，
+	# 2026-10-09 改档位（45 / 80 顶上）时那份抄件就成了漏网的旧口径。
+	if max_rounds != 0 and not ROUNDS_SW.has(str(max_rounds)):
 		max_rounds = 30
 	win_cash = clampi(win_cash, WIN_CASH_MIN, WIN_CASH_MAX)
 	if not WIN_MODES.has(win_mode):

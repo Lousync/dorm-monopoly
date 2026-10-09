@@ -51,10 +51,16 @@ func _run() -> void:
 	await create_timer(2.0).timeout   # 等 _host_setup 恢复执行完（1.5s）且 _run_game 因 running=false 退出，避免并发
 
 	# ---------- 定档与抽卡 ----------
-	print("== 掷骰定档与抽卡 ==")
-	_check(TechData.tier_by_dice(1) == "白银" and TechData.tier_by_dice(2) == "白银", "骰子 1~2 → 白银")
-	_check(TechData.tier_by_dice(3) == "黄金" and TechData.tier_by_dice(4) == "黄金", "骰子 3~4 → 黄金")
-	_check(TechData.tier_by_dice(5) == "钻石" and TechData.tier_by_dice(6) == "钻石", "骰子 5~6 → 钻石")
+	print("== 随机定档与抽卡 ==")
+	# 2026-10-09：取代原「掷骰 1~6 → 三档」那三条映射断言。骰子已删，但**分布必须仍是等分**
+	# （原路 = 均匀 6 面映射到 3 档 = 各 1/3）⇒ 这里改成抽一批看三档都出现过、且不越界。
+	var seen := {}
+	for i in 600:
+		seen[TechData.random_tier()] = true
+	_check((seen.keys() as Array).all(func(t: String) -> bool: return t in TechData.TIERS),
+		"随机定档只会抽到三档之内（实得 %s）" % str(seen.keys()))
+	_check(seen.size() == TechData.TIERS.size(),
+		"随机定档抽 600 次三档都出现过（不是死抽一档，实得 %d 档）" % seen.size())
 	_check((TechData.pool("白银") as Array).size() == 20, "白银池 20 条")
 	_check((TechData.pool("黄金") as Array).size() == 19, "黄金池 19 条（样板房弃案留空）")
 	_check((TechData.pool("钻石") as Array).size() == 20, "钻石池 20 条")
@@ -65,21 +71,27 @@ func _run() -> void:
 		ok3 = ok3 and (s as Array).all(func(n: String) -> bool: return n in TechData.pool("白银"))
 	_check(ok3, "同档抽 3 张且互不重复")
 
-	# ---------- 骰子定档演出（2026-10-07 补齐） ----------
-	print("== 骰子定档演出 ==")
+	# ---------- 定档演出（2026-10-07 补齐；2026-10-09 去掉骰面） ----------
+	print("== 定档演出 ==")
 	_check(g._tier_color("白银") != g._tier_color("黄金")
 		and g._tier_color("黄金") != g._tier_color("钻石")
 		and g._tier_color("白银") != g._tier_color("钻石"), "三档等级色互不相同")
-	var pip_ok := true
-	for i in 6:
-		pip_ok = pip_ok and (g.DICE_PIPS[i] as Array).size() == i + 1
-	_check(pip_ok, "骰面点数映射：1~6 各 i+1 个点")
-	var before: int = g.get_child_count()
-	g._show_tech_dice(3, "黄金")
-	_check(g.get_child_count() == before + 1, "定档演出挂了一层屏幕层控件（不报错）")
+	# 钉住**那一层本身**，别数 `get_child_count()`：对局的广播刷新会不停增删自己的子节点
+	# （实测这 2.8 秒里别的分支增删了 90 来个），总数对比会假红/假绿。做法 = 演出前后做差集，
+	# 找出新挂上的那一层，随后只看它有没有被释放。
+	var kids_before := {}
+	for c in g.get_children():
+		kids_before[c] = true
+	g._show_tech_tier("黄金")
+	var layer: Node = null
+	for c in g.get_children():
+		if not kids_before.has(c):
+			layer = c
+			break
+	_check(layer != null and (layer as Control).z_index == 75, "定档演出挂了一层屏幕层控件（z=75）")
 	await create_timer(2.8).timeout
 	await process_frame
-	_check(g.get_child_count() == before, "定档演出自动收（层已释放）")
+	_check(not is_instance_valid(layer), "定档演出自动收（那一层已释放）")
 
 	# ---------- 全 bot 跑通科技阶段 ----------
 	print("== 科技阶段（全 bot） ==")
@@ -94,7 +106,7 @@ func _run() -> void:
 	await g._tech_phase()
 	g.running = false
 	_check(g._tech_tier in TechData.TIERS,
-		"掷骰定档恢复（2026-10-07 三档池齐）：本局档 = %s" % g._tech_tier)
+		"随机定档：本局档落在三档之内 = %s" % g._tech_tier)
 	_check(String(p1.tech) != "" and String(p1.tech) in TechData.pool(g._tech_tier)
 		and String(p2.tech) in TechData.pool(g._tech_tier), "全员都拿到了本档科技")
 	_check(not bool(g._tech_open), "科技阶段结束：三选一阶段收口（tech_open=false）")
@@ -110,7 +122,7 @@ func _run() -> void:
 	g.running = true
 	await g._tech_phase()
 	g.running = false
-	_check(g._tech_tier == "钻石", "指定「钻石」→ 不掷骰，本局档 = 钻石（实得 %s）" % g._tech_tier)
+	_check(g._tech_tier == "钻石", "指定「钻石」→ 不随机，本局档 = 钻石（实得 %s）" % g._tech_tier)
 	_check(String(g.hp[0].tech) in TechData.pool("钻石"), "指定档抽卡来自钻石池")
 	g._settings.tech_tier = GameSettings.TECH_TIER_RANDOM
 	g._settings.tech_on = false

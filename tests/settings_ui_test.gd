@@ -94,11 +94,20 @@ func _run() -> void:
 	lb._settings_btn.pressed.emit()
 	var rounds: Dictionary = lb._set_rounds_chips.get_meta("chips", {})
 	var wins: Dictionary = lb._set_win_chips.get_meta("chips", {})
-	_check(rounds.size() == 4 and wins.size() == 3, "回合上限 4 档、胜利条件 3 选")
+	_check(rounds.size() == 5 and wins.size() == 3, "回合上限 5 档、胜利条件 3 选")
+	# 档位守门人（2026-10-09 改为 30/45/60/80/不限）：新档在、旧档 90 不在
+	_check(rounds.has("45") and rounds.has("80") and not rounds.has("90"),
+		"回合上限档位 = 30/45/60/80/不限（45、80 是新档，90 已换掉）")
 	rounds["none"].pressed.emit()
 	_check(lb._set_rounds == 0, "点「不限」→ max_rounds = 0")
+	# 目标现金金额**只在「目标现金」模式下显示**（用户 2026-10-09）
+	_check(not lb._set_wincash_row.visible, "默认「总资产排名」⇒ 目标现金那一行不显示")
 	wins["cash"].pressed.emit()
 	_check(lb._set_win == "cash", "点「目标现金」→ win_mode = cash")
+	_check(lb._set_wincash_row.visible, "选中「目标现金」⇒ 金额那一行出现")
+	wins["last"].pressed.emit()
+	_check(not lb._set_wincash_row.visible, "换回「最后存活」⇒ 金额那一行又收起")
+	wins["cash"].pressed.emit()   # 复位：下面几条要 win = cash
 	lb._set_cash_edit.text = "abc200000"   # 杂字符被剥掉，数字留出来钳制
 	lb._set_salary_edit.text = "4500"
 	lb._set_wincash_edit.text = "50000"
@@ -126,13 +135,34 @@ func _run() -> void:
 	lb._settings_btn.pressed.emit()
 	_check(lb._set_cash_edit.text == str(before.start_cash), "弹窗展示默认起始资金")
 	_check(lb._set_rounds == before.max_rounds, "弹窗展示默认回合上限")
-	lb._set_wrap.visible = false
-	# 开局科技等级（2026-10-07）：chip 行 4 档，选「钻石」写进设置
+	# 破产变卖：条目名与比例（用户 2026-10-09）。比例**必须来自 GameData.LIQ_RATE** ——
+	# 写死的话改比例时这行就骗人了（同 TRUST_FUND 那条教训），所以这里钉的是"读常量"本身。
+	var liq_lbl := lb._set_liq_sw.get_parent().get_child(0) as Label
+	_check(liq_lbl != null and liq_lbl.text.begins_with("破产变卖："),
+		"条目名已改为「破产变卖」（实得 %s）" % (liq_lbl.text if liq_lbl != null else "<无>"))
+	_check(liq_lbl != null and liq_lbl.text.contains("%d%%" % int(round(GameData.LIQ_RATE * 100.0)))
+		and not liq_lbl.text.contains("30%"),
+		"回收比例读的是 GameData.LIQ_RATE（现 %d%%），不是写死的旧值" % int(round(GameData.LIQ_RATE * 100.0)))
+	# 开局科技：默认**开**（用户 2026-10-09），等级选择跟着开关显隐
+	_check(lb._set_tech_sw.on and lb._set_tech_tier_box.visible,
+		"科技默认开 ⇒ 开关是开、等级选择可见")
 	var tier_chips: Dictionary = lb._set_tech_tier_chips.get_meta("chips", {})
 	_check(tier_chips.size() == 4, "科技等级 4 档 chip（随机/白银/黄金/钻石）")
+	_check(String(tier_chips[GameSettings.TECH_TIER_RANDOM].text) == "随机",
+		"「随机」档文案 = 随机（去掉了「（掷骰）」）")
+	# 开关的显隐联动：这里**不改用真实点击** —— 科技那一节在滚动区下方、被 ScrollContainer
+	# 裁掉，点不到（本文件开头那段注释里的坑）。改发它对外的那枚 `toggled` 信号，
+	# 与真机点击走的是同一条回调（`_set_tech_sw` 的 on_change）。
+	lb._set_tech_sw.set_on(false)
+	lb._set_tech_sw.toggled.emit(false)
+	_check(not lb._set_tech and not lb._set_tech_tier_box.visible, "关掉科技开关 ⇒ 等级选择收起")
+	lb._set_tech_sw.set_on(true)
+	lb._set_tech_sw.toggled.emit(true)
+	_check(lb._set_tech and lb._set_tech_tier_box.visible, "再打开 ⇒ 等级选择又露出")
 	tier_chips["钻石"].pressed.emit()
 	lb._on_settings_save()
-	_check(net.game_settings.tech_tier == "钻石", "选「钻石」写进设置（tech_tier）")
+	_check(net.game_settings.tech_tier == "钻石" and net.game_settings.tech_on,
+		"选「钻石」写进设置（tech_tier，且 tech_on 仍为开）")
 	lb._set_wrap.visible = false
 
 	# ---- 开关组件（on/off 的行由「关 / 开」两枚 chip 换成 UIKit.Switch，用户 2026-10-09） ----

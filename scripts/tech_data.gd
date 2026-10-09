@@ -1,6 +1,6 @@
 class_name TechData
 ## 开局科技数据总表（唯一台账：doc/game-design/开局科技.md）。
-## 每局掷骰定档（1~2 白银 / 3~4 黄金 / 5~6 钻石，等分、全场同档），每人从同档抽三选一，
+## 每局**随机定档**（三档等概率、全场同档），每人从同档抽三选一，
 ## 允许多人重复。科技效果一律无 buff/debuff 标签——香皂对科技无效。
 ## 三档均已定稿实装（2026-10-07，黄金 19 条、编号 16 弃案留空；钻石 20 条）。
 
@@ -147,10 +147,8 @@ static func pool(tier: String) -> Array:
 			out.append(name)
 	return out
 
-## 骰子点数 → 等级（1~2 白银 / 3~4 黄金 / 5~6 钻石）
-static func tier_by_dice(pips: int) -> String:
-	if pips <= 2:
-		return TIER_SILVER
-	if pips <= 4:
-		return TIER_GOLD
-	return TIER_DIAMOND
+## 随机定一档（三档等概率 = 各 1/3）。
+## 2026-10-09 取代原 `tier_by_dice(pips)`：原路是「掷 1~6 点 → 1~2 白银 / 3~4 黄金 / 5~6 钻石」，
+## 均匀掷 6 面骰再映射到 3 档，概率**本就是各 1/3** —— 去掉骰子不改分布、不动平衡。
+static func random_tier() -> String:
+	return TIERS[randi_range(0, TIERS.size() - 1)]

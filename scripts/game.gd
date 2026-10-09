@@ -574,6 +574,15 @@ func _host_setup() -> void:
 		GameData.fmt_money(_settings.start_cash), GameData.fmt_money(_settings.start_salary)], "#f0c064")
 	_log("转盘决定步数（0~12）：转到 12 满值再动一次，转到 0 就地再结算脚下格子；连续三次 10+ 会被查寝抓走哦")
 	await _wait(1.5)
+	# 名单为空 ⇒ 不推进对局。**这里必须退，不能往下走**：`_run_game()` 第一行就是 `hp[turn_i]`，
+	# 空名单直接越界崩（与 `_broadcast_state` 里那处同类，那边已单独守卫）。
+	# 正常开局至少房主自己，走不到这条；会走到的是**测试脚手架**（多数用例实例化 `game.tscn`
+	# 后只把 `running` 冻住，之后再自己往 `hp` 里塞人）。时间上也必须在这退：用例靠
+	# 「`_host_setup` 在它解冻 `running` 之前跑完」把脚手架和自己的用例隔开，而 2026-10-09
+	# 起开局科技默认开、`_host_setup` 被撑长了 1.75 秒，`casino_test` 因此先假红（后台对局
+	# 真的开跑、动了它那三家的钱）。
+	if hp.is_empty():
+		return
 	if _settings.tech_on:
 		await _tech_phase()   # 开局科技：掷骰定档 + 全员三选一（见开局科技.md）
 	_broadcast_state()
@@ -583,22 +592,21 @@ func _host_setup() -> void:
 
 # ================= 房主：开局科技 =================
 # 定档 → 每人私密同档三选一（bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。
-# 规则：doc/game-design/开局科技.md。定档 = 掷骰（1~2 白银 / 3~4 黄金 / 5~6 钻石，
-# 见 TechData.tier_by_dice）；三档池子已于 2026-10-07 定稿补齐，掷骰定档恢复。
+# 规则：doc/game-design/开局科技.md。定档 = **系统等概率选一档**（三档各 1/3）——
+# 原「掷 1~6 点再映射」于 2026-10-09 去掉（分布本就是等分，去掉骰子不改平衡，
+# 见 TechData.random_tier）。
 
 func _tech_phase() -> void:
-	var pips := randi_range(1, 6)
 	if _settings.tech_tier != GameSettings.TECH_TIER_RANDOM:
-		# 房主指定等级（2026-10-07）：不掷骰，直接用该档；pips=0 告诉演出「无骰面」。
-		pips = 0
+		# 房主指定等级（2026-10-07）：直接用该档，不随机
 		_tech_tier = _settings.tech_tier
 		_log("【开局科技】房主指定本局科技等级「%s」！" % _tech_tier, "#f0c064")
 	else:
-		_tech_tier = TechData.tier_by_dice(pips)
-		_log("【开局科技】掷骰 %d 点 —— 本局科技等级「%s」！" % [pips, _tech_tier], "#f0c064")
+		_tech_tier = TechData.random_tier()
+		_log("【开局科技】随机定档 —— 本局科技等级「%s」！" % _tech_tier, "#f0c064")
 	_broadcast_state()
-	s_tech_dice.rpc(pips, _tech_tier)   # 定档演出（全员同演；不挡流程，仅等它走完再开选卡）
-	await _wait(TECH_DICE_TIME if pips > 0 else TECH_DICE_TIME_FIXED)
+	s_tech_tier.rpc(_tech_tier)   # 定档演出（全员同演；不挡流程，仅等它走完再开选卡）
+	await _wait(TECH_TIER_REVEAL_TIME)
 	# ---- 全员**同时**三选一（2026-10-07 改：原先逐个问，一个人选完才轮到下一个）----
 	_tech_offers = {}
 	_tech_picks = {}
@@ -658,21 +666,15 @@ func _tech_names_for(peer: int) -> Array:
 			return _tech_offers[tok].names
 	return []
 
-# ---------------- 骰子定档演出（2026-10-07） ----------------
-# `开局科技.md` §四 原记「骰子定档演出仍待做，当前定档走战报公告」——本段补齐：
-# 掷骰定档时在**屏幕层**演一段（骰面快滚 → 定格 + 等级横幅 → 自动收），全员同演。
-# 2026-10-07 加「房主指定等级」：指定档不掷骰，演出一段无骰面的横幅（`pips <= 0`）。
-# 程序化画骰面（3×3 圆点网格，不依赖字体 / 素材，同「能程序化就别加素材」的约定）。
+# ---------------- 定档演出（2026-10-07；2026-10-09 去掉骰面） ----------------
+# 开局科技定档时在**屏幕层**晃一下：居中面板亮出「本局科技等级 · X」，随即自动收，全员同演。
+# 2026-10-07 原为「骰面快滚 → 定格 + 横幅」；用户 2026-10-09 判「不需要掷骰子动画」⇒
+# 骰面绘制（`_die_face` / `_set_die_face` / `DICE_PIPS`）、快滚时长与 `pips` 参数一并删除，
+# 随机与房主指定**合并成同一种演出**。`_tech_phase` 按下面的时长等它走完再开选卡。
 
-const TECH_DICE_ROLL_N := 10       # 快滚步数
-const TECH_DICE_ROLL_DT := 0.07    # 每步间隔
-const TECH_DICE_HOLD := 1.4        # 定格后横幅停留
-## 演出总时长（`_tech_phase` 按它等演出走完再开选卡），留一点收尾余量。
-const TECH_DICE_TIME := TECH_DICE_ROLL_N * TECH_DICE_ROLL_DT + TECH_DICE_HOLD + 0.35
-## 指定等级时的演出更短（无骰面快滚，只亮横幅 + 停留）。
-const TECH_DICE_TIME_FIXED := TECH_DICE_HOLD + 0.35
-## 骰面点数 → 3×3 网格里点亮的格（row-major：0 1 2 / 3 4 5 / 6 7 8）。
-const DICE_PIPS := [[4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8]]
+const TECH_TIER_HOLD := 1.4        # 横幅停留
+## 演出总时长（留一点收尾余量）
+const TECH_TIER_REVEAL_TIME := TECH_TIER_HOLD + 0.35
 
 func _tier_color(tier: String) -> Color:
 	match tier:
@@ -683,42 +685,12 @@ func _tier_color(tier: String) -> Color:
 		_:
 			return Color(0.80, 0.84, 0.92)   # 白银
 
-## 造一个骰面（3×3 圆点网格）。返回的网格由 `_set_die_face` 按点数点亮。
-func _die_face(size: float) -> GridContainer:
-	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
-	grid.custom_minimum_size = Vector2(size, size)
-	var cell := (size - 12.0) / 3.0
-	grid.set_meta("cell", cell)   # 圆点半径随格子尺寸取（`_set_die_face` 读它）
-	for i in 9:
-		var dot := Panel.new()
-		dot.custom_minimum_size = Vector2(cell, cell)
-		dot.add_theme_stylebox_override("panel", UIKit.stylebox(Color(0, 0, 0, 0), int(cell * 0.5)))
-		grid.add_child(dot)
-	return grid
-
-func _set_die_face(grid: GridContainer, pips: int) -> void:
-	if grid == null or not is_instance_valid(grid):
-		return
-	var corner := int(float(grid.get_meta("cell", 36.0)) * 0.5)   # 半格 = 正圆
-	var on: Array = DICE_PIPS[clampi(pips, 1, 6) - 1]
-	for i in grid.get_child_count():
-		var dot := grid.get_child(i) as Panel
-		if dot == null:
-			continue
-		dot.add_theme_stylebox_override("panel",
-			UIKit.stylebox(UIKit.ACCENT if i in on else Color(0, 0, 0, 0), corner))
-
 @rpc("authority", "call_local", "reliable")
-func s_tech_dice(pips: int, tier: String) -> void:
-	_show_tech_dice(pips, tier)
+func s_tech_tier(tier: String) -> void:
+	_show_tech_tier(tier)
 
-## 定档演出：屏幕层压暗底 + 居中面板（标题 / 骰面 / 等级横幅）。
-## `pips > 0` = 掷骰档（骰面快滚 → 定格；时长 `TECH_DICE_TIME`）；`pips <= 0` = 房主**指定档**
-## （无骰面、直接亮横幅；时长 `TECH_DICE_TIME_FIXED`）。
-func _show_tech_dice(pips: int, tier: String) -> void:
+## 定档演出：屏幕层压暗底 + 居中面板（标题 + 等级横幅 → 自动收）。
+func _show_tech_tier(tier: String) -> void:
 	var layer := Control.new()
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.z_index = 75   # 高于抽卡 / 结算（40~50），低于暂停（80）
@@ -740,33 +712,15 @@ func _show_tech_dice(pips: int, tier: String) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 16)
 	m.add_child(v)
-	var t := UIKit.title_label("开局科技 · 掷骰定档" if pips > 0 else "开局科技 · 指定等级", 22)
+	var t := UIKit.title_label("开局科技 · 本局等级", 22)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
-	# 骰面只在掷骰档出现（指定档无骰）
-	var face: GridContainer = null
-	if pips > 0:
-		var face_wrap := CenterContainer.new()
-		v.add_child(face_wrap)
-		face = _die_face(120.0)
-		face_wrap.add_child(face)
-		_set_die_face(face, 1)
-	var banner := UIKit.label("", 26, _tier_color(tier))
+	var banner := UIKit.label("本局科技等级 · %s" % tier, 26, _tier_color(tier))
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(banner)
-	if pips <= 0:
-		banner.text = "本局科技等级 · %s" % tier   # 指定档：直接亮，不等快滚
-		Fx.play("cash", 0.0)
+	Fx.play("cash", 0.0)
 	var tw := create_tween()
-	if pips > 0:
-		for i in TECH_DICE_ROLL_N:
-			tw.tween_callback(func() -> void: _set_die_face(face, randi_range(1, 6))).set_delay(TECH_DICE_ROLL_DT)
-		tw.tween_callback(func() -> void:
-			_set_die_face(face, pips)
-			if is_instance_valid(banner):
-				banner.text = "本局科技等级 · %s" % tier
-			Fx.play("cash", 0.0))
-	tw.tween_interval(TECH_DICE_HOLD)
+	tw.tween_interval(TECH_TIER_HOLD)
 	tw.tween_callback(func() -> void:
 		if is_instance_valid(layer):
 			layer.queue_free())
@@ -1350,8 +1304,8 @@ func _run_game() -> void:
 		if _rounds_exhausted():
 			return
 
-## 轮数用尽 → 按身家结算。回合计数已由 _advance_turn 按圈维护（见 fix/v0.0.2）。
-## 回合上限为档位制（30/60/90，0 = 不限——只能靠胜利条件或全员破产结束，见开局设置.md §三）。
+## 轮数用尽 → 按总资产结算。回合计数已由 _advance_turn 按圈维护（见 fix/v0.0.2）。
+## 回合上限为档位制（30/45/60/80，0 = 不限——只能靠胜利条件或全员破产结束，见开局设置.md §三）。
 func _rounds_exhausted() -> bool:
 	var lim := _settings.max_rounds
 	if lim <= 0 or round_no <= lim:
@@ -2213,8 +2167,6 @@ func _grant_item_of_quality(p: Dictionary, q: String, src := "机会卡") -> Str
 	_log("%s 从%s获得道具【%s】" % [p.name, src, id], "#74d188")
 	return id
 
-const LIQ_RATE := 0.30   # 变卖回收比例（经济与胜负.md §三 定稿 30%；数值待复核时只改这里）
-
 ## 支付一笔钱：能付多少付多少；差额先试应急基金，再试「变卖保底」（房主开关，默认开），
 ## 都救不回来才破产出局（「东山再起」科技可挡一次）。receiver 传空字典 = 交给学校（缴费 / 罚款 / 畸变）。
 func _pay(p: Dictionary, amount: int, receiver: Dictionary) -> void:
@@ -2302,10 +2254,10 @@ func _run_receiver_sale(bust: Dictionary, estate: Array) -> void:
 
 # ---------------- 破产变卖保底（房主权威；开关 = 开局设置「破产变卖保底」） ----------------
 
-## 一块地皮的变卖回收价 = 累计投入（地价 + 等级 × 升级费）× LIQ_RATE
+## 一块地皮的变卖回收价 = 地皮价值（含房屋 = 地价 + 等级 × 升级费）× GameData.LIQ_RATE
 func _liq_value(idx: int) -> int:
 	var invested := int(GameData.TILES[idx].price) + int(htiles[idx].get("level", 0)) * GameData.upgrade_cost(idx)
-	return int(round(float(invested) * LIQ_RATE))
+	return int(round(float(invested) * GameData.LIQ_RATE))
 
 ## 变卖保底主流程：开一个变卖会话，等待卖家自选（真人限时 / 机器人与超时自动兜底）。
 ## 返回 true = 已凑足并付清（short 清零）；false = 凑不足 / 会话中断（调用方继续走破产）。
@@ -3071,8 +3023,8 @@ func _refresh_liq_ui() -> void:
 	liq_panel.visible = mine
 	liq_watch.visible = watching
 	if watching:
-		liq_watch.text = "%s 正在变卖地皮凑 %s（投入 × 30%%）……" % [
-			_name_by_peer(peer), GameData.fmt_money(need)]
+		liq_watch.text = "%s 正在变卖地皮凑 %s（地皮价值 × %d%%）……" % [
+			_name_by_peer(peer), GameData.fmt_money(need), int(round(GameData.LIQ_RATE * 100.0))]
 	if not mine:
 		return
 	var me := _state_player(my_peer)
@@ -3095,7 +3047,7 @@ func _refresh_liq_ui() -> void:
 		var lv := UIKit.label("Lv%d · 累计投入 %s" % [int(t.get("level", 0)), GameData.fmt_money(invested)], 13, UIKit.TEXT_DIM)
 		lv.custom_minimum_size = Vector2(210, 0)
 		row.add_child(lv)
-		var val := int(round(float(invested) * LIQ_RATE))
+		var val := int(round(float(invested) * GameData.LIQ_RATE))
 		var vv := UIKit.label("回收 %s" % GameData.fmt_money(val), 14, Color(0.98, 0.85, 0.6))
 		vv.custom_minimum_size = Vector2(120, 0)
 		row.add_child(vv)
@@ -3164,7 +3116,11 @@ func _broadcast_state() -> void:
 	s_state.rpc({
 		"phase": "playing" if (running or lab_mode) else "ended",
 		"round": round_no, "max_rounds": _settings.max_rounds,
-		"turn": int(hp[turn_i].peer),
+		# `turn` 的「没人」哨兵是 `GameData.NO_PEER`（见 `_refresh_actor_ring` 的注释，**不是 -1**）。
+		# 守卫是必须的：名单为空时 `hp[turn_i]` 直接越界崩在这里 —— `_op_window_owner()` 早有
+		# 同样的守卫，只有这处漏了 ⇒ 每次无玩家的自动开局都在日志里刷一条 SCRIPT ERROR
+		#（2026-10-09 查「科技默认开」的连带影响时发现的既有缺陷）。
+		"turn": (int(hp[turn_i].peer) if turn_i < hp.size() else GameData.NO_PEER),
 		"await": await_state, "await_peer": await_peer,
 		"players": plist, "tiles": htiles,
 		"shops": shops, "refresh_price": _refresh_price(),

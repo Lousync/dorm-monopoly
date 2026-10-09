@@ -76,6 +76,12 @@ func _test_round() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false
+	# 脚手架那局**不要跑开局科技**（2026-10-09 起 `tech_on` 默认开）：本测试给 Net.players
+	# 塞了三家 bot，`_host_setup` 因此会真的走一遍 `_tech_phase`（定档演出 + 给这三家发科技），
+	# 于是它要多花 1.75 秒才走到 `_run_game()` —— 而那时本测试已经解冻 `running` 了，
+	# 上面那句「先让它自己退出」的约定就失效：**后台对局真的开跑、动了这三家的钱**
+	#（`奖池全额回到玩家手里` 因此假红：前 15000 / 后 15100）。
+	g._settings.tech_on = false
 	if g.board == null or g.casino == null:
 		_check(false, "对局场景可加载（脚本编译失败？）")
 		return
