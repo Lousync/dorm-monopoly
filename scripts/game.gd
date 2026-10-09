@@ -86,6 +86,18 @@ var tianming_picker: Control   # 天命在握点数框（1~11 + 不指定；tabl
 var _tgt_slot := -1         # 指向性道具：待选目标的道具槽位（-1=无）
 var _tgt_stage := ""        # ""=无 / "peer"=选玩家 / "tile"=选地块
 var _tgt_peer := -1         # 两段式：已选定的目标玩家
+## **卡**选目标态（批 2 §三）：非空 = 这次选的是**卡**的目标，值是字段名（如 `"steal_from"`）。
+## 复用上面那套 `_tgt_stage` 状态机（与道具「跑腿券」同一个交互），只多这一个判别位 ——
+## **卡态下 `_tgt_slot` 必须恒为 -1**：`_target_item_id()` 会拿它去读 `items[_tgt_slot]`，
+## 越界。所以 `_on_seat_clicked` 里卡的分支**必须先于**道具那条判。
+var _tgt_card := ""
+var _card_target_peers: Array = []   # 卡选目标态下**可选中**的 peer（房主广播，客户端照着点亮立牌）
+var _target_pick := GameData.NO_PEER # 玩家侧选中的目标（`c_card_target` / 房主本机点击写入）
+## 玩家侧**已作答**（选中或取消都算）。房主等的是它、不是 `_target_pick`：取消传回的正是 `NO_PEER`，
+## 拿它当判据的话「取消」与「还没选」分不开 ⇒ 取消也要空等满一个操作窗口（见 `_await_card_target`）。
+var _card_target_ack := false
+## 正在为一张卡选目标的**抽卡者**（0 = 没有）。`c_card_target` 的归属校验用（同 `c_card_ok` 的做法）。
+var _awaiting_card_target := 0
 var _tgt_tiles: Array = []  # 当前可选的地块 idx
 var _tgt_swap_mine := -1    # 转专业两段式：已选定的「我的那块地」（-1 = 还没选）
 var target_hint: Control
@@ -870,6 +882,9 @@ func _send_renmen_pick(idx: int) -> void:
 	_tgt_tech_pick = false
 	_tgt_slot = -1
 	_tgt_stage = ""
+	# 同"清选目标态"的那处收口：卡态的判别位一并归零。两态本不会同时挂着，留着这条是为了
+	# **判别位卡死**这个失效模式 —— `_tgt_card` 挂住会把之后所有立牌点击静默吞掉（见 `_on_seat_clicked`）。
+	_tgt_card = ""
 	_tgt_tiles = []
 	if target_hint != null:
 		target_hint.visible = false
@@ -4141,7 +4156,11 @@ func _refresh_action_button() -> void:
 	var using: bool = await_state == "item" and int(st.get("await_peer", -1)) == my_peer
 	if not using and selected_slot >= 0:
 		_clear_item_selection()
-	if not using and _tgt_stage != "":
+	# 卡选目标态（批 2 §三）**不在**这条清理的范围内（判据 `_tgt_card == ""`）：它等的是
+	# `s_card_target` 那对进/退包，而不是 `await == "item"`。不排除的话，窗口期里**任何一次**
+	# 状态广播（别人丢张牌、掉线都会发）都会把这次选目标当场收掉 —— 而收掉现在会回报房主，
+	# 这张卡的目标就白丢了。卡态的收尾只有两条：`s_card_target(done)` 与玩家自己取消。
+	if not using and _tgt_stage != "" and _tgt_card == "":
 		_cancel_target()
 	if action_btn == null or not is_instance_valid(action_btn):
 		return
@@ -6311,6 +6330,19 @@ func _rank_of(peer: int) -> int:
 ## 他人那一格在名册条上（**批次 13 ② 起在左上角「暂停」旁**））；
 ## 座位卡与立牌都已退场，这里只是后果函数。
 func _on_seat_clicked(peer: int) -> void:
+	# 卡选目标态**先在**这里分流：它必须排在道具那条之前 —— 卡态下 `_tgt_slot == -1`，
+	# 落到下面会拿 -1 去读 `_target_item_id()`（越界）、并去用掉一个不存在的道具槽位。
+	# 受理条件只有"是我的可选目标"；不是就静默 no-op（与道具那条同款：不报错、不收态）。
+	if _tgt_card != "":
+		if peer != my_peer and _card_target_peers.has(peer):
+			if multiplayer.is_server():
+				# 房主本机这份直接落（同 `_send_use_item` / `_on_card_confirm` 的做法：
+				# 房主也是玩家，`c_*` 只走"客户端 → 房主"那半程）
+				_target_pick = peer
+				_card_target_ack = true
+			else:
+				c_card_target.rpc_id(1, peer)
+		return
 	if _tgt_stage == "peer" and peer != my_peer:
 		var iid := _target_item_id()
 		if iid == "转专业":
@@ -6343,6 +6375,95 @@ func _on_seat_clicked(peer: int) -> void:
 		_log("选定目标：%s" % _name_by_peer(peer), "#f0c064")
 		_send_use_item(_tgt_slot, peer)
 		return
+
+# ---------------- 卡选目标（批 2 §三）：复用同一套状态机，判别位换成 `_tgt_card` ----------------
+
+## 卡选目标态：房主 → 全员（`cands` = 此刻可选 peer，客户端照着点亮立牌 / 立牌金边）。
+## `done=true` 收尾（熄灭高亮、收起提示条）。两半都走**既有**的 `_push_peer_highlight`，
+## 于是"哪几块亮着"与"点谁真的有反应"（`_on_seat_clicked` 的卡分支照 `_card_target_peers` 判）
+## 依旧同源。
+##
+## `owner_peer` 目前只随包下发、不做过滤（判据在 `_await_card_target` 那侧的 `_awaiting_card_target`）。
+@rpc("authority", "call_local", "reliable")
+func s_card_target(owner_peer: int, field: String, cands: Array, done: bool) -> void:
+	if done:
+		_tgt_card = ""
+		_tgt_stage = ""
+		_tgt_peer = -1
+		_tgt_slot = -1
+		_card_target_peers = []
+		_push_peer_highlight([])
+		if target_hint != null:
+			target_hint.visible = false
+		if board != null:
+			board.set_select_tiles([])
+		return
+	_tgt_card = field
+	_tgt_slot = -1
+	_tgt_peer = -1
+	_tgt_stage = "peer"
+	_card_target_peers = cands
+	_show_target_hint("选一位室友（Esc / 右键取消）")
+	_push_peer_highlight(cands)
+
+## 玩家侧：选好了目标（或取消，传 `GameData.NO_PEER`）。
+@rpc("any_peer", "reliable")
+func c_card_target(target: int) -> void:
+	if not multiplayer.is_server():
+		return
+	# 归属校验（做法同 `c_card_ok` / `c_decision`）：`s_card_target` 是**全员**广播，别人也在
+	# 选目标态里；少了这道闸，谁先点一下名册条 / 立牌就能替抽卡者定下目标。
+	# `get_remote_sender_id() == 0` = 不是从网络进来的（本机直连），照收。
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != 0 and sender != _awaiting_card_target:
+		return
+	_target_pick = target
+	_card_target_ack = true
+
+## 房主侧：等抽卡者为一张卡选目标。返回目标玩家字典；取消 / 无人可选 / 超时 → `{}`
+##（`{}` = 这张卡的目标部分作废，设计稿 §三）。
+##
+## 走**玩家侧**那套 `_tgt_stage` 状态机（与道具「跑腿券」同一个交互），只是判别位换成 `_tgt_card`。
+## 超时走既有操作限位（同 `_await_card_confirm` 的 `"card"` 挡位 ⇒ 倒计时挂在抽卡者的条上）。
+func _await_card_target(p: Dictionary, field: String) -> Dictionary:
+	var cands := _card_target_candidates(p, field)
+	if cands.is_empty():
+		_log("没有可指定的目标，这张卡的目标部分作废", "#8a90a5")
+		return {}
+	_target_pick = GameData.NO_PEER
+	_card_target_ack = false
+	_awaiting_card_target = int(p.peer)
+	s_card_target.rpc(GameData.NO_PEER, field, cands, false)
+	if _is_managed(p):
+		await _wait(0.6)
+		if _target_pick == GameData.NO_PEER:
+			_target_pick = int(cands[randi_range(0, cands.size() - 1)])
+	else:
+		# `alive` 的语义是"**还**在等"（同 `_ask` / `_await_card_confirm`）—— 等的是**作答**而不是
+		# "选到了人"：取消传回的就是 `NO_PEER`，拿 `_target_pick` 当判据的话取消也要空等一整窗。
+		await _await_turn_window("card", func() -> bool: return not _card_target_ack)
+	s_card_target.rpc(GameData.NO_PEER, "", [], true)   # 收尾（第 4 参 = 收）
+	var pick := _target_pick
+	_target_pick = GameData.NO_PEER
+	_card_target_ack = false
+	_awaiting_card_target = 0
+	if pick == GameData.NO_PEER:
+		return {}
+	return _state_player(pick)
+
+## 这张卡此刻可选的目标（按字段过滤）：`seize_tile` / `force_buy_tile` 只列**名下有地**的人
+##（夺地 / 强买没有地皮可下手）；其余字段列所有其他存活玩家。
+## 读房主侧的 `hp` / `htiles`（房主权威：目标合不合法只有房主说了算）。
+func _card_target_candidates(p: Dictionary, field: String) -> Array:
+	var need_props := field == "seize_tile" or field == "force_buy_tile"
+	var out: Array = []
+	for o in hp:
+		if int(o.peer) == int(p.peer) or not bool(o.alive):
+			continue
+		if need_props and (_own_props(int(o.peer)) as Array).is_empty():
+			continue
+		out.append(int(o.peer))
+	return out
 
 ## 任意门选格态进入（s_state 驱动）：高亮全盘格子，点一格即发
 func _begin_renmen_pick() -> void:
@@ -6425,6 +6546,16 @@ func _cancel_target() -> void:
 	if _tgt_tech_pick:
 		_send_renmen_pick(-1)
 		return
+	# 卡选目标态：**先回报房主**再清本地态 —— 只清本地的话，房主那份 `_await_card_target`
+	# 要空等满一个操作窗口（默认 25s）才知道没人要选。传 `NO_PEER` = 取消，
+	# 房主据此让这张卡的目标部分作废（设计稿 §三）。
+	# **只在卡态下发**（判据 `_tgt_card != ""`）：道具那两条取消路径（Esc / 右键）一字不动。
+	if _tgt_card != "":
+		if multiplayer.is_server():
+			_target_pick = GameData.NO_PEER
+			_card_target_ack = true
+		else:
+			c_card_target.rpc_id(1, GameData.NO_PEER)
 	# 选中态与「选目标态」是两件事：点手中的牌 = 选中并**紧接着**用掉（批次 7 起直出），
 	# 但选中态本身仍由 `_on_item_slot_clicked` 单独维护，所以取消要把两者一起收回 ——
 	# 只清 _tgt_stage 的话，桌上一张牌可能一直抬着（Esc / 右键这两条取消路径正是这么来的）。
@@ -6434,6 +6565,7 @@ func _cancel_target() -> void:
 	_tgt_slot = -1
 	_tgt_stage = ""
 	_tgt_peer = -1
+	_tgt_card = ""
 	_tgt_tiles = []
 	_tgt_swap_mine = -1
 	if target_hint != null:
