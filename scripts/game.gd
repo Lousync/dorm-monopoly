@@ -1076,7 +1076,10 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 	if (p.get("items", []) as Array).size() >= _bag_cap(p):
 		_log("%s 背包已满，与一次「发现」擦肩而过" % p.name, "#8a90a5")
 		return ""
-	# 全池等概率、抽最多 3 件不重复；不足 3 件就给多少算多少（2026-10-10：原「降档凑数」作废）。
+	# 全池等概率、抽最多 `want` 件不重复；不足就给多少算多少（2026-10-10：原「降档凑数」作废）。
+	# 科技「眼尖手快」（白银，2026-10-10 重定义并实装）：候选**多翻一件**（3 → 4）。
+	# 它与钻石「淘宝达人」在同一个格上是一条阶梯：多一件 vs 定向保底（本函数第二参 `guarantee`）。
+	var want: int = 4 if _has_tech(p, "眼尖手快") else 3
 	var pool: Array = _item_pool("")
 	if pool.is_empty():
 		return ""
@@ -1089,7 +1092,7 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 				_log("【%s】%s 的候选里保底一件【%s】档" % [src, p.name, guarantee], "#f0c064")
 				break
 	for gid in pool:
-		if ids.size() >= 3:
+		if ids.size() >= want:
 			break
 		if not ids.has(String(gid)):
 			ids.append(String(gid))
@@ -5503,7 +5506,8 @@ func _item_turn_start(p: Dictionary) -> void:
 	if _has_tech(p, "天选之人"):
 		p.money = int(p.money) + 500
 	if _has_tech(p, "定期存款"):
-		p.money = int(p.money) + mini(600, int(p.money) / 50)   # 定期存款：现金 ×2%（上限 ¥600）
+		# 定期存款（黄金）：现金 ×1.5%（2026-10-10 由 2% 削到 1.5%，上限 ¥600 不变）
+		p.money = int(p.money) + mini(600, int(p.money) * TechData.DEPOSIT_PERMILLE / 1000)
 	if _has_tech(p, "复利"):
 		p.money = int(p.money) + mini(1000, int(p.money) / 40)   # 复利（钻石）：现金 ×2.5%（上限 ¥1000）
 	if _has_tech(p, "大器晚成") and round_no >= 15:

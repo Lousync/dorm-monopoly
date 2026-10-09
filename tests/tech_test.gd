@@ -57,15 +57,47 @@ func _test_grant_tech(g) -> void:
 	_check((p.techs as Array) == ["助学金"], "列表里就这一条")
 	_check(g._grant_tech(p, "助学金") == false, "重复发放返回 false（幂等，不做数值补偿）")
 	_check((p.techs as Array).size() == 1, "重复发放不叠加（仍然是 1 条）")
-	# implemented 闸：此刻「眼尖手快」是**唯一**一条未定稿的（T5 会翻成 true）—— 用它当活体样本。
-	# ⚠ T5 落地时这两行**整段删掉**（它一实装这条就红），见 T5 Step 1。
-	_check(g._grant_tech(p, "眼尖手快") == false, "未定稿的科技发不出去（implemented 闸）")
+	# implemented 闸：59 条全实装后已无「未定稿」的活体样本 ⇒ 只钉 def 空表这一半；
+	# 「未定稿发不出去」那半由 T3 时期的那条活体断言覆盖过（那时「眼尖手快」正是样本）。
 	_check(g._grant_tech(p, "查无此科技") == false, "表里没有的名字发不出去")
 	_check((p.techs as Array).size() == 1, "被闸门挡下的都没进列表")
 	# 多条共存：结构上成立（本批在对局上仍不可达，唯一路径是发车前那次三选一）
 	g._grant_tech(p, "天选之人")
 	_check((p.techs as Array).size() == 2 and g._has_tech(p, "助学金") and g._has_tech(p, "天选之人"),
 		"两条共存：结构上支持「科技可以有多条」")
+
+## 眼尖手快（2026-10-10 重定义并实装）：落在失物招领格时**候选多翻一件（4 选 1）**。
+## 钉的是**行为**（候选条数），不是 `desc` 文案 —— 文案同源断言另有一条。
+func _test_keentech_discover(g) -> void:
+	print("== 眼尖手快：候选多翻一件 ==")
+	_check(bool(TechData.def("眼尖手快").implemented), "眼尖手快已实装（白银 20/20）")
+	_check(String(TechData.def("眼尖手快").desc) == "你落在失物招领格时，候选多翻一件（4 选 1）。",
+		"卡面文案 = 4 选 1（实得「%s」）" % String(TechData.def("眼尖手快").desc))
+	var p := _mk_player(1, "甲")
+	p.bot = true          # 走 bot 路径：不发 UI、立刻返回
+	g.hp = [p]
+	# 对照组：没有这条科技 ⇒ 3 件
+	p.techs = []
+	await g._run_discover(p, "失物招领")
+	_check(g._discover_offered.size() == 3,
+		"没有眼尖手快：候选 3 件（实得 %d）" % g._discover_offered.size())
+	# 实验组：有这条科技 ⇒ 4 件（池子够宽时恒为 4）
+	p.items = []
+	p.techs = ["眼尖手快"]
+	await g._run_discover(p, "失物招领")
+	_check(g._discover_offered.size() == 4,
+		"眼尖手快：候选 4 件（实得 %d）" % g._discover_offered.size())
+	# 与钻石「淘宝达人」的阶梯：两者同时在 ⇒ 仍是 4 件、且保底一件紫
+	p.items = []
+	p.techs = ["眼尖手快", "淘宝达人"]
+	await g._run_discover(p, "失物招领", "紫")
+	var sz: int = g._discover_offered.size()
+	var has_p := false
+	for oid in g._discover_offered:
+		if String(ItemData.def(String(oid)).quality) == "紫":
+			has_p = true
+	_check(sz == 4 and has_p, "眼尖手快 + 淘宝达人：4 件且保底一件紫（实得 %d 件，%s）" % [sz, str(has_p)])
+	g.hp = []
 
 func _run() -> void:
 	seed(4321)
@@ -97,8 +129,8 @@ func _run() -> void:
 		"随机定档只会抽到三档之内（实得 %s）" % str(seen.keys()))
 	_check(seen.size() == TechData.TIERS.size(),
 		"随机定档抽 600 次三档都出现过（不是死抽一档，实得 %d 档）" % seen.size())
-	# 2026-10-10 批 1 审查 I4：「眼尖手快」标 implemented:false ⇒ 移出抽取池 ⇒ 白银可用池 20 → 19
-	_check((TechData.pool("白银") as Array).size() == 19, "白银池 19 条（「眼尖手快」未实装、已移出池）")
+	# 2026-10-10 科技调整：眼尖手快重定义为「候选多翻一件」并实装 ⇒ 白银可用池回到 20
+	_check((TechData.pool("白银") as Array).size() == 20, "白银池 20 条（眼尖手快已实装）")
 	_check((TechData.pool("黄金") as Array).size() == 19, "黄金池 19 条（样板房弃案留空）")
 	_check((TechData.pool("钻石") as Array).size() == 20, "钻石池 20 条")
 	var ok3 := true
@@ -209,6 +241,9 @@ func _run() -> void:
 
 	# ---------- 科技容器与发放函数（方案 B） ----------
 	_test_grant_tech(g)
+
+	# ---------- 眼尖手快（2026-10-10 重定义并实装） ----------
+	await _test_keentech_discover(g)
 
 	# ---------- 即时型效果 ----------
 	print("== 即时型效果 ==")
@@ -471,14 +506,15 @@ func _run() -> void:
 	g.running = false
 
 	print("== 定期存款 / 复利 / 大器晚成 ==")
+	_check(int(TechData.DEPOSIT_PERMILLE) == 15, "定期存款利率常量 = 15‰（1.5%）")
 	var pi := _mk_player(1, "储户")
 	pi.techs = ["定期存款"]
 	pi.money = 1000
 	g._item_turn_start(pi)
-	_check(int(pi.money) == 1020, "定期存款：现金 ×2%（¥1000 → +20）")
+	_check(int(pi.money) == 1015, "定期存款：现金 ×1.5%（¥1000 → +15）")
 	pi.money = 200000
 	g._item_turn_start(pi)
-	_check(int(pi.money) == 200600, "定期存款：单次上限 ¥600")
+	_check(int(pi.money) == 200600, "定期存款：单次上限 ¥600（不变）")
 	pi.techs = ["复利"]
 	pi.money = 1000
 	g._item_turn_start(pi)

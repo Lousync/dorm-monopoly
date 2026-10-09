@@ -21,6 +21,12 @@ const TIER_COLORS := {
 static func tier_color(tier: String) -> Color:
 	return TIER_COLORS.get(tier, TIER_COLORS[TIER_SILVER])
 
+## 「定期存款」（黄金）的每回合利率，以**千分比**存（15 = 1.5%）。
+## 用整数存是为了让结算保持整数除法（`现金 × 15 ÷ 1000`，GDScript 的 int/int 向零截断 = 向下取整，
+## 与 desc 的「向下取整」一致），也顺手把那个裸数字变成可断言的名字。
+## 2026-10-10：2% → 1.5%，上限 ¥600 不变（2% 在 ¥20000 现金下 ≈ ¥12000，超黄金带两成、与钻石重叠）。
+const DEPOSIT_PERMILLE := 15
+
 ## 白银定稿 20 条目标：当前 20 条全部定稿（编号 4/6/17 弃案留空，见 doc/game-design/科技.md）
 const TECHS := {
 	# ---- 白银（2026-10-04 定稿） ----
@@ -40,12 +46,12 @@ const TECHS := {
 		"desc": "小卖部购买道具每件立减 ¥200。", "implemented": true},
 	"摸鱼时刻": {"tier": TIER_SILVER,
 		"desc": "你掷出 0（原地待命）时 +¥500。", "implemented": true},
-	# 2026-10-10 标未实装（批 1 审查 I4）：全仓没有它的实现——不是漏了挂载，是从未写过；
-	# 且 `implemented: false` 会经 `TechData.pool` 把它**排除出抽取池**（不会再被任何一局选到），
-	# 所以「选到它 = 白选」这一条自此不成立。效果重定义（「+1 档」在全池等概率下无处着力）
-	# 是设计决定，登记在 `doc/development/未完成项-交接.md` ㉖，不在这里发明。
+	# 2026-10-10 重定义并实装：旧效果「品质 +1 档」在**全池等概率**（2026-10-10 道具重构）之后
+	# 无处着力（那是它此前被标未实装的根因），改为**候选多翻一件** —— 贴名字（眼尖＝看得多）、
+	# 可测（`_run_discover` 的候选条数 3 → 4）、零新增 UI / 零新增 RPC，
+	# 并与钻石「淘宝达人」（保底紫）在同一个格上接成阶梯。见 `doc/game-design/科技.md` §三。
 	"眼尖手快": {"tier": TIER_SILVER,
-		"desc": "失物招领捡到的道具品质 +1 档（金封顶）。", "implemented": false},
+		"desc": "你落在失物招领格时，候选多翻一件（4 选 1）。", "implemented": true},
 	"装修返现": {"tier": TIER_SILVER,
 		"desc": "你升级地皮时每级 +¥150。", "implemented": true},
 	"赌场熟客": {"tier": TIER_SILVER,
@@ -85,7 +91,7 @@ const TECHS := {
 	"置业补贴": {"tier": TIER_GOLD,
 		"desc": "你每购买一块地皮 +¥500。", "implemented": true},
 	"定期存款": {"tier": TIER_GOLD,
-		"desc": "每个自己回合开始获得现金 ×2% 的利息（向下取整，单次上限 ¥600）。", "implemented": true},
+		"desc": "每个自己回合开始获得现金 ×1.5% 的利息（向下取整，单次上限 ¥600）。", "implemented": true},
 	"能量回收": {"tier": TIER_GOLD,
 		"desc": "每次使用主动道具后，50% 概率退回 1⚡。", "implemented": true},
 	"赌运加持": {"tier": TIER_GOLD,
