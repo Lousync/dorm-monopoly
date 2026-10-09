@@ -61,6 +61,7 @@ func _run() -> void:
 	await _test_erging(g)
 	_test_card_state(g)
 	_test_price_state(g)
+	_test_pricing(g)
 	await _test_soil(g)
 	await _test_discover(g)
 	if fails == 0:
@@ -272,6 +273,67 @@ func _test_price_state(g) -> void:
 	_check(int(ss.get("cd_preview", -1)) == 5, "货架：拼车显示冷却预览 5")
 	_check(ItemData.shop_state("刮刮乐").is_empty(), "货架：一次性件无冷却预览")
 	_check(ItemData.shop_state("招财猫").is_empty(), "货架：被动件无冷却预览")
+
+## 定价与刷新曲线（2026-10-10 道具重构：全池等概率后件数占比就是出现率，
+## **价格是唯一剩下的稀有度门闸**）。档价与黑市地皮价一律从数据类读出断言（不抄第二份表）。
+## Ruling BG：刷新曲线**驱动两次真刷新**看价格递增与真扣钱，而不是只读常量。
+func _test_pricing(g) -> void:
+	print("== 定价与刷新曲线 ==")
+	var tbl: Dictionary = ItemData.QUALITY_PRICES
+	_check(int(tbl["白"]) == 600, "白档价 600（不动）")
+	_check(int(tbl["蓝"]) == 1600, "蓝档价 1600")
+	_check(int(tbl["紫"]) == 3200, "紫档价 3200")
+	_check(int(tbl["金"]) == 8000, "金档价 8000（= 开局 ¥20000 的四成）")
+	# 档价必须是**升序且拉开量级**，否则「用价格当门闸」不成立
+	_check(int(tbl["白"]) < int(tbl["蓝"]) and int(tbl["蓝"]) < int(tbl["紫"])
+		and int(tbl["紫"]) < int(tbl["金"]), "四档价严格递增")
+	# 定价与 item_price 同源：无单件覆盖的件照新档价走（招财猫白 / 黑卡金）
+	_check(ItemData.item_price("招财猫") == int(tbl["白"])
+		and ItemData.item_price("黑卡") == int(tbl["金"]),
+		"无单件覆盖的件按新档价定价（招财猫 %d / 黑卡 %d）" % [
+			ItemData.item_price("招财猫"), ItemData.item_price("黑卡")])
+
+	# 黑市地皮价：紫 1 / 金 3（黑市只从紫/金抽，是金档的主要来源 ⇒ 用价格收口）
+	_check(int(ItemData.BLACK_COST["紫"]) == 1, "黑市紫的地皮价 1（不动）")
+	_check(int(ItemData.BLACK_COST["金"]) == 3, "黑市金的地皮价抬到 3 块")
+	_check(int(ItemData.BLACK_COST["金"]) > int(ItemData.BLACK_COST["紫"]),
+		"黑市档价随品质递增（金比紫贵）")
+
+	# —— 刷新曲线：真的开一次小卖部、连刷两次，看「起点 > 白档价」与「按步进递增 + 真扣钱」——
+	var tile := -1
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			tile = i
+			break
+	_check(tile >= 0, "找到小卖部格子")
+	if tile < 0:
+		return
+	var p := _mk_player(1, "甲")
+	p.money = 20000
+	g.hp = [p]
+	g.turn_i = 0
+	g.shops = {tile: {"slots": ["招财猫", "兼职中介", "饭卡"]}}   # 摆三件白货，保证整架重掷会换人
+	g._shop_peer = 1
+	g._shop_tile = tile
+	g.refresh_count = 0
+	var c0: int = g._refresh_price()
+	_check(c0 == int(ItemData.REFRESH_BASE),
+		"首次刷新价 = 起点 %d（实得 %d）" % [int(ItemData.REFRESH_BASE), c0])
+	_check(c0 > int(tbl["白"]),
+		"刷新起点高于白档价（%d > %d）：刷新 = 再赌一次有没有金，不能比买白货更便宜" % [c0, int(tbl["白"])])
+	g._shop_refresh(1)
+	_check(g.refresh_count == 1 and int(p.money) == 20000 - c0,
+		"第一次刷新照起点价扣钱并推高全场价（余 %d，期望 %d）" % [int(p.money), 20000 - c0])
+	var c1: int = g._refresh_price()
+	_check(c1 == c0 + int(ItemData.REFRESH_STEP),
+		"第二次刷新价 = 首次 + 步进 %d（%d → %d）" % [int(ItemData.REFRESH_STEP), c0, c1])
+	g._shop_refresh(1)
+	_check(g.refresh_count == 2 and int(p.money) == 20000 - c0 - c1,
+		"第二次刷新照 c1 扣钱（余 %d，期望 %d）" % [int(p.money), 20000 - c0 - c1])
+	# 收摊：本用例造的货架与刷新计数就地清干净，免得后面 _item_pool 的断言看运气（本文件既有约定）
+	g.shops = {}
+	g._shop_peer = 0
+	g.refresh_count = 0
 
 func _test_coco(g) -> void:
 	print("== 亡牌飞行员coco ==")

@@ -90,7 +90,8 @@ func _test_buy(g) -> void:
 	_setup(g, [p], t, ["平均主义", "", ""])
 	g._black_peer = 1
 	g._black_buy(1, 0)
-	_check(g._black_pay_mode == "buy" and g._black_pay_need == 1, "进入交地支付（需 1 块）")
+	_check(g._black_pay_mode == "buy" and g._black_pay_need == int(ItemData.BLACK_COST["紫"]),
+		"进入交地支付（需 %d 块 = 紫档地皮价）" % int(ItemData.BLACK_COST["紫"]))
 	g._black_pay(1, a)
 	_check(int(g.htiles[a].owner) == GameData.NO_OWNER and int(g.htiles[a].level) == 0, "交出地皮回归无主且等级清零")
 	_check(p.items.size() == 1 and String(p.items[0].id) == "平均主义", "获得所购道具")
@@ -101,7 +102,7 @@ func _test_insufficient(g) -> void:
 	print("== 凑不出货钱 → 挨打 + 小黑屋 ==")
 	var p := _mk_player(1, "甲", 1000)
 	var t := _fresh_tiles()
-	_setup(g, [p], t, ["黑卡", "", ""])  # 金，需 2 块地皮
+	_setup(g, [p], t, ["黑卡", "", ""])  # 金，需 3 块地皮（2026-10-10 T4 起 2 → 3）
 	g._black_peer = 1
 	g._black_buy(1, 0)
 	_check(g._black_peer == 0, "被扔出黑市")
@@ -159,21 +160,30 @@ func _test_picker(g) -> void:
 
 func _test_bot(g) -> void:
 	print("== bot：买最值一件并留出口费 ==")
-	var a := _prop_idx(3)
-	var b := _prop_idx(4)
-	var c := _prop_idx(5)
+	# 2026-10-10（T4）：金的地皮价 2 → 3，写死「3 块地」会让 3 - 3 = 0 < 1 ⇒ 金货被跳过，
+	# 这条用例测的就不再是「选最值」而是「付不起」。按 `BLACK_COST` 动态铺够
+	# 「买得起金货 + 留得下 1 块出口费」，前提才对得上断言的语义。
+	var need_n: int = int(ItemData.BLACK_COST["金"]) + int(ItemData.BLACK_EXIT_COST)
+	var t := _fresh_tiles()
+	var owned: Array = []
+	for k in need_n:
+		var idx := _prop_idx(3 + k)
+		if idx < 0:
+			break
+		t[idx].owner = 1
+		owned.append(idx)
 	var p := _mk_player(1, "机器人甲")
 	p.bot = true
-	var t := _fresh_tiles()
-	t[a].owner = 1
-	t[b].owner = 1
-	t[c].owner = 1
-	_setup(g, [p], t, ["平均主义", "黑卡", ""])  # 紫1 / 金2
+	_setup(g, [p], t, ["平均主义", "黑卡", ""])  # 紫1 / 金3
+	_check(owned.size() == need_n,
+		"铺够地皮 %d 块（金货 %d + 出口费 %d）" % [need_n, int(ItemData.BLACK_COST["金"]), int(ItemData.BLACK_EXIT_COST)])
+	if owned.size() != need_n:
+		return
 	g._black_peer = 1
 	g._bot_blackshop(p)
 	_check(p.items.size() == 1 and String(p.items[0].id) == "黑卡", "bot 选最值的金货")
 	_check(g._black_peer == 0, "bot 交完出口费离店")
-	_check((g.htiles[a].owner as int) == GameData.NO_OWNER, "bot 用地皮结账")
+	_check((g.htiles[owned[0]].owner as int) == GameData.NO_OWNER, "bot 用地皮结账")
 
 func _test_shop_ui(g) -> void:
 	print("== 小卖部买按钮 ==")

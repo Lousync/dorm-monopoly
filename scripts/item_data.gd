@@ -10,15 +10,15 @@ const QUALITY_COLORS := {
 	"紫": Color(0.66, 0.47, 0.92),   # 原样
 	"金": Color(0.96, 0.62, 0.25),   # 沿用原「橙」的琥珀值：保住「顶档 = 琥珀」这套口径
 }
-const QUALITY_PRICES := {"白": 600, "蓝": 1800, "紫": 3000, "金": 4500}  # 键重命名（值待 T4 重定）
-const REFRESH_BASE := 500   # 小卖部刷新价起点：全局递增、整局不重置（待数值专场）
-const REFRESH_STEP := 300
+const QUALITY_PRICES := {"白": 600, "蓝": 1600, "紫": 3200, "金": 8000}  # 2026-10-10 定稿：全池等概率后的**唯一**稀有度门闸
+const REFRESH_BASE := 800   # 500 → 800（> 白档价 600）：刷新 = 再赌一次有没有金，起点必须贵
+const REFRESH_STEP := 400   # 300 → 400：让「刷到出金为止」有实打实的成本
 const SHOP_TIMEOUT := 20.0  # 逛店发呆兜底
 const SOIL_DONATE := 400    # 落地焦土自动捐款（待数值专场）；恢复目标 = 地价 × 1.0
 const ITEM_TIMEOUT := 12.0  # 道具阶段发呆兜底
 
 # ---------------- 黑市（§8：仅由机会卡进入，一切消费用地产） ----------------
-const BLACK_COST := {"紫": 1, "金": 2}        # 每件货的地皮价（键重命名；金的地皮价待 T4 抬到 3）
+const BLACK_COST := {"紫": 1, "金": 3}        # 每件货的地皮价；金 2 → 3：黑市只从紫/金抽（金占池内 ~24%），用价格收口
 const BLACK_REFRESH_COST := 1                  # 刷新固定 1 块地皮（不涨价）
 const BLACK_EXIT_COST := 1                     # 出口费 1 块地皮
 const BLACK_TIMEOUT := 20.0                    # 逛黑市发呆兜底
