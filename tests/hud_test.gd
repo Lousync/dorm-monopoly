@@ -659,6 +659,7 @@ func _run() -> void:
 	var z_before: float = g.board._zoom
 	var c_before: Vector2 = g.board._center
 	_check(g.deck_reveal != null, "屏幕层抽卡演出组件已建（TableHud.build_play_ui）")
+	# 第一个参数是**卡类名**（机会 / 道具卡 / 畸变卡），2026-10-09 前是牌堆名
 	g.deck_reveal.show_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
 	await process_frame
 	_check(g.deck_reveal.is_showing(), "抽卡演出已开始")

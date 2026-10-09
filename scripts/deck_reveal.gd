@@ -71,7 +71,8 @@ func _process(delta: float) -> void:
 ## 屏幕正中亮出一张卡。重复调用先把上一张收掉（幂等）。
 ##
 ## **卡源有两种**（批次 12 C3）：`item_id` 非空 = 演**该道具的卡面**（⑪ 失物招领，直接挂一张
-## `ItemCard` —— 屏幕层是 2D，不需要手牌那套 SubViewport 纹理）；否则演牌堆（机会 / 命运）的文字卡。
+## `ItemCard` —— 屏幕层是 2D，不需要手牌那套 SubViewport 纹理）；否则演**文字卡**（机会卡 / 畸变公告），
+## 其标题由 `deck` 给 —— 它是**卡类名 / 演出标题**，2026-10-09 起不再是牌堆名（牌堆已删）。
 func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	_close()
 	var item_face := item_id != ""
@@ -86,7 +87,7 @@ func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	card.size = CARD_SIZE
 	card.pivot_offset = CARD_SIZE * 0.5        # 绕自己中心压扁 / 缩放
 	add_child(card)
-	# 道具卡面没有牌堆名，卡背借用「机会」那套绿背（同一段演出的卡背不必再画一份）
+	# 道具卡面没有卡类名，卡背借用「机会」那套绿背（同一段演出的卡背不必再画一份）
 	_back = _card_face_back("机会" if item_face else deck, accent)
 	card.add_child(_back)
 	_front = ItemCard.make(item_id, CARD_SIZE) if item_face else _card_face_front(deck, text, style)
@@ -250,7 +251,7 @@ func _make_card_art(deck: String) -> TextureRect:
 	tr.modulate = Color(1.0, 0.86, 0.55, 0.30) if deck == "机会" else Color(0.78, 0.72, 1.0, 0.30)
 	return tr
 
-## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（牌堆名 + 卡文）
+## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（卡类名 + 卡文）
 func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)

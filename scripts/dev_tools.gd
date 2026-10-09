@@ -611,7 +611,7 @@ func take_shot(path: String) -> void:
 		# 摆拍（批次 12 C3 / ⑪ 失物招领）：演出**道具卡面**（覆盖上面那张机会卡）——
 		# 同一段四相位、同一个「确定」。用法：`--autotest=host --rounds=6
 		# --shot=shots/b12_c_itemreveal_card.png`（文件名含 `card` ⇒ 走上面那条出图门）。
-		g.deck_reveal.show_card("失物招领", "good", "【失物招领】捡到了【招财猫】！", "招财猫")
+		g.deck_reveal.show_card("道具卡", "good", "【失物招领】捡到了【招财猫】！", "招财猫")
 		g.deck_reveal.dev_force_confirm = true
 		g.deck_reveal.set_can_confirm(true)
 		g.deck_reveal.tick(DeckReveal.CARD_TIME + 0.01)

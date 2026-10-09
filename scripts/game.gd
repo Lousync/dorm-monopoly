@@ -3306,6 +3306,11 @@ func s_move(peer: int, path: Array, step_time: float) -> void:
 	# 逐格走子 = 世界坐标补间 + 竖直小跳的弧 + 挤压（棋子已搬进 3D，见 table_props.play_token_move）
 	table3d.table_props.play_token_move(peer, path, step_time)
 
+## 房主 → 全员：`deck != ""` 时在屏幕正中亮一张大字卡（演机会卡的文字卡 / 道具卡面 / 畸变公告），
+## 否则只播震屏 / 音效那类强调。
+## `deck` = **卡类名**（机会 / 道具卡 / 畸变卡）—— 2026-10-09 起不再是牌堆名（牌堆已删）；
+## 它同时充当卡面标题与卡背配色键（"机会" 绿背、其余蓝背），所以畸变那一路传的是
+## 演出标题「🌀 畸变 · 名」。
 @rpc("authority", "call_local", "reliable")
 func s_card(text: String, kind: String = "info", deck: String = "", card_item: String = "") -> void:
 	Fx.play("card", -4.0)
