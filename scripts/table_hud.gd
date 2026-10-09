@@ -109,31 +109,40 @@ static func build_play_ui(g: Node) -> void:
 	ttv.add_child(g._tip_sub)
 
 
+	# ---- 对局仪表盘（顶部指挥带 + 右侧玩家纵览）----
+	# 融合落位（2026-10-09 用户拍板「重新设计原型让这些控件融合」）：横条铺满顶部、
+	# 与左上「暂停」/右上「战报·规则」同一条带上，中间放仪表盘内容、左右各留空位让按钮
+	# "坐进"横条两端（按钮本身位置一字未动）。畸变横幅与战报气泡挪到横条下方（见下）。
+	# 数据全读已同步的 st / _op_*，客户端也准；由 Dashboard._process 逐帧自刷。
+	g.dashboard = Dashboard.new()
+	g.dashboard.name = "Dashboard"
+	hud.add_child(g.dashboard)
+	g.dashboard.g = g
+	g.dashboard.setup()
+
 	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条；
-	# 顶部左右两角已被暂停按钮与战报开关占掉，中间这块是空的。
+	# **2026-10-09 起顶边从 52 下移到 128**：顶部 8..76 已是仪表盘横条，气泡不能再压上去。
 	g.log_toast = VBoxContainer.new()
 	g.log_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	g.log_toast.offset_left = -390.0
 	g.log_toast.offset_right = 390.0
-	g.log_toast.offset_top = 52.0
-	g.log_toast.offset_bottom = 300.0
+	g.log_toast.offset_top = 128.0
+	g.log_toast.offset_bottom = 376.0
 	g.log_toast.add_theme_constant_override("separation", 4)
 	g.log_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.log_toast)
 
 	# 顶部**水平居中**的「畸变生效中」横幅（批次 12 D3 / 设计 §⑫：从右上角搬到中间）。
 	# **"中间"= 不再贴右上角**，不是屏幕正中 —— 真放正中会盖住棋盘中心与格详情卡。
-	# 落位：`y ≈ 6..48`，**在战报气泡（y ≥ 52）之上**。
-	# **批次 13 ② 起名册条搬到了左上角（x ≈ 104..250、y ≈ 10..214）** ⇒ 它与横幅**同占 y 6..48
-	# 这一带**，靠 x 分开：横幅是**居中**的（实测宽 200~600 ⇒ 左缘 ≥ 490），够不到 250。
-	# `hud_test` 里那条"横幅不与名册条 / 三个角按钮重叠"同时核条本身与每一格，就是钉这件事。
-	# 外包一层 `CenterContainer` 才能"贴内容宽度 + 居中"：`PanelContainer` 自己按锚点铺满，
+	# 落位（**2026-10-09 下移**）：`y ≈ 84..126`，**在仪表盘横条（8..76）之下、战报气泡
+	#（顶边 128）之上**。此前是 6..48（那时顶部没有横条）。
+	# 走 `CenterContainer` 才能"贴内容宽度 + 居中"：`PanelContainer` 自己按锚点铺满，
 	# 直接给 `CENTER_TOP` 会得到一条固定宽度的长条（文案短时两侧一大片空、还压住更多屏幕）。
 	# 显隐仍由 `game._refresh_ab_ui` 只管 `ab_label.visible`（外层容器留着不吃鼠标、不画东西）。
 	g.ab_wrap = CenterContainer.new()
 	g.ab_wrap.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	g.ab_wrap.offset_top = 6.0
-	g.ab_wrap.offset_bottom = 48.0
+	g.ab_wrap.offset_top = 84.0
+	g.ab_wrap.offset_bottom = 126.0
 	g.ab_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.ab_wrap)
 	g.ab_label = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.88), 10, Color(0, 0, 0, 0), 0, 5)
@@ -363,7 +372,7 @@ static func build_play_ui(g: Node) -> void:
 	g.liq_watch = UIKit.label("", 16, UIKit.ACCENT)
 	g.liq_watch.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	g.liq_watch.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	g.liq_watch.offset_top = 52
+	g.liq_watch.offset_top = 84
 	g.liq_watch.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	g.liq_watch.visible = false
 	g.liq_layer.add_child(g.liq_watch)
@@ -564,15 +573,14 @@ static func build_play_ui(g: Node) -> void:
 	# 见 game.gd:_dock_band（贴底条按可用带夹位）
 	g.log_panel.offset_left = -300
 	g.log_panel.offset_right = -12
-	# 顶边 **52**（批次 13 辛 ② 从 134 收回来）。来龙去脉：
+	# 顶边 **84**（2026-10-09：仪表盘横条占了 8..76，面板下移到横条之下）。来龙去脉：
 	#   * 批次 12 D1 把它从 46 抬到 **134** —— 当时名册条（y 50..128）钉在「战报」按钮之下，
 	#     战报栏若仍从 46 起就会把名册条整个盖住（⑩ 明写"名册条不许与展开的战报栏打架"）。
 	#   * 批次 13 ② 名册条搬到了**左上角** ⇒ 那条约束作废，134 只剩余量（当时刻意没动它）。
-	#   * 批次 13 辛 ② 用户明写「『战报』弹窗离战报按钮这么远干什么」⇒ 收到 **52**，
-	#     与「规则说明」面板**同一条顶边**（两枚按钮的实效下沿都是 46，让开 6 像素）。
-	# 右边缘仍是 −12、底边仍是 780、宽度不动。（`hud_test` 那条"展开的战报栏不压名册条"
-	# 按 `get_global_rect()` 实算、不写死这个数，两边位置都成立。）
-	g.log_panel.offset_top = 52
+	#   * 批次 13 辛 ② 用户明写「『战报』弹窗离战报按钮这么远干什么」⇒ 收到 **52**。
+	#   * 2026-10-09 顶部加仪表盘横条（8..76）⇒ 再下移到 **84**，与「规则说明」面板同一条顶边，
+	#     避免与横条相交。右边缘仍是 −12、底边仍是 780、宽度不动。
+	g.log_panel.offset_top = 84
 	g.log_panel.offset_bottom = 780
 	# 默认收起：消息改在屏幕上方弹出（见 game.gd:_push_log_toast），
 	# 战报里的完整记录照旧保留，点「战报 ▾」展开看历史。

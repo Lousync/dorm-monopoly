@@ -189,6 +189,7 @@ func _run() -> void:
 	# 而它引用了 autoload `Fx` —— 在 `--script` 入口下此时 autoload 还没注册，
 	# 整链会以「Identifier not found: Fx」编译失败（同 layout_test 顶部那段说明）。
 	var UK = load("res://scripts/ui_kit.gd")
+	var DASH = load("res://scripts/dashboard.gd")
 	g.my_peer = 2
 	g.s_state(_state(2, false))          # 走客户端真正跑的那个处理函数
 	await process_frame
@@ -471,8 +472,9 @@ func _run() -> void:
 	var abr: Rect2 = (g.ab_label as Control).get_global_rect()
 	_check(absf(abr.get_center().x - g.size.x * 0.5) <= 4.0,
 		"横幅**水平居中**（中心 x %.1f / 屏心 %.1f）" % [abr.get_center().x, g.size.x * 0.5])
-	_check(abr.position.y >= 0.0 and abr.end.y <= 52.0,
-		"横幅在屏幕上方、战报气泡（y 从 52 起）之上（实得 y %.1f..%.1f）" % [abr.position.y, abr.end.y])
+	_check(abr.position.y >= DASH.BAR_BOTTOM and abr.end.y <= g.log_toast.offset_top,
+		"横幅在**仪表盘横条之下、战报气泡之上**（横条底 %.0f / 气泡顶 %.0f / 实得 y %.1f..%.1f）"
+			% [DASH.BAR_BOTTOM, g.log_toast.offset_top, abr.position.y, abr.end.y])
 	# **名册条那两问随载体一起删**（`roster_strip` 不是成员了）：立牌可见的那一块是 3D 节点、
 	# 顶部横幅是屏幕层控件 —— 两者不同层，不存在"重叠"这件事可言。
 	var ab_hit := 0
@@ -484,6 +486,45 @@ func _run() -> void:
 	g.s_state(s_ab)
 	await process_frame
 	_check(not g.ab_label.visible, "没有畸变时横幅收起")
+
+	print("== 对局仪表盘：回合 / 行动者 / 阶段 stepper / 等待提示 / 玩家纵览 ==")
+	# 融合落位（2026-10-09）：顶部横条与三个角按钮同带；内容读已同步的 st / _op_*，客户端也准。
+	_check(g.dashboard != null, "仪表盘已建（TableHud.build_play_ui）")
+	_check(g.dashboard.get_parent() == g.hud_layer,
+		"挂在屏幕层容器上（`get_parent() == g.hud_layer`，不随相机转）")
+	g.my_peer = 2
+	g.s_state(_state(2, false))          # turn=2(我), await=roll, round=3
+	await process_frame
+	_check(String(g.dashboard.round_n.text) == "3",
+		"回合卡 = st.round（实得 %s）" % String(g.dashboard.round_n.text))
+	_check(String(g.dashboard.who_name.text) == "乙",
+		"当前行动者 = 轮到的那一位（实得 %s）" % String(g.dashboard.who_name.text))
+	_check(String(g.dashboard.who_tag.text).contains("轮到你"),
+		"轮到我时行动标签写「轮到你」（实得 %s）" % String(g.dashboard.who_tag.text))
+	# await=roll ⇒ stepper 停在第 1 段「① 掷轮盘」
+	_check(int(g.dashboard._phase) == 1,
+		"阶段 stepper 停在「① 掷轮盘」（实得 %d）" % int(g.dashboard._phase))
+	# 右侧纵览：列全 4 家（peer 1..4）
+	_check(g.dashboard._rows.size() == 4,
+		"右侧纵览列出全部玩家（实得 %d）" % g.dashboard._rows.size())
+	# 等待提示：roll 环节 + 限时窗口补一条后显示剩余秒
+	g.s_op_timer("roll", 30.0, 30.0, 2)
+	g.dashboard.refresh()
+	_check(String(g.dashboard.wait_text.text) == "等待掷轮盘",
+		"等待提示写环节名（实得 %s）" % String(g.dashboard.wait_text.text))
+	_check(g.dashboard.wait_time.visible and String(g.dashboard.wait_time.text).contains("剩"),
+		"限时窗口显示剩余秒（实得 %s）" % String(g.dashboard.wait_time.text))
+	g.s_op_timer("", 0.0, 0.0, -1)
+	g.dashboard.refresh()
+	# 落点：横条内容（回合卡 / 等待行）不与三个角按钮重叠 —— 左右各留了空位让按钮"坐进"横条两端。
+	var dash_hit := 0
+	for pair in [[g.dashboard.round_n, g.opt_btn], [g.dashboard.steps_row, g.log_toggle],
+			[g.dashboard.steps_row, g.rules_btn]]:
+		var a: Control = pair[0]
+		var b: Control = pair[1]
+		if a.visible and b.visible and a.get_global_rect().intersects(b.get_global_rect()):
+			dash_hit += 1
+	_check(dash_hit == 0, "横条内容不与角按钮（暂停/战报/规则）重叠（重叠 %d 处）" % dash_hit)
 
 	print("== 客户端视角：行动者不是我 ==")
 	g.my_peer = 9                         # 观战/掉线后重连之类：自己不在名册里

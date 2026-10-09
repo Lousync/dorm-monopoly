@@ -49,16 +49,17 @@ static func _build_button(g: Node) -> void:
 	g.add_child(g.rules_btn)
 
 ## 展开态：面板 + 分页标签 + 滚动正文。**批次 13 ①：从左下角搬到右上角** ——
-## 右边缘 **−12**（与展开的「战报」栏同一条线）、顶边 **52**（在「规则说明 / 战报」两枚按钮
-## 的实效下沿 46 之下，让开 6 像素）。用户 ① 原话「弹窗改成右上角，和按钮位置相匹配」。
+## 右边缘 **−12**（与展开的「战报」栏同一条线）、顶边 **84**（2026-10-09：顶部仪表盘横条占
+## 8..76，面板下移到横条之下，与「战报」栏同一条顶边；两枚按钮的实效下沿 40 也在横条里）。
+## 用户 ① 原话「弹窗改成右上角，和按钮位置相匹配」。
 static func _build_panel(g: Node) -> void:
 	g.rules_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 12,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85), 1, 8)
 	g.rules_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	g.rules_panel.offset_left = -12 - PANEL_W
 	g.rules_panel.offset_right = -12
-	g.rules_panel.offset_top = 52
-	g.rules_panel.offset_bottom = 52 + PANEL_H
+	g.rules_panel.offset_top = 84
+	g.rules_panel.offset_bottom = 84 + PANEL_H
 	g.rules_panel.visible = false
 	g.add_child(g.rules_panel)
 	# 自右上角向下「长出来」，所以缩放的支点放在右上角

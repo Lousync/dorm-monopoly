@@ -246,6 +246,10 @@ var hud_layer: Control
 ## 载体从画布搬到屏幕层的原因与 z 档见那里；内容 / 数据源（`board._peers_info`）与显隐由
 ## `_on_table_hover` / `_set_token_hover` / `_place_token_tip` 负责，`_process` 每帧重摆一次。
 var token_tip: Control
+## 对局仪表盘（顶部指挥带 + 右侧玩家纵览，2026-10-09）：`TableHud.build_play_ui` 建的屏幕层
+## 管理器（`scripts/dashboard.gd`，Node；两块控件挂在 `hud_layer` 上），自行 `_process` 逐帧刷新。
+## 数据全读已同步的 `st` / `_op_*`。
+var dashboard: Dashboard
 var _tip_name: Label                # 条里那行昵称（颜色 = 该玩家的棋子色）
 var _tip_sub: Label                 # 第二行「身家 … · 第 N 名（· 已出局）」
 ## 当前悬停到谁（哨兵是 `GameData.NO_PEER`，**不是 -1** —— 机器人 peer 从 -1 起编号）。
@@ -492,6 +496,8 @@ func _lab_hide_hud() -> void:
 	for c in [opt_btn, log_panel, log_toggle, log_toast]:
 		if c != null and is_instance_valid(c):
 			c.visible = false
+	if dashboard != null and is_instance_valid(dashboard):
+		dashboard.hide_all()
 
 ## 重建一局沙盒（同步版，不跑回合循环）
 func lab_reset() -> void:

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>对局仪表盘 · 原型（可交互）</title>
+<title>对局仪表盘 · 原型（可交互 · 融合版）</title>
 <style>
   :root{
     --bg:#1b1e27; --bg-deep:#0e1019; --panel:#272b37; --panel2:#2f3441;
@@ -31,58 +31,67 @@
     border:1px solid #2a2f3d; background:
       radial-gradient(700px 400px at 50% 60%, #232a38 0%, #12151e 70%);
     box-shadow:inset 0 0 80px #0008;}
-  .stage .felt{position:absolute;inset:12% 16% 10%;border-radius:18px;
+  .stage .felt{position:absolute;inset:16% 16% 10%;border-radius:18px;
     background:linear-gradient(180deg,#1c2230,#141824);border:1px solid #2b3140}
   .stage .felt:after{content:"（这里是对局棋盘 / 3D 桌面）";position:absolute;inset:0;display:flex;
     align-items:center;justify-content:center;color:#4a5468;font-size:14px}
 
-  /* 仪表盘：顶部流程条（浮在画面上） */
-  .dash{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:min(1120px,94%);
-    display:flex;gap:12px;align-items:stretch;pointer-events:none}
+  /* ── 融合顶部指挥带：与暂停 / 规则 / 战报同一条带 ── */
+  .bar{position:absolute;top:10px;left:16px;right:16px;height:66px;
+    display:flex;gap:14px;align-items:stretch;pointer-events:none}
   .card{background:linear-gradient(180deg,rgba(47,52,65,.96),rgba(33,37,47,.96));
     border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 26px #0009,inset 0 1px 0 #ffffff10;}
-  .card.pad{padding:10px 14px}
+  .card.pad{padding:8px 12px;display:flex;align-items:center;gap:12px}
+  /* 现有按钮"坐进"横条两端（实现里它们位置一字未动，横条只是把它们纳入同一条带） */
+  .ibar{pointer-events:auto;background:linear-gradient(180deg,#343a48,#262b36);
+    border:1px solid var(--border);border-radius:10px;color:var(--text);font:inherit;font-size:13px;
+    padding:7px 12px;cursor:pointer}
+  .ibar:hover{border-color:var(--accent)}
+  .zoneL,.zoneR{display:flex;align-items:center;gap:8px}
+  .spacer{flex:1 1 auto}
 
   /* 轮次卡 */
-  .round{display:flex;flex-direction:column;gap:6px;min-width:210px}
-  .round .big{display:flex;align-items:baseline;gap:8px}
-  .round .n{font-size:30px;font-weight:800;color:var(--accent);line-height:1;
-    text-shadow:0 0 18px #f5b34240}
-  .round .of{font-size:13px;color:var(--dim)}
-  .round .label{font-size:11px;letter-spacing:2px;color:var(--dim);margin-top:-2px}
-  .round .bar{height:6px;border-radius:6px;background:#1a1e28;overflow:hidden;border:1px solid #00000040}
-  .round .bar>i{display:block;height:100%;width:0%;
-    background:linear-gradient(90deg,var(--accent-deep),var(--accent),var(--accent-hi));
-    box-shadow:0 0 12px #f5b34280;transition:width .5s}
+  .round{flex-direction:column;gap:4px;min-width:150px;align-items:stretch;justify-content:center}
+  .round .label{font-size:10px;letter-spacing:2px;color:var(--dim)}
+  .round .big{display:flex;align-items:baseline;gap:6px}
+  .round .n{font-size:26px;font-weight:800;color:var(--accent);line-height:1;text-shadow:0 0 18px #f5b34240}
+  .round .of{font-size:12px;color:var(--dim)}
+  .round .bar2{height:6px;border-radius:6px;background:#1a1e28;overflow:hidden;border:1px solid #00000040}
+  .round .bar2>i{display:block;height:100%;width:0%;
+    background:linear-gradient(90deg,var(--accent-deep),var(--accent),var(--accent-hi));transition:width .5s}
 
   /* 当前行动 + 阶段 stepper */
-  .now{flex:1 1 auto;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .now{flex:1 1 auto;flex-direction:column;gap:3px;min-width:0;align-items:stretch;justify-content:center}
   .now .who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dim)}
   .now .who .me{color:var(--accent);font-weight:700}
   .dot{width:12px;height:12px;border-radius:50%;box-shadow:0 0 0 2px #0006,0 0 10px currentColor}
-  .steps{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
-  .step{display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:9px;
-    font-size:12.5px;color:var(--dim);border:1px solid transparent;white-space:nowrap;transition:.25s}
-  .step .k{width:8px;height:8px;border-radius:50%;background:#4a5468}
+  .steps{display:flex;align-items:center;gap:2px;flex-wrap:nowrap}
+  .step{display:flex;align-items:center;gap:5px;padding:5px 8px;border-radius:8px;
+    font-size:12px;color:var(--dim);border:1px solid transparent;white-space:nowrap;transition:.25s}
+  .step .k{width:7px;height:7px;border-radius:50%;background:#4a5468}
   .step.done{color:#8fbf9a}
   .step.done .k{background:var(--good)}
   .step.cur{color:#101319;background:linear-gradient(180deg,var(--accent-hi),var(--accent));
     border-color:var(--accent-hi);font-weight:800;box-shadow:0 0 16px #f5b34255}
   .step.cur .k{background:#101319}
   .sep{color:#39404f;font-size:12px}
-  .wait{font-size:12.5px;color:var(--text);display:flex;align-items:center;gap:8px}
-  .wait .pill{padding:3px 9px;border-radius:999px;font-size:11.5px;
+  .wait{font-size:12px;color:var(--text);display:flex;align-items:center;gap:8px}
+  .wait .pill{padding:2px 8px;border-radius:999px;font-size:11px;
     background:#f5b34222;border:1px solid #f5b34255;color:var(--accent-hi)}
   .wait .t{color:var(--danger);font-weight:700}
 
-  /* 玩家纵览（右侧竖排） */
-  .rail{position:absolute;right:12px;top:12px;width:210px;display:flex;flex-direction:column;gap:8px;
+  /* 畸变横幅（融合后移到横条之下、居中） */
+  .abanner{position:absolute;top:84px;left:50%;transform:translateX(-50%);
+    padding:5px 14px;border-radius:999px;font-size:13px;color:#f0c064;
+    background:rgba(30,24,14,.9);border:1px solid #f5b34266;box-shadow:0 6px 18px #0008;pointer-events:none}
+
+  /* 玩家纵览（右侧竖排，落在横条之下） */
+  .rail{position:absolute;right:16px;top:86px;width:200px;display:flex;flex-direction:column;gap:7px;
     pointer-events:none}
-  .prow{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:10px}
+  .prow{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px}
   .prow .nm{font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .prow .st{font-size:11px;color:var(--dim)}
   .prow .money{font-size:12.5px;color:var(--accent)}
-  .prow .meta{font-size:11px;color:var(--dim);text-align:right;line-height:1.35}
+  .prow .meta{font-size:10.5px;color:var(--dim);text-align:right;line-height:1.4}
   .prow.turn{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 20px #f5b34233;
     background:linear-gradient(180deg,rgba(60,52,35,.96),rgba(36,33,26,.96))}
   .prow.turn .nm{color:var(--accent-hi);font-weight:700}
@@ -100,26 +109,29 @@
     padding:7px 12px;cursor:pointer;transition:.15s}
   button:hover{background:#3e4658;border-color:var(--accent)}
   button.go{background:linear-gradient(180deg,var(--accent-hi),var(--accent));color:#171a22;font-weight:800;border-color:var(--accent-hi)}
-  .spacer{flex:1 1 auto}
   .hint{font-size:11.5px;color:var(--dim);max-width:520px}
 </style>
 </head>
 <body>
   <div class="proto-head">
-    <h1>对局仪表盘 · 原型</h1>
-    <span class="sub">展示「第几轮 / 谁在行动 / 到哪个阶段 / 还剩多久」的整体流程</span>
-    <span class="warn">← 这是草稿，欢迎推翻</span>
+    <h1>对局仪表盘 · 原型（融合版）</h1>
+    <span class="sub">顶部指挥带把「第几轮 / 谁在行动 / 到哪个阶段 / 还剩多久」与暂停·规则·战报融成一条</span>
+    <span class="warn">← 草稿，欢迎推翻</span>
   </div>
 
   <div class="stage">
     <div class="felt"></div>
 
-    <!-- 顶部流程条 -->
-    <div class="dash">
+    <!-- 融合顶部指挥带：左端暂停、右端规则/战报与横条同带 -->
+    <div class="bar">
+      <div class="zoneL">
+        <button class="ibar">⏸ 暂停</button>
+      </div>
+
       <div class="card pad round">
         <div class="label">回合 / ROUND</div>
         <div class="big"><span class="n" id="roundN">1</span><span class="of">/ 30</span></div>
-        <div class="bar"><i id="roundBar"></i></div>
+        <div class="bar2"><i id="roundBar"></i></div>
       </div>
 
       <div class="card pad now">
@@ -131,13 +143,23 @@
         <div class="steps" id="steps"></div>
         <div class="wait" id="wait"></div>
       </div>
+
+      <div class="spacer"></div>
+
+      <div class="zoneR">
+        <button class="ibar">规则说明</button>
+        <button class="ibar">战报 ▾</button>
+      </div>
     </div>
 
-    <!-- 右侧玩家纵览 -->
+    <!-- 畸变横幅：横条之下、居中 -->
+    <div class="abanner" id="abanner">🌀 畸变生效中：断网·剩 3 回合</div>
+
+    <!-- 右侧玩家纵览（落在横条之下） -->
     <div class="rail" id="rail"></div>
   </div>
 
-  <!-- 控制条 -->
+  <!-- 控制条（仅原型演示） -->
   <div class="controls">
     <button class="go" id="playBtn">▶ 自动播放</button>
     <button id="prevPhase">◀ 上一阶段</button>
