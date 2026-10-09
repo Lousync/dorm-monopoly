@@ -134,7 +134,7 @@ func _card_rows(card: Dictionary) -> Array:
 	if card.has("charge_to"):
 		rows.append({"k": "索取", "v": "向选定目标收取 ¥%d" % int(card.charge_to)})
 	if card.has("each_from_target"):
-		rows.append({"k": "请客", "v": "选定目标给每位其他存活玩家 ¥%d" % int(card.each_from_target)})
+		rows.append({"k": "请客", "v": "选定目标给每位其他存活玩家 ¥%d（收钱方含抽卡者本人）" % int(card.each_from_target)})
 	if card.has("steal_item_from"):
 		rows.append({"k": "抢道具", "v": "从选定目标随机夺一件道具"})
 	if card.has("jail_to"):
