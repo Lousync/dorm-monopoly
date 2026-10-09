@@ -35,8 +35,6 @@ const SOURCES := [
 	"doc/game-design/道具图鉴.md",
 ]
 
-const QUALITY_CHARS := "白绿蓝紫橙"
-
 ## `GameData.card_kind()` 的五个卡型 → 中文 / 配色 / 图案（配色与抽卡演出的
 ## `s_card.rpc(..., kind, ...)` 同一套语义，见 机会卡.md §三）
 const KIND_LABEL := {"good": "收益", "bad": "损失", "move": "移动", "jail": "查寝", "info": "其他"}
@@ -399,7 +397,11 @@ func _parse_heading(line: String) -> Dictionary:
 	if a <= 0 or b < a + 2:
 		return {}
 	var inner := t.substr(a + 1, b - a - 1)
-	if not QUALITY_CHARS.contains(inner.substr(0, 1)):
+	# 品质档**只有一个来源**：`ItemData.QUALITIES`（2026-10-10 道具重构：四档改名）。
+	# 原先这里硬编码 "白绿蓝紫橙" —— 那是品质档的第二来源，而这里又是本函数的**准入判据**，
+	# 忘了同步它，`道具图鉴.md` 的条目会**静默解析失败**（条目不进图鉴，只表现为生成器报
+	# 「文档有代码没写」，定位很难）。改读数据类的单表后，改档位只需动 `ItemData`。
+	if not ItemData.QUALITIES.has(inner.substr(0, 1)):
 		return {}
 	return {"name": t.substr(0, a).strip_edges(), "note": t.substr(b + 1).strip_edges()}
 
