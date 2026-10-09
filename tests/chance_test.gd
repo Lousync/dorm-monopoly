@@ -112,6 +112,8 @@ func _run() -> void:
 	await _test_target_fields(g)
 	await _test_tile_move_fields(g)
 	await _test_choices(g)
+	_test_deck_iface(g)
+	await _test_deck_fields(g)
 	if fails == 0:
 		print("CHANCE TEST: ALL PASS")
 		quit(0)
@@ -940,3 +942,165 @@ func _test_choices_ownership(g) -> void:
 	_check(g._choice_pick == 1, "本机就是抽卡者 → 收下（实得 %d）" % g._choice_pick)
 	g._choice_pick = -1
 	g._awaiting_card = 0
+
+# ================= 情报类 3 个字段（Task 13） =================
+#
+# 为什么情报类只能围绕**牌堆**做：本作的身家、现金、背包、地皮本来就全是公开信息
+#（`_peers_info` 把 `worth` 挂在桌面立牌上、公开背包另有弹窗、地皮归属肉眼可见）——
+# **唯一真正隐藏的是机会牌堆的牌序**。所以「窥探现金 / 公开身家」那类卡是废卡（已从字段表里
+# 去掉），这一类的三条都只动牌堆、**不动任何对局状态**（钱 / 位置 / 跳过一概不碰）。
+#
+# 三条字段的落点见 `机会卡.md` §三：与目标类 / 地皮类**同组**、排在 `move_steps` 之前
+#（`_apply_card` 里那两段 `for` 之后、`move_steps` 那条之前）。
+
+func _test_deck_iface(g) -> void:
+	print("== 情报：接口齐备 ==")
+	_check(_has_prop(g, "_peeked"), "成员 _peeked 在位")
+	_check(g.has_method("_card_apply_deck"), "方法 _card_apply_deck 在位")
+	# 私密那条**不该另起一套**：既有的 `s_peek_card`（广播 + 收端自过滤）就是那条路
+	_check(g.has_method("s_peek_card"), "私密那条走既有的 s_peek_card")
+
+## 摆一桌干净局面，并把牌堆换成**已知序列**（`_new_event_deck` 每次都洗牌 ⇒ 必须自己覆盖），
+## `_peeked` 也清空 —— 用例之间不串味。
+func _deck_table(g, cards: Array) -> void:
+	_target_table(g)   # 甲 5000 / 乙 1000 / 丙 800 / 丁（出局）
+	g._event_deck = []
+	for c in cards:
+		g._event_deck.append({"t": String(c)})
+	g._peeked = []
+
+## 牌堆当前的牌面文案序列（用例拿它比对**顺序**，不是只比张数）。
+func _deck_titles(g) -> Array:
+	var out := []
+	for c in (g._event_deck as Array):
+		out.append(String((c as Dictionary).get("t", "?")))
+	return out
+
+## `_peeked` 当前的牌面文案序列（同上一份，读的是"被记下的那几张"）。
+func _peeked_titles(g) -> Array:
+	var out := []
+	for c in (g._peeked as Array):
+		out.append(String((c as Dictionary).get("t", "?")))
+	return out
+
+func _test_deck_fields(g) -> void:
+	# 存在性闸（`_test_deck_iface`）已经单独报过红；实现缺席时再往下走，只会在读 `_peeked` /
+	# 调 `_card_apply_deck` 那一行 SCRIPT ERROR 就地中断 —— `await` 就此挂住，整个套件要跑到
+	# 30s 超时才退，红得看不出是哪一条。所以这里先按同一套判据挡一道。
+	if not _has_prop(g, "_peeked") or not g.has_method("_card_apply_deck"):
+		return
+	await _test_bury_deck(g)
+	await _test_peek_deck(g)
+	await _test_shuffle_deck(g)
+	await _test_deck_pure(g)
+	await _test_deck_order(g)
+
+func _test_bury_deck(g) -> void:
+	print("== 情报：塞底（bury_deck） ==")
+	_deck_table(g, ["一", "二", "三"])
+	await g._apply_card(g.hp[0], {"t": "压箱底", "bury_deck": true})
+	_check(_deck_titles(g) == ["二", "三", "一"],
+		"顶张真的去了底部、其余相对顺序不变（实得 %s）" % str(_deck_titles(g)))
+	_check((g._event_deck as Array).size() == 3, "牌堆不增不减（仍 3 张）")
+	# 只剩一张：塞底等于原样（既不崩、也不掉牌）
+	_deck_table(g, ["独苗"])
+	await g._apply_card(g.hp[0], {"t": "压箱底", "bury_deck": true})
+	_check(_deck_titles(g) == ["独苗"], "牌堆只剩一张时塞底仍是那一张（实得 %s）" % str(_deck_titles(g)))
+	# 牌堆见底 ⇒ 先补洗一手再塞（不能对着空数组 `pop_front`）
+	_deck_table(g, [])
+	await g._apply_card(g.hp[0], {"t": "压箱底", "bury_deck": true})
+	_check((g._event_deck as Array).size() > 1,
+		"空牌堆 ⇒ 先补洗一手（实得 %d 张）" % (g._event_deck as Array).size())
+
+func _test_peek_deck(g) -> void:
+	print("== 情报：偷看（peek_deck） ==")
+	_deck_table(g, ["一", "二", "三", "四"])
+	await g._apply_card(g.hp[0], {"t": "小道消息", "peek_deck": 2})
+	_check((g._peeked as Array).size() == 2, "记下顶 2 张（实得 %d）" % (g._peeked as Array).size())
+	_check(_peeked_titles(g) == ["一", "二"],
+		"记的就是**顶 N 张**、顺序一致（实得 %s）" % str(_peeked_titles(g)))
+	_check(_deck_titles(g) == ["一", "二", "三", "四"], "偷看**不抽牌**：牌堆原封不动")
+	# N 比牌堆还大 ⇒ 只看到牌堆现有那几张（`mini` 挡住越界）
+	await g._apply_card(g.hp[0], {"t": "小道消息", "peek_deck": 99})
+	_check(_peeked_titles(g) == ["一", "二", "三", "四"],
+		"N 超过牌堆大小 ⇒ 只记到现有那几张、不越界（实得 %s）" % str(_peeked_titles(g)))
+	# 牌堆见底 ⇒ 先补洗一手再偷看
+	_deck_table(g, [])
+	await g._apply_card(g.hp[0], {"t": "小道消息", "peek_deck": 1})
+	_check((g._peeked as Array).size() == 1,
+		"空牌堆 ⇒ 先补洗一手（偷看得一张，实得 %d）" % (g._peeked as Array).size())
+	# **私密**那半：走的是既有 `s_peek_card`（广播 + 收端自过滤，见该函数注释）——
+	# 抽卡者本人看得到，旁人那端一个字都不该有。
+	_deck_table(g, ["私密甲", "私密乙"])
+	var log1 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "小道消息", "peek_deck": 2})
+	_check(_log_at(g, "私密甲", log1) >= 0, "抽卡者本人看得到内容（走的仍是既有 `s_peek_card`）")
+	_deck_table(g, ["私密丙", "私密丁"])
+	g.my_peer = 2   # 本机是乙，抽卡的是甲
+	var log2 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "小道消息", "peek_deck": 2})
+	_check(_log_at(g, "私密丙", log2) < 0, "旁观者那端看不到内容（既有那条「广播 + 收端自过滤」照旧）")
+	_check(_peeked_titles(g) == ["私密丙", "私密丁"],
+		"牌堆情报本身照旧记在房主侧（私密只关战报那半，实得 %s）" % str(_peeked_titles(g)))
+
+func _test_shuffle_deck(g) -> void:
+	print("== 情报：重洗（shuffle_deck） ==")
+	_deck_table(g, ["一", "二", "三", "四", "五"])
+	g._peeked = [{"t": "旧预知"}]   # 先摆一条预知：重洗必须把它作废
+	var before := _deck_titles(g)
+	before.sort()
+	await g._apply_card(g.hp[0], {"t": "重新洗牌", "shuffle_deck": true})
+	var after := _deck_titles(g)
+	after.sort()
+	_check(after == before, "洗牌**元素多重集守恒**（不增不减：洗前 %s / 洗后 %s）" % [str(before), str(after)])
+	_check((g._event_deck as Array).size() == 5, "张数不变（仍 5 张）")
+	_check((g._peeked as Array).is_empty(), "重洗把所有人的预知作废（`_peeked` 清空）")
+	# 钉「真的调了 shuffle」而不只是顺手清了 `_peeked`：连洗 20 次，至少有一次牌序与原先不同。
+	# 5 张的排列有 120 种 ⇒ 20 次全同的概率是 (1/120)^20，不是靠运气过的。
+	_deck_table(g, ["一", "二", "三", "四", "五"])
+	var orig := _deck_titles(g)
+	var changed := 0
+	for _i in 20:
+		await g._apply_card(g.hp[0], {"t": "重新洗牌", "shuffle_deck": true})
+		if _deck_titles(g) != orig:
+			changed += 1
+	_check(changed > 0, "确实重洗了牌序（20 次里有 %d 次与原先不同）" % changed)
+	# 牌堆见底 ⇒ 先补洗一手（先有牌可洗）
+	_deck_table(g, [])
+	await g._apply_card(g.hp[0], {"t": "重新洗牌", "shuffle_deck": true})
+	_check((g._event_deck as Array).size() > 1,
+		"空牌堆 ⇒ 先补洗一手（实得 %d 张）" % (g._event_deck as Array).size())
+
+## 三个字段都**不产生任何对局状态变化**（不动钱、不动位置、不动跳过）—— 纯情报 / 牌序操作。
+func _test_deck_pure(g) -> void:
+	print("== 情报：不动任何对局状态 ==")
+	var cases := {"peek_deck": 2, "shuffle_deck": true, "bury_deck": true}
+	for field in cases:
+		_deck_table(g, ["一", "二", "三", "四"])
+		g.hp[0].pos = 3
+		g.hp[1].pos = 11
+		var card := {"t": "情报卡"}
+		card[field] = cases[field]
+		await g._apply_card(g.hp[0], card)
+		_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 1000 \
+			and int(g.hp[2].money) == 800 and int(g.hp[3].money) == 1000,
+			"%s：四家现金一分没动" % field)
+		_check(int(g.hp[0].pos) == 3 and int(g.hp[1].pos) == 11,
+			"%s：位置没动（连落点都没结算）" % field)
+		_check(int(g.hp[0].skip) == 0 and int(g.hp[1].skip) == 0, "%s：跳过回合也没被写" % field)
+
+## 插卡顺序（`机会卡.md` §三）：情报类与目标类 / 地皮类**同组**，都排在 `move_steps` 之前。
+## 钉法：一张卡同时带 `bury_deck` + `move_steps: -1`，且抽卡者持【雨伞】—— `move_steps` 那条
+## 遇后退会**提前 `return`**，情报类要是排在它后面就一并被跳过。
+func _test_deck_order(g) -> void:
+	print("== 情报：插卡顺序在 move_steps 之前 ==")
+	_deck_table(g, ["一", "二", "三", "四"])
+	g.hp[0].items = [{"id": "雨伞"}]
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "顺序钉子", "bury_deck": true, "move_steps": -1})
+	_check(_deck_titles(g) == ["二", "三", "四", "一"],
+		"情报类生效：没被 move_steps 的提前 return 跳过（实得 %s）" % str(_deck_titles(g)))
+	var i_move := _log_at(g, "免疫了后退", log0)
+	var i_deck := _log_at(g, "塞到了最底下", log0)
+	_check(i_move >= 0, "（前提）move_steps 那条确实提前 return 了")
+	_check(i_deck >= 0 and i_deck < i_move, "战报次序：情报类在 move_steps 之前（%d < %d）" % [i_deck, i_move])

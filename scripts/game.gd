@@ -508,6 +508,7 @@ func _lab_hide_hud() -> void:
 func lab_reset() -> void:
 	running = false
 	_event_deck = []
+	_peeked = []   # 与牌堆一起清：留着旧局的预知读出来只会误导（沙盒里最容易读到的就是它）
 	hp = _build_hp()
 	htiles = []
 	for i in GameData.TILES.size():
@@ -2027,6 +2028,10 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 ## 机会牌堆（预生成洗牌、抽完再补洗）——「小抄」要能预览顶张，就必须有稳定牌序
 var _event_deck: Array = []
 
+## 最近一次「私密偷看」看到的牌堆顶那几张（`peek_deck` 记下；`shuffle_deck` 会作废它）。
+## 只是**给测试 / 摆拍读**的诊断位 —— 玩法侧一个字都不读它（私密那半靠 `s_peek_card` 走战报）。
+var _peeked: Array = []
+
 func _new_event_deck() -> Array:
 	var pool := GameData.events_for()
 	if not blackshop_enabled:
@@ -2184,6 +2189,14 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 	for f in ["seize_tile", "force_buy_tile", "swap_pos", "pull_target", "push_back", "shuffle_pos"]:
 		if card.has(f):
 			await _card_apply_tile_move(p, card, f)
+	# ---- 情报类（2026-10-09 批 2 §三）：接着地皮与位置类、同样在 move_steps 之前 ----
+	# 落点即 `机会卡.md` §三 写死的那条：`… → go_jail → [目标类 → 地皮类 → 情报类] → move_steps → …`。
+	# **别挪到 `move_steps` 后面**（那里 `move_steps < 0` 被免疫时会提前 `return`，一张同时带
+	# 情报字段的卡会被静默吞掉）；也**别挪到 `choices` 那一支后面** —— 那支末尾 `return`，同理
+	# 会吞掉情报字段（`choices` 永远排在整张卡的最后，见 §三）。
+	for f in ["peek_deck", "shuffle_deck", "bury_deck"]:
+		if card.has(f):
+			_card_apply_deck(p, card, f)
 	if card.has("move_steps"):
 		if int(card.move_steps) < 0 and (_immune_debuff(p) or _has_item(p, "雨伞")):
 			_log("%s 免疫了后退" % p.name, "#8fb7f2")
@@ -2456,6 +2469,39 @@ func _card_after_tile_move(p: Dictionary, tgt: Dictionary) -> void:
 	_check_xiaojinku(p)
 	_check_xiaojinku(tgt)
 	_broadcast_state()
+
+## 情报类：本作**唯一真正隐藏**的信息是机会牌堆的牌序（身家 / 现金 / 背包 / 地皮本来就全是
+## 公开信息，见 `机会卡.md` §二）—— 所以这一类的三条都**只动牌堆**，不碰任何对局状态
+##（钱 / 位置 / 跳过 / 道具一概不动）。
+##
+## 不在这里调 `_check_end()`（同 `_card_apply_target` / `_card_apply_tile_move`：`_apply_card`
+## 末尾那一次才是这张卡唯一的出口）。只读传入的 card（与 `_apply_card` 同规矩）。
+func _card_apply_deck(p: Dictionary, card: Dictionary, field: String) -> void:
+	# 三条都先保证牌堆非空：抽空的那一档由 `_new_event_deck()` 现补一手（同 `_draw_chance_card`
+	# / `_peek_event` 的既有口径），否则下面 `pop_front` / `shuffle` 都是对着空数组下手。
+	if _event_deck.is_empty():
+		_event_deck = _new_event_deck()
+	match field:
+		"peek_deck":
+			# N 由卡面给，可能比牌堆还大 ⇒ 夹在 [0, 牌堆大小] 里：越界不崩，数据写坏成负数
+			# 也只当"什么都没看到"（`clampi` 两头都挡）。
+			var n: int = clampi(int(card.peek_deck), 0, _event_deck.size())
+			var seen: Array = []
+			var names := PackedStringArray()   # `String.join` 吃 PackedStringArray，不吃 Array
+			for i in n:
+				seen.append(_event_deck[i])
+				names.append(String((_event_deck[i] as Dictionary).get("t", "?")))
+			_peeked = seen
+			# **私密**：走既有的 `s_peek_card`（广播 + 收端自过滤，见它的函数注释 —— 别改成 rpc_id）
+			s_peek_card.rpc(int(p.peer), "牌堆顶 %d 张：%s" % [n, ", ".join(names)])
+		"shuffle_deck":
+			_event_deck.shuffle()
+			_peeked = []   # 预知作废：洗过之后谁都别想还记着旧牌序
+			_log("%s 把机会牌堆整个重洗了一遍" % p.name, "#c9a6ff")
+		"bury_deck":
+			var top: Dictionary = _event_deck.pop_front()
+			_event_deck.append(top)
+			_log("%s 把牌堆顶那张塞到了最底下" % p.name, "#c9a6ff")
 
 ## 机会卡发道具（指定 id / 指定品质）；背包满则作废提示，唯一池过滤照旧
 func _grant_card_item(p: Dictionary, id: String) -> void:
