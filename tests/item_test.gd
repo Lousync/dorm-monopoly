@@ -481,11 +481,16 @@ func _test_discover(g) -> void:
 	g.hp = []
 
 ## 科技「淘宝达人」的保底（2026-10-10 道具重构 I3）：候选里**保底一件紫档**（池里有紫就保证出现）。
-## 池子收成「1 紫 + 3 非紫」四件时三种口径的区分力：
-##   · 新口径（全池等概率 + 保底）：每轮候选都是 3 件、且必含那件紫 ⇒ 全绿；
-##   · 保底被摘掉（回归）：3 选 2 漏掉那件紫的概率 = 1/4 ⇒ 8 轮全绿的 chance 只有 0.25^8 ≈ 1.5e-5 ⇒ 必红；
-##   · 批 1 之前（第三参 = 品质，整池只抽紫）：候选只有那件紫、件数 1 ⇒ 件数/非紫两条必红。
+## 池子收成「1 紫 + 3 非紫」四件，跑 `ROUNDS` 轮，三种口径的区分力：
+##   · 新口径（全池等概率 + 保底）：每轮候选都是 3 件、且必含那件紫 ⇒ **确定全绿**（不是概率绿）；
+##   · 保底被摘掉（回归）：3 选 2 漏掉那件紫的概率 = 1/4 ⇒ 一轮绿的 chance 是 3/4 ⇒
+##     `ROUNDS` 轮全绿的 chance = (3/4)^ROUNDS。取 40 ⇒ **≈ 1.0e-5**（40 是比复审建议的 30 再翻一点，
+##     把假绿压到 1e-5 量级）；**只有 `all_have_purple` 这一条**能抓到它。
+##   · 批 1 之前（第三参 = 品质、且**沿品质向下降档**）：本池下 紫(1)<3 → 降蓝(0)<3 → 降绿(0)<3 → 白(3)
+##     ⇒ 产出**三件全白**。所以旧口径下「件数 == 3」与「出现过非紫」**也绿**，区分新旧口径的仍是
+##     `all_have_purple`（旧口径必红）。（我第一版把这两条当成区分项，是错的：那时模型漏了降档环。）
 ## 用 bot 走 `_run_discover`（不发 UI，只为拿 `_discover_offered`）。
+const DISCOVER_ROUNDS := 40
 func _test_taobao_guarantee(g) -> void:
 	print("== 淘宝达人保底（候选保底一件紫） ==")
 	var p := _mk_player(1, "甲")
@@ -523,7 +528,7 @@ func _test_taobao_guarantee(g) -> void:
 	var size_ok := true
 	var all_have_purple := true
 	var saw_non_purple := false
-	for i in 8:
+	for i in DISCOVER_ROUNDS:
 		p.items = []   # 每轮清背包：唯一件不占池、也不撑满背包
 		await g._run_discover(p, "失物招领", "紫")
 		if g._discover_offered.size() != 3:
@@ -537,8 +542,8 @@ func _test_taobao_guarantee(g) -> void:
 		if not has_p:
 			all_have_purple = false
 	_check(size_ok, "每轮候选都是 3 件（全池 4 件等概率 + 保底）")
-	_check(all_have_purple, "每轮候选里都保底一件紫档（8 轮全绿）")
-	_check(saw_non_purple, "候选里出现过非紫件（不是旧口径「整池只抽紫」）")
+	_check(all_have_purple, "每轮候选里都保底一件紫档（%d 轮全绿）" % DISCOVER_ROUNDS)
+	_check(saw_non_purple, "候选里出现过非紫件（候选来自全池，不是单档池）")
 	g.items_consumed = saved_burn
 	g.hp = []
 
