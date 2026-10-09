@@ -673,14 +673,6 @@ const TECH_TIER_HOLD := 1.4        # 横幅停留
 ## 演出总时长（留一点收尾余量）
 const TECH_TIER_REVEAL_TIME := TECH_TIER_HOLD + 0.35
 
-func _tier_color(tier: String) -> Color:
-	match tier:
-		"黄金":
-			return Color(0.95, 0.78, 0.35)
-		"钻石":
-			return Color(0.55, 0.88, 1.0)
-		_:
-			return Color(0.80, 0.84, 0.92)   # 白银
 
 @rpc("authority", "call_local", "reliable")
 func s_tech_tier(tier: String) -> void:
@@ -712,7 +704,7 @@ func _show_tech_tier(tier: String) -> void:
 	var t := UIKit.title_label("开局科技 · 本局等级", 22)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
-	var banner := UIKit.label("本局科技等级 · %s" % tier, 26, _tier_color(tier))
+	var banner := UIKit.label("本局科技等级 · %s" % tier, 26, TechData.tier_color(tier))
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(banner)
 	Fx.play("cash", 0.0)
@@ -1897,7 +1889,7 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 		"event":
 			var card: Dictionary = _draw_event(String(d.name))
 			# 仿桌游：机会/命运卡从棋盘中央对应牌堆抽出展示
-			s_card.rpc(String(card.t), _card_kind(card), String(d.name))
+			s_card.rpc(String(card.t), GameData.card_kind(card), String(d.name))
 			_log("%s 抽到事件：%s" % [p.name, card.t])
 			# 批次 12 C2：演出停在 HOLD 等抽卡者点「确定」，**效果在确认之后才落地**。
 			await _await_card_confirm(p)
@@ -1990,21 +1982,6 @@ func _peek_event(kind: String) -> Dictionary:
 	if not _event_decks.has(kind) or (_event_decks[kind] as Array).is_empty():
 		_event_decks[kind] = _new_event_deck(kind)
 	return (_event_decks[kind] as Array)[0]
-
-func _card_kind(card: Dictionary) -> String:
-	if card.has("go_jail"):
-		return "jail"
-	if card.has("move_steps"):
-		return "move"
-	if card.has("money"):
-		return "good" if int(card.money) >= 0 else "bad"
-	if card.has("from_each") or card.has("gain_item") or card.has("gain_item_quality"):
-		return "good"
-	if card.has("to_each"):
-		return "bad"
-	if card.has("enter_blackshop"):
-		return "bad"
-	return "info"
 
 func _resolve_buy(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]

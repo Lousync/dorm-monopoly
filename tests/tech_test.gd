@@ -73,9 +73,11 @@ func _run() -> void:
 
 	# ---------- 定档演出（2026-10-07 补齐；2026-10-09 去掉骰面） ----------
 	print("== 定档演出 ==")
-	_check(g._tier_color("白银") != g._tier_color("黄金")
-		and g._tier_color("黄金") != g._tier_color("钻石")
-		and g._tier_color("白银") != g._tier_color("钻石"), "三档等级色互不相同")
+	# 2026-10-09 起配色**唯一来源**是 `TechData.TIER_COLORS`（原在 `game.gd._tier_color()`，
+	# 挪走是为了让图鉴生成器也能读它）—— 所以这里直接钉 TechData，不再绕 `g._tier_color`。
+	_check(TechData.tier_color("白银") != TechData.tier_color("黄金")
+		and TechData.tier_color("黄金") != TechData.tier_color("钻石")
+		and TechData.tier_color("白银") != TechData.tier_color("钻石"), "三档等级色互不相同")
 	# 钉住**那一层本身**，别数 `get_child_count()`：对局的广播刷新会不停增删自己的子节点
 	# （实测这 2.8 秒里别的分支增删了 90 来个），总数对比会假红/假绿。做法 = 演出前后做差集，
 	# 找出新挂上的那一层，随后只看它有没有被释放。

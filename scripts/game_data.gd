@@ -178,6 +178,25 @@ static func events_for(kind: String) -> Array:
 			out.append(e)
 	return out
 
+## 抽卡演出的**卡型**（决定卡面配色）：good / bad / move / jail / info 五类（事件卡.md §三）。
+## 判定按字段优先级，顺序有意义（一张卡可能同时有 money 与 move_steps，先命中的说话）。
+## 2026-10-09 从 `game.gd._card_kind()` 挪来：图鉴生成器（`--script` 跑）要复用它，
+## 而它读不到 `game.gd` —— 抄一份就是**会烂的第二来源**（卡型配色会跟演出悄悄不一致）。
+static func card_kind(card: Dictionary) -> String:
+	if card.has("go_jail"):
+		return "jail"
+	if card.has("move_steps"):
+		return "move"
+	if card.has("money"):
+		return "good" if int(card.money) >= 0 else "bad"
+	if card.has("from_each") or card.has("gain_item") or card.has("gain_item_quality"):
+		return "good"
+	if card.has("to_each"):
+		return "bad"
+	if card.has("enter_blackshop"):
+		return "bad"
+	return "info"
+
 ## 四角格位置：0 起点(右下) / 34 宿委会(左下) / 56 卧谈会(左上) / 90 查寝(右上)
 ## 该格子是不是四个角上的**地标格**（起点 / 宿委会 / 卧谈会 / 查寝）。
 ## 注意不能按格型判：`rest` 是「免费休息」，四角上的卧谈会和沿途 4 个空教室共用这个格型，

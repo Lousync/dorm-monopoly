@@ -9,6 +9,18 @@ const TIER_GOLD := "黄金"
 const TIER_DIAMOND := "钻石"
 const TIERS: Array[String] = [TIER_SILVER, TIER_GOLD, TIER_DIAMOND]
 
+## 档位配色。**唯一来源**：`game.gd` 的定档演出横幅、`tools/gen_gallery.gd` 生成的图鉴页都读它。
+## 原先只存在于 `game.gd` 的 `_tier_color()` 里，图鉴生成器（`--script` 跑，读不到 game.gd）
+## 要复用时只能抄一份**会烂的第二来源** —— 2026-10-09 挪到这里，与 `ItemData.QUALITY_COLORS` 同待遇。
+const TIER_COLORS := {
+	TIER_SILVER: Color(0.80, 0.84, 0.92),
+	TIER_GOLD: Color(0.95, 0.78, 0.35),
+	TIER_DIAMOND: Color(0.55, 0.88, 1.0),
+}
+
+static func tier_color(tier: String) -> Color:
+	return TIER_COLORS.get(tier, TIER_COLORS[TIER_SILVER])
+
 ## 白银定稿 20 条目标：当前 20 条全部定稿（编号 4/6/17 弃案留空，见开局科技.md）
 const TECHS := {
 	# ---- 白银（2026-10-04 定稿） ----
