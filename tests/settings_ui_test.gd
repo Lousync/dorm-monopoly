@@ -74,6 +74,13 @@ func _run() -> void:
 	for t in GameSettings.TIERS:
 		want.append(String(t))
 	_check(str(ids) == str(want), "chip 顺序 = GameSettings.TIERS（实得 %s）" % str(ids))
+	# 「现状」那一档**不是统一的秒数**（各环节各自沿用原值）⇒ 必须挂悬停说明，否则会被读成
+	# "现状 = 25 秒"（用户 2026-10-09 就是这么问的）。文案只有一份来源。
+	var cur_chip: Button = chips[GameSettings.TIER_CURRENT]
+	_check(cur_chip.tooltip_text == GameSettings.TIER_CURRENT_HINT and not cur_chip.tooltip_text.is_empty(),
+		"「现状」chip 挂着悬停说明（GameSettings.TIER_CURRENT_HINT）")
+	_check(cur_chip.tooltip_text.contains("35") and cur_chip.tooltip_text.contains("12"),
+		"悬停说明里列出了各环节的原值（掷轮 35 / 道具 12 …）")
 	chips["30"].pressed.emit()
 	_check(lb._set_tier == "30", "点「30 秒」chip 选中 30 秒")
 	lb._on_settings_save()

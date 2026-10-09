@@ -352,7 +352,10 @@ static func chip(color: Color, side: float = 16.0) -> Control:
 
 ## 一排单选 chips（ids + id->文案）；点选回调 on_pick(id)。
 ## 建出来的 HBox 带 meta "chips" = {id: Button}，用 chip_select() 刷新高亮。
-static func chip_row(ids: Array, labels: Dictionary, on_pick: Callable) -> HBoxContainer:
+## `tooltips`（可选，id → 文案）给某几枚挂悬停说明 —— 用于"这一档的真实含义看文案看不出来"的场合
+##（现用：操作限时的「现状」档，见 `GameSettings.TIER_CURRENT_HINT`）。没给到的 id 不挂。
+static func chip_row(ids: Array, labels: Dictionary, on_pick: Callable,
+		tooltips: Dictionary = {}) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	var map := {}
@@ -360,6 +363,7 @@ static func chip_row(ids: Array, labels: Dictionary, on_pick: Callable) -> HBoxC
 		var sid := String(id)
 		var b := button(String(labels.get(sid, sid)), 14)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.tooltip_text = String(tooltips.get(sid, ""))
 		b.pressed.connect(func() -> void: on_pick.call(sid))
 		row.add_child(b)
 		map[sid] = b

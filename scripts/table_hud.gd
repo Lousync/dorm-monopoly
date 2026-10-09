@@ -987,7 +987,8 @@ static func build_menu_ui(g: Node) -> void:
 	g.tier_title = UIKit.label("操作限时", 14, UIKit.TEXT)
 	sv.add_child(g.tier_title)
 	g.tier_row = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
-		func(id: String) -> void: g._set_timeout_tier(id))
+		func(id: String) -> void: g._set_timeout_tier(id),
+		{GameSettings.TIER_CURRENT: GameSettings.TIER_CURRENT_HINT})
 	sv.add_child(g.tier_row)
 	g.tier_readonly = UIKit.label("", 13, UIKit.TEXT_DIM)
 	sv.add_child(g.tier_readonly)

@@ -348,7 +348,8 @@ func _build_settings_dialog() -> void:
 	_set_chips = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
 		func(id: String) -> void:
 			_set_tier = id
-			UIKit.chip_select(_set_chips, id))
+			UIKit.chip_select(_set_chips, id),
+		{GameSettings.TIER_CURRENT: GameSettings.TIER_CURRENT_HINT})
 	pb.add_child(_set_chips)
 	pb.add_child(_note("回合上限：到轮未分胜负则按身家结算"))
 	_set_rounds_chips = UIKit.chip_row(GameSettings.ROUNDS_SW, GameSettings.ROUNDS_LABELS,
