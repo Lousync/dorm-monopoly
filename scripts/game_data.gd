@@ -272,17 +272,15 @@ static func _build_tiles() -> Array:
 		}
 
 	# 剩余格按确定性序列填充：
-	# E=机会/命运 S=小卖部 I=失物招领(随机道具) A=特浓咖啡(再动一次) C=赌场 R=免费休息
+	# E=机会 S=小卖部 I=失物招领(随机道具) A=特浓咖啡(再动一次) C=赌场 R=免费休息
 	var xseq := _x_sequence()
 	var xi := 0
-	var ei := 0
 	for i in total:
 		if not t[i].is_empty():
 			continue
 		match xseq[xi]:
 			"E":
 				t[i] = {"type": "event", "name": "机会"}
-				ei += 1
 			"S":
 				t[i] = {"type": "shop", "name": "小卖部"}
 			"I":
@@ -300,7 +298,7 @@ static func _build_tiles() -> Array:
 
 ## 功能格铺设序列（按剩余空位的路径序填充，分组只为好读）：
 ## 底边+左边前段 / 左边后段+顶边 / 右边 —— 同侧同类格不相邻。
-## 合计 S6（小卖部）/ E4（机会命运）/ I4（失物招领）/ A2（特浓咖啡）/ C2（赌场）/ R4（空教室）。
+## 合计 S6（小卖部）/ E4（机会）/ I4（失物招领）/ A2（特浓咖啡）/ C2（赌场）/ R4（空教室）。
 static func _x_sequence() -> Array:
 	var a := ["S", "I", "A", "C", "R", "S", "E", "S"]
 	var b := ["S", "R", "C", "E", "I", "E", "R"]
