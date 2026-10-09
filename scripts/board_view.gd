@@ -250,7 +250,7 @@ func _build_backdrop() -> void:
 ## 格子类型 → Twemoji 主题图标名（assets/icons/，CC-BY 4.0）
 ## 地产的图标逐块放在数据里（d.icon），不再按组查表（组已废除）。
 const TILE_ICONS := {
-	"event": {"机会": "luck", "命运": "fate"},
+	"event": "luck",
 	"item": "1f381", "again": "2615", "rest": "rest", "casino": "casino", "shop": "daily",
 	"start": "start", "jail": "jail", "go_jail": "gojail",
 }
@@ -259,10 +259,7 @@ func _tile_icon_name(d: Dictionary) -> String:
 	var t := String(d.type)
 	if t == "property":
 		return String(d.get("icon", "dorm"))
-	var v = TILE_ICONS.get(t, "")
-	if v is Dictionary:
-		return v.get(String(d.get("name", "")), "")
-	return v
+	return String(TILE_ICONS.get(t, ""))
 
 func _build_tiles() -> void:
 	for i in GameData.TILES.size():

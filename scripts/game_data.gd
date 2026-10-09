@@ -119,7 +119,7 @@ const TILE_DESC := {
 	"jail": "被查寝的同学在这里反省（跳过一回合）",
 	"go_jail": "立刻被送往宿委会反省一回合（跳过一回合）",
 	"rest": "放松一下，无事发生",
-	"event": "抽取一张宿舍事件卡",
+	"event": "抽取一张机会卡（机会 / 道具 / 畸变）",
 	"item": "翻一翻失物招领箱，捡到一件随机道具",
 	"again": "灌一口特浓咖啡，本回合再行动一次",
 	"casino": "全员下注玩小游戏，赢家通吃",
@@ -281,7 +281,7 @@ static func _build_tiles() -> Array:
 			continue
 		match xseq[xi]:
 			"E":
-				t[i] = {"type": "event", "name": "命运" if ei % 2 == 1 else "机会"}
+				t[i] = {"type": "event", "name": "机会"}
 				ei += 1
 			"S":
 				t[i] = {"type": "shop", "name": "小卖部"}

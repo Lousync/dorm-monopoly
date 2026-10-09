@@ -107,7 +107,7 @@ func _test_board_shape() -> void:
 			"shop":
 				shops += 1
 	_check(props == 30, "30 块地产")
-	_check(events == 4, "4 个机会/命运格（事件卡池变化多端，替代部分纯给钱格）")
+	_check(events == 4, "4 个机会格（三类卡池，替代部分纯给钱格）")
 	_check(shops == 6, "6 个小卖部格（实机反馈：4 家太少）")
 	_check(items == 4, "4 个失物招领格（随机道具替代固定给钱）")
 	_check(agains == 2, "2 个特浓咖啡格（再动一次）")
@@ -119,6 +119,12 @@ func _test_board_shape() -> void:
 		if String(t.type) == "fine" or String(t.type) == "bonus":
 			legacy += 1
 	_check(legacy == 0, "不再有强制缴费 / 兼职奖励格")
+	# 机会格一律叫「机会」（2026-10-09：命运格并入）
+	var fate_left := 0
+	for t in GameData.TILES:
+		if String(t.type) == "event" and String(t.name) != "机会":
+			fate_left += 1
+	_check(fate_left == 0, "没有还叫「命运」的事件格（实得 %d 格）" % fate_left)
 	# 同侧同类格不相邻：扫每段连续空位（相邻的功能空位不该同型）
 	var gap_types: Array = []
 	for i in GameData.TILES.size():
