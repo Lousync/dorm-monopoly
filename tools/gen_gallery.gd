@@ -100,23 +100,18 @@ func _entries_cards() -> Array:
 			rows.append({"k": "香皂", "v": soap})
 		out.append({
 			"title": String(card.t),
-			# 副标题只写「chips 没说的事」：牌堆归属 chip 已经写了，这里补的是它**什么意思**
-			"subtitle": "只在「机会」格出现" if card.has("only") else "机会 / 命运两副牌堆都会抽到",
+			# 副标题只写「chips 没说的事」：卡类 chip 已经写了这一类是什么，这里补的是三类的关系
+			"subtitle": "机会格专属：机会 85% / 道具 10% / 畸变 5% 三类卡之一",
 			"glyph": KIND_GLYPH.get(kind, "·"),
 			"accent": KIND_COLOR.get(kind, "#4a5b66"),
 			"chips": [
-				{"t": deck_of(card)},
+				{"t": "机会卡"},
 				{"t": KIND_LABEL.get(kind, kind), "color": KIND_COLOR.get(kind, "")},
 			],
-			"facets": {"牌堆": deck_of(card), "卡型": KIND_LABEL.get(kind, kind)},
+			"facets": {"卡类": "机会卡", "卡型": KIND_LABEL.get(kind, kind)},
 			"rows": rows,
 		})
 	return out
-
-
-## 牌堆归属：**没写 `only` 的就是通用卡**，两副牌堆都会抽到（`GameData.events_for` 的口径）
-func deck_of(card: Dictionary) -> String:
-	return "机会专属" if card.has("only") else "通用"
 
 
 ## 逐字段把效果摊成「键 / 值」行。顺序照 机会卡.md §三 的结算顺序，
@@ -460,7 +455,7 @@ func _facet_order(sec: String, key: String) -> Array:
 	match sec:
 		"cards":
 			match key:
-				"牌堆": return ["通用", "机会专属"]
+				"卡类": return ["机会卡"]
 				"卡型": return [KIND_LABEL["good"], KIND_LABEL["bad"], KIND_LABEL["move"],
 					KIND_LABEL["jail"], KIND_LABEL["info"]]
 		"items":
