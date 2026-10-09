@@ -143,7 +143,14 @@ func _run() -> void:
 	_check(liq_lbl != null and liq_lbl.text.contains("%d%%" % int(round(GameData.LIQ_RATE * 100.0)))
 		and not liq_lbl.text.contains("30%"),
 		"回收比例读的是 GameData.LIQ_RATE（现 %d%%），不是写死的旧值" % int(round(GameData.LIQ_RATE * 100.0)))
-	# 开局科技：默认**开**（用户 2026-10-09），等级选择跟着开关显隐
+	# 2026-10-10 科技调整：分节名去掉「开局」这个**系统名**限定（「开局」降为「当前唯一的获得时机」）。
+	# 标题不是子节点、是 `SectionBox._draw()` 里画的 ⇒ 只能按私成员名读回（本仓 SectionBox 无 accessor）。
+	# ⚠ 必须显式标 `Node`：`lb` 是 `instantiate()` 的无类型返回值 ⇒ `lb._set_tech_sw` 是 Variant，
+	# 链式 `get_parent()` 拿不到返回类型，`:=` 会以「Cannot infer the type」编译失败。
+	var tech_sec: Node = lb._set_tech_sw.get_parent().get_parent().get_parent()
+	_check(tech_sec != null and String(tech_sec.get("_text")) == "科技",
+		"设置弹窗分节名 = 「科技」（实得「%s」）" % String(tech_sec.get("_text")))
+	# 科技：默认**开**（用户 2026-10-09），等级选择跟着开关显隐
 	_check(lb._set_tech_sw.on and lb._set_tech_tier_box.visible,
 		"科技默认开 ⇒ 开关是开、等级选择可见")
 	var tier_chips: Dictionary = lb._set_tech_tier_chips.get_meta("chips", {})

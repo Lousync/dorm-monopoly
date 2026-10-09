@@ -19,6 +19,15 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 递归收一棵子树里所有 Label 的文本（弹层 / 演出层的文案断言用；本文件原先没有）。
+func _labels_under(n: Node) -> Array:
+	var out: Array = []
+	if n is Label:
+		out.append(String((n as Label).text))
+	for c in n.get_children():
+		out.append_array(_labels_under(c))
+	return out
+
 func _fresh_tiles() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
@@ -92,6 +101,8 @@ func _run() -> void:
 			layer = c
 			break
 	_check(layer != null and (layer as Control).z_index == 75, "定档演出挂了一层屏幕层控件（z=75）")
+	_check(_labels_under(layer).has("科技 · 本局等级"),
+		"定档演出标题 = 「科技 · 本局等级」（实得 %s）" % str(_labels_under(layer)))
 	await create_timer(2.8).timeout
 	await process_frame
 	_check(not is_instance_valid(layer), "定档演出自动收（那一层已释放）")
@@ -151,6 +162,10 @@ func _run() -> void:
 		off_peers.append(int(g._tech_offers[tok].peer))
 	_check(off_peers.has(1) and off_peers.has(2), "两份 offer 分别指向两个真人（不是逐个）")
 	_check(g._tech_picks.is_empty(), "没人作答时 picks 为空（两人同时在等）")
+	# 三选一弹层也是**玩家可见面**（房主本人那一份是本地直调的，所以这台机器上一定挂着层）。
+	_check(g._tech_offer_layer != null and _labels_under(g._tech_offer_layer).has("科技 · 白银"),
+		"三选一弹层标题 = 「科技 · 白银」（实得 %s）"
+			% str(_labels_under(g._tech_offer_layer) if g._tech_offer_layer != null else []))
 	for tok in g._tech_offers.keys():
 		g._tech_answer(int(tok), String(g._tech_offers[tok].names[0]))
 	w = 0.0

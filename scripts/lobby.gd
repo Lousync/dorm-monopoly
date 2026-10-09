@@ -16,7 +16,7 @@ var _room_label: Label
 var _set_wrap: Control
 var _set_scroll: ScrollContainer
 var _set_chips: HBoxContainer            # 操作限时挡位
-var _set_tech_tier_chips: HBoxContainer  # 开局科技等级（随机 / 指定）
+var _set_tech_tier_chips: HBoxContainer  # 科技等级（随机 / 指定）
 var _set_rounds_chips: HBoxContainer     # 回合上限档位
 var _set_win_chips: HBoxContainer        # 胜利条件
 var _set_ab_chips: HBoxContainer         # 畸变频率
@@ -26,7 +26,7 @@ var _set_liq_sw: UIKit.Switch            # 破产变卖保底
 var _set_shop_sw: UIKit.Switch           # 小卖部开关
 var _set_black_sw: UIKit.Switch          # 黑市开关
 var _set_casino_sw: UIKit.Switch         # 赌场开关
-var _set_tech_sw: UIKit.Switch           # 开局科技开关
+var _set_tech_sw: UIKit.Switch           # 科技开关
 var _set_ab_cond_sw: UIKit.Switch        # 畸变条件触发
 var _set_cash_edit: LineEdit             # 起始资金
 var _set_salary_edit: LineEdit           # 起点补贴
@@ -35,7 +35,7 @@ var _set_wincash_edit: LineEdit          # 目标现金金额
 var _set_wincash_row: HBoxContainer       # 目标现金：仅 win = 目标现金 时显示
 var _set_tech_tier_box: VBoxContainer     # 科技等级：仅科技开关打开时显示
 var _set_tier := GameSettings.TIER_CURRENT
-var _set_tech := true    # 开局科技开关（发车前配置；对局内不可改。默认开 = `GameSettings` 那份默认）
+var _set_tech := true    # 科技开关（发车前配置；对局内不可改。默认开 = `GameSettings` 那份默认）
 var _set_tech_tier := GameSettings.TECH_TIER_RANDOM   # 科技等级：random = 系统随机选一档；其余 = 指定
 var _set_liq := true
 var _set_rounds := 30
@@ -282,7 +282,7 @@ func _i_am_ready() -> bool:
 ##   * 去掉顶上那句「默认值 = 现状常量…」提示（用户要求）；
 ##   * 每一节套一个 `UIKit.SectionBox` —— 带边框，**小标题骑在上边框正中**（legend 式）；
 ##   * on/off 的行从「关 / 开」两枚 chip 换成 `UIKit.Switch` **开关组件**；
-##   * 原先的「特殊机制」一节拆成**「开局科技」+「畸变」两节**（两套系统挤在一节里读不清）。
+##   * 原先的「特殊机制」一节拆成**「科技」+「畸变」两节**（两套系统挤在一节里读不清）。
 ##
 ## 行内版式沿用两种既有形态：**多选一（chip 行）**用「说明一行 + 整行 chip」，
 ## **开关 / 数字**用「说明左边、控件右边」—— 控件因此贴着小节盒的右内缘、纵向对齐。
@@ -390,8 +390,8 @@ func _build_settings_dialog() -> void:
 	_set_casino_sw = UIKit.switch_toggle(_set_casino, func(on: bool) -> void: _set_casino = on)
 	shb.add_child(UIKit.ctrl_row("宿舍赌场", _set_casino_sw))
 
-	# —— 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡 ——
-	var tech := UIKit.section_box("开局科技")
+	# —— 科技（doc/game-design/科技.md）：关 = 本局不定档不选卡 ——
+	var tech := UIKit.section_box("科技")
 	sv.add_child(tech)
 	var tb := tech.body()
 	_set_tech_sw = UIKit.switch_toggle(_set_tech, func(on: bool) -> void:
@@ -607,7 +607,7 @@ func _shot() -> void:
 	Net.chat_history = ["房主：开了开了，都进来", "机器人A：来了来了"]
 	_refresh_chat()
 	if _shot_path.contains("settings"):
-		_on_open_settings()   # 摆拍：打开「游戏设置」弹窗（含操作限时 + 开局科技开关）
+		_on_open_settings()   # 摆拍：打开「游戏设置」弹窗（含操作限时 + 科技开关）
 		# 文件名再带 `_end` ⇒ 顺手把滚动区拉到底，用来拍**下半截**（道具/科技/畸变那几节）。
 		# 弹窗内容比 520 高的滚动区多，一张图拍不全 —— 与游戏侧那些按文件名分支的摆拍同例。
 		# ⚠ 得先等一帧布局落定，否则滚动区还不知道自己有多少内容，`scroll_vertical` 会被夹回 0。

@@ -551,7 +551,7 @@ func take_shot(path: String) -> void:
 		g._broadcast_state()
 		await get_tree().create_timer(0.25).timeout
 	if path.contains("tech") and not path.contains("techroll") and g.multiplayer.is_server():
-		# 摆拍：亮出开局科技三选一弹层（海克斯式三卡），并程序化选中中间一张，
+		# 摆拍：亮出科技三选一弹层（海克斯式三卡），并程序化选中中间一张，
 		# 展示绿框 + 绿光的选中态与点亮后的「确定」。走真入口 _show_tech_offer +
 		# _tech_pick_card（与玩家点卡同一条刷新链），不直改样式。
 		# 用法：--autotest=host --rounds=6 --shot=shots/xx_tech_table_plain.png

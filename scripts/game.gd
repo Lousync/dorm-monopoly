@@ -616,10 +616,10 @@ func _tech_phase() -> void:
 	if _settings.tech_tier != GameSettings.TECH_TIER_RANDOM:
 		# 房主指定等级（2026-10-07）：直接用该档，不随机
 		_tech_tier = _settings.tech_tier
-		_log("【开局科技】房主指定本局科技等级「%s」！" % _tech_tier, "#f0c064")
+		_log("【科技】房主指定本局科技等级「%s」！" % _tech_tier, "#f0c064")
 	else:
 		_tech_tier = TechData.random_tier()
-		_log("【开局科技】随机定档 —— 本局科技等级「%s」！" % _tech_tier, "#f0c064")
+		_log("【科技】随机定档 —— 本局科技等级「%s」！" % _tech_tier, "#f0c064")
 	_broadcast_state()
 	s_tech_tier.rpc(_tech_tier)   # 定档演出（全员同演；不挡流程，仅等它走完再开选卡）
 	await _wait(TECH_TIER_REVEAL_TIME)
@@ -670,10 +670,10 @@ func _tech_phase() -> void:
 			picked = String(names[randi_range(0, names.size() - 1)])
 			_log("%s 选科技超时，随机拍了一张" % p.name, "#8a90a5")
 		p.tech = picked
-		_log("【开局科技】%s 选了「%s」：%s" % [p.name, picked, String(TechData.def(picked).get("desc", ""))], "#74d188")
+		_log("【科技】%s 选了「%s」：%s" % [p.name, picked, String(TechData.def(picked).get("desc", ""))], "#74d188")
 		_tech_apply_instant(p, picked)
 	_broadcast_state()
-	_log("【开局科技】全员选定，发车！", "#f0c064")
+	_log("【科技】全员选定，发车！", "#f0c064")
 
 ## 某 peer 在本局科技三选一里的候选（bot 不在 `_tech_offers` 里；找不到给空）
 func _tech_names_for(peer: int) -> Array:
@@ -720,7 +720,7 @@ func _show_tech_tier(tier: String) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 16)
 	m.add_child(v)
-	var t := UIKit.title_label("开局科技 · 本局等级", 22)
+	var t := UIKit.title_label("科技 · 本局等级", 22)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
 	var banner := UIKit.label("本局科技等级 · %s" % tier, 26, TechData.tier_color(tier))
@@ -935,7 +935,7 @@ func _show_tech_offer(token: int, tier: String, names: Array) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 14)
 	m.add_child(v)
-	var title := UIKit.title_label("开局科技 · %s" % tier, 24)
+	var title := UIKit.title_label("科技 · %s" % tier, 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
 	var hint := UIKit.label("本局全员同档 —— 点选一张科技，再点「确定」生效；超时将随机选择", 13, UIKit.TEXT_DIM)
