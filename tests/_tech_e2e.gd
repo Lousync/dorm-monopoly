@@ -1,5 +1,5 @@
 extends SceneTree
-## 开局科技真实开局链路验证（辅助脚本，不进 CI 套件清单）：
+## 科技真实开局链路验证（辅助脚本，不进 CI 套件清单）：
 ## 模拟真实开房（ENet 服务器 + Net.players 1 真人 2 机器人）→ 对局场景自然 _host_setup
 ## → 科技阶段开启 → 房主（peer 1）收到选卡弹层 → 走真按钮链路应答 → 全员拿到科技。
 ## 跑法：godot --headless --path . --script tests/_tech_e2e.gd

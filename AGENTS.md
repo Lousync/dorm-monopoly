@@ -37,7 +37,7 @@
 | `道具系统.md` | 体力/冷却/唯一性/焚毁/免疫标签、金货子系统、卡面规格 |
 | `道具图鉴.md` | **逐件道具唯一来源**：品质/能量/类型/效果/联动/卡面文案（68 件） |
 | `开局设置.md` | 房主开局配置项（经济/节奏/胜利/道具/特殊）；**每局从默认值起、无预设方案** |
-| `开局科技.md` | 开局三选一科技机制 + 图鉴 |
+| `科技.md` | 科技机制（三档 · 发车前 / 将来可中局获得）+ 图鉴 |
 | `畸变.md` | 全场畸变机制 + 图鉴 + 候选草案 |
 | `设计决策留痕.md` | 讨论过程、拍板理由、当时的备选方案与日期（**不是当前事实**） |
 | `图鉴.html` | **生成产物，勿手改**（唯一的非 `.md` 活文件）：事件卡 / 道具 / 科技 / 畸变 的检索页。由 `tools/gen_gallery.gd` 从数据表 + `道具图鉴.md` 生成，浏览器直接打开 |
@@ -104,7 +104,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/chance_test.gd    # 机会卡单测（三类分布 / 15 个智斗字段 / 选目标 / 抉择）
 & $G --headless --path . --script tests/regression_test.gd # 回归单测（审查发现的问题逐条钉住）
 & $G --headless --path . --script tests/aberration_test.gd # 畸变单测（两道闸门 + 逐条效果）
-& $G --headless --path . --script tests/tech_test.gd    # 开局科技单测（定档抽卡 + 逐条效果）
+& $G --headless --path . --script tests/tech_test.gd    # 科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
 & $G --headless --path . --script tests/hud_test.gd      # HUD 回归（身家条/底栏/客户端视角）
@@ -163,7 +163,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   左右、不再打架**；**批次 13 辛 ② 起战报栏顶边已收到 52**（贴在两枚按钮之下），这张图用来核那一条；
   `abshow` → 把房主的 `_ab_active` 写一条畸变再 `_broadcast_state()`，让**顶部居中的畸变横幅**
   亮起来核对落位与不重叠（批次 12 D；如 `xx_abshow_table_plain.png`）；
-  `techroll` → 播**开局科技定档演出**（屏幕层，`_show_tech_tier`），停在「等级横幅」那一刻
+  `techroll` → 播**科技定档演出**（屏幕层，`_show_tech_tier`），停在「等级横幅」那一刻
   （如 `xx_techroll_table_plain.png`）——核对等级配色 / 落位。**2026-10-09 起演出无骰面**
   （骰子绘制已删），随机与房主指定是同一种演出 ⇒ 文件名带不带 `fixed` 已无区别
   （分支名 `techroll` 保留，多处文档按它引用，别顺手改名）。

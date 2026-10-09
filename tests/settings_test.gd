@@ -42,7 +42,7 @@ func _test_object() -> void:
 	_check(s.max_rounds == 30 and s.win_mode == "rounds" and s.win_cash == 50000,
 		"回合上限 30 / 胜利条件总资产排名 / 目标现金 5 万 默认")
 	_check(s.shop_on and s.black_on and s.casino_on, "小卖部 / 黑市 / 赌场默认开")
-	_check(s.tech_on, "开局科技默认开（例外二：「默认 ≠ 现状」，2026-10-09 用户定）")
+	_check(s.tech_on, "科技默认开（例外二：「默认 ≠ 现状」，2026-10-09 用户定）")
 	_check(s.tech_tier == GameSettings.TECH_TIER_RANDOM, "科技等级默认 = 随机")
 	var c := s.copy()
 	c.start_cash = 40000

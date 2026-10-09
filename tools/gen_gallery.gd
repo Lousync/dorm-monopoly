@@ -67,7 +67,7 @@ func _initialize() -> void:
 	var sections: Array = [
 		_section("cards", "事件卡", _entries_cards()),
 		_section("items", "道具", _entries_items(doc)),
-		_section("techs", "开局科技", _entries_techs()),
+		_section("techs", "科技", _entries_techs()),
 		_section("aberrations", "畸变", _entries_aberrations()),
 	]
 	_report_doc_gaps(doc, _doc_lines)   # 缺项要在 entries 之后再补，见函数注释
@@ -300,7 +300,7 @@ func _doc_rows(id: String, doc: Dictionary) -> Array:
 	return rows
 
 
-# ---------------------------------------------------------------- 开局科技
+# ---------------------------------------------------------------- 科技
 
 func _entries_techs() -> Array:
 	var out: Array = []

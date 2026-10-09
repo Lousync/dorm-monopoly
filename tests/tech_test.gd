@@ -1,8 +1,8 @@
 extends SceneTree
-## 开局科技集成单测：掷骰定档 / 同档抽三 / 全 bot 跑通科技阶段 /
+## 科技集成单测：掷骰定档 / 同档抽三 / 全 bot 跑通科技阶段 /
 ## 逐条效果（上限叠加、回合开始型、路径收益、折扣、保单、里程碑、回收返现）/ 快照字段。
 ## 跑法：godot --headless --path . --script tests/tech_test.gd
-## 规则来源：doc/game-design/开局科技.md（2026-10-04 定稿）
+## 规则来源：doc/game-design/科技.md（2026-10-04 定稿）
 
 var fails := 0
 

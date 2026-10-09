@@ -168,7 +168,7 @@ var ab_dur_row: HBoxContainer # 对局内设置面板：持续回合 chips（房
 var ab_cond_sw: UIKit.Switch  # 对局内设置面板：条件触发开关（房主；原为「关 / 开」两枚 chip）
 var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
-# ---------------- 开局科技（host 状态，规则见 doc/game-design/开局科技.md） ----------------
+# ---------------- 科技（host 状态，规则见 doc/game-design/科技.md） ----------------
 var _tech_tier := ""          # 本局科技等级（掷骰 / 房主指定，空 = 未开科技）
 var _tech_offers := {}        # token -> {"peer": int, "names": Array}：本局**同时**三选一的各份
 var _tech_picks := {}         # peer -> 选中的科技名（房主权威；全员同时选，2026-10-07）
@@ -563,7 +563,7 @@ func _build_hp() -> Array:
 			"bonus_used": 0,
 			"roll_bonus": 0, "reroll_next": false, "silence": 0, "silence2": 0, "shield": 0,
 			"charm_used": false, "emg_used": false, "loan_left": 0, "rework": 3,
-			# 开局科技新增字段（tech = 所选科技名；wuyun/yanguang/kingtu = 对应科技的计数）
+			# 科技新增字段（tech = 所选科技名；wuyun/yanguang/kingtu = 对应科技的计数）
 			"tech": "", "wuyun_left": 0, "yanguang_left": 0, "kingtu": 0,
 			# 2026-10-07 批次：悔棋/天命在握/任意门（次数）、东山再起/接收大员（一次性）、
 			# 广置家业（档位）、小金库（一次性）；tianming_roll = 天命在握指定的本盘点数
@@ -600,15 +600,15 @@ func _host_setup() -> void:
 	if hp.is_empty():
 		return
 	if _settings.tech_on:
-		await _tech_phase()   # 开局科技：掷骰定档 + 全员三选一（见开局科技.md）
+		await _tech_phase()   # 科技：掷骰定档 + 全员三选一（见科技.md）
 	_broadcast_state()
 	if at_mode == "host":
 		get_tree().create_timer(3.0).timeout.connect(_autotest_watch)
 	_run_game()
 
-# ================= 房主：开局科技 =================
+# ================= 房主：科技 =================
 # 定档 → 每人私密同档三选一（bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。
-# 规则：doc/game-design/开局科技.md。定档 = **系统等概率选一档**（三档各 1/3）——
+# 规则：doc/game-design/科技.md。定档 = **系统等概率选一档**（三档各 1/3）——
 # 原「掷 1~6 点再映射」于 2026-10-09 去掉（分布本就是等分，去掉骰子不改平衡，
 # 见 TechData.random_tier）。
 
@@ -5461,7 +5461,7 @@ func _item_turn_start(p: Dictionary) -> void:
 	if _ab_has("奖学金季"):
 		p.money = int(p.money) + 300
 		_log("【奖学金季】%s 领到 %s 补贴" % [p.name, GameData.fmt_money(300)], "#74d188")
-	# ---- 开局科技：回合开始型（见 tech_data / 开局科技.md） ----
+	# ---- 科技：回合开始型（见 tech_data / 科技.md） ----
 	if _has_tech(p, "助困金") and int(p.get("money", 0)) < 1000:
 		p.money = int(p.money) + 500   # 贫困线兜底（先于其他进账判定）
 	if _has_tech(p, "零花钱规划"):

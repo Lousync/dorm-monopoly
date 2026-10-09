@@ -78,8 +78,8 @@
   机器人自动玩、破产者观战。
 - 「失物招领」4 格随机捡一件道具，「特浓咖啡」2 格可**再行动一次**；
   「空教室 / 卧谈会」免费休息。
-- **开局**：房主可调一套经济 / 节奏 / 胜利 / 道具设置（`开局设置.md`），并可开「开局科技」——
-  发车前每人私密三选一（`开局科技.md`）。
+- **开局**：房主可调一套经济 / 节奏 / 胜利 / 道具设置（`开局设置.md`），并可开「科技」——
+  发车前每人私密三选一（`科技.md`）。
 - 付不起钱即破产，名下地产充公、道具清空；**活到最后**，或 **30 轮后总资产最高**者获胜。
 
 ## 操作与表现
@@ -135,7 +135,7 @@ scripts/
   game_data.gd         56 格棋盘生成、机会卡数据、租金/路径/几何等纯规则（可单测）
   game_settings.gd     开局设置：房主可调的经济/节奏/胜利/道具/特殊项
   item_data.gd         道具数据总表（品质/体力/冷却/唯一性；台账见 doc/game-design/道具系统.md）
-  tech_data.gd         开局科技数据（三选一，池与档位）
+  tech_data.gd         科技数据（三档 · 发车前三选一，池与档位）
   aberration_data.gd   畸变数据（全场事件）
   item_card.gd         道具卡面控件（图鉴 / 货架 / 使用展示共用）
   game.gd              对局场景：房主权威回合状态机 + 全员状态同步 + HUD + 小游戏
@@ -182,7 +182,7 @@ tools/                 构建期工具（**不进游戏**）：`gen_gallery.gd` 
   面向 AI 编码代理，人类开发者同样先读这一篇）
 - **玩法设计**：`doc/game-design/`（**全局语义见该目录 `术语表.md`**）
   （棋盘与地产 / 机会卡 / 经济与胜负 / 小卖部 / 黑市 / 赌场 / 道具系统 / 道具图鉴 /
-  开局科技 / 畸变 / 开局设置；另有 `设计决策留痕.md`；交互原型定稿存档在
+  科技 / 畸变 / 开局设置；另有 `设计决策留痕.md`；交互原型定稿存档在
   `doc/game-design/prototype/`，`.html`/`.drawio`）
 - **图鉴页**：`doc/game-design/图鉴.html`（**生成产物，勿手改**）—— 全部事件卡 / 道具 / 科技 /
   畸变 **共 193 条**的可搜索检索页，浏览器直接打开。改数据后跑
@@ -238,7 +238,7 @@ Godot_console.exe --headless --path . --script tests/shop_test.gd
 Godot_console.exe --headless --path . --script tests/casino_test.gd
 # 畸变单测（全场事件：两道闸门 + 逐条效果 + 对局内设置同步）
 Godot_console.exe --headless --path . --script tests/aberration_test.gd
-# 开局科技单测（定档抽卡 + 逐条效果）
+# 科技单测（定档抽卡 + 逐条效果）
 Godot_console.exe --headless --path . --script tests/tech_test.gd
 # 开局设置单测（操作限时挡位）
 Godot_console.exe --headless --path . --script tests/settings_test.gd

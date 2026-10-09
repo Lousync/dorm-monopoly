@@ -1,5 +1,5 @@
 class_name TechData
-## 开局科技数据总表（唯一台账：doc/game-design/开局科技.md）。
+## 科技数据总表（唯一台账：doc/game-design/科技.md）。
 ## 每局**随机定档**（三档等概率、全场同档），每人从同档抽三选一，
 ## 允许多人重复。科技效果一律无 buff/debuff 标签——香皂对科技无效。
 ## 三档均已定稿实装（2026-10-07，黄金 19 条、编号 16 弃案留空；钻石 20 条）。
@@ -21,7 +21,7 @@ const TIER_COLORS := {
 static func tier_color(tier: String) -> Color:
 	return TIER_COLORS.get(tier, TIER_COLORS[TIER_SILVER])
 
-## 白银定稿 20 条目标：当前 20 条全部定稿（编号 4/6/17 弃案留空，见开局科技.md）
+## 白银定稿 20 条目标：当前 20 条全部定稿（编号 4/6/17 弃案留空，见 doc/game-design/科技.md）
 const TECHS := {
 	# ---- 白银（2026-10-04 定稿） ----
 	"助学金": {"tier": TIER_SILVER,
