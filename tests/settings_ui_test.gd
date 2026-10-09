@@ -13,6 +13,18 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 往视口里塞一次「按下 + 松开」，走真实 GUI 输入链路（`_input` → GUI 拾取都过一遍）。
+## 位置用 `global_position`：失焦兜底那处判据读的也是它（见 `UIKit.release_focus_on_click`）。
+func _push_click(vp: Viewport, at: Vector2) -> void:
+	for pressed in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		vp.push_input(ev)
+
 func _run() -> void:
 	print("== 大厅游戏设置弹窗 ==")
 	# `--script` 主脚本里不能用 `Net.` 标识符（编译期 Identifier not found），
@@ -87,6 +99,24 @@ func _run() -> void:
 	lb._on_settings_save()
 	_check(net.game_settings.tech_tier == "钻石", "选「钻石」写进设置（tech_tier）")
 	lb._set_wrap.visible = false
+
+	# ---- 输入框失焦回归（用户 2026-10-09 报：鼠标点到别处，聊天框仍高亮） ----
+	# 与主菜单同一条根因：按钮一律 FOCUS_NONE、面板不吃键盘焦点 ⇒ 点哪儿 LineEdit 都还攥着
+	# 焦点，「focus」样式（金色描边）一直挂着。主菜单 2026-10-08 已补 `_input` 兜底，
+	# **大厅漏了同一处** —— 这条钉住它（走 `push_input` 的真实 GUI 链路，不是直接调处理函数）。
+	var vp: Viewport = lb.get_viewport()
+	lb._chat_edit.grab_focus()
+	_check(vp.gui_get_focus_owner() == lb._chat_edit, "聊天输入框点一下拿得到焦点")
+	_push_click(vp, Vector2(6, 6))          # 屏幕左上角：落在聊天框之外
+	_check(vp.gui_get_focus_owner() != lb._chat_edit, "点聊天框之外 → 收掉焦点（不再高亮）")
+	# 设置弹窗里的数字框同理：修的是「场景级」那一处兜底，不是只堵了聊天框这一个口子
+	lb._set_wrap.visible = true
+	lb._set_cash_edit.grab_focus()
+	_check(vp.gui_get_focus_owner() == lb._set_cash_edit, "设置弹窗数字框拿得到焦点")
+	_push_click(vp, Vector2(6, 6))
+	_check(vp.gui_get_focus_owner() != lb._set_cash_edit, "点数字框之外 → 收掉焦点")
+	lb._set_wrap.visible = false
+
 	# 「开始游戏！」不再弹设置窗（本测试只有 1 人，can_start 不通过，不会真的换场景）
 	lb._start_btn.pressed.emit()
 	_check(not lb._set_wrap.visible, "点「开始游戏！」直接开局，不再弹设置弹窗")

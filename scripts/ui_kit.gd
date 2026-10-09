@@ -198,6 +198,32 @@ static func line_edit(placeholder: String, size: int = 15) -> LineEdit:
 	e.add_theme_color_override("selection_color", Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.3))
 	return e
 
+## 点击输入框之外时收掉 LineEdit 的焦点。**凡是有 LineEdit 的场景，在 `_input()` 里调一行即可**：
+##     func _input(e: InputEvent) -> void:
+##         UIKit.release_focus_on_click(self, e)
+##
+## **病因（用户在两个入口各报过一次，同一处根因）**：本项目按钮一律 `FOCUS_NONE`（见 `button()`），
+## 标签 `MOUSE_FILTER_IGNORE`、面板也不吃键盘焦点 ⇒ **点哪儿 LineEdit 都还攥着焦点**，
+## 那个金色的 `focus` 样式（见 `line_edit()`）就一直挂着 —— 2026-10-08 主菜单的昵称框、
+## 2026-10-09 大厅的聊天框。
+##
+## **走 `_input`（比 GUI 拾取**先**拿到事件）**：点**落在输入框内**就一个字都不动、让 LineEdit
+## 自己处理光标定位；落在别处才收焦点，而这次点击**照常派发给下面的控件** —— 不吞按钮的点击，
+## 也不影响「点房间列表的加入」「点确定」这些操作（它们在 `release_focus()` 之后照常收到事件）。
+##
+## **判据读事件自带的位置，不读 `get_mouse_position()`**：合成事件（测试用 `push_input` 塞进来的）
+## 里两者不是一回事 —— 读后者会让本函数在测试里形同虚设（永远拿真鼠标的位置去比）。真机点击两者相同。
+static func release_focus_on_click(host: Node, e: InputEvent) -> void:
+	var mb := e as InputEventMouseButton
+	if mb == null or not mb.pressed:
+		return
+	var vp := host.get_viewport()
+	if vp == null:
+		return
+	var f := vp.gui_get_focus_owner()
+	if f is LineEdit and not f.get_global_rect().has_point(mb.global_position):
+		f.release_focus()
+
 static func panel(bg: Color, corner: int = 10, border: Color = Color(0, 0, 0, 0), border_w: int = 0) -> Panel:
 	var p := Panel.new()
 	p.add_theme_stylebox_override("panel", stylebox(bg, corner, border, border_w))

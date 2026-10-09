@@ -196,6 +196,12 @@ func _exit_tree() -> void:
 	Net.lobby_changed.disconnect(_refresh)
 	Net.chat_received.disconnect(_refresh_chat)
 
+## 点输入框之外要收掉焦点（用户 2026-10-09 报「鼠标点到别处，聊天框还亮着」）。
+## 与主菜单那条是**同一处根因、同一个兜底**（按钮都 FOCUS_NONE ⇒ 点哪儿 LineEdit 都攥着焦点），
+## 只是主菜单 2026-10-08 已补、大厅漏了。判据与细节见 `UIKit.release_focus_on_click`。
+func _input(e: InputEvent) -> void:
+	UIKit.release_focus_on_click(self, e)
+
 func _refresh() -> void:
 	_room_label.text = "房间：%s（%d/%d 人）" % [Net.room_name, Net.players.size(), Net.MAX_PLAYERS]
 	for c in _players_box.get_children():

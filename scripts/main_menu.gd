@@ -412,16 +412,10 @@ func _repo_button() -> Button:
 	return b
 
 ## 点空白处要收掉输入框的焦点（用户 2026-10-08 报「鼠标点到别处，昵称框还亮着」）。
-## 根因：本项目所有按钮都是 `FOCUS_NONE`、面板也不吃键盘焦点，于是点哪儿 LineEdit 都还攥着
-## 焦点，`focus` 样式（金色描边）一直挂着。
-## 用 `_input`（GUI 之前拿到事件）：点**落在输入框内**就不动它，让 LineEdit 自己处理；
-## 落在别处才收焦点，而这次点击照常派发给下面的控件，不会吞掉按钮的点击。
+## 实现在 `UIKit.release_focus_on_click` —— 2026-10-09 大厅的聊天框报的是同一处根因，
+## 于是那份逻辑提成公共函数、两处共用（原先这里写的是它的一份内联副本）。
 func _input(e: InputEvent) -> void:
-	if not (e is InputEventMouseButton) or not (e as InputEventMouseButton).pressed:
-		return
-	var f := get_viewport().gui_get_focus_owner()
-	if f is LineEdit and not f.get_global_rect().has_point(get_viewport().get_mouse_position()):
-		f.release_focus()
+	UIKit.release_focus_on_click(self, e)
 
 func _exit_tree() -> void:
 	Net.lobby_joined.disconnect(_on_lobby_joined)
