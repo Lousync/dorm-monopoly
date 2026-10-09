@@ -1065,7 +1065,8 @@ func _close_tech_offer() -> void:
 	_tech_ok = null
 
 # ================= 房主：「发现」三选一（术语表.md） =================
-# 触发载体 = 失物招领格：从**可获取池**等概率翻出 3 件候选（2026-10-10 重构：人为权重退场），
+# 触发载体 = 失物招领格：从**可获取池**等概率翻出候选（**默认 3 件**，2026-10-10 重构：人为权重退场；
+# 持科技「眼尖手快」者为 4 件 —— 件数口径写在 `doc/game-design/术语表.md` 的「发现」词条），
 # 只有本人看得到（私密 RPC），选中入包（受背包上限）；bot 按品质价自动选、超时随机兜底。
 # 「不限时」档不自动关。
 # 大卡复用 ItemCard.SIZE_LARGE（道具系统.md §九「卡片规格」：发现三选一用大卡）。
@@ -1200,10 +1201,13 @@ func _show_discover_offer(token: int, ids: Array) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 14)
 	m.add_child(v)
-	var title := UIKit.title_label("发现 · 三选一", 24)
+	# 标题**不带件数**：候选默认 3 件，持科技「眼尖手快」时 4 件（2026-10-10）——
+	# 写死数字要么对一半人成假话、要么得把件数一路传到文案层（多一处会漂的第二来源）。
+	# 件数只在 `术语表.md` 的「发现」词条里写清（那是给设计者查口径的地方）。
+	var title := UIKit.title_label("发现 · 候选", 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var hint := UIKit.label("只有你能看到这三件——点选一张拿进背包；超时将随机选择", 13, UIKit.TEXT_DIM)
+	var hint := UIKit.label("只有你能看到这几件——点选一张拿进背包；超时将随机选择", 13, UIKit.TEXT_DIM)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(hint)
 	var row := HBoxContainer.new()
