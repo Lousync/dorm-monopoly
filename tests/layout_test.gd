@@ -1901,11 +1901,11 @@ func _run() -> void:
 			_check(hr.get_child_count() == pool4 and hr.get_child(0) == first4,
 				"重复调用不重建手牌节点（%d → %d 张）" % [pool4, hr.get_child_count()])
 			# 有厚度（能投影）与品质色：厚度取**节点自己的 mesh**（不比实现常量），
-			# 品质色是数据契约（招财猫=白 / 黑卡=橙，取自 ItemData.QUALITY_COLORS）。
+			# 品质色是数据契约（招财猫=白 / 黑卡=金，取自 ItemData.QUALITY_COLORS）。
 			tp4.set_hand([{"id": "招财猫"}, {"id": "黑卡"}])
 			var thick4 := true
 			var color4 := true
-			var want_q := ["白", "橙"]
+			var want_q := ["白", "金"]
 			for i in 2:
 				var mi4 := hr.get_child(i) as MeshInstance3D
 				var bm4: BoxMesh = null
@@ -1917,7 +1917,7 @@ func _run() -> void:
 				if mat4 == null or not mat4.albedo_color.is_equal_approx(ID4.QUALITY_COLORS[want_q[i]]):
 					color4 = false
 			_check(thick4, "每张牌都是有厚度的盒子（BoxMesh，厚度 ≥ 0.01 世界单位）")
-			_check(color4, "牌身用品质色（招财猫=白 / 黑卡=橙）")
+			_check(color4, "牌身用品质色（招财猫=白 / 黑卡=金）")
 			# 批次 5 Task 3 把牌**放大到 1.5 倍上下**（0.30×0.34 → 0.46×0.54）。
 			# 尺寸取**节点自己的 mesh**（不是读常量），下界钉在 0.40/0.48：谁要是缩回批次 3 那档，
 			# 这条先红（"明显比批次 3 更大"是本任务的验收项）。

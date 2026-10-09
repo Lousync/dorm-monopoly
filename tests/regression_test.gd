@@ -457,7 +457,7 @@ func _test_dead_player_items_return_to_pool(g) -> void:
 	g.shops = {}
 	g._black_slots = []
 	g.items_consumed = {}
-	_check(g._item_pool("橙").has("黑卡"), "破产玩家持有的唯一道具回到可获取池")
+	_check(g._item_pool("金").has("黑卡"), "破产玩家持有的唯一道具回到可获取池")
 
 func _test_conn_lost_unpauses(g, lobby) -> void:
 	print("== 掉线回主菜单必须解除暂停 ==")

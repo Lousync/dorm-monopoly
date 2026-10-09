@@ -771,8 +771,8 @@ func _tech_apply_instant(p: Dictionary, picked: String) -> void:
 			if _grant_item_of_quality(p, "紫", "孤注一掷") == "":
 				p.money = int(p.money) + 3000   # 紫档缺货兜底（同上）
 		"欧皇附体":
-			if _grant_item_of_quality(p, "橙", "欧皇附体") == "":
-				p.money = int(p.money) + 6000   # 橙档缺货兜底（同上）
+			if _grant_item_of_quality(p, "金", "欧皇附体") == "":
+				p.money = int(p.money) + 6000   # 金档缺货兜底（同上）
 		_:
 			pass
 
@@ -4785,7 +4785,7 @@ func _show_info_panel(idx: int) -> void:
 		"item":
 			accent = ItemData.QUALITY_COLORS["紫"]
 		"again":
-			accent = ItemData.QUALITY_COLORS["橙"]
+			accent = ItemData.QUALITY_COLORS["金"]
 	info_title.text = "【%s】" % String(d.name)
 	info_title.add_theme_color_override("font_color", accent)
 	info_body.text = body
@@ -5082,9 +5082,9 @@ func _open_card_gallery() -> void:
 
 	gv.add_child(_card_section("道具栏尺寸（小 · 96×132）", [
 		_card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
-		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "稀有 · 被动"),
-		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "超稀有 · ⚡3"),
-		_card_cell("交换生", ItemCard.SIZE_SMALL, {}, "超稀有 · ⚡3"),
+		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
+		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡3"),
+		_card_cell("交换生", ItemCard.SIZE_SMALL, {}, "稀有 · ⚡3"),
 		_card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡5"),
 		_card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "传说 · ⚡4"),
 		_card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "传说 · 一次性"),
@@ -5568,7 +5568,7 @@ func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -
 			_log("【能量回收】%s 找回了 1⚡（现 %d/%d）" % [p.name, int(p.stamina), _stamina_cap(p)], "#74d188")
 		_consume_cost_pen(p)
 		# 一次性道具（type=consumable，紫档主动等）：用后自动丢弃回池。
-		# 橙档焚毁件（蛋蛋节 / 亡牌飞行员coco / 二青会酒寒暑）已在上面按 items_consumed 永久离池。
+		# 焚毁件（蛋蛋节 / 亡牌飞行员coco / 二青会酒寒暑）已在上面按 items_consumed 永久离池。
 		# 打印店复制件（`fake`）也是用后即弃，但**不回池**（原主那件还在，回池会污染唯一性）。
 		var once: bool = String(d.type) == "consumable" \
 			and String(it.id) != "蛋蛋节" and String(it.id) != "亡牌飞行员coco" \
@@ -5614,7 +5614,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 	if need_player and (t.is_empty() or not bool(t.alive)):
 		return false
 	match id:
-		# ---- 首批 ----
 		"作弊器":
 			p.cheat_roll = clampi(arg, 0, 12)
 			_log("%s 掏出【作弊器】，下一次转盘他说了算" % p.name, "#8fb7f2")
@@ -5654,7 +5653,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			_apply_egg_festival(p)
 		"亡牌飞行员coco":
 			_apply_coco(p)
-		# ---- 白 ----
 		"兼职中介":
 			p.money = int(p.money) + 800
 			_log("%s 找【兼职中介】拿到 ¥800" % p.name, "#74d188")
@@ -5682,7 +5680,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			# 整行由这里拼好（`s_peek_card` 不再自带前缀，见它的函数注释）——措辞一字未改
 			s_peek_card.rpc(int(p.peer), "（小抄）机会牌堆下一张：%s" % String(_peek_event().get("t", "?")))
 			_log("%s 偷偷看了眼机会牌堆顶" % p.name, "#f0c064")
-		# ---- 绿 ----
 		"占座":
 			var own := _own_props(int(p.peer))
 			if own.is_empty():
@@ -5729,7 +5726,7 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			if bool(t.alive) and running:
 				await _move_and_resolve(t, 2)
 		"二手群接龙":
-			var pool := _item_pool("绿")
+			var pool := _item_pool("蓝")
 			if pool.is_empty():
 				return false
 			var gid: String = pool[randi_range(0, pool.size() - 1)]
@@ -5743,7 +5740,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			p.money = int(p.money) - 500
 			p.stamina = mini(int(p.stamina) + 3, _stamina_cap(p))
 			_log("%s 充了 ¥500 校园卡，恢复体力" % p.name, "#74d188")
-		# ---- 蓝 ----
 		"换座位":
 			if t.is_empty() or int(t.peer) == int(p.peer):
 				return false
@@ -5835,7 +5831,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			else:
 				t.roll_bonus = int(t.get("roll_bonus", 0)) + 3
 				_log("%s 点名 %s：下回合点数 +3" % [p.name, t.name], "#c9a6ff")
-		# ---- 紫 ----
 		"拆解钳":
 			if (t.get("items", []) as Array).is_empty():
 				return false
@@ -5873,7 +5868,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			else:
 				t.silence = maxi(int(t.get("silence", 0)), 3)
 				_log("%s 包场：%s 接下来两个回合不能使用道具" % [p.name, t.name], "#c9a6ff")
-		# ---- 紫·新批次（2026-10-04 定稿 · 2026-10-05 实装） ----
 		"刮刮乐":
 			var sc := randi_range(1, 10) * 100
 			p.money = int(p.money) + sc
@@ -5908,7 +5902,7 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 		"打印店":
 			var printable: Array = []
 			for pit in (t.get("items", []) as Array):
-				if String(ItemData.def(String(pit.id)).get("quality", "")) != "橙":
+				if String(ItemData.def(String(pit.id)).get("quality", "")) != "金":
 					printable.append(pit)
 			if printable.is_empty() or p.items.size() >= _bag_cap(p):
 				return false
@@ -5934,7 +5928,6 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 		"出老千":
 			_log("%s 用【出老千】：本场赌局没赢也能分钱" % p.name, "#f0a0c0")
 			await casino.run(p, int(p.peer))
-		# ---- 橙 ----
 		"二两寒暑":
 			var cpen2: Array = t.get("cost_pen", [])
 			cpen2.append(2)

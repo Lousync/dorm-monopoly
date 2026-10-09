@@ -398,7 +398,7 @@ func _render_players() -> void:
 func _render_quality() -> void:
 	for c in _q_box.get_children():
 		c.queue_free()
-	for q in ["全部", "白", "绿", "蓝", "紫", "橙"]:
+	for q in ["全部"] + ItemData.QUALITIES:   # 档位从 `ItemData.QUALITIES` 派生：改档位只动数据表（Ruling BL/BM）
 		var b := UIKit.button(q, 11)
 		if q == qfilter:
 			UIKit.restyle_button(b, "primary")

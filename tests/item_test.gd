@@ -53,6 +53,7 @@ func _run() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false  # 冻结主循环：本测试手动摆状态
+	_test_quality_tiers(g)
 	_test_egg(g)
 	_test_coco(g)
 	_test_use_guard(g)
@@ -165,7 +166,7 @@ func _test_roof(g) -> void:
 	_check(int(p0.stamina) == 2, "顶楼加盖：消耗 3⚡（5→2）")
 	_check(p0.items.is_empty(), "顶楼加盖：一次性用后丢弃")
 
-## 二青会酒寒暑（橙·一次性·焚毁）+ 强化版「组队学习·寒暑」（1⚡ / 无冷却 / 独立次数）
+## 二青会酒寒暑（紫·一次性·焚毁）+ 强化版「组队学习·寒暑」（1⚡ / 无冷却 / 独立次数）
 func _test_erging(g) -> void:
 	print("== 二青会酒寒暑 ==")
 	var p0 := _mk_player(1, "甲")
@@ -190,7 +191,7 @@ func _test_erging(g) -> void:
 	_check(g.items_consumed.has("二青会酒寒暑"), "二青会用后焚毁不回池")
 	_check(p0.items.size() == 1 and String(p0.items[0].id) == "组队学习·寒暑", "授予强化版组队学习")
 	_check(int(p0.item_used_n) == 1 and bool(p0.item_used), "二青会占用普通使用额度")
-	_check(g._item_pool("绿").find("组队学习·寒暑") == -1, "授予件不进随机池（hidden）")
+	_check(g._item_pool("蓝").find("组队学习·寒暑") == -1, "授予件不进随机池（hidden）")
 	var grade := ItemData.def("组队学习·寒暑")
 	_check(int(grade.get("cost", 0)) == 1, "授予件能量 = 1")
 	_check(int(grade.get("cooldown", 0)) == 0, "授予件无冷却")
@@ -235,6 +236,32 @@ func _test_card_state(g) -> void:
 	p.items = [{"id": "交换生", "cd": 2}]
 	s = g._card_state(p, p.items[0])
 	_check(not s.has("cd_preview"), "冷却中不给冷却预览（改显剩余）")
+
+## 品质四档（2026-10-10 道具重构）：**件数分布就是稀有度曲线**，件数与严格递减是硬契约。
+func _test_quality_tiers(_g) -> void:
+	print("== 品质四档分布 ==")
+	_check(ItemData.QUALITIES == ["白", "蓝", "紫", "金"], "四档（实得 %s）" % str(ItemData.QUALITIES))
+	_check(not ItemData.QUALITY_NAMES.has("绿") and not ItemData.QUALITY_NAMES.has("橙"),
+		"旧键「绿」「橙」已从显示名表退场")
+	var cnt := {"白": 0, "蓝": 0, "紫": 0, "金": 0}
+	var stray: Array = []
+	for id in ItemData.ITEMS:
+		var q := String(ItemData.ITEMS[id].get("quality", ""))
+		if cnt.has(q):
+			cnt[q] += 1
+		else:
+			stray.append("%s=%s" % [id, q])
+	_check(stray.is_empty(), "68 件的品质键全在四档内（越界：%s）" % ", ".join(PackedStringArray(stray)))
+	_check(cnt["白"] == 27 and cnt["蓝"] == 20 and cnt["紫"] == 16 and cnt["金"] == 5,
+		"件数 白27 / 蓝20 / 紫16 / 金5（实得 %d/%d/%d/%d）" % [cnt["白"], cnt["蓝"], cnt["紫"], cnt["金"]])
+	# Ruling BG：合计 68 要**真的量**（不是由「件数相等」隐式推出）——ITEMS 少一件/多一件都该红。
+	_check(ItemData.ITEMS.size() == 68, "数据表共 68 件（实得 %d）" % ItemData.ITEMS.size())
+	_check(cnt["白"] + cnt["蓝"] + cnt["紫"] + cnt["金"] == 68, "四档合计 = 68（无越界件漏计）")
+	_check(cnt["白"] > cnt["蓝"] and cnt["蓝"] > cnt["紫"] and cnt["紫"] > cnt["金"],
+		"白 > 蓝 > 紫 > 金（严格递减）")
+	for q in ItemData.QUALITIES:
+		_check(ItemData.QUALITY_PRICES.has(q) and ItemData.QUALITY_COLORS.has(q),
+			"%s 档在定价表与配色表里都有" % q)
 
 ## 单件售价覆盖（二青会 ¥8000）+ 货架冷却预览状态
 func _test_price_state(g) -> void:

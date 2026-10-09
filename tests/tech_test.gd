@@ -195,8 +195,8 @@ func _run() -> void:
 	p1.money = 20000
 	g._tech_apply_instant(p1, "欧皇附体")
 	_check(int(p1.money) == 20000 and p1.items.size() == 1
-		and String(ItemData.def(String(p1.items[0].id)).quality) == "橙",
-		"欧皇附体：开局获得一件橙档道具")
+		and String(ItemData.def(String(p1.items[0].id)).quality) == "金",
+		"欧皇附体：开局获得一件金档道具")
 	g._tech_apply_instant(p1, "悔棋")
 	_check(int(p1.get("meiqi_left", 0)) == 1, "悔棋：置 1 次")
 	g._tech_apply_instant(p1, "天命在握")

@@ -383,7 +383,7 @@ const HAND_FAN_DEG := 8.0
 ## 抬起来只会**更远离**桌垫下沿那条木纹留白（往上挪），所以它不受"整排落在木纹留白里"那条约束。
 const HAND_SEL_LIFT := 0.13
 ## 待确认丢弃时**牌身**染成的红（只改牌身材质色，**不动牌面贴图**：图标仍要认得出来）。
-## 红色要压得住品质色（白/绿/蓝/紫/橙都染得红），所以饱和度取高、值取中上。
+## 红色要压得住品质色（白/蓝/紫/金都染得红），所以饱和度取高、值取中上。
 const HAND_DISCARD_COLOR := Color(0.86, 0.28, 0.26)
 
 # ---- 批次 12 B1：手牌正面 = 商店那张卡（每槽一个 SubViewport） ----
@@ -641,7 +641,7 @@ func _apply_hand_layout() -> void:
 			continue
 		var id := String((_hand_items[i] as Dictionary).get("id", ""))
 		var d := ItemData.def(id)
-		# 品质色是**数据契约**：键就是 "白"/"绿"/"蓝"/"紫"/"橙"（item_data.gd）。
+		# 品质色是**数据契约**：键就是 `ItemData.QUALITIES`（"白"/"蓝"/"紫"/"金"，见 item_data.gd）。
 		# 选中 → 提亮一档（不改品质色的语义，只是加亮）；待确认丢弃 → 染红（红色优先）。
 		var q: Color = ItemData.QUALITY_COLORS.get(String(d.get("quality", "白")), Color.WHITE)
 		if i == _hand_disc:

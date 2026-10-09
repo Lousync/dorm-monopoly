@@ -101,7 +101,7 @@ func _test_insufficient(g) -> void:
 	print("== 凑不出货钱 → 挨打 + 小黑屋 ==")
 	var p := _mk_player(1, "甲", 1000)
 	var t := _fresh_tiles()
-	_setup(g, [p], t, ["黑卡", "", ""])  # 橙，需 2 块地皮
+	_setup(g, [p], t, ["黑卡", "", ""])  # 金，需 2 块地皮
 	g._black_peer = 1
 	g._black_buy(1, 0)
 	_check(g._black_peer == 0, "被扔出黑市")
@@ -168,10 +168,10 @@ func _test_bot(g) -> void:
 	t[a].owner = 1
 	t[b].owner = 1
 	t[c].owner = 1
-	_setup(g, [p], t, ["平均主义", "黑卡", ""])  # 紫1 / 橙2
+	_setup(g, [p], t, ["平均主义", "黑卡", ""])  # 紫1 / 金2
 	g._black_peer = 1
 	g._bot_blackshop(p)
-	_check(p.items.size() == 1 and String(p.items[0].id) == "黑卡", "bot 选最值的橙货")
+	_check(p.items.size() == 1 and String(p.items[0].id) == "黑卡", "bot 选最值的金货")
 	_check(g._black_peer == 0, "bot 交完出口费离店")
 	_check((g.htiles[a].owner as int) == GameData.NO_OWNER, "bot 用地皮结账")
 

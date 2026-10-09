@@ -380,7 +380,7 @@ static func build_play_ui(g: Node) -> void:
 	var bbv := VBoxContainer.new()
 	bbv.add_theme_constant_override("separation", 6)
 	bbm.add_child(bbv)
-	bbv.add_child(UIKit.label("☠ 黑市 · 只收地皮（紫1 / 橙2 / 刷新1 / 出口1）", 13, Color(0.85, 0.55, 0.95)))
+	bbv.add_child(UIKit.label("☠ 黑市 · 只收地皮（紫1 / 金2 / 刷新1 / 出口1）", 13, Color(0.85, 0.55, 0.95)))
 	g.black_btns = []
 	for i in 3:
 		var bb := UIKit.button("买", 12)
