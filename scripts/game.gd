@@ -490,7 +490,7 @@ func _lab_hide_hud() -> void:
 ## 重建一局沙盒（同步版，不跑回合循环）
 func lab_reset() -> void:
 	running = false
-	_event_decks = {}
+	_event_deck = []
 	hp = _build_hp()
 	htiles = []
 	for i in GameData.TILES.size():
@@ -1577,6 +1577,16 @@ func _ab_tick() -> void:
 		_log("畸变【%s】退去了，一切恢复常轨" % id, "#8a90a5")
 		s_aberr.rpc(id, "end", 0)
 
+## 机会格抽到持续型畸变卡时用：先把已在生效的持续型提前结束（「新盖旧」，2026-10-09 拍板）。
+## 结束路径与 `_ab_tick` 的到期那条**逐句一致**（战报 + `s_aberr(id,"end")`），只是不减 left。
+## 保住「全场同时最多 1 条持续型」这条不变量 —— 玩家中途抽卡绕过了两道闸门，靠这里兜住。
+func _ab_end_active() -> void:
+	for a in _ab_active:
+		var id := String(a.id)
+		_log("畸变【%s】被新的畸变顶掉了" % id, "#8a90a5")
+		s_aberr.rpc(id, "end", 0)
+	_ab_active.clear()
+
 ## 收集本回合候选：顺延队首（prio −1 插队）+ 新达成条件（prio 0）+ 随机掷中（prio 1）
 func _ab_candidates(p: Dictionary) -> Array:
 	var out: Array = []
@@ -1887,13 +1897,39 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 			else:
 				await _resolve_rent(p, idx)
 		"event":
-			var card: Dictionary = _draw_event(String(d.name))
-			# 仿桌游：机会/命运卡从棋盘中央对应牌堆抽出展示
-			s_card.rpc(String(card.t), GameData.card_kind(card), String(d.name))
-			_log("%s 抽到事件：%s" % [p.name, card.t])
-			# 批次 12 C2：演出停在 HOLD 等抽卡者点「确定」，**效果在确认之后才落地**。
-			await _await_card_confirm(p)
-			await _apply_card(p, card)
+			# 三类卡：先掷类别、再按类别取值（概率精确，不靠牌堆配比拼近似值）
+			match _roll_chance_kind():
+				"card":
+					var card: Dictionary = _draw_chance_card()
+					# 仿桌游：机会卡从棋盘中央牌堆抽出展示
+					s_card.rpc(String(card.t), GameData.card_kind(card), "机会")
+					_log("%s 抽到机会卡：%s" % [p.name, card.t])
+					# 批次 12 C2：演出停在 HOLD 等抽卡者点「确定」，**效果在确认之后才落地**。
+					await _await_card_confirm(p)
+					await _apply_card(p, card)
+				"item":
+					var q := _roll_quality(ItemData.CHANCE_ITEM_WEIGHTS.duplicate())
+					var qi: int = ItemData.QUALITIES.find(q)
+					while qi > 0 and _item_pool(ItemData.QUALITIES[qi]).is_empty():
+						qi -= 1   # 缺货向下降档（口径同失物招领）
+					var got := _grant_item_of_quality(p, ItemData.QUALITIES[qi], "道具卡")
+					if String(got) != "":
+						s_card.rpc("【道具卡】%s 拿到了【%s】！" % [p.name, got], "good", "道具卡", got)
+						await _await_card_confirm(p)
+					else:
+						s_card.rpc("【道具卡】%s 空手而归" % p.name, "info")
+						await _wait(0.4)
+				_:
+					# 畸变卡：从现有畸变池抽一条，全场立即生效（绕过两道闸门；持续型新盖旧）
+					var pool := _ab_random_pool()
+					if pool.is_empty():
+						s_card.rpc("【畸变卡】%s 抽了个空" % p.name, "info")
+						await _wait(0.4)
+					else:
+						var ab_id := String(pool[randi_range(0, pool.size() - 1)])
+						if String(AberrationData.def(ab_id).get("type", "")) == "持续":
+							_ab_end_active()
+						await _ab_trigger(p, ab_id)
 		"item":
 			# 失物招领 = 「发现」三选一（术语表.md）：按招领权重定品质，翻出三件候选私密挑一件。
 			# 品质缺货向下降档（口径同旧版），背包满 / 池空则落空。
@@ -1958,30 +1994,42 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 	if not bool(p.alive):
 		_check_end()
 
-## 机会/命运预生成牌堆（抽完再补洗）——「小抄」要能预览顶张，就必须有稳定牌序
-var _event_decks := {}
+## 机会牌堆（预生成洗牌、抽完再补洗）——「小抄」要能预览顶张，就必须有稳定牌序
+var _event_deck: Array = []
 
-func _new_event_deck(kind: String) -> Array:
-	var pool := GameData.events_for(kind)
+func _new_event_deck() -> Array:
+	var pool := GameData.events_for()
 	if not blackshop_enabled:
 		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_blackshop"))
 	if not _settings.shop_on:
 		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_shop"))
 	if pool.is_empty():
-		pool = GameData.events_for(kind)
-	var d := pool.duplicate(true)
-	d.shuffle()
-	return d
+		pool = GameData.events_for()   # 过滤到空则回退全池（口径与改造前一致）
+	pool.shuffle()
+	return pool
 
-func _draw_event(kind: String) -> Dictionary:
-	if not _event_decks.has(kind) or (_event_decks[kind] as Array).is_empty():
-		_event_decks[kind] = _new_event_deck(kind)
-	return (_event_decks[kind] as Array).pop_front()
+func _draw_chance_card() -> Dictionary:
+	if _event_deck.is_empty():
+		_event_deck = _new_event_deck()
+	return _event_deck.pop_front()
 
-func _peek_event(kind: String) -> Dictionary:
-	if not _event_decks.has(kind) or (_event_decks[kind] as Array).is_empty():
-		_event_decks[kind] = _new_event_deck(kind)
-	return (_event_decks[kind] as Array)[0]
+func _peek_event() -> Dictionary:
+	if _event_deck.is_empty():
+		_event_deck = _new_event_deck()
+	return _event_deck[0]
+
+## 这次落在机会格抽到哪一类。畸变总开关为「关」时第三档作废、并入机会卡（实际 90/10/0）。
+func _roll_chance_kind() -> String:
+	var r := randf()
+	if String(_settings.ab_freq) == "关":
+		# 畸变被房主关掉 ⇒ 机会格不该绕过设置把它塞回来：**只有** 5% 那档并进机会卡，
+		# 道具卡那 10% 不动（设计稿 §一 边界规则 1「实际分布 90/10/0」）
+		return "card" if r < GameData.CHANCE_P + GameData.CHANCE_AB_P else "item"
+	if r < GameData.CHANCE_P:
+		return "card"
+	if r < GameData.CHANCE_P + GameData.CHANCE_ITEM_P:
+		return "item"
+	return "aberr"
 
 func _resolve_buy(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -5102,8 +5150,8 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 				p.money = int(p.money) + amt
 				_log("%s 支使 %s 跑腿，收 ¥%d" % [p.name, t.name, amt], "#c9a6ff")
 		"小抄":
-			s_peek_card.rpc(int(p.peer), String(_peek_event("命运").get("t", "?")))
-			_log("%s 偷偷看了眼命运牌堆顶" % p.name, "#f0c064")
+			s_peek_card.rpc(int(p.peer), String(_peek_event().get("t", "?")))
+			_log("%s 偷偷看了眼机会牌堆顶" % p.name, "#f0c064")
 		# ---- 绿 ----
 		"占座":
 			var own := _own_props(int(p.peer))

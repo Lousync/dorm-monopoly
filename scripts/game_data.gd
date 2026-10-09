@@ -127,6 +127,12 @@ const TILE_DESC := {
 	"shop": "三栏货架 · 每家独立补货 · 落地即可逛",
 }
 
+## 机会格抽卡的类别概率（2026-10-09 定稿；**写死、不进开局设置**）。
+## 畸变总开关为「关」时第三档作废、并入机会卡（实际 90/10/0）。
+const CHANCE_P := 0.85
+const CHANCE_ITEM_P := 0.10
+const CHANCE_AB_P := 0.05
+
 ## 事件卡：t=文本；money=收支；from_each=每位其他室友给你；to_each=你给每位室友；
 ## move_steps=前进/后退若干格（途中踩到起点照常领工资）；go_jail=直接送宿委会。
 const EVENTS := [
@@ -164,19 +170,16 @@ const EVENTS := [
 	{"t": "在失物招领处认领回一件小道具", "gain_item_quality": "白"},
 	{"t": "社团活动抽奖，抽中一件道具", "gain_item_quality": "绿"},
 	{"t": "学长毕业清仓，塞给你一件好货", "gain_item_quality": "蓝"},
-	# ---- 机会卡专属事件（only 标记：只在「机会」格出现；命运格不发） ----
-	{"t": "路过小卖部，被老板拉进店里逛逛", "enter_shop": true, "only": "机会"},
-	{"t": "在公告栏后面捡到一张道具券", "gain_item_quality": "蓝", "only": "机会"},
-	{"t": "收到一条神秘短信：后门等你——黑市开张", "enter_blackshop": true, "only": "机会"},
+	# ---- 机会卡专属事件（原 `only: "机会"`；2026-10-09 命运并入后 only 机制退场） ----
+	{"t": "路过小卖部，被老板拉进店里逛逛", "enter_shop": true},
+	{"t": "在公告栏后面捡到一张道具券", "gain_item_quality": "蓝"},
+	{"t": "收到一条神秘短信：后门等你——黑市开张", "enter_blackshop": true},
 ]
 
-## 按格子类型取事件卡池：无 only 的通用卡 + only 命中当前格类型的专属卡（§8）
-static func events_for(kind: String) -> Array:
-	var out := []
-	for e in EVENTS:
-		if not e.has("only") or String(e.only) == kind:
-			out.append(e)
-	return out
+## 全部事件卡（黑市 / 小卖部开关造成的过滤在 `game._new_event_deck` 里做）。
+## 2026-10-09：`only` 机制随「命运」一起退场，这里不再按格型筛。
+static func events_for() -> Array:
+	return EVENTS.duplicate()
 
 ## 抽卡演出的**卡型**（决定卡面配色）：good / bad / move / jail / info 五类（事件卡.md §三）。
 ## 判定按字段优先级，顺序有意义（一张卡可能同时有 money 与 move_steps，先命中的说话）。

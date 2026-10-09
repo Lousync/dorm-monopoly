@@ -1,5 +1,5 @@
 class_name AberrationData
-## 畸变（全场事件）数据总表（唯一台账：doc/game-design/畸变.md，图鉴 14 条）。
+## 畸变（全场事件）数据总表（唯一台账：doc/game-design/畸变.md，图鉴 16 条）。
 ## 字段：type=持续|非持续；trigger=随机|条件；tag=debuff|buff|中性；
 ##       dur=持续回合数（0=用开局设置基准 ab_dur；诚信考试=1 即「本回合」）；
 ##       cond=条件触发参数；implemented=false 不进触发池。

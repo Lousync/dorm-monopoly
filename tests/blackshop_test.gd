@@ -226,22 +226,21 @@ func _test_sleep(g) -> void:
 
 func _test_events(g) -> void:
 	print("== 机会卡池过滤 ==")
-	var chance := GameData.events_for("机会")
-	var fate := GameData.events_for("命运")
+	var pool := GameData.events_for()
 	var has_black := false
-	for e in chance:
+	for e in pool:
 		if e.has("enter_blackshop"):
 			has_black = true
-	_check(has_black, "机会格卡池含进入黑市")
-	var fate_has := false
-	for e in fate:
-		if e.has("enter_blackshop"):
-			fate_has = true
-	_check(not fate_has, "命运格卡池不含进入黑市（only 过滤）")
+	_check(has_black, "机会卡池含进入黑市（黑市唯一入口）")
+	var stray_only := 0
+	for e in pool:
+		if e.has("only"):
+			stray_only += 1
+	_check(stray_only == 0, "only 字段已退场（实得 %d 张残留）" % stray_only)
 	g.blackshop_enabled = false
 	var leaked := false
 	for i in 60:
-		if g._draw_event("机会").has("enter_blackshop"):
+		if g._draw_chance_card().has("enter_blackshop"):
 			leaked = true
 			break
 	_check(not leaked, "关闭黑市后机会卡不再发出该事件")

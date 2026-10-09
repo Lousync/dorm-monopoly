@@ -11,6 +11,7 @@ const QUALITY_COLORS := {
 }
 const SHOP_WEIGHTS := {"白": 40, "绿": 30, "蓝": 20, "紫": 5, "橙": 5}  # 橙 5% 定稿，其余待数值专场
 const FIND_WEIGHTS := {"白": 45, "绿": 30, "蓝": 18, "紫": 5, "橙": 2}  # 失物招领格：白捡的，要比小卖部略涩
+const CHANCE_ITEM_WEIGHTS := {"白": 40, "绿": 30, "蓝": 20, "紫": 8, "橙": 2}  # 机会格的道具卡：略好于失物招领
 const QUALITY_PRICES := {"白": 600, "绿": 1000, "蓝": 1800, "紫": 3000, "橙": 4500}  # 待数值专场
 const REFRESH_BASE := 500   # 小卖部刷新价起点：全局递增、整局不重置（待数值专场）
 const REFRESH_STEP := 300
