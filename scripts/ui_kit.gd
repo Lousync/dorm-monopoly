@@ -224,6 +224,28 @@ static func release_focus_on_click(host: Node, e: InputEvent) -> void:
 	if f is LineEdit and not f.get_global_rect().has_point(mb.global_position):
 		f.release_focus()
 
+# ---------------- 小节容器（legend 式边框盒）与开关组件（设置弹窗用，2026-10-09） ----------------
+
+## 小节盒子的底色。**必须不透明** —— 标题是用这一色盖掉上边框中间那一截画出来的
+##（见 `SectionBox`），半透明就盖不干净。比弹窗底色（`PANEL_GLASS`）稍暗一档 ⇒ 读作"嵌进去的盒子"。
+const SECTION_BG := Color(0.116, 0.130, 0.172)
+
+## 开关的轨道尺寸与关机色（开机色直接用 `GOOD` 绿）。
+const SWITCH_W := 52.0
+const SWITCH_H := 26.0
+const SWITCH_OFF := Color(0.30, 0.33, 0.40)
+
+## 一个带边框的小节盒子，小标题骑在上边框正中（legend 式）。往里塞内容用 `body()` 拿那个 VBox。
+static func section_box(title: String) -> SectionBox:
+	return SectionBox.new(title, SECTION_BG, Color(BORDER.r, BORDER.g, BORDER.b, 0.85))
+
+## 一个 on/off 开关组件；点一下翻转，翻转后回调 `on_change(新值)`。
+## **替代原先「关 / 开」两枚 chip**（用户 2026-10-09）。外部改状态走 `set_on()`。
+static func switch_toggle(initial: bool, on_change: Callable) -> Switch:
+	var s := Switch.new(initial)
+	s.toggled.connect(on_change)
+	return s
+
 static func panel(bg: Color, corner: int = 10, border: Color = Color(0, 0, 0, 0), border_w: int = 0) -> Panel:
 	var p := Panel.new()
 	p.add_theme_stylebox_override("panel", stylebox(bg, corner, border, border_w))
@@ -580,3 +602,144 @@ class DiceIcon extends Control:
 			draw_circle(c + Vector2(0, 1.2), r, Color(0, 0, 0, 0.35))
 			draw_circle(c, r, Color(0.16, 0.115, 0.03))
 			draw_circle(c + Vector2(-r * 0.3, -r * 0.3), r * 0.34, Color(1, 0.96, 0.82, 0.3))
+
+class SectionBox extends MarginContainer:
+	## 带边框的小节盒，小标题**骑在上边框正中**（legend / fieldset 式）。
+	##
+	## **为什么要自己写**：Godot 没有 fieldset 这类现成控件。想在边框中间开个缺口放标题，
+	## 有两条路 —— 拆成两段 StyleBox 手工拼，或者像这里：`_draw()` 先把整圈边框画出来，
+	## 再用**与小节底色同色**的一小块**盖掉**上边框中间那一截，最后把标题画上去。
+	## 于是有了那条硬前提：小节底色必须**不透明**（见 `UIKit.SECTION_BG`）。
+	##
+	## **标题不是子节点、是在 `_draw()` 里画的** —— 这样它不参与布局，盒子的高度仍然
+	## 完全由内容驱动（本类就是 `MarginContainer`）；代价是内容的上边距得自己给标题留位置
+	##（`TOP_PAD`）。标题有一半在盒子**外**（上边框之上），所以放它的容器（滚动区的 VBox）
+	## 要留够间隔，最上面一节还得垫一块空白，否则会被 `ScrollContainer` 裁掉。
+	const TOP_PAD := 24        # 内容距盒顶（给骑在边框上的标题让位）
+	const SIDE_PAD := 14
+	const BOTTOM_PAD := 12
+	const TITLE_PX := 14
+	const TITLE_GAP := 9       # 标题底色往两侧多留的宽，做出"缺口"
+
+	var _text := ""
+	var _bg := Color.BLACK
+	var _sb: StyleBoxFlat
+	var _body: VBoxContainer
+
+	func _init(title: String, bg: Color, border: Color) -> void:
+		_text = title
+		_bg = bg
+		add_theme_constant_override("margin_top", TOP_PAD)
+		add_theme_constant_override("margin_left", SIDE_PAD)
+		add_theme_constant_override("margin_right", SIDE_PAD)
+		add_theme_constant_override("margin_bottom", BOTTOM_PAD)
+		_sb = StyleBoxFlat.new()
+		_sb.bg_color = bg
+		_sb.set_corner_radius_all(10)
+		_sb.set_border_width_all(1)
+		_sb.border_color = border
+		_body = VBoxContainer.new()
+		_body.add_theme_constant_override("separation", 7)
+		add_child(_body)
+
+	## 往里放内容的 VBox（行与行之间已给好 7px 间隔）。
+	func body() -> VBoxContainer:
+		return _body
+
+	## 尺寸一变就得重画（标题是按 `size.x` 居中的）。
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		draw_style_box(_sb, Rect2(Vector2.ZERO, size))
+		var f := UIKit.font_bold()
+		var tw: float = f.get_string_size(_text, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_PX).x
+		var asc: float = f.get_ascent(TITLE_PX)
+		var desc: float = f.get_descent(TITLE_PX)
+		var h: float = asc + desc
+		# 标题的竖直中心 = 上边框（y = 0）⇒ 上半个字探到盒外，正是 legend 的样子
+		var left: float = size.x * 0.5 - tw * 0.5
+		draw_rect(Rect2(left - TITLE_GAP, -h * 0.5, tw + TITLE_GAP * 2.0, h), _bg, true)
+		draw_string(f, Vector2(left, (asc - desc) * 0.5), _text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_PX, UIKit.ACCENT)
+
+class Switch extends Control:
+	## on/off 开关组件（程序化绘制 —— 与项目"能画出来的就别加素材"那条一致：转盘 / 房子贴图 /
+	## 卡面 / 按钮九宫格都是这么来的）。点一下翻转，翻转后 `toggled.emit(新值)`。
+	##
+	## 滑块位置 `_t` 是**手写的 `_process` 相位**（0 = 关、1 = 开，静止时 `set_process(false)`），
+	## 与项目"持续动画手写相位"那条约定同形；一次翻转约 1/7 秒。
+	signal toggled(on: bool)
+
+	var on := false
+	var _t := 0.0
+	var _hover := false
+
+	func _init(initial := false) -> void:
+		on = initial
+		_t = 1.0 if initial else 0.0
+		custom_minimum_size = Vector2(UIKit.SWITCH_W, UIKit.SWITCH_H)
+		size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		focus_mode = Control.FOCUS_NONE
+		tooltip_text = "开 / 关"
+		set_process(false)
+
+	## 外部改状态（`_sync_panel` 刷回显用）。`animate = false` 直接落位 ——
+	## 打开弹窗时不该看到滑块自己滑一遍。
+	func set_on(v: bool, animate := true) -> void:
+		if v == on:
+			return
+		on = v
+		if animate:
+			set_process(true)
+		else:
+			_t = 1.0 if v else 0.0
+			set_process(false)
+			queue_redraw()
+
+	func _gui_input(e: InputEvent) -> void:
+		var mb := e as InputEventMouseButton
+		if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		set_on(not on)
+		toggled.emit(on)
+		accept_event()
+		Fx.play("click", -8.0, randf_range(0.95, 1.05))
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_MOUSE_ENTER:
+			_hover = true
+			queue_redraw()
+		elif what == NOTIFICATION_MOUSE_EXIT:
+			_hover = false
+			queue_redraw()
+
+	func _process(delta: float) -> void:
+		var target := 1.0 if on else 0.0
+		_t = move_toward(_t, target, delta * 7.0)
+		if is_equal_approx(_t, target):
+			_t = target
+			set_process(false)
+		queue_redraw()
+
+	func _draw() -> void:
+		var r: float = size.y * 0.5
+		var col: Color = UIKit.SWITCH_OFF.lerp(UIKit.GOOD, _t)
+		if _hover:
+			col = col.lightened(0.10)
+		_capsule(Rect2(Vector2.ZERO, size), col.darkened(0.45))                 # 一圈暗边
+		_capsule(Rect2(Vector2(1.5, 1.5), size - Vector2(3.0, 3.0)), col)
+		var kr: float = r - 3.0
+		var kx: float = r + _t * (size.x - r * 2.0)
+		draw_circle(Vector2(kx, r + 1.0), kr, Color(0, 0, 0, 0.30))             # 滑块投影
+		draw_circle(Vector2(kx, r), kr, Color(0.94, 0.95, 0.97))
+
+	## 胶囊形（两端半圆的长条）：中段矩形 + 两端圆。
+	func _capsule(rect: Rect2, col: Color) -> void:
+		var r: float = rect.size.y * 0.5
+		draw_rect(Rect2(rect.position.x + r, rect.position.y, rect.size.x - r * 2.0, rect.size.y), col, true)
+		draw_circle(rect.position + Vector2(r, r), r, col)
+		draw_circle(rect.position + Vector2(rect.size.x - r, r), r, col)

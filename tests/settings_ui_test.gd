@@ -13,9 +13,19 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
-## 往视口里塞一次「按下 + 松开」，走真实 GUI 输入链路（`_input` → GUI 拾取都过一遍）。
-## 位置用 `global_position`：失焦兜底那处判据读的也是它（见 `UIKit.release_focus_on_click`）。
+## 往视口里塞一次「移动 + 按下 + 松开」，走真实 GUI 输入链路（`_input` 与 GUI 拾取都过一遍）。
+##
+## **两处非显然的坑（都实测踩过）**：
+##   * `in_local_coords = true` —— 坐标直接按画布空间算，不经窗口→画布的拉伸变换；
+##     而 headless 下**根视口只有 64 × 64**（不是项目设的 1280 × 800），
+##     于是默认的 false 会把落点算到视口外、事件被直接丢掉 ⇒ 什么都点不中。
+##     所以本测试开头先 `root.size = Vector2i(1280, 800)` 把画布撑开（同 `pause_menu_test`）。
+##   * 先推一次 `InputEventMouseMotion`：让 Viewport 先把 hover 算出来（与 `pause_menu_test` 同）。
 func _push_click(vp: Viewport, at: Vector2) -> void:
+	var mv := InputEventMouseMotion.new()
+	mv.position = at
+	mv.global_position = at
+	vp.push_input(mv, true)
 	for pressed in [true, false]:
 		var ev := InputEventMouseButton.new()
 		ev.button_index = MOUSE_BUTTON_LEFT
@@ -23,10 +33,18 @@ func _push_click(vp: Viewport, at: Vector2) -> void:
 		ev.pressed = pressed
 		ev.position = at
 		ev.global_position = at
-		vp.push_input(ev)
+		vp.push_input(ev, true)
+
+## 点某个控件的正中（走真实 GUI 拾取，与真机点一下等价）。
+## ⚠ 控件必须**真的在可视区内** —— `ScrollContainer` 会把滚出可视区的子节点裁掉，
+## 那种控件点不到（本次实测踩到：点第四节里的小卖部开关，怎么点都没反应）。
+func _click_control(vp: Viewport, c: Control) -> void:
+	_push_click(vp, c.get_global_rect().get_center())
 
 func _run() -> void:
 	print("== 大厅游戏设置弹窗 ==")
+	# headless 的根视口默认只有 64 × 64 ⇒ 先撑成项目设定的画布尺寸，否则点哪儿都点不中
+	root.size = Vector2i(1280, 800)
 	# `--script` 主脚本里不能用 `Net.` 标识符（编译期 Identifier not found），
 	# 照 tests/hud_test.gd 的写法从 root 取（Task 2 实测踩到）
 	var net = root.get_node_or_null("Net")
@@ -110,17 +128,43 @@ func _run() -> void:
 	_check(net.game_settings.tech_tier == "钻石", "选「钻石」写进设置（tech_tier）")
 	lb._set_wrap.visible = false
 
+	# ---- 开关组件（on/off 的行由「关 / 开」两枚 chip 换成 UIKit.Switch，用户 2026-10-09） ----
+	# ⚠ 用**第一节「经济」里那个**开关：它在滚动区的可视范围内。点更靠下那些（小卖部…）
+	# 会被 `ScrollContainer` 裁掉 ⇒ 点在可视区外、GUI 拾取根本递不到它（本次实测踩到）。
+	var vp: Viewport = lb.get_viewport()
+	lb._settings_btn.pressed.emit()
+	# ⚠ 必须**等一帧**：弹窗刚 `visible = true`，容器布局还没重算 ⇒ 立刻读 `get_global_rect()`
+	# 拿到的是过期落点，点过去自然什么都点不中（本次实测踩到）。
+	await create_timer(0.1).timeout
+	_check(lb._set_liq_sw != null and lb._set_liq_sw.on, "破产变卖保底开关初始为开")
+	_click_control(vp, lb._set_liq_sw)
+	_check(not lb._set_liq_sw.on and not lb._set_liq, "点开关 → 翻成关、并写回 _set_liq")
+	_click_control(vp, lb._set_liq_sw)
+	_check(lb._set_liq_sw.on and lb._set_liq, "再点一下 → 翻回开")
+	# 回显：`_sync_panel()` 要能把开关刷成 `_set_*` 的值（`animate = false`，不带滑动）
+	lb._set_shop = false
+	lb._sync_panel()
+	_check(not lb._set_shop_sw.on, "`_sync_panel` 把开关刷成关")
+	lb._set_shop = true
+	lb._sync_panel()
+	_check(lb._set_shop_sw.on, "`_sync_panel` 把开关刷成开")
+	# 翻成关之后经「确定」写进设置
+	_click_control(vp, lb._set_liq_sw)
+	lb._on_settings_save()
+	_check(not net.game_settings.liq_on, "开关注：关 → 「确定」写进设置（liq_on）")
+	lb._set_wrap.visible = false
+
 	# ---- 输入框失焦回归（用户 2026-10-09 报：鼠标点到别处，聊天框仍高亮） ----
 	# 与主菜单同一条根因：按钮一律 FOCUS_NONE、面板不吃键盘焦点 ⇒ 点哪儿 LineEdit 都还攥着
 	# 焦点，「focus」样式（金色描边）一直挂着。主菜单 2026-10-08 已补 `_input` 兜底，
 	# **大厅漏了同一处** —— 这条钉住它（走 `push_input` 的真实 GUI 链路，不是直接调处理函数）。
-	var vp: Viewport = lb.get_viewport()
 	lb._chat_edit.grab_focus()
 	_check(vp.gui_get_focus_owner() == lb._chat_edit, "聊天输入框点一下拿得到焦点")
 	_push_click(vp, Vector2(6, 6))          # 屏幕左上角：落在聊天框之外
 	_check(vp.gui_get_focus_owner() != lb._chat_edit, "点聊天框之外 → 收掉焦点（不再高亮）")
 	# 设置弹窗里的数字框同理：修的是「场景级」那一处兜底，不是只堵了聊天框这一个口子
 	lb._set_wrap.visible = true
+	await create_timer(0.1).timeout      # 同上：等布局落定，`get_global_rect()` 才算数
 	lb._set_cash_edit.grab_focus()
 	_check(vp.gui_get_focus_owner() == lb._set_cash_edit, "设置弹窗数字框拿得到焦点")
 	_push_click(vp, Vector2(6, 6))
