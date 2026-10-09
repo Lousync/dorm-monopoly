@@ -1098,12 +1098,15 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 	_broadcast_state()
 	return picked
 
-## bot 挑卡策略（简单可预期）：品质售价高的优先
+## bot 挑卡策略（简单可预期）：**按 `item_price`（含单件 `price` 覆盖）**取最贵。
+## 2026-10-10 修：原先读 `ItemData.price(quality)`（只看档价），与 UI（`_refresh_shop_ui`）
+## 及购买链路（`_shop_buy`）**不同源** —— 二青会酒寒暑（单件覆盖 ¥8000）在 bot 眼里一直只值
+## 它那一档的档价。契约是「单件 `price` 覆盖优先」，任何覆盖都该被 bot 看见。
 func _discover_bot_pick(ids: Array) -> String:
 	var best := ""
 	var best_p := -1
 	for id in ids:
-		var pr := int(ItemData.price(String(ItemData.def(String(id)).quality)))
+		var pr := ItemData.item_price(String(id))
 		if pr > best_p:
 			best_p = pr
 			best = String(id)
@@ -6092,7 +6095,9 @@ func _bot_shop(p: Dictionary, idx: int) -> void:
 		var id := String(arr[i])
 		if id == "":
 			continue
-		var price := ItemData.price(String(ItemData.def(id).quality))
+		# 2026-10-10 修：与 UI / 购买链路同源（含单件 `price` 覆盖）。
+		# 只按档价会把二青会酒寒暑看成紫档价 ⇒ bot 挑它、再被 `_shop_buy` 的真实价拒付，空手离店。
+		var price := ItemData.item_price(id)
 		if int(p.money) >= price and p.items.size() < _bag_cap(p) and price > best_price:
 			best = i
 			best_price = price

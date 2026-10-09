@@ -62,6 +62,7 @@ func _run() -> void:
 	_test_card_state(g)
 	_test_price_state(g)
 	_test_pricing(g)
+	_test_bot_pricing(g)
 	await _test_soil(g)
 	await _test_discover(g)
 	if fails == 0:
@@ -334,6 +335,57 @@ func _test_pricing(g) -> void:
 	g.shops = {}
 	g._shop_peer = 0
 	g.refresh_count = 0
+
+## bot 定价读单件覆盖（2026-10-10 修）：`_discover_bot_pick` / `_bot_shop` 与 UI（`_refresh_shop_ui`）
+## 及购买链路（`_shop_buy`）**同源** —— 都该读 `ItemData.item_price(id)`（先看单件 `price` 覆盖）。
+## 黑市比价按 `BLACK_COST` 档位（地皮计价）**是对的**，不在本条内。
+func _test_bot_pricing(g) -> void:
+	print("== bot 定价读单件覆盖 ==")
+	# 方向一（发现三选一）：三件**同为紫档** —— 只按档价排就是「三件一样贵」（取第一件），
+	# 只有读 item_price 才分得出高下（二青会单件覆盖 ¥8000 > 紫档价 ¥3200）。
+	# 用三件而非两件：无论将来单件覆盖的数怎么改，「最贵的那件不是 ids[0]」恒成立。
+	var ids := ["作弊器", "平均主义", "二青会酒寒暑"]
+	var want := ""
+	for id in ids:
+		if want == "" or ItemData.item_price(id) > ItemData.item_price(want):
+			want = id
+	_check(want != ids[0], "（前置）按 item_price 排最贵的不是列表第一件（实得最贵 = %s）" % want)
+	_check(g._discover_bot_pick(ids) == want,
+		"发现三选一：bot 按 item_price 挑最贵（期望 %s，实得 %s）" % [want, g._discover_bot_pick(ids)])
+
+	# 方向二（小卖部）：同一架上是「真有单件覆盖、bot 买不起」的件 + 「只按档价、买得起」的件，
+	# bot 只揣 ¥5000。读 item_price 才知道二青会要 ¥8000 ⇒ 转头买 ¥3200 的紫货；
+	# 只按档价（两件都被看成 ¥3200）则先撞上二青会、再被 `_shop_buy` 的真实价 ¥8000 拒付 ⇒ 空手离店。
+	var tile := -1
+	for i in GameData.TILES.size():
+		if String(GameData.TILES[i].get("type", "")) == "shop":
+			tile = i
+			break
+	_check(tile >= 0, "找到小卖部格子")
+	if tile < 0:
+		return
+	var cheap := "作弊器"   # 紫档 · 无单件覆盖 ⇒ 按档价 ¥3200
+	_check(ItemData.item_price(cheap) == ItemData.item_price("平均主义")
+		and ItemData.item_price(cheap) < ItemData.item_price("二青会酒寒暑"),
+		"（前置）廉价件按档价、贵件按单件覆盖（%d < %d）" % [
+			ItemData.item_price(cheap), ItemData.item_price("二青会酒寒暑")])
+	var p := _mk_player(1, "甲")
+	p.bot = true
+	p.money = 5000
+	g.hp = [p]
+	g.shops = {tile: {"slots": ["二青会酒寒暑", cheap, ""]}}
+	g._shop_peer = 1
+	g._shop_tile = tile
+	g._bot_shop(p, tile)
+	_check(p.items.size() == 1 and String(p.items[0].id) == cheap,
+		"小卖部：bot 跳过买不起的 ¥8000 件、买下买得起的档价件（实得 %s）" % str(p.items))
+	_check(int(p.money) == 5000 - ItemData.item_price(cheap),
+		"小卖部：按真实价 ¥%d 扣钱（余 %d，期望 %d）" % [
+			ItemData.item_price(cheap), int(p.money), 5000 - ItemData.item_price(cheap)])
+	# 收摊：本用例造的货架就地清干净（本文件既有约定），免得后面 _item_pool 的断言看运气
+	g.shops = {}
+	g._shop_peer = 0
+	g.hp = []
 
 func _test_coco(g) -> void:
 	print("== 亡牌飞行员coco ==")
