@@ -752,8 +752,9 @@ func _test_bury(g) -> void:
 	#
 	# 这一段刻意走**「不限时」档**（`sec <= 0` ⇒ `_await_turn_window` 根本不计时）：窗口只能被
 	# 「已作答」关掉。**判据写成 `_bury_pick`（选了置底吗）的实现在这里会当场挂住**（靠 20s
-	# 看门狗兜底），而不会像"12 秒窗口"那样恰好也返回 false 蒙混过关 —— 于是这条断言与机器的
-	# 计时精度无关（本机实测：无头模式下 `_wait` 的实测耗时与名义秒数不成比例，拿绝对耗时当判据不可靠）。
+	# 看门狗兜底），而不会像"12 秒窗口"那样恰好也返回 false 蒙混过关 —— 于是这条断言与机器
+	# 的计时精度无关（本机实测：无头模式下 0.3s 与 0.4s 两段 `_wait` 的实测耗时几乎一样、
+	# 都在 267~314 ms 之间，拿绝对耗时当判据不可靠）。
 	var prev_tier := String(g._settings.timeout_tier)
 	g._settings.timeout_tier = GameSettings.TIER_NONE
 	g.running = true
@@ -786,8 +787,9 @@ func _test_bury(g) -> void:
 	g._settings.timeout_tier = prev_tier
 
 	# ⑤ `at_mode` 旁路：自动回归里房主自己是「真人」（`_is_managed` 为假）⇒ 本机那张不白等一窗。
-	# **放在最后**：开了 `at_mode` 就会让游戏侧那条自动作答钩子（`_at_auto_bury`，0.4s 定时）
-	# 武装起来，它会替**之后**任何一次亮着的询问作答 —— 排在中间会干扰上面那两条真人断言。
+	# **留在最后**：`at_mode` 是「这台机子在自动回归里」的状态，上面那几条要的是普通对局，
+	# 别让这个标志盖在它们头上（它还会让 `_process` 里的自动作答钩子开始认牌）。
+	# 判据仍是耗时：走真窗口要等满 `ITEM_TIMEOUT`（实测 12112 ms），走旁路只等 0.3 s。
 	g.at_mode = "host"
 	t0 = Time.get_ticks_msec()
 	_check(await g._await_bury_choice(p) == false, "at_mode：本机自动作答（不置底）")
