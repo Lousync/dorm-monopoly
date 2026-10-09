@@ -40,6 +40,18 @@ jobs:
             echo "::endgroup::"
           done
 
+      # 图鉴页（doc/game-design/图鉴.html）是**生成产物**：提交进 git，但由
+      # scripts/*_data.gd 与 doc/game-design/道具图鉴.md 生成。
+      # 改了数据却忘了重跑生成器 ⇒ 这一闸当场逮住；生成器是确定性的（无时间戳、无随机序），
+      # 所以正常情况不会误报。重跑：godot --headless --path . --script tools/gen_gallery.gd
+      # 行尾：生成器写 LF（Godot 默认），仓库存的也是 LF；本机 core.autocrlf 不影响
+      # `git diff` 的比较（两侧都会先归一化成 LF），已实测。
+      - name: 图鉴页不过期
+        run: |
+          set -euo pipefail
+          godot --headless --path . --script tools/gen_gallery.gd
+          git diff --exit-code -- doc/game-design/图鉴.html
+
       # 房主即服务器：起一个后台房主，再跑一个客户端自动对打 3 轮
       - name: 联机回归（房主 + 客户端 3 轮）
         run: |

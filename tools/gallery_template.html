@@ -1,0 +1,346 @@
+<!doctype html>
+<!--
+	宿舍大富翁 · 图鉴页 **模板**（不是成品）。
+	成品是 doc/game-design/图鉴.html —— 由 tools/gen_gallery.gd 把这个文件读进来、
+	把下面那段 `__GALLERY_DATA__` 换成真数据后写出去。**别直接改成品，会被覆盖。**
+
+	直接双击本文件只会看到「数据未注入」的提示，属正常（模板里没有数据）。
+
+	模板里**不许出现任何游戏数据**（品质色、档位色、条数、文案…）——它们全部由生成器送进来。
+	唯一可以写死的只有「页面外壳」：配色变量、排版、以及页签的名字与顺序。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宿舍大富翁 · 图鉴</title>
+<style>
+	:root{
+		--bg:#0e1418; --panel:#151e25; --panel2:#1b262f; --panel3:#22303b;
+		--line:rgba(240,192,100,.18); --line2:rgba(255,255,255,.07);
+		--text:#e8eef2; --dim:#8fa2ad; --gold:#f0c064;
+		--radius:10px;
+	}
+	*{box-sizing:border-box}
+	html,body{margin:0;padding:0}
+	body{
+		background:
+			radial-gradient(1100px 520px at 50% -12%, #1b2831 0%, rgba(14,20,24,0) 62%) no-repeat,
+			var(--bg);
+		color:var(--text);
+		font:14px/1.72 -apple-system,"Segoe UI","Microsoft YaHei","PingFang SC","Source Han Sans SC",sans-serif;
+		-webkit-font-smoothing:antialiased;
+		padding-bottom:64px;
+	}
+	.wrap{max-width:1240px;margin:0 auto;padding:0 20px}
+
+	header{padding:34px 0 18px;border-bottom:1px solid var(--line2)}
+	h1{margin:0 0 6px;font-size:26px;letter-spacing:.06em;font-weight:600}
+	h1 .dot{color:var(--gold)}
+	.meta{color:var(--dim);font-size:12.5px;line-height:1.9}
+	.meta code{color:#c8d6df;background:var(--panel2);border:1px solid var(--line2);
+		border-radius:5px;padding:1px 6px;font-size:12px}
+	.warn{margin-top:10px;color:#f0b0a0;font-size:12.5px}
+	.warn b{color:#ff8f75}
+	.warn details{background:rgba(240,140,110,.07);border:1px solid rgba(240,140,110,.26);
+		border-radius:8px;padding:8px 12px}
+	.warn summary{cursor:pointer;color:#ff8f75;font-weight:600;outline:none}
+	.warn ul{margin:8px 0 2px;padding-left:20px;line-height:1.85}
+	.warn li{color:#e0b8ad}
+
+	nav.tabs{display:flex;gap:8px;flex-wrap:wrap;padding:18px 0 0}
+	nav.tabs button{
+		appearance:none;cursor:pointer;font:inherit;font-size:14px;
+		color:var(--dim);background:var(--panel);border:1px solid var(--line2);
+		border-radius:999px;padding:8px 18px;transition:.15s;
+	}
+	nav.tabs button:hover{color:var(--text);border-color:var(--line)}
+	nav.tabs button.on{color:#1a1206;background:var(--gold);border-color:var(--gold);font-weight:600}
+	nav.tabs .n{opacity:.62;font-size:12px;margin-left:6px}
+
+	.toolbar{position:sticky;top:0;z-index:5;margin:16px 0 20px;padding:14px 16px;
+		background:rgba(14,20,24,.9);backdrop-filter:blur(10px);
+		border:1px solid var(--line2);border-radius:var(--radius)}
+	.searchrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+	input[type=search]{
+		flex:1 1 260px;min-width:0;font:inherit;color:var(--text);
+		background:var(--panel2);border:1px solid var(--line2);border-radius:7px;
+		padding:8px 12px;outline:none;
+	}
+	input[type=search]:focus{border-color:var(--gold)}
+	input[type=search]::placeholder{color:#6d7d87}
+	.count{color:var(--dim);font-size:12.5px;white-space:nowrap}
+	.count b{color:var(--gold);font-size:15px}
+
+	.facets{display:flex;flex-direction:column;gap:7px;margin-top:12px}
+	.facet{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+	.facet>.lbl{color:var(--dim);font-size:12px;min-width:38px;flex:0 0 auto}
+	.chip{
+		appearance:none;cursor:pointer;font:inherit;font-size:12.5px;line-height:1;
+		color:var(--dim);background:transparent;border:1px solid var(--line2);
+		border-radius:999px;padding:5px 11px;transition:.13s;
+	}
+	.chip:hover{color:var(--text);border-color:var(--line)}
+	.chip.on{color:#0e1418;background:var(--gold);border-color:var(--gold);font-weight:600}
+
+	.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+	.card{
+		position:relative;background:var(--panel);border:1px solid var(--line2);
+		border-radius:var(--radius);padding:14px 16px 15px;overflow:hidden;
+	}
+	.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent,#4a5b66)}
+	.card.dim{opacity:.62}
+	.chead{display:flex;gap:11px;align-items:flex-start}
+	.ico{
+		flex:0 0 auto;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;
+		background:var(--panel3);border:1px solid var(--line2);font-size:19px;line-height:1;
+	}
+	.ico img{width:26px;height:26px;display:block;image-rendering:auto}
+	.ttl{flex:1 1 auto;min-width:0}
+	.name{font-size:15px;font-weight:600;letter-spacing:.02em;color:#fff;word-break:break-word}
+	.card.dim .name{color:#c3ccd3}
+	.sub{color:var(--dim);font-size:12px;margin-top:2px}
+	.flag{display:inline-block;margin-left:7px;font-size:11px;padding:1px 7px;border-radius:5px;
+		background:rgba(240,176,140,.14);color:#f0b08c;border:1px solid rgba(240,176,140,.3);
+		vertical-align:1px}
+	.tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+	.tag{font-size:11.5px;line-height:1;padding:4px 9px;border-radius:6px;
+		background:var(--panel3);border:1px solid var(--line2);color:#cbd8e0}
+	.tag.c{background:transparent;font-weight:600}
+	.body{margin-top:10px;padding:9px 12px;border-radius:8px;
+		background:rgba(0,0,0,.22);border:1px dashed var(--line2);
+		font-size:13.5px;color:#dbe6ec}
+	.rows{margin-top:9px;display:flex;flex-direction:column;gap:5px}
+	.row{display:flex;gap:9px;font-size:13px}
+	.row>.k{flex:0 0 auto;color:var(--gold);opacity:.85;font-size:12px;min-width:52px;padding-top:1px}
+	.row>.v{flex:1 1 auto;min-width:0;color:#c6d2da;word-break:break-word}
+	.card code{background:rgba(255,255,255,.07);border-radius:4px;padding:0 4px;
+		font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12.5px;color:#e6d6a8}
+	.card b,.card strong{color:#fff}
+	.empty{color:var(--dim);padding:40px 4px;text-align:center}
+
+	footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line2);
+		color:var(--dim);font-size:12px;line-height:2}
+	footer code{color:#c8d6df;background:var(--panel2);border:1px solid var(--line2);
+		border-radius:5px;padding:1px 6px}
+	@media (max-width:640px){
+		.grid{grid-template-columns:1fr}
+		h1{font-size:21px}
+		.count{width:100%}
+	}
+</style>
+</head>
+<body>
+<div class="wrap">
+	<header>
+		<h1>宿舍大富翁 <span class="dot">·</span> 图鉴</h1>
+		<div class="meta" id="meta"></div>
+		<div class="warn" id="warn"></div>
+	</header>
+
+	<nav class="tabs" id="tabs"></nav>
+
+	<div class="toolbar">
+		<div class="searchrow">
+			<input type="search" id="q" placeholder="搜索名称 / 文案 / 效果…" autocomplete="off">
+			<div class="count" id="count"></div>
+		</div>
+		<div class="facets" id="facets"></div>
+	</div>
+
+	<main class="grid" id="grid"></main>
+
+	<footer id="foot"></footer>
+</div>
+
+<!-- 数据由 tools/gen_gallery.gd 注入；手工改这里没有意义，重跑生成器即被覆盖。 -->
+<script id="gallery-data" type="application/json">__GALLERY_DATA__</script>
+
+<script>
+"use strict";
+(function () {
+	// ---------- 数据 ----------
+	var raw = document.getElementById("gallery-data").textContent.trim();
+	var DATA = null;
+	try { DATA = JSON.parse(raw); } catch (e) { DATA = null; }
+	if (!DATA || !DATA.sections) {
+		document.getElementById("grid").innerHTML =
+			'<div class="empty">数据未注入 —— 这是<b>模板文件</b>。<br>' +
+			'成品在 <code>doc/game-design/图鉴.html</code>，由 <code>tools/gen_gallery.gd</code> 生成。</div>';
+		document.getElementById("q").disabled = true;
+		return;
+	}
+
+	// ---------- 工具 ----------
+	function esc(s) {
+		return String(s).replace(/[&<>"']/g, function (c) {
+			return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+		});
+	}
+	// 极简行内 markdown：先转义，再放行 **粗体** 与 `代码`（其余一律按纯文本对待）
+	function fmt(s) {
+		return esc(s)
+			.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+			.replace(/`([^`]+)`/g, "<code>$1</code>");
+	}
+	function el(tag, cls, html) {
+		var d = document.createElement(tag);
+		if (cls) d.className = cls;
+		if (html != null) d.innerHTML = html;
+		return d;
+	}
+
+	// ---------- 状态 ----------
+	// 页签可由 URL 锚点选中（`图鉴.html#techs`）—— 既是给别人甩链接的入口，
+	// 也让「换个页签截图看看」不用靠点鼠标。
+	var cur = 0;
+	var q = "";
+	var sel = {};                      // sel[页签下标][facet 名] = { 值: true }
+	DATA.sections.forEach(function (s, i) {
+		sel[i] = {};
+		if (s.id === location.hash.replace("#", "")) cur = i;
+	});
+
+	// ---------- 头部 ----------
+	var meta = document.getElementById("meta");
+	meta.innerHTML = "共 <b>" + DATA.total + "</b> 条 · 数据来源 " +
+		DATA.sources.map(function (p) { return "<code>" + esc(p) + "</code>"; }).join("、") +
+		"<br>本页为<b>生成产物</b>，请勿手改；改数据后重跑生成器。";
+	if (DATA.warnings && DATA.warnings.length) {
+		// 收进折叠里：这是一份**待办清单**，常驻展开会把正文挤到屏外；但也不能藏起来
+		// ——这几条正是生成器替人盯着的东西（见 tools/gen_gallery.gd 顶部注释）。
+		document.getElementById("warn").innerHTML =
+			"<details><summary>⚠ 代码与文档对不上（" + DATA.warnings.length +
+			" 条）— 点开看清单</summary><ul>" +
+			DATA.warnings.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") +
+			"</ul></details>";
+	}
+	document.getElementById("foot").innerHTML =
+		"重新生成：<code>godot --headless --path . --script tools/gen_gallery.gd</code>　·　" +
+		"品质配色取自 <code>scripts/item_data.gd</code>，档位配色取自 <code>scripts/tech_data.gd</code>，卡型判定取自 <code>scripts/game_data.gd</code>。";
+
+	// ---------- 页签 ----------
+	var tabs = document.getElementById("tabs");
+	DATA.sections.forEach(function (s, i) {
+		var b = el("button", i === cur ? "on" : "");
+		b.innerHTML = esc(s.title) + '<span class="n">' + s.entries.length + "</span>";
+		b.addEventListener("click", function () {
+			cur = i; q = "";
+			document.getElementById("q").value = "";
+			location.hash = s.id;
+			renderTabs(); renderFacets(); render();
+		});
+		tabs.appendChild(b);
+	});
+	function renderTabs() {
+		Array.prototype.forEach.call(tabs.children, function (b, i) {
+			b.className = i === cur ? "on" : "";
+		});
+	}
+
+	// ---------- 筛选栏 ----------
+	var facetsBox = document.getElementById("facets");
+	function renderFacets() {
+		facetsBox.innerHTML = "";
+		var sec = DATA.sections[cur];
+		if (!sec.facets || !sec.facets.length) return;
+		sec.facets.forEach(function (f) {
+			var row = el("div", "facet");
+			row.appendChild(el("span", "lbl", esc(f.key)));
+			f.values.forEach(function (v) {
+				var on = sel[cur][f.key] && sel[cur][f.key][v];
+				var b = el("button", "chip" + (on ? " on" : ""), esc(v));
+				b.addEventListener("click", function () {
+					if (!sel[cur][f.key]) sel[cur][f.key] = {};
+					if (sel[cur][f.key][v]) delete sel[cur][f.key][v];
+					else sel[cur][f.key][v] = true;
+					if (!Object.keys(sel[cur][f.key]).length) delete sel[cur][f.key];
+					renderFacets(); render();
+				});
+				row.appendChild(b);
+			});
+			facetsBox.appendChild(row);
+		});
+	}
+
+	// ---------- 过滤 ----------
+	function textOf(e) {
+		var parts = [e.title, e.subtitle, e.body];
+		(e.rows || []).forEach(function (r) { parts.push(r.k, r.v); });
+		(e.chips || []).forEach(function (c) { parts.push(c.t); });
+		return parts.join(" ").toLowerCase();
+	}
+	function keep(e) {
+		var f = sel[cur];
+		for (var k in f) {
+			var want = f[k];
+			var hit = false;
+			for (var v in want) if (e.facets && e.facets[k] === v) hit = true;
+			if (!hit) return false;                   // 同一 facet 内多选取「或」
+		}
+		return !q || textOf(e).indexOf(q) >= 0;
+	}
+
+	// ---------- 渲染 ----------
+	var grid = document.getElementById("grid");
+	function render() {
+		var sec = DATA.sections[cur];
+		var list = sec.entries.filter(keep);
+		document.getElementById("count").innerHTML =
+			"<b>" + list.length + "</b> / " + sec.entries.length + " 条";
+
+		grid.innerHTML = "";
+		if (!list.length) { grid.appendChild(el("div", "empty", "没有匹配的条目。")); return; }
+		list.forEach(function (e) {
+			var c = el("div", "card" + (e.dim ? " dim" : ""));
+			c.style.setProperty("--accent", e.accent || "#4a5b66");
+
+			var head = el("div", "chead");
+			var ico = el("div", "ico");
+			if (e.icon) ico.appendChild(el("img")).src = e.icon;
+			else ico.textContent = e.glyph || "·";
+			head.appendChild(ico);
+
+			var t = el("div", "ttl");
+			var flag = e.flag ? '<span class="flag">' + esc(e.flag) + "</span>" : "";
+			t.appendChild(el("div", "name", fmt(e.title) + flag));
+			if (e.subtitle) t.appendChild(el("div", "sub", fmt(e.subtitle)));
+			head.appendChild(t);
+			c.appendChild(head);
+
+			if (e.chips && e.chips.length) {
+				var tags = el("div", "tags");
+				e.chips.forEach(function (ch) {
+					var g = el("span", "tag" + (ch.color ? " c" : ""), esc(ch.t));
+					if (ch.color) g.style.color = ch.color;
+					tags.appendChild(g);
+				});
+				c.appendChild(tags);
+			}
+			if (e.body) c.appendChild(el("div", "body", fmt(e.body)));
+			if (e.rows && e.rows.length) {
+				var rows = el("div", "rows");
+				e.rows.forEach(function (r) {
+					var d = el("div", "row");
+					d.appendChild(el("div", "k", esc(r.k)));
+					d.appendChild(el("div", "v", fmt(r.v)));
+					rows.appendChild(d);
+				});
+				c.appendChild(rows);
+			}
+			grid.appendChild(c);
+		});
+	}
+
+	// ---------- 搜索 ----------
+	document.getElementById("q").addEventListener("input", function (ev) {
+		q = ev.target.value.trim().toLowerCase();
+		render();
+	});
+
+	renderFacets();
+	render();
+})();
+</script>
+</body>
+</html>
