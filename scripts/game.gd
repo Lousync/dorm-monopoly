@@ -2169,6 +2169,12 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 			if tgt.is_empty():
 				continue
 			_card_apply_target(p, tgt, card, f)
+	# ---- 地皮与位置类（2026-10-09 批 2 §三）：接着目标类、同样在 move_steps 之前 ----
+	# 顺序即 `机会卡.md` §三 的那条（先地皮后位置；`shuffle_pos` 收尾）：卡面数据表按同一顺序排，
+	# 一张卡同时带两条时结算次序才是可预期的。逐条独立结算（一条作废不影响下一条）。
+	for f in ["seize_tile", "force_buy_tile", "swap_pos", "pull_target", "push_back", "shuffle_pos"]:
+		if card.has(f):
+			await _card_apply_tile_move(p, card, f)
 	if card.has("move_steps"):
 		if int(card.move_steps) < 0 and (_immune_debuff(p) or _has_item(p, "雨伞")):
 			_log("%s 免疫了后退" % p.name, "#8fb7f2")
@@ -2275,6 +2281,153 @@ func _card_apply_target(p: Dictionary, tgt: Dictionary, card: Dictionary, field:
 			# 写法与既有 `go_jail` 字段一致 —— 护身符救下时战报会先说"送去了"，这是既有口径，本波不另立一套。
 			_log("%s 把 %s 送去了宿委会（他跳过下一回合）" % [p.name, tgt.name], "#c9a6ff")
 			_send_to_jail(tgt)
+
+## 地皮与位置类效果（`field` 由 `_apply_card` 的循环给出）。
+## `shuffle_pos` 无目标（全场重排）；其余五条先取目标（`seize_tile` / `force_buy_tile` 的
+## 候选名单只列名下有地的人，见 `_card_target_candidates`）。
+##
+## 免疫口径（`机会卡.md` §四）：`seize_tile:"take"` / `force_buy_tile` / `pull_target` /
+## `push_back` 对目标不利 ⇒ debuff、**目标持皂整条免疫**；`seize_tile:"swap"` 与 `swap_pos`
+## 是**中性**（一 debuff 一 buff 相抵，口径同畸变「斗地主」）⇒ 香皂无效。中性那几条
+## **一概不调 `_immune_debuff`**：它除了香皂还会**扣掉护腕的盾**，拿它当"中性也过一道闸"用会白吃一件道具。
+##
+## 不在这里调 `_check_end()`（同 `_card_apply_target`：`_apply_card` 末尾那一次才是这张卡唯一的出口）。
+## 只读传入的 card（与 `_apply_card` 同规矩：本波没有 `card.x = …`）。
+func _card_apply_tile_move(p: Dictionary, card: Dictionary, field: String) -> void:
+	if field == "shuffle_pos":
+		# 无目标：只把**存活**者的位置重排（出局者原地留观）。**不结算落点**（`机会卡.md` §三）。
+		# 表现走 `s_tp`（传送）而不是 `s_move`：`s_move` 是**逐格走过去**的，单元素路径会让棋子
+		# 横穿一整条边；「交换座位」/ 送监 也是这么做的（见 `table_props.set_token_teleport`）。
+		var order: Array = hp.filter(func(o: Dictionary) -> bool: return bool(o.alive))
+		var spots: Array = order.map(func(o: Dictionary) -> int: return int(o.pos))
+		spots.shuffle()
+		_log("【%s】全场重新抽签，位置大洗牌！" % card.t, "#c9a6ff")
+		for i in order.size():
+			order[i].pos = int(spots[i])
+			s_tp.rpc(int(order[i].peer), int(order[i].pos))
+		await _wait(0.5)
+		return
+	var tgt: Dictionary = await _card_target_for(p, card, field)
+	if tgt.is_empty():
+		return
+	if _card_tile_move_harmful(card, field) and _immune_debuff(tgt):
+		_log("%s 的【空想者的香皂】挡下了【%s】" % [tgt.name, card.t], "#8fb7f2")
+		return
+	var tpeer := int(tgt.peer)
+	match field:
+		"swap_pos":
+			var tmp: int = int(p.pos)
+			p.pos = int(tgt.pos)
+			tgt.pos = tmp
+			s_tp.rpc(int(p.peer), int(p.pos))
+			s_tp.rpc(tpeer, int(tgt.pos))
+			_log("%s 与 %s 换了位置（不结算落点）" % [p.name, tgt.name], "#c9a6ff")
+			await _wait(0.4)
+		"pull_target":
+			tgt.pos = int(p.pos)
+			s_tp.rpc(tpeer, int(tgt.pos))
+			_log("%s 把 %s 拽到了自己这一格" % [p.name, tgt.name], "#c9a6ff")
+			await _wait(0.3)
+			await _resolve_tile(tgt)   # 被拉来的人**照常结算落点**（同「拼车」把目标挪到某格那一脚）
+		"push_back":
+			var n: int = absi(int(card.push_back))
+			_log("%s 让 %s 后退 %d 格" % [p.name, tgt.name, n], "#c9a6ff")
+			# 与 `move_steps` 字段同一条路子（逐格 + 过起点领工资 + 走完结算落点）。
+			# **不复用 `_move_and_resolve`**：它那两处都是"前进向"的 —— 「公交卡 +1」与
+			# 「隔离的移动扣点 `maxi(0, s - cut)`」喂负数会把后退压成 0 ⇒ 变成"原地重结算"。
+			var path := GameData.compute_path_steps(int(tgt.pos), -n)
+			for idx in path:
+				if idx == 0:
+					_pass_start(tgt, "被推着退过起点")
+			if not path.is_empty():
+				tgt.pos = int(path[path.size() - 1])
+				s_move.rpc(tpeer, path, 0.09)
+				await _wait(0.25 + path.size() * 0.09)
+			await _resolve_tile(tgt)   # 后退落点照常结算
+		"seize_tile":
+			var theirs: Array = _own_props(tpeer)
+			if theirs.is_empty():
+				_log("%s 名下没有地，抢无可抢" % tgt.name, "#8a90a5")
+				return
+			match String(card.seize_tile):
+				"take":
+					var idx: int = _least_invested(theirs)
+					_transfer_tile(idx, int(p.peer))
+					_card_after_tile_move(p, tgt)
+					_log("%s 夺走了 %s 的【%s】（装修等级跟着地块走）" % [
+						p.name, tgt.name, String(GameData.TILES[idx].name)], "#c9a6ff")
+				"swap":
+					var mine: Array = _own_props(int(p.peer))
+					if mine.is_empty():
+						_log("%s 名下没有地，换不了" % p.name, "#8a90a5")
+						return
+					# 「与目标各随机一块」（`机会卡.md` §二）：两边都随机，不是挑"投入最少"那块
+					var mi: int = int(mine[randi_range(0, mine.size() - 1)])
+					var ti: int = int(theirs[randi_range(0, theirs.size() - 1)])
+					_transfer_tile(mi, tpeer)
+					_transfer_tile(ti, int(p.peer))
+					_card_after_tile_move(p, tgt)
+					_log("%s 与 %s 各随机换了一块地（%s ↔ %s）" % [p.name, tgt.name,
+						String(GameData.TILES[mi].name), String(GameData.TILES[ti].name)], "#c9a6ff")
+				_:
+					# 数据契约只有 take / swap 两种取值：别的值当**作废**（别默默按 swap 换地）
+					_log("【%s】的 seize_tile 取值「%s」不认识，这张卡作废" % [
+						card.t, String(card.seize_tile)], "#8a90a5")
+		"force_buy_tile":
+			var theirs2: Array = _own_props(tpeer)
+			if theirs2.is_empty():
+				_log("%s 名下没有地，买无可买" % tgt.name, "#8a90a5")
+				return
+			var idx2: int = _least_invested(theirs2)
+			# 百分比价按**整数除法向下取整**（`原价 × pct / 100`；正数下截断即向下）
+			var price: int = int(GameData.TILES[idx2].price) * int(card.force_buy_tile) / 100
+			if int(p.money) < price:
+				_log("%s 的资金不够强买 %s 的【%s】（要 %s）" % [p.name, tgt.name,
+					String(GameData.TILES[idx2].name), GameData.fmt_money(price)], "#8a90a5")
+				return
+			p.money = int(p.money) - price
+			tgt.money = int(tgt.money) + price
+			_transfer_tile(idx2, int(p.peer))
+			_card_after_tile_move(p, tgt)
+			_log("%s 以 %s 强买了 %s 的【%s】" % [p.name, GameData.fmt_money(price),
+				tgt.name, String(GameData.TILES[idx2].name)], "#c9a6ff")
+
+## 地皮类里哪几条算 debuff（目标持皂 ⇒ 整条免疫）。
+## `seize_tile` 只有 "take" 是夺人东西；"swap" 与 `swap_pos` 是中性（一 debuff 一 buff 相抵）。
+func _card_tile_move_harmful(card: Dictionary, field: String) -> bool:
+	if field == "swap_pos":
+		return false
+	if field == "seize_tile":
+		return String(card.get("seize_tile", "")) == "take"
+	return true   # force_buy_tile / pull_target / push_back
+
+## 目标名下「投入最少」的一块地（地价 + 装修投入）—— 与畸变「斗地主」同口径。
+func _least_invested(props: Array) -> int:
+	var best: int = int(props[0])
+	var best_v: int = 1 << 30
+	for idx in props:
+		var v: int = int(GameData.TILES[idx].price) \
+			+ int(htiles[idx].get("level", 0)) * GameData.upgrade_cost(idx)
+		if v < best_v:
+			best_v = v
+			best = int(idx)
+	return best
+
+## 一块地易主（**保留装修等级**：`level` 不动，租金随之归新主）。
+## 焦土不必管：焦土的 `owner` 恒为无主（见 `_resolve_tile` 的修复分支与畸变「轰炸」），
+## 所以 `_own_props` 收进来的地一律不是焦土。
+func _transfer_tile(idx: int, to_peer: int) -> void:
+	htiles[idx].owner = to_peer
+
+## 地皮易主之后的收尾：里程碑（地皮块数会跨档，同道具「交换课表」）+ 小金库 + **广播状态**。
+## 广播不能省：`_apply_card` 末尾只 `_check_end()`、不推状态，缺了它客户端棋盘上的归属与
+## 等级会一直停在旧值（道具那条能省，是因为 `_use_item` 末尾自己广播了一遍）。
+func _card_after_tile_move(p: Dictionary, tgt: Dictionary) -> void:
+	_check_tech_milestone(p)
+	_check_tech_milestone(tgt)
+	_check_xiaojinku(p)
+	_check_xiaojinku(tgt)
+	_broadcast_state()
 
 ## 机会卡发道具（指定 id / 指定品质）；背包满则作废提示，唯一池过滤照旧
 func _grant_card_item(p: Dictionary, id: String) -> void:

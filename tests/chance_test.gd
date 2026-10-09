@@ -88,6 +88,13 @@ func _run() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false
+	# 脚手架那局**不要跑开局科技**（2026-10-09 起 `tech_on` 默认开；同 `casino_test` 那条）：
+	# 实例化时 `_start()` 已经起跑（它先 `_wait(1.5)`），本文件又习惯**一上来就往 `hp` 里塞人**，
+	# 于是 1.5 秒一到它就当"名单已就绪"：`_tech_phase` 会给在场每家发一张随机科技 +
+	# 即时效果（可能直接动钱），还 `rpc_id` 给客户端位（测试里没这些 peer ⇒ 刷一堆
+	# "unknown peer ID" 的 ERROR）。原先本套件在 1.5 秒内就跑完了、撞不上；Task 11 的
+	# 地皮 / 位置用例带了一串走子等待，跑得比 1.5 秒长了 ⇒ 必须显式关掉。
+	g._settings.tech_on = false
 	# 先立一道存在性闸：实现缺席时下面每条用例都会在赋值 / 调用处报 SCRIPT ERROR 就地中断，
 	# `fails` 一个都不涨 —— 汇总会**假绿**成 "ALL PASS"。有了这几条，"功能没写"才是红的。
 	_test_iface(g)
@@ -100,6 +107,7 @@ func _run() -> void:
 	await _test_no_candidates(g)
 	await _test_managed(g)
 	await _test_target_fields(g)
+	await _test_tile_move_fields(g)
 	if fails == 0:
 		print("CHANCE TEST: ALL PASS")
 		quit(0)
@@ -480,3 +488,266 @@ func _test_field_order(g) -> void:
 	_check(i_jail >= 0 and i_steal > i_jail, "战报次序：go_jail 在目标类之前（%d < %d）" % [i_jail, i_steal])
 	# `i_steal >= 0` 不能省：两条都缺时 `-1 < 160` 也成立，会白送一条假绿
 	_check(i_steal >= 0 and i_move > i_steal, "战报次序：目标类在 move_steps 之前（%d < %d）" % [i_steal, i_move])
+
+# ================= 地皮与位置类 6 个字段（Task 11） =================
+#
+# 摆一桌地皮局：甲(1) / 乙(2) / 丙(3) 各 5000、丁(4) 出局。
+# `own` = {peer: [地皮下标…]}（归谁）、`lvl` = {地皮下标: 等级}（只给 `own` 里那几块地设等级）。
+# 位置一律由用例自己摆（`_mk_player` 给的是 0）。
+func _tile_table(g, own := {}, lvl := {}) -> void:
+	var t := _fresh_tiles()
+	for peer in own:
+		for idx in own[peer]:
+			t[int(idx)].owner = int(peer)
+	for idx in lvl:
+		t[int(idx)].level = int(lvl[idx])
+	var d := _mk_player(4, "丁")
+	d.alive = false
+	_setup(g, [_mk_player(1, "甲", 5000), _mk_player(2, "乙", 5000), _mk_player(3, "丙", 5000), d], t)
+
+func _test_tile_move_fields(g) -> void:
+	await _test_seize_tile(g)
+	await _test_seize_swap(g)
+	await _test_force_buy(g)
+	await _test_swap_pos(g)
+	await _test_pull_target(g)
+	await _test_push_back(g)
+	await _test_shuffle_pos(g)
+	await _test_tile_soap(g)
+
+func _test_seize_tile(g) -> void:
+	print("== 地皮：夺地（seize_tile: take） ==")
+	var p0 := _prop_idx(0)   # 1 号格：地价 2800（每级装修 = 地价一半 1400）
+	var p1 := _prop_idx(1)   # 2 号格：地价 2540
+	# 含装修等级：乙名下只有一块地、已到 Lv3 ⇒ 夺走时等级跟着地块走
+	_tile_table(g, {2: [p0]}, {p0: 3})
+	await g._apply_card(g.hp[0], {"t": "夺地令", "seize_tile": "take", "_target": 2})
+	_check(int(g.htiles[p0].owner) == 1 and int(g.htiles[p0].level) == 3,
+		"夺来的地**连装修等级一起走**（owner %d / level %d）" % [
+			int(g.htiles[p0].owner), int(g.htiles[p0].level)])
+	_check(g._own_props(2).is_empty(), "乙名下清空")
+	# 「投入最少」= 地价 + 装修投入：p1 地价更低、但带 Lv4 ⇒ 投入反而更高 ⇒ 夺的是 p0
+	_tile_table(g, {2: [p0, p1]}, {p1: 4})
+	await g._apply_card(g.hp[0], {"t": "夺地令", "seize_tile": "take", "_target": 2})
+	_check(int(g.htiles[p0].owner) == 1 and int(g.htiles[p1].owner) == 2,
+		"取「投入最少」那块：p0(2800) 归甲、p1(2540 + Lv4 装修) 留乙")
+	# 目标无地 ⇒ 作废（连甲自己那块地也不该动）
+	_tile_table(g, {1: [p0]})
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "夺地令", "seize_tile": "take", "_target": 2})
+	_check(int(g.htiles[p0].owner) == 1 and _log_at(g, "抢无可抢", log0) >= 0,
+		"目标无地 ⇒ 作废（甲自己那块地也没动）")
+
+func _test_seize_swap(g) -> void:
+	print("== 地皮：互换（seize_tile: swap） ==")
+	var p0 := _prop_idx(0)
+	var p1 := _prop_idx(1)
+	# 各只有一块 ⇒ "各随机一块"也唯一，结果确定
+	_tile_table(g, {1: [p0], 2: [p1]}, {p0: 2, p1: 1})
+	await g._apply_card(g.hp[0], {"t": "换宿", "seize_tile": "swap", "_target": 2})
+	_check(int(g.htiles[p0].owner) == 2 and int(g.htiles[p1].owner) == 1,
+		"各随机一块互换：p0 ↔ p1（owner %d / %d）" % [
+			int(g.htiles[p0].owner), int(g.htiles[p1].owner)])
+	_check(int(g.htiles[p0].level) == 2 and int(g.htiles[p1].level) == 1,
+		"装修等级跟着地块走（level %d / %d）" % [
+			int(g.htiles[p0].level), int(g.htiles[p1].level)])
+	# 任一方无地 ⇒ 作废
+	_tile_table(g, {1: [p0]})
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "换宿", "seize_tile": "swap", "_target": 2})
+	_check(int(g.htiles[p0].owner) == 1 and _log_at(g, "抢无可抢", log0) >= 0,
+		"目标无地 ⇒ 作废（甲那块地还在）")
+	_tile_table(g, {2: [p1]})
+	log0 = _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "换宿", "seize_tile": "swap", "_target": 2})
+	_check(int(g.htiles[p1].owner) == 2 and _log_at(g, "换不了", log0) >= 0,
+		"自己无地 ⇒ 作废（乙那块地还在）")
+
+func _test_force_buy(g) -> void:
+	print("== 地皮：强买（force_buy_tile） ==")
+	var p0 := _prop_idx(0)   # 地价 2800
+	var p1 := _prop_idx(1)   # 地价 2540
+	# 2540 × 33 / 100 = 838.2 ⇒ 整数除法**向下取整** 838（正数截断即向下）
+	_tile_table(g, {2: [p1]})
+	await g._apply_card(g.hp[0], {"t": "强买令", "force_buy_tile": 33, "_target": 2})
+	_check(int(g.htiles[p1].owner) == 1 and int(g.hp[0].money) == 5000 - 838 \
+		and int(g.hp[1].money) == 5000 + 838,
+		"按 33%% 原价强买：地皮归甲、甲付 838 给乙（实得 %d / %d）" % [
+			int(g.hp[0].money), int(g.hp[1].money)])
+	# 现金不足 ⇒ 作废（地皮与钱都不动）
+	_tile_table(g, {2: [p0]})
+	g.hp[0].money = 100
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "强买令", "force_buy_tile": 33, "_target": 2})
+	_check(int(g.htiles[p0].owner) == 2 and int(g.hp[0].money) == 100 \
+		and _log_at(g, "不够", log0) >= 0,
+		"现金不足 ⇒ 作废（地皮仍归乙、甲那 100 没动）")
+	# 目标无地 ⇒ 作废
+	_tile_table(g, {1: [p0]})
+	await g._apply_card(g.hp[0], {"t": "强买令", "force_buy_tile": 33, "_target": 2})
+	_check(int(g.htiles[p0].owner) == 1 and int(g.hp[0].money) == 5000, "目标无地 ⇒ 作废")
+
+func _test_swap_pos(g) -> void:
+	print("== 位置：换位（swap_pos，不结算落点） ==")
+	var p0 := _prop_idx(0)
+	var p1 := _prop_idx(1)
+	# 两个落点都归丙：真若结算落点，甲乙都得给丙付租金 ⇒ 钱一分不动才说明没结算
+	_tile_table(g, {3: [p0, p1]})
+	g.hp[0].pos = p0
+	g.hp[1].pos = p1
+	await g._apply_card(g.hp[0], {"t": "霸占床位", "swap_pos": true, "_target": 2})
+	_check(int(g.hp[0].pos) == p1 and int(g.hp[1].pos) == p0,
+		"甲 ↔ 乙 换位（pos %d / %d）" % [int(g.hp[0].pos), int(g.hp[1].pos)])
+	_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 5000 and int(g.hp[2].money) == 5000,
+		"**不结算落点**：两人都落在丙的地上，租金一分没动")
+
+func _test_pull_target(g) -> void:
+	print("== 位置：拉人（pull_target，照常结算落点） ==")
+	var p0 := _prop_idx(0)
+	# 甲站在**自己**的地上：被拉来的乙落在甲的格 ⇒ 照常付租金给甲（"真结算了"的可见凭据）
+	_tile_table(g, {1: [p0]})
+	g.hp[0].pos = p0
+	g.hp[1].pos = 8
+	await g._apply_card(g.hp[0], {"t": "拉你过来", "pull_target": true, "_target": 2})
+	_check(int(g.hp[1].pos) == p0, "乙被拉到甲这一格（pos 8 ⇒ %d）" % int(g.hp[1].pos))
+	var rent := GameData.rent_for(p0, g.htiles)
+	_check(int(g.hp[1].money) == 5000 - rent and int(g.hp[0].money) == 5000 + rent,
+		"被拉来的人**照常结算落点**：乙付租金 %d 给甲（实得 %d / %d）" % [
+			rent, int(g.hp[1].money), int(g.hp[0].money)])
+	_check(int(g.hp[0].pos) == p0, "甲自己没被挪动")
+
+func _test_push_back(g) -> void:
+	print("== 位置：推退（push_back，照常结算落点） ==")
+	var p0 := _prop_idx(0)
+	var from_idx := p0 + 2   # 从 p0 往后 2 格正好落回 p0（不经过起点）
+	_tile_table(g, {1: [p0]})
+	g.hp[0].pos = 0
+	g.hp[1].pos = from_idx
+	await g._apply_card(g.hp[0], {"t": "推你一把", "push_back": 2, "_target": 2})
+	_check(int(g.hp[1].pos) == p0, "乙后退 2 格（pos %d ⇒ %d）" % [from_idx, int(g.hp[1].pos)])
+	var rent := GameData.rent_for(p0, g.htiles)
+	_check(int(g.hp[1].money) == 5000 - rent and int(g.hp[0].money) == 5000 + rent,
+		"后退落点**照常结算**：乙付租金 %d 给甲（实得 %d / %d）" % [
+			rent, int(g.hp[1].money), int(g.hp[0].money)])
+	# 后退途中跨过起点 ⇒ 照常领工资（`机会卡.md` §三「与 move_steps 同口径」）；
+	# 落点 52 号格是甲的地 ⇒ 再照常付一次租金
+	var last := _prop_idx(29)   # 52 号格（最末一块地产）
+	_tile_table(g, {1: [last]})
+	g.hp[0].pos = 0
+	g.hp[1].pos = 1
+	var sal := int(g._salary_amount(g.hp[1]))
+	var rent2 := GameData.rent_for(last, g.htiles)
+	await g._apply_card(g.hp[0], {"t": "推你一把", "push_back": 5, "_target": 2})
+	_check(int(g.hp[1].pos) == last, "后退 5 格：1 ⇒ %d（跨过起点绕回顶边）" % int(g.hp[1].pos))
+	_check(int(g.hp[1].money) == 5000 + sal - rent2,
+		"途中跨过起点领工资 +%d、落点又付租金 %d（实得 %d）" % [
+			sal, rent2, int(g.hp[1].money)])
+
+func _test_shuffle_pos(g) -> void:
+	print("== 位置：全场洗位（shuffle_pos，无目标） ==")
+	var p0 := _prop_idx(0)
+	var p1 := _prop_idx(1)
+	var p2 := _prop_idx(2)
+	# 丁是**地主**（30 块地全归他）：谁被洗到谁的格上都要付租 ⇒ 钱一分不动才说明没结算
+	var t := _fresh_tiles()
+	for i in t.size():
+		if int(t[i].owner) == GameData.NO_OWNER and String(GameData.TILES[i].get("type", "")) == "property":
+			t[i].owner = 4
+	_setup(g, [_mk_player(1, "甲", 5000), _mk_player(2, "乙", 5000),
+		_mk_player(3, "丙", 5000), _mk_player(4, "丁", 5000)], t)
+	g.hp[0].pos = p0
+	g.hp[1].pos = p1
+	g.hp[2].pos = p2
+	g.hp[3].pos = 8   # 8 号格不是地产：丁换到别人格上要付租，别人换到 8 上什么也不用付
+	var before := [int(g.hp[0].pos), int(g.hp[1].pos), int(g.hp[2].pos), int(g.hp[3].pos)]
+	var t0 := Time.get_ticks_msec()
+	await g._apply_card(g.hp[0], {"t": "大风吹", "shuffle_pos": true})
+	var ms := Time.get_ticks_msec() - t0
+	var after := [int(g.hp[0].pos), int(g.hp[1].pos), int(g.hp[2].pos), int(g.hp[3].pos)]
+	before.sort()
+	after.sort()
+	_check(after == before, "存活玩家的位置**多重集守恒**（洗前 %s / 洗后 %s）" % [str(before), str(after)])
+	_check(ms < 2000, "无目标：不进选目标态、也不空等一个操作窗口（实耗 %d ms）" % ms)
+	_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 5000 \
+		and int(g.hp[2].money) == 5000 and int(g.hp[3].money) == 5000,
+		"洗位**不结算落点**：四个人都站在丁的地上，租金一分没动")
+	# 出局者不参与洗牌（他的位置原地不动）
+	_tile_table(g, {})
+	g.hp[0].pos = 3
+	g.hp[1].pos = 11
+	g.hp[2].pos = 40
+	g.hp[3].pos = 20   # 出局的丁
+	await g._apply_card(g.hp[0], {"t": "大风吹", "shuffle_pos": true})
+	var alive_pos := [int(g.hp[0].pos), int(g.hp[1].pos), int(g.hp[2].pos)]
+	alive_pos.sort()
+	_check(alive_pos == [3, 11, 40], "只洗存活的三家（实得 %s）" % str(alive_pos))
+	_check(int(g.hp[3].pos) == 20, "出局者的位置不参与洗牌（仍是 20）")
+
+## 免疫口径（`机会卡.md` §四）：夺地 take / 强买 / 拉人 / 推退是 debuff ⇒ 目标持皂整条免疫；
+## 互换 / 换位是**中性**（一 debuff 一 buff 相抵）⇒ 香皂无效；全场洗位无目标 ⇒ 不吃任何人的香皂。
+func _test_tile_soap(g) -> void:
+	print("== 地皮 / 位置：香皂口径 ==")
+	var p0 := _prop_idx(0)
+	var p1 := _prop_idx(1)
+	# debuff 四条：目标持皂 ⇒ 整条免疫
+	var cases := {"seize_tile": "take", "force_buy_tile": 150,
+		"pull_target": true, "push_back": 2}
+	for field in cases:
+		_tile_table(g, {2: [p1]}, {p1: 2})
+		g.hp[0].pos = p0
+		g.hp[1].pos = 8
+		g.hp[1].items = [{"id": "空想者的香皂", "melt_left": 10}]
+		var card := {"t": "地皮卡", "_target": 2}
+		card[field] = cases[field]
+		var log0 := _log_len(g)
+		await g._apply_card(g.hp[0], card)
+		_check(_log_at(g, "挡下了", log0) >= 0, "%s：战报写明被香皂挡下（真走了那道闸）" % field)
+		_check(int(g.htiles[p1].owner) == 2 and int(g.htiles[p1].level) == 2, "%s：地皮没易主" % field)
+		_check(int(g.hp[1].pos) == 8 and int(g.hp[0].pos) == p0, "%s：两边位置都没动" % field)
+		_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 5000, "%s：现金一分没动" % field)
+	# 中性两条：目标持皂照样生效（战报里连"挡下了"都不该有）
+	_tile_table(g, {1: [p0], 2: [p1]}, {p0: 1, p1: 2})
+	g.hp[1].items = [{"id": "空想者的香皂", "melt_left": 10}]
+	var log1 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "换宿", "seize_tile": "swap", "_target": 2})
+	_check(int(g.htiles[p0].owner) == 2 and int(g.htiles[p1].owner) == 1 \
+		and _log_at(g, "挡下了", log1) < 0,
+		"互换是**中性**：目标持皂照样换得成（也没走免疫那道闸）")
+	_tile_table(g, {})
+	g.hp[0].pos = p0
+	g.hp[1].pos = p1
+	g.hp[1].items = [{"id": "空想者的香皂", "melt_left": 10}]
+	log1 = _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "霸占床位", "swap_pos": true, "_target": 2})
+	_check(int(g.hp[0].pos) == p1 and int(g.hp[1].pos) == p0 and _log_at(g, "挡下了", log1) < 0,
+		"换位是**中性**：目标持皂照样换得成")
+	# 中性那两条**不碰** `_immune_debuff`：不然会顺手把护腕的盾扣掉（盾是给 debuff 用的）
+	_tile_table(g, {})
+	g.hp[0].pos = p0
+	g.hp[1].pos = p1
+	g.hp[1].shield = 1
+	g.hp[1].items = [{"id": "护腕"}]
+	await g._apply_card(g.hp[0], {"t": "霸占床位", "swap_pos": true, "_target": 2})
+	_check(int(g.hp[1].get("shield", 0)) == 1 and g.hp[1].items.size() == 1 \
+		and int(g.hp[1].pos) == p0,
+		"中性换位不消耗护腕的盾（换位照常发生）")
+	# 全场洗位：抽卡者持皂也挡不住（无目标）
+	_tile_table(g, {})
+	g.hp[0].pos = 3
+	g.hp[1].pos = 11
+	g.hp[2].pos = 40
+	g.hp[0].items = [{"id": "空想者的香皂", "melt_left": 10}]
+	var log2 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "大风吹", "shuffle_pos": true})
+	var after := [int(g.hp[0].pos), int(g.hp[1].pos), int(g.hp[2].pos)]
+	after.sort()
+	_check(after == [3, 11, 40] and _log_at(g, "挡下了", log2) < 0,
+		"全场洗位**无目标**：抽卡者持皂也挡不住（位置仍是那三个的多重集）")
+	# debuff 那条走的仍是既有的 `_immune_debuff`：护腕的盾同样挡下、并消耗掉
+	_tile_table(g, {2: [p1]})
+	g.hp[1].shield = 1
+	g.hp[1].items = [{"id": "护腕"}]
+	await g._apply_card(g.hp[0], {"t": "夺地令", "seize_tile": "take", "_target": 2})
+	_check(int(g.htiles[p1].owner) == 2 and int(g.hp[1].get("shield", 0)) == 0 \
+		and g.hp[1].items.is_empty(),
+		"debuff 夺地被护腕挡下、盾消耗掉（走的是既有 `_immune_debuff`）")
