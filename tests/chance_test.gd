@@ -62,6 +62,9 @@ func _setup(g, players: Array, tiles: Array) -> void:
 	g._card_target_ack = false
 	g._awaiting_card_target = 0
 	g._hl_peers = []
+	# 抉择卡（Task 12）那两个判别位也一并复位，用例之间不串味
+	g._choice_pick = -1
+	g._awaiting_card = 0
 
 ## 甲(1) / 乙(2,名下有地) / 丙(3,bot) / 丁(4,出局)
 func _table(g) -> void:
@@ -108,6 +111,7 @@ func _run() -> void:
 	await _test_managed(g)
 	await _test_target_fields(g)
 	await _test_tile_move_fields(g)
+	await _test_choices(g)
 	if fails == 0:
 		print("CHANCE TEST: ALL PASS")
 		quit(0)
@@ -751,3 +755,188 @@ func _test_tile_soap(g) -> void:
 	_check(int(g.htiles[p1].owner) == 2 and int(g.hp[1].get("shield", 0)) == 0 \
 		and g.hp[1].items.is_empty(),
 		"debuff 夺地被护腕挡下、盾消耗掉（走的是既有 `_immune_debuff`）")
+
+# ================= 抉择卡（Task 12） =================
+#
+# 一张卡给 2~3 个分支、由抽到的人自己挑；**每个分支自带一段效果字段**，按 `_apply_card` 的
+# 同一套分派结算（所以「告密还是包庇」可以一支带目标、一支给钱）。bot / 休眠托管 / 自动回归 /
+# 没作答 ⇒ 取第一项。
+#
+# 作答走卡面那排按钮（`DeckReveal.show_choices` → `choice_picked` → `_on_card_choice` →
+# 客户端 `c_choice` 回程 / 房主直接记下），归属校验与选目标同一套。
+
+func _test_choices(g) -> void:
+	_test_choices_iface(g)
+	await _test_choices_single(g)
+	await _test_choices_managed(g)
+	await _test_choices_pick(g)
+	_test_choices_spectator(g)
+	_test_choices_ownership(g)
+
+## 存在性闸（同上 `_test_iface` 那条）：实现缺席时下面每条都会在调用处中断、`fails` 一个都不涨。
+func _test_choices_iface(g) -> void:
+	print("== 抉择卡：接口齐备 ==")
+	_check(_has_prop(g, "_choice_pick"), "成员 _choice_pick 在位")
+	for nm in ["_await_card_choice", "_on_card_choice"]:
+		_check(g.has_method(nm), "方法 %s 在位" % nm)
+	for nm in ["s_card_choices", "c_choice"]:
+		_check(g.has_method(nm), "RPC %s 在位" % nm)
+	var dr = g.deck_reveal
+	_check(dr != null, "（前置）屏幕层抽卡演出组件在（否则下面几条是空的）")
+	if dr == null:
+		return
+	_check(dr.has_signal("choice_picked"), "DeckReveal.choice_picked 信号在位")
+	for nm in ["show_choices", "is_choice_visible"]:
+		_check(dr.has_method(nm), "DeckReveal.%s 在位" % nm)
+	# 方向是协议的一部分（钉法同 hud_test 的 c_card_ok / s_card_close）。
+	var rcfg: Dictionary = g.get_script().get_rpc_config()
+	var ck := StringName("c_choice")
+	var sk := StringName("s_card_choices")
+	_check(rcfg.has(ck) and rcfg.has(sk), "c_choice / s_card_choices 都登记在册")
+	if rcfg.has(ck):
+		_check(int((rcfg[ck] as Dictionary).get("rpc_mode", -1)) == MultiplayerAPI.RPC_MODE_ANY_PEER,
+			"c_choice 是 any_peer（客户端 → 房主）")
+	if rcfg.has(sk):
+		var sc: Dictionary = rcfg[sk]
+		_check(int(sc.get("rpc_mode", -1)) == MultiplayerAPI.RPC_MODE_AUTHORITY \
+			and bool(sc.get("call_local", false)),
+			"s_card_choices 是 authority + call_local（房主 → 全员，房主自己也进抉择态）")
+
+## 0 项 / 1 项：没什么可挑的 ⇒ **不进交互**（不开窗口、不发按钮），照常按第 0 项结算。
+func _test_choices_single(g) -> void:
+	print("== 抉择卡：≤1 项 ⇒ 直接取第 0 项、不进交互 ==")
+	_target_table(g)   # 甲 5000
+	var t0 := Time.get_ticks_msec()
+	await g._apply_card(g.hp[0], {"t": "单选", "choices": [{"t": "唯一一支：+¥300", "money": 300}]})
+	var ms := Time.get_ticks_msec() - t0
+	_check(int(g.hp[0].money) == 5300, "一支也照常结算（甲 5300，实得 %d）" % int(g.hp[0].money))
+	_check(ms < 300, "且**立刻**结算、不开操作窗口（实耗 %d ms，托管那支要 0.6s）" % ms)
+	_check(g._choice_pick == -1 and g._awaiting_card == 0, "没进抉择态（判别位与归属位都没被写脏）")
+	# 空表（数据写坏）：整段作废 —— 关键是**别去索引 `choices[0]`**（那样当场就越界崩）
+	_target_table(g)
+	await g._apply_card(g.hp[0], {"t": "空抉择", "choices": []})
+	_check(int(g.hp[0].money) == 5000 and int(g.hp[0].pos) == 0,
+		"空抉择表 ⇒ 当这张卡没有那段（一分没动、也没崩）")
+
+## bot / 休眠托管 / 自动回归（房主自己那张）都不等人点 ⇒ 取第一项。
+func _test_choices_managed(g) -> void:
+	print("== 抉择卡：托管 / 机器人 / 自动回归 ⇒ 取第一项 ==")
+	var card := {"t": "翘课去兼职", "choices": [
+		{"t": "去兼职：+¥1200", "money": 1200},
+		{"t": "去上课：前进 4 格", "move_steps": 4}]}
+	# 休眠托管。用**真实机制**：`sleep = 1` ⇒ `_is_managed` 为真（给实例覆盖 `_is_managed`
+	# 那种写法在 GDScript 里做不到，见 tests/blackshop_test.gd 里同款做法）。
+	_target_table(g)
+	g.hp[0].sleep = 1
+	await g._apply_card(g.hp[0], card)
+	_check(int(g.hp[0].money) == 6200, "休眠托管取第一项（甲 5000 → 6200，实得 %d）" % int(g.hp[0].money))
+	_check(int(g.hp[0].pos) == 0, "第二项（前进 4 格）没被结算")
+	# 机器人
+	_target_table(g)
+	g.hp[0].bot = true
+	await g._apply_card(g.hp[0], card)
+	_check(int(g.hp[0].money) == 6200, "机器人取第一项（实得 %d）" % int(g.hp[0].money))
+	_check(int(g.hp[0].pos) == 0, "第二项也没被结算")
+	# 自动回归里房主自己那张：不等真人点（`_await_card_confirm` 的同一支）
+	_target_table(g)
+	g.at_mode = "host"
+	await g._apply_card(g.hp[0], card)
+	g.at_mode = ""
+	_check(int(g.hp[0].money) == 6200, "自动回归里房主自己那张取第一项（实得 %d）" % int(g.hp[0].money))
+	# 没人作答（真人窗口没开出来 / 超时）：`_choice_pick` 一直没人写 ⇒ 落到第 0 项。
+	# **真超时那一趟要空等满 25 秒**（本机成本太高），`_await_turn_window` 的超时本身由
+	# hud_test 的抽卡确认那段钉；这里钉的是"没等到作答时取第一项"这个落点。
+	_target_table(g)
+	await g._apply_card(g.hp[0], card)   # `running` 关着 ⇒ 窗口一次都不进（hud_test 里同一条）
+	_check(int(g.hp[0].money) == 6200, "没人作答 → 落到第 0 项（实得 %d）" % int(g.hp[0].money))
+	_check(int(g.hp[0].pos) == 0, "第二项同样没被结算")
+	_check(g._choice_pick == -1 and g._awaiting_card == 0, "四路都收尾干净（判别位与归属位复位）")
+
+## 真人作答（走真实那条：房主本机点击 ⇒ `_on_card_choice`）：**挑中的那一支才结算**。
+func _test_choices_pick(g) -> void:
+	print("== 抉择卡：挑中的那一支才结算 ==")
+	# 「告密还是包庇」的骨架：两支都带目标字段，一支给钱、一支送监 ⇒ 一眼看得出走了哪支。
+	# `_target` 是测试 / 摆拍的注入键（见 `_card_target_for`），绕开选目标交互 ——
+	# 那条交互由 T9 那节单独钉。
+	var card := {"t": "告密还是包庇", "choices": [
+		{"t": "包庇：他给你 ¥800", "steal_from": 800, "_target": 2},
+		{"t": "告密：送他去宿委会", "jail_to": true, "_target": 2}]}
+	_target_table(g)   # 甲 5000 / 乙 1000 / 丙 800 / 丁（出局）
+	g.running = true   # 窗口才进得去（本套件开头把它关了，见 hud_test 里同一条说明）
+	var out: Array = []
+	_answer_choice_when_waiting(g, 1, out)   # 不 await：等协程跑到窗口那句再作答
+	await g._apply_card(g.hp[0], card)
+	g.running = false
+	_check(out.size() == 1 and int(out[0]) == 1, "（前置）确实进了抉择态、等的是抽卡者本人")
+	_check(int(g.hp[1].pos) == GameData.JAIL_TILE and int(g.hp[1].skip) == 1,
+		"第二支生效：乙被送进宿委会并跳过下一回合（pos %d / skip %d）" % [
+			int(g.hp[1].pos), int(g.hp[1].skip)])
+	_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 1000,
+		"第一支（夺取 800）一点没落地（实得 甲 %d / 乙 %d）" % [int(g.hp[0].money), int(g.hp[1].money)])
+	_check(g._choice_pick == -1 and g._awaiting_card == 0, "收尾干净（判别位与归属位复位）")
+	# 递进结算**只读**原来那张卡（`merged` 是分支的副本）：同一份 `card` 再来一次，结果一模一样
+	#（下面这段就是拿**同一个字典**重跑一遍 —— 上一趟真要把 `t` / 字段挖走或改写，这里就崩了）
+	_check((card.choices as Array).size() == 2 and (card.choices as Array)[1].has("t") \
+		and not card.has("steal_from") and not card.has("jail_to") and not card.has("_target"),
+		"原 card 字典没被污染（分支还在、没往外漏字段）")
+	# 反过来选第一支：钱的活也照同一套字段结算
+	_target_table(g)
+	g.running = true
+	out = []
+	_answer_choice_when_waiting(g, 0, out)
+	await g._apply_card(g.hp[0], card)
+	g.running = false
+	_check(int(g.hp[0].money) == 5800 and int(g.hp[1].money) == 200,
+		"第一支生效：甲夺取 800（实得 甲 %d / 乙 %d）" % [int(g.hp[0].money), int(g.hp[1].money)])
+	_check(int(g.hp[1].pos) == 0 and int(g.hp[1].skip) == 0, "第二支（送监）没落地")
+
+## 等协程跑进抉择态之后替玩家点第 idx 枚（房主本机那条路）。`out` 收回实际的归属位
+##（顺便把"等的是不是抽卡者本人"钉死）。测试里拿不到挂起的协程句柄，就这么错帧作答。
+func _answer_choice_when_waiting(g, idx: int, out: Array) -> void:
+	for _i in 300:
+		await process_frame
+		if int(g._awaiting_card) != 0:
+			out.append(int(g._awaiting_card))
+			g._on_card_choice(idx)
+			return
+
+## 只有抽卡者那一端出按钮（口径同 T9 对选目标态的修法）：`s_card_choices` 是全员广播，
+## 观众看到的是同一张卡，但按钮整排不出镜 —— 也**不该**由他作答（另有 `c_choice` 的归属校验兜底）。
+func _test_choices_spectator(g) -> void:
+	print("== 抉择卡：只有抽卡者出按钮 ==")
+	_setup(g, [_mk_player(1, "甲"), _mk_player(2, "乙")], _fresh_tiles())   # my_peer = 1
+	var dr = g.deck_reveal
+	if dr == null:
+		return   # 存在性闸已经报过红了
+	dr.show_card("机会", "info", "测试：抉择卡")
+	dr.tick(dr.CARD_TIME + 0.05)   # 推出停留段：卡停住
+	_check(dr.is_showing() and dr.is_awaiting_confirm(), "（前置）卡已停在「等作答」上")
+	g.s_card_choices.rpc(["包庇", "告密"], 2)   # 抽卡者是 2，本机是 1
+	_check(not dr.is_choice_visible(), "旁观者（不是抽卡者）→ 按钮整排不出镜")
+	_check((dr._choice_labels as Array).is_empty(), "旁观者那端连标签都不留")
+	g.s_card_choices.rpc(["包庇", "告密"], 1)   # 这一张是抽卡者自己抽的
+	_check(dr.is_choice_visible(), "抽卡者本人 → 按钮出镜")
+	_check((dr._choice_btns as Array).size() == 2, "按标签建了 2 枚（实得 %d 枚）" % (dr._choice_btns as Array).size())
+	g.s_card_choices.rpc([], 1)                 # 收尾（空标签 = 退出抉择态）
+	_check(not dr.is_choice_visible(), "收尾包 ⇒ 退出抉择态、按钮收掉")
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)
+	_check(not dr.is_showing(), "（收尾）演出照旧收回")
+
+## 作答只有抽卡者本人算数（做法同 `c_card_ok` / `c_card_target`）：`s_card_choices` 是全员广播，
+## 别人那端也有同一张卡与同一排按钮 —— 少了这道闸，谁先点一下就能替抽卡者定下分支。
+func _test_choices_ownership(g) -> void:
+	print("== 抉择卡：归属校验 ==")
+	_target_table(g)
+	g._awaiting_card = 999        # 假装正等着别人（headless 下本机不是任何人的"远端"）
+	g._choice_pick = -1
+	g.c_choice(1)
+	_check(g._choice_pick == -1, "不是抽卡者本人 → c_choice 被丢掉")
+	g._awaiting_card = 0          # 哨兵：没有抉择在等
+	g.c_choice(1)
+	_check(g._choice_pick == -1, "没有抉择在等 → 也丢掉（哨兵 0 谁都不匹配）")
+	g._awaiting_card = 1          # 本机就是抽卡者（直连：sender = 0）
+	g.c_choice(1)
+	_check(g._choice_pick == 1, "本机就是抽卡者 → 收下（实得 %d）" % g._choice_pick)
+	g._choice_pick = -1
+	g._awaiting_card = 0

@@ -20,6 +20,10 @@ extends Control
 ## 本机玩家按下「确定」（`game` 接手：房主直接放行 / 客户端回 `c_card_ok`）。
 signal confirmed
 
+## 抉择卡：本机玩家挑了第 `idx` 个分支（`game._on_card_choice` 接手：房主直接记下 /
+## 客户端回 `c_choice`）。**只有抽卡者那一端会有按钮**，见 `game.s_card_choices`。
+signal choice_picked(idx: int)
+
 ## 卡的屏幕尺寸（2:3 —— 与旧 `BoardView.CARD_SIZE`(260×390) 同比例，放大到"大字"档）。
 const CARD_SIZE := Vector2(320.0, 480.0)
 ## 四段相位时长（秒）：抽出 → 翻面 → 停留 → 收回。数值与旧版一字不差。
@@ -29,6 +33,8 @@ const HOLD := 1.50
 const BACK := 0.28
 ## 演出到「停住等确定」为止的时长（= 前三段之和）。**BACK 只在 `request_close()` 之后走**。
 const CARD_TIME := OUT + FLIP + HOLD
+## 抉择卡那排分支按钮的单枚尺寸（横向排一排、整排居中，见 `_place`）。
+const CHOICE_BTN := Vector2(168.0, 42.0)
 
 ## 摆拍用：强制让「确定」按钮出镜（`--shot` 的 card / itemreveal 分支置真，`_close()` 复位）。
 var dev_force_confirm := false
@@ -43,6 +49,10 @@ var _closing := false         # 已收到关闭请求，正在走 BACK 相位
 var _close_t := 0.0           # BACK 相位计时
 var _can_confirm := false     # 本机玩家是"该确认的人"（由 game 按操作窗口归属推）
 var _btn: Button              # 「确定」（停住之后才出镜；非抽卡者不给可用的按钮）
+# 抉择卡（批次 2 §三）：卡面下方那排分支按钮。空数组 = 不在抉择态 ⇒ 照旧走「确定」那一条。
+var _choice_labels: Array = []   # 房主发下来的分支文案（`s_card_choices`）
+var _choice_btns: Array = []     # 按 `_choice_labels` 建出来的那几枚（1~3 枚）
+var _built_labels: Array = []    # `_choice_btns` 是按哪一份标签建的（用来免掉每帧重建）
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -111,6 +121,9 @@ func request_close() -> void:
 	_closing = true
 	_close_t = 0.0
 	_btn.visible = false
+	# 抉择按钮同理：收尾相位里 `tick` 不再过 `_update_btn`，得在这里先收掉（`_choice_labels`
+	# 不动 —— 它还记着"这一张是抉择卡"，重开演时由 `show_card → _close` 清）
+	_sync_choice_btns([])
 
 ## 本机玩家是不是"该点确定的人"（由 `game` 按操作窗口归属 `_op_owner` 推）。
 ## 非抽卡者看到同一张卡，但**没有可用的按钮**（按钮整枚不出镜）。
@@ -126,10 +139,48 @@ func is_awaiting_confirm() -> bool:
 func is_confirm_visible() -> bool:
 	return _btn.visible
 
-## 按钮该不该出镜：停住之后、且本机是"该确认的人"（或摆拍强制）。
+## 抉择卡：卡面下方给 N 个分支按钮（1~3 个）。`labels` 为空 = 退出抉择态（按钮整排收掉）。
+##
+## 与「确定」是**同一次演出里互斥的两种作答方式**：抉择态一进，那枚单按钮就不出镜
+##（见 `_update_btn`）—— 一次只留一种点法，免得"点了确定到底算不算答完"要两处判。
+func show_choices(labels: Array) -> void:
+	_choice_labels = labels.duplicate()
+	_update_btn()
+
+## 抉择按钮此刻是不是亮着（测试读它）。
+func is_choice_visible() -> bool:
+	for b in _choice_btns:
+		if (b as Button).visible:
+			return true
+	return false
+
+## 按钮该不该出镜。两条**互斥**：
+##   * 抉择态（`_choice_labels` 非空）→ 按它建 N 枚分支按钮，整组等卡停住才出镜；
+##   * 否则 —— 「确定」那一条**一字未改**（停住之后、且本机是"该确认的人"或摆拍强制）。
 func _update_btn() -> void:
-	_btn.visible = _showing and not _closing and _t >= CARD_TIME \
-		and (_can_confirm or dev_force_confirm)
+	var settled := _showing and not _closing and _t >= CARD_TIME
+	_sync_choice_btns(_choice_labels if settled else [])
+	_btn.visible = settled and _choice_labels.is_empty() and (_can_confirm or dev_force_confirm)
+
+## 按 `labels` 重建那排分支按钮（`labels` 为空 = 全收掉）。
+## 每帧都会被 `_update_btn` 调到 ⇒ 先比一遍标签，没变就原样留着，别每帧重建节点。
+func _sync_choice_btns(labels: Array) -> void:
+	if labels == _built_labels:
+		return
+	for b in _choice_btns:
+		(b as Button).queue_free()
+	_choice_btns = []
+	_built_labels = labels.duplicate()
+	for i in labels.size():
+		var b := UIKit.button(String(labels[i]), 16, "normal")
+		b.custom_minimum_size = CHOICE_BTN
+		b.size = CHOICE_BTN
+		# 捕的是**这一枚自己的下标**：GDScript 的闭包按值捕获 ⇒ 每轮的 `i` 各自快照，
+		# 不会三枚一起报同一个数
+		b.pressed.connect(func() -> void: choice_picked.emit(i))
+		add_child(b)
+		_choice_btns.append(b)
+	_place()
 
 ## 相位推进（`_process` 每帧调；测试与摆拍可直接快进）。
 func tick(delta: float) -> void:
@@ -201,8 +252,20 @@ func _place() -> void:
 	if _card == null or not is_instance_valid(_card):
 		return
 	_card.position = (size - CARD_SIZE) * 0.5 + Vector2(0.0, _bob)
-	_btn.position = Vector2((size.x - _btn.size.x) * 0.5,
-		(size.y + CARD_SIZE.y) * 0.5 + 18.0)
+	var y := (size.y + CARD_SIZE.y) * 0.5 + 18.0
+	_btn.position = Vector2((size.x - _btn.size.x) * 0.5, y)
+	# 抉择按钮组：与「确定」同一个纵坐标（卡正下方），横向排一排、整排居中。
+	# 宽度按**各自的实际 size**（文案长短不一，Control 会把 size 撑到不小于文字宽）⇒ 不会互相压住。
+	var n := _choice_btns.size()
+	if n > 0:
+		var total := float(n - 1) * 12.0
+		for b in _choice_btns:
+			total += (b as Button).size.x
+		var x := (size.x - total) * 0.5
+		for b in _choice_btns:
+			var bb := b as Button
+			bb.position = Vector2(x, y)
+			x += bb.size.x + 12.0
 
 ## 收掉当前这张（重复开演 / 演出结束都走它）。
 func _close() -> void:
@@ -218,6 +281,10 @@ func _close() -> void:
 	_can_confirm = false
 	dev_force_confirm = false
 	_btn.visible = false
+	# 抉择态一并清干净：下一次开演若又是抉择卡，`s_card_choices` 会重新发标签过来；
+	# 不留在上一张的标签上（留着的话，新卡停住时那排旧按钮会自己冒出来）
+	_choice_labels = []
+	_sync_choice_btns([])   # 走它 = 顺带把那几枚按钮节点真回收掉（不能只清数组，会留孤儿节点）
 	visible = false
 
 ## 翻面：true = 显示卡背，false = 显示卡面

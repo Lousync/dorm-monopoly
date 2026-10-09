@@ -358,8 +358,13 @@ var _prompt_token := -1
 ## ⇒ `s_prompt` 的签名不必带格号。
 var _prompt_tile := -1
 ## 卡面确认（批次 12 C2 / ⑧⑪）：正在等谁点「确定」（0 = 没有）；他确认后 `_card_ack` 置真。
+## **抉择卡复用同一个归属位**（批次 2 §三）：抉择的作答窗口同样挂在抽卡者身上
+##（`_op_window_owner` / `_broadcast_state` 的等待链都只认它一处），掉线 / 重连那两个既有钩子
+##（`_disconnect` 的 `_card_ack = true`、`_rekey_transient` 的换 key）也就一并照上了。
 var _awaiting_card := 0
 var _card_ack := false
+## 抉择卡：抽卡者选中的分支下标（-1 = 还没作答 ⇒ 房主按第一项兜底，见 `_await_card_choice`）。
+var _choice_pick := -1
 
 # ---------------- 自动化测试 ----------------
 var at_mode := ""
@@ -1922,7 +1927,11 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 					s_card.rpc(String(card.t), GameData.card_kind(card), "机会")
 					_log("%s 抽到机会卡：%s" % [p.name, card.t])
 					# 批次 12 C2：演出停在 HOLD 等抽卡者点「确定」，**效果在确认之后才落地**。
-					await _await_card_confirm(p)
+					# 抉择卡（批次 2 §三）不走这一步：它的分支按钮**就是**它的「确定」，由
+					# `_apply_card` 末尾那段（`_await_card_choice`）接手，顺带负责收卡。
+					# 先走确认的话，那一步已经把卡收走了（`s_card_close` → BACK 相位）⇒ 按钮无处可挂。
+					if not card.has("choices"):
+						await _await_card_confirm(p)
 					await _apply_card(p, card)
 				"item":
 					var q := _roll_quality(ItemData.CHANCE_ITEM_WEIGHTS.duplicate())
@@ -2204,6 +2213,25 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 			_log("【停电】黑市也黑着，进不去", "#8a90a5")
 		else:
 			await _run_blackshop(p)
+	# ---- 抉择卡（批次 2 §三）：**排在最后** —— 分支自己那段效果字段要按同一套分派结算，
+	# 所以递进调一次 `_apply_card` 复用现成的顺序（钱 / 目标 / 地皮 / 位移……），不另抄一遍。
+	if card.has("choices"):
+		var opts: Array = card.choices
+		# 空表（数据写坏）当这张卡没有这一段：不拦的话 `opts[i]` 当场越界
+		if not opts.is_empty():
+			var i := await _await_card_choice(p, card)
+			var branch: Dictionary = opts[i]
+			_log("%s 选择了：%s" % [p.name, String(branch.get("t", ""))], "#f0c064")
+			# **复制一份再改**：`_apply_card` 全程只读传入的 card（分支字典也是卡的一部分，
+			# 原样留着 —— 这张卡可能被重放 / 被图鉴读）。`t` 是分支文案、不是玩法字段，留在里面
+			# 也会被 `_apply_card` 忽略，但复制干净点更省心。
+			var merged := branch.duplicate()
+			merged.erase("t")
+			await _apply_card(p, merged)
+			# 上面的递进调用自己末尾就 `_check_end()` 过一次 ⇒ **这一处不再重复**
+			#（同 `_card_apply_target` 那条口径：一张卡只留一个出口。多调一次会让「目标现金」
+			#  那种胜负把同一句胜利战报刷两遍 —— `_end_game` 没有重入闸）。
+			return
 	_check_end()
 
 ## 取这张卡要下手的目标（`{}` = 这张卡的目标部分作废）。
@@ -3686,6 +3714,86 @@ func _await_card_confirm(p: Dictionary) -> void:
 	s_card_close.rpc()
 	_awaiting_card = 0
 	_broadcast_state()
+
+## 房主 → 全员：抉择卡的选项按钮。首参 = 分支文案（1~3 条），次参 = **抽卡者**（同 `s_card_target`
+## 那条口径：`call_local` 让全员都收到，但**只有抽卡者那一端进抉择态**，见下）。
+##
+## `labels` 为空 = 退出抉择态（收按钮）。
+@rpc("authority", "call_local", "reliable")
+func s_card_choices(labels: Array, owner_peer: int) -> void:
+	if deck_reveal == null or not is_instance_valid(deck_reveal):
+		return
+	# 只有抽卡者本人那一端出按钮（同 T9 对选目标态的修法）：旁观者看到的是同一张卡，
+	# 但按钮整排不出镜 —— 他也**不该**作答（另有 `c_choice` 的归属校验兜底）。
+	# 本机被托管（机器人 / 休眠）时同样不出：房主那边短暂延时后自动取第一项，
+	# 按钮闪一下反而像"能点"。
+	var me := _player_by_peer(my_peer)
+	var mine: bool = owner_peer == my_peer and not me.is_empty() and not _is_managed(me)
+	deck_reveal.show_choices(labels if mine else [])
+
+## 客户端 → 房主：本机玩家挑了抉择卡的第 `idx` 个分支。
+@rpc("any_peer", "call_remote", "reliable")
+func c_choice(idx: int) -> void:
+	if not multiplayer.is_server():
+		return
+	# 没人等抉择（哨兵 0 谁都不匹配）：一律不收 —— 一句游离的直连调用不该把 `_choice_pick` 写脏。
+	if _awaiting_card == 0:
+		return
+	# 归属校验（做法同 `c_card_ok` / `c_card_target` / `c_decision`）：`s_card_choices` 是**全员**广播，
+	# 别人那端也有同一张卡与同一排按钮；少了这道闸，谁先点一下就能替抽卡者定下分支。
+	# 从网络来的必须正是抽卡者本人；本机直连（sender = 0）则要求本机就是抽卡者。
+	var sender := multiplayer.get_remote_sender_id()
+	if (sender != 0 and sender != _awaiting_card) or (sender == 0 and _awaiting_card != my_peer):
+		return
+	_choice_pick = idx
+
+## 本机玩家点了某个分支（`DeckReveal.choice_picked`）：房主直接记下，客户端回 `c_choice`。
+func _on_card_choice(idx: int) -> void:
+	if multiplayer.is_server():
+		if _awaiting_card == my_peer:
+			_choice_pick = idx
+	else:
+		c_choice.rpc_id(1, idx)
+
+## 房主侧：等抽卡者为一张抉择卡挑分支，返回分支下标。bot / 休眠托管 / 自动回归 / 没作答 ⇒ 0。
+##
+## 骨架照 `_await_card_confirm`（托管走短暂延时、真人走**既有操作窗口**的 "card" 挡位 ⇒ 倒计时
+## 挂在抽卡者那条身家条 / 名册行上、超时即取第一项）。两个差别：
+##   * 收卡（`s_card_close`）落在本函数末尾 —— 抉择卡不走「先确定、再选」：它的分支按钮**就是**
+##     它的「确定」（`_play_turn` 的 "event" 分支据此不调 `_await_card_confirm`）。先确定的话，
+##     那一步已经把卡收走了（`s_card_close` → BACK 相位），按钮就没处挂。
+##   * 等待条件多并一个 `_card_ack`：掉线那条既有钩子（`_disconnect` 的
+##     `_awaiting_card == id` ⇒ `_card_ack = true`）也适用于这里，掉线者不留全场空等一窗。
+func _await_card_choice(p: Dictionary, card: Dictionary) -> int:
+	var opts: Array = card.choices
+	if opts.size() <= 1:
+		# 0 项（数据写坏）/ 1 项：没什么可挑的 ⇒ **不进交互**（不开窗口、不发按钮），取第 0 项。
+		# 空表那一边由 `_apply_card` 的 `opts.is_empty()` 拦着，走不到这里。
+		return 0
+	_choice_pick = -1
+	_card_ack = false
+	_awaiting_card = int(p.peer)
+	_broadcast_state()   # 快照里 await="card" / await_peer=抽卡者
+	var labels: Array = opts.map(func(o: Dictionary) -> String: return String(o.get("t", "?")))
+	s_card_choices.rpc(labels, _awaiting_card)
+	if _is_managed(p):
+		await _wait(0.6)
+	elif at_mode != "" and int(p.peer) == my_peer:
+		# 自动回归里房主自己那张：不等真人点（同 `_await_card_confirm` 那一支的口径，
+		# **同样别扩成"整局都自动作答"** —— 客户端那一张要走真正的操作窗口 + `c_choice` 回程）。
+		await _wait(0.3)
+	else:
+		# `alive` 的语义是"**还**在等"（同 `_await_card_confirm`）—— 写反了窗口一次都不进。
+		await _await_turn_window("card", func() -> bool: return _choice_pick < 0 and not _card_ack)
+	s_card_choices.rpc([], _awaiting_card)   # 退出抉择态（收按钮）
+	s_card_close.rpc()
+	_awaiting_card = 0
+	_broadcast_state()
+	var pick := _choice_pick
+	_choice_pick = -1
+	if pick < 0 or pick >= opts.size():
+		pick = 0        # 没作答（超时 / 掉线）⇒ 第一项
+	return pick
 
 # ================= 界面刷新 =================
 

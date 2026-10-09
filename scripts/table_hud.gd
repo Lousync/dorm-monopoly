@@ -589,6 +589,8 @@ static func build_play_ui(g: Node) -> void:
 	# 客户端回 `c_card_ok`），超时与机器人 / 休眠托管由 `game._await_card_confirm` 兜。
 	g.deck_reveal = DeckReveal.new()
 	g.deck_reveal.confirmed.connect(g._on_card_confirm)
+	# 抉择卡那排分支按钮（批次 2 §三）：同一条路 —— 房主直接记下 / 客户端回 `c_choice`。
+	g.deck_reveal.choice_picked.connect(g._on_card_choice)
 	hud.add_child(g.deck_reveal)
 
 	var hair := ColorRect.new()
