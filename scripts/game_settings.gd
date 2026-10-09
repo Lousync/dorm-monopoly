@@ -29,17 +29,12 @@ const AB_FREQS: Array[String] = ["关", "低", "中", "高"]
 const AB_FREQ_LABELS := {"关": "关", "低": "低", "中": "中", "高": "高"}
 const AB_DURS: Array[String] = ["1", "2", "3", "4"]
 const AB_DUR_LABELS := {"1": "1", "2": "2", "3": "3", "4": "4"}
-const AB_COND_SW: Array[String] = ["off", "on"]
-const AB_COND_LABELS := {"off": "关", "on": "开"}
 
 var ab_freq := "关"   # 随机触发频率（关 = 整局不触发）
 var ab_dur := 2       # 持续型畸变的默认时长基准（玩家回合数，条目可覆盖）
 var ab_cond := true   # 是否允许条件型畸变触发
 
 # ---- 开局科技（doc/game-design/开局科技.md；关 = 发车不定档不选卡） ----
-const TECH_SW: Array[String] = ["off", "on"]
-const TECH_SW_LABELS := {"off": "关", "on": "开"}
-
 ## 科技开关：**默认开**（用户 2026-10-09 定）—— 与 `liq_on` 并列，都是「默认值 ≠ 现状」的例外。
 var tech_on := true
 
@@ -55,8 +50,6 @@ const CASH_MIN := 0
 const CASH_MAX := 99999
 const SALARY_MIN := 0
 const SALARY_MAX := 20000
-const SW: Array[String] = ["off", "on"]
-const SW_LABELS := {"off": "关", "on": "开"}
 
 var start_cash := GameData.START_MONEY    # 起始资金（0 ~ 99999）
 var start_salary := GameData.SALARY       # 起点补贴（0 ~ 20000）

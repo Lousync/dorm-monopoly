@@ -246,6 +246,40 @@ static func switch_toggle(initial: bool, on_change: Callable) -> Switch:
 	s.toggled.connect(on_change)
 	return s
 
+## ---- 小节内容的三行「说明 + 控件」套路 ----------------------------------------------------
+## **两个设置面板共用这一份**（大厅「游戏设置」弹窗 / 对局内暂停的设置面板，2026-10-09 统一）：
+## 原先只有大厅那三只是 `lobby.gd` 的私有方法，对局内那一版要照着再抄一遍 —— 抄件迟早走样。
+## 说明一律 `TEXT_DIM` + **可折行**：不带 `autowrap_mode` 的 Label 会把**整个弹窗撑宽**
+##（实测大厅那边一句长说明就把弹窗从 680 顶到 758：中心容器按内容最小宽走）。
+
+## 一行说明（无控件，占整行）
+static func note(text: String, px := 13) -> Label:
+	var l := label(text, px, TEXT_DIM)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return l
+
+## 「说明 + 任意控件」一行（开关 / 滑块都用它）：说明占满剩余宽度并折行，控件贴右内缘
+static func ctrl_row(text: String, ctrl: Control, px := 13) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var l := label(text, px, TEXT_DIM)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.add_child(l)
+	row.add_child(ctrl)
+	return row
+
+## 「说明 + 数字输入」一行（只收数字；越界钳制由调用方做）
+static func num_row(text: String, edit: LineEdit, px := 13) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var l := label(text, px, TEXT_DIM)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.add_child(l)
+	row.add_child(edit)
+	return row
+
 static func panel(bg: Color, corner: int = 10, border: Color = Color(0, 0, 0, 0), border_w: int = 0) -> Panel:
 	var p := Panel.new()
 	p.add_theme_stylebox_override("panel", stylebox(bg, corner, border, border_w))

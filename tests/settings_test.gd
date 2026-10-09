@@ -249,15 +249,18 @@ func _test_in_game_tier() -> void:
 	g._refresh_tier_ui()
 	_check(g.tier_row.visible, "房主看得到可点的挡位 chips")
 	_check(not g.tier_readonly.visible, "房主不显示只读行")
-	# 小标题只跟 chips 一侧显隐：否则客户端会看到「操作限时」小标题 + 只读行两行同义文本
-	_check(g.tier_title.visible == g.tier_row.visible, "小标题与 chips 同步显隐")
+	# 房主那一侧整块（说明 + chips）一起显隐。2026-10-09 统一样式后**小标题由
+	# `UIKit.SectionBox` 的 legend 承担**（原先是 `tier_title` 标签）：标题房主 / 客户端
+	# 都看得到，切的是盒子里的内容 —— 所以不再有「标题跟着 chips 一起藏」那条不变式。
+	_check(g.tier_host_box.visible, "房主：说明 + chips 那一块整体可见")
 	# g 是 Node 类型，动态属性访问返回 Variant，不能写 `:=`（类型推不出来）
 	var rev: int = g._timeout_rev
 	g._set_timeout_tier("30")
 	_check(g._settings.timeout_tier == "30", "点挡位写进 settings")
 	_check(g._timeout_rev == rev + 1, "改挡位 → _timeout_rev +1（触发重计时）")
 	_check(String(g.st.get("timeout_tier", "")) == "30", "改挡位 → 快照同步")
-	_check(g.tier_readonly.text.begins_with("操作限时：30 秒"), "只读行文案跟随挡位")
+	# 只读行不再重复「操作限时：」前缀 —— 那两个字现在由上面的小节标题（legend）说
+	_check(g.tier_readonly.text.begins_with("30 秒"), "只读行文案跟随挡位（前缀由小节标题承担）")
 	g._set_timeout_tier("bogus")
 	_check(g._settings.timeout_tier == "30", "非法挡位被拒（回落靠 GameSettings）")
 	g.queue_free()

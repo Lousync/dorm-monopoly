@@ -583,6 +583,12 @@ func take_shot(path: String) -> void:
 		# 「卡在菜单之下」由 `hud_test` 的显式 z 断言钉住（`deck_reveal.z_index < menu_layer.z_index`），
 		# 别从这张图得出反向结论。
 		g._open_menu()
+		# 文件名再带 `setpanel` ⇒ 顺手切到「设置」那一片，用来核对对局内设置面板的
+		# **分节边框盒 / 开关组件 / 与大厅弹窗的一致性**（2026-10-09 统一样式时加的；
+		# 如 `xx_pause_setpanel_table_plain.png`）。要等一帧布局落定再切，否则同批截图拍到上一片。
+		if path.contains("setpanel"):
+			await get_tree().create_timer(0.3).timeout
+			g._menu_show("settings")
 	if path.contains("deckout"):
 		# 抽卡「抽出」摆拍（批次 8 起演出在**屏幕层**，相机不再参与）：这里不再需要先把注视点
 		# 挪到牌堆（旧版是给 `play_deck_card` 的推近兜底），只等一拍让场景稳定。

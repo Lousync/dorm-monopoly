@@ -128,7 +128,9 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   `table` 时会调 `focus_grid(27, 2.0)` 想拉近到 27 号格、并弹格详情卡 —— **但 `cam_locked`
   默认锁着，`focus_grid` 直接 no-op**（摆拍默认锁镜头那条的副作用，见下 `freecam`）⇒ 不带
   `table` 的图**实际也是全景**，只是多一张格详情卡；真要看近景**必须配 `freecam`**；
-  `rules` → 展开规则说明；`pause` → 打开暂停菜单；`card` → 跳过赌局；
+  `rules` → 展开规则说明；`pause` → 打开暂停菜单（文件名再带 `setpanel` ⇒ 顺手切到「设置」那一片，
+  用来核对**对局内设置面板**的分节边框盒 / 开关组件 / 与大厅弹窗的一致性，如
+  `xx_pause_setpanel_table_plain.png`）；`card` → 跳过赌局；
   `deckout` → **抽卡「抽出」瞬间**：在 **0.06s / 0.16s 各补一张**（常规三帧的第一帧落在翻面之后，
   拍不到"卡刚亮出来的那一刻"）—— 批次 8 起**抽卡演出已在屏幕层、相机不动**，那个"先让推近
   生效"的旧前提没了：**不再需要 `freecam`**。**出图门是 `not path.contains("plain") or

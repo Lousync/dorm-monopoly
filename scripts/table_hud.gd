@@ -929,8 +929,10 @@ static func build_menu_ui(g: Node) -> void:
 	mv.add_child(cont_btn)
 	var set_btn := UIKit.with_icon(UIKit.button("设置", 15), "gear", 18)
 	set_btn.pressed.connect(func() -> void:
+		# 打开时把本地那两项刷回真值：开关组件不像 `CheckButton` 有 `button_pressed` 那种
+		# 双向绑定，得显式同步（`animate = false` ⇒ 直接落位，不该自己滑一遍）
 		g.vol_slider.value = g.audio_volume * 100.0
-		g.mute_check.button_pressed = g.audio_mute
+		g.mute_sw.set_on(g.audio_mute, false)
 		g._menu_show("settings")
 	)
 	mv.add_child(set_btn)
@@ -942,27 +944,40 @@ static func build_menu_ui(g: Node) -> void:
 	)
 	mv.add_child(quit_btn)
 
-	# 设置：音量 / 静音（后续会加更多设置项）
+	# 设置：**样式与大厅「游戏设置」弹窗统一**（2026-10-09 用户要求）—— 同一套分节边框盒
+	# （`UIKit.SectionBox`，小标题骑在上边框正中）、同一套「说明 + 控件」行
+	# （`UIKit.note` / `UIKit.ctrl_row`）、同一套**开关组件**（`UIKit.Switch`：静音与条件触发
+	# 原先分别是 Godot 自带的 `CheckButton` 与「关 / 开」两枚 chip，现在都换掉了）。
+	# 房主 / 客户端的只读分工照旧，显隐由 `game._refresh_tier_ui` /
+	# `game._refresh_ab_settings_ui` 管（它们跟每次 `s_state` 走），这里只建空壳。
 	var sc := CenterContainer.new()
 	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	sc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.menu_layer.add_child(sc)
 	g.settings_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
-	g.settings_panel.custom_minimum_size = Vector2(320, 0)
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 12)
+	g.settings_panel.custom_minimum_size = Vector2(680, 0)
 	sc.add_child(g.settings_panel)
-	var sm := UIKit.margins(20, 20, 16, 14)
+	var sm := UIKit.margins(18, 18, 14, 12)
 	g.settings_panel.add_child(sm)
 	var sv := VBoxContainer.new()
-	sv.add_theme_constant_override("separation", 8)
+	# 间隔要**大于 legend 标题探出盒外的那半截**，否则上一节的边框压到下一节的标题
+	sv.add_theme_constant_override("separation", 20)
 	sm.add_child(sv)
+	sv.add_child(UIKit.title_label("游戏设置", 20))
+
+	# —— 声音 ——
+	var snd := UIKit.section_box("声音")
+	sv.add_child(snd)
+	var sndb := snd.body()
 	var vol_row := HBoxContainer.new()
 	vol_row.add_theme_constant_override("separation", 10)
-	sv.add_child(vol_row)
-	vol_row.add_child(UIKit.label("音效音量", 14, UIKit.TEXT))
+	sndb.add_child(vol_row)
+	vol_row.add_child(UIKit.label("音效音量", 13, UIKit.TEXT_DIM))
 	g.vol_slider = HSlider.new()
 	g.vol_slider.min_value = 0
 	g.vol_slider.max_value = 100
+	# 与其余行相反：这一行要**滑块**占满剩余宽度，说明贴左按自然宽
 	g.vol_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	g.vol_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	g.vol_slider.value_changed.connect(func(v: float) -> void:
@@ -970,56 +985,51 @@ static func build_menu_ui(g: Node) -> void:
 		g._apply_audio()
 	)
 	vol_row.add_child(g.vol_slider)
-	var mute_row := HBoxContainer.new()
-	mute_row.add_theme_constant_override("separation", 10)
-	sv.add_child(mute_row)
-	mute_row.add_child(UIKit.label("静音", 14, UIKit.TEXT))
-	g.mute_check = CheckButton.new()
-	g.mute_check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	g.mute_check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	g.mute_check.toggled.connect(func(on: bool) -> void:
+	g.mute_sw = UIKit.switch_toggle(g.audio_mute, func(on: bool) -> void:
 		g.audio_mute = on
 		g._apply_audio()
 	)
-	mute_row.add_child(g.mute_check)
-	# 操作限时（房主可点，客户端只读；见 doc/game-design/开局设置.md §三之一）
-	# 小标题与只读行互斥显隐，文案由 game.gd 的 _refresh_tier_ui() 统一填（本行只建空标签）
-	g.tier_title = UIKit.label("操作限时", 14, UIKit.TEXT)
-	sv.add_child(g.tier_title)
+	sndb.add_child(UIKit.ctrl_row("静音", g.mute_sw))
+
+	# —— 操作限时（房主可点，客户端只读；见 doc/game-design/开局设置.md §三之一）——
+	var tsec := UIKit.section_box("操作限时")
+	sv.add_child(tsec)
+	var tsb := tsec.body()
+	g.tier_host_box = VBoxContainer.new()
+	g.tier_host_box.add_theme_constant_override("separation", 7)
+	tsb.add_child(g.tier_host_box)
+	# 这句**与大厅那句一字不差**：同一个设置，两处不能各写各的说法
+	g.tier_host_box.add_child(UIKit.note("操作限时：轮到你时超过该时间没操作，就由系统托管。买地 / 装修决策、破产变卖自选、抽卡确认都按本档计时。"))
 	g.tier_row = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
 		func(id: String) -> void: g._set_timeout_tier(id),
 		{GameSettings.TIER_CURRENT: GameSettings.TIER_CURRENT_HINT})
-	sv.add_child(g.tier_row)
-	g.tier_readonly = UIKit.label("", 13, UIKit.TEXT_DIM)
-	sv.add_child(g.tier_readonly)
-	# 畸变（房主可点，客户端只读；规则见 doc/game-design/畸变.md）
-	g.ab_title = UIKit.label("畸变（全场事件）", 14, UIKit.TEXT)
-	sv.add_child(g.ab_title)
-	var abr1 := HBoxContainer.new()
-	abr1.add_theme_constant_override("separation", 10)
-	sv.add_child(abr1)
-	abr1.add_child(UIKit.label("触发频率", 13, UIKit.TEXT_DIM))
+	g.tier_host_box.add_child(g.tier_row)
+	g.tier_readonly = UIKit.note("")
+	tsb.add_child(g.tier_readonly)
+
+	# —— 畸变（房主可点，客户端只读；规则见 doc/game-design/畸变.md）——
+	var absec := UIKit.section_box("畸变")
+	sv.add_child(absec)
+	var abbody := absec.body()
+	g.ab_host_box = VBoxContainer.new()
+	g.ab_host_box.add_theme_constant_override("separation", 7)
+	abbody.add_child(g.ab_host_box)
+	g.ab_host_box.add_child(UIKit.note("回合开始时可能触发的全场事件；频率「关」= 整局不触发"))
 	g.ab_row = UIKit.chip_row(GameSettings.AB_FREQS, GameSettings.AB_FREQ_LABELS,
 		func(id: String) -> void: g._set_ab_freq(id))
-	abr1.add_child(g.ab_row)
-	var abr2 := HBoxContainer.new()
-	abr2.add_theme_constant_override("separation", 10)
-	sv.add_child(abr2)
-	abr2.add_child(UIKit.label("持续回合", 13, UIKit.TEXT_DIM))
+	g.ab_host_box.add_child(g.ab_row)
+	g.ab_host_box.add_child(UIKit.note("持续（持续型畸变默认几回合）"))
 	g.ab_dur_row = UIKit.chip_row(GameSettings.AB_DURS, GameSettings.AB_DUR_LABELS,
 		func(id: String) -> void: g._set_ab_dur(id))
-	abr2.add_child(g.ab_dur_row)
-	var abr3 := HBoxContainer.new()
-	abr3.add_theme_constant_override("separation", 10)
-	sv.add_child(abr3)
-	abr3.add_child(UIKit.label("条件触发", 13, UIKit.TEXT_DIM))
-	g.ab_cond_row = UIKit.chip_row(GameSettings.AB_COND_SW, GameSettings.AB_COND_LABELS,
-		func(id: String) -> void: g._set_ab_cond(id))
-	abr3.add_child(g.ab_cond_row)
-	g.ab_readonly = UIKit.label("", 13, UIKit.TEXT_DIM)
-	sv.add_child(g.ab_readonly)
-	sv.add_child(UIKit.label("—— 更多设置项（后续加入） ——", 12, UIKit.TEXT_DIM))
-	var back_btn := UIKit.button("‹ 返回", 14)
+	g.ab_host_box.add_child(g.ab_dur_row)
+	# 初值随便给（开局那个广播就会由 `_refresh_ab_settings_ui` 刷成真值）
+	g.ab_cond_sw = UIKit.switch_toggle(true, func(on: bool) -> void: g._set_ab_cond(on))
+	g.ab_host_box.add_child(UIKit.ctrl_row("条件触发（满足条目条件时也会触发）", g.ab_cond_sw))
+	g.ab_readonly = UIKit.note("")
+	abbody.add_child(g.ab_readonly)
+
+	var back_btn := UIKit.button("‹ 返回", 15)
+	back_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	back_btn.pressed.connect(func() -> void: g._menu_show("menu"))
 	sv.add_child(back_btn)
 

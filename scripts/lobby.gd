@@ -330,14 +330,14 @@ func _build_settings_dialog() -> void:
 	var econ := UIKit.section_box("经济")
 	sv.add_child(econ)
 	var eb := econ.body()
-	eb.add_child(_num_row("起始资金（每人开局现金）", _set_cash_edit))
-	eb.add_child(_num_row("起点补贴（踏过 / 停在起点的工资）", _set_salary_edit))
+	eb.add_child(UIKit.num_row("起始资金（每人开局现金）", _set_cash_edit))
+	eb.add_child(UIKit.num_row("起点补贴（踏过 / 停在起点的工资）", _set_salary_edit))
 	_set_liq_sw = UIKit.switch_toggle(_set_liq, func(on: bool) -> void: _set_liq = on)
 	# 文案（用户 2026-10-09）：条目名「破产变卖保底」→「破产变卖」，比例 30% → 50%，
 	# 原括注（回收公式 + 「窗口 = 操作限时」）整句删除 —— 窗口来源在第二节「操作限时」的
 	# 说明里已写明"破产变卖自选"按本档计时，这一行不必重复。
 	# 比例**不写死**：读 `GameData.LIQ_RATE`，改比例时这里自动跟上。
-	eb.add_child(_ctrl_row(
+	eb.add_child(UIKit.ctrl_row(
 		"破产变卖：付不起钱时可变卖地皮凑差价，可回收地皮价值（含房屋）的 %d%%"
 			% int(round(GameData.LIQ_RATE * 100.0)),
 		_set_liq_sw))
@@ -348,14 +348,14 @@ func _build_settings_dialog() -> void:
 	var pb := pace.body()
 	# 这一句顺带点明**覆盖范围**：凡"要你拿主意"的窗口都归本挡位（含破产变卖那个自选变卖），
 	# 免得再有人以为变卖另有一个旋钮（用户 2026-10-09 就是这么问的）。
-	pb.add_child(_note("操作限时：轮到你时超过该时间没操作，就由系统托管。买地 / 装修决策、破产变卖自选、抽卡确认都按本档计时。"))
+	pb.add_child(UIKit.note("操作限时：轮到你时超过该时间没操作，就由系统托管。买地 / 装修决策、破产变卖自选、抽卡确认都按本档计时。"))
 	_set_chips = UIKit.chip_row(GameSettings.TIERS, GameSettings.TIER_LABELS,
 		func(id: String) -> void:
 			_set_tier = id
 			UIKit.chip_select(_set_chips, id),
 		{GameSettings.TIER_CURRENT: GameSettings.TIER_CURRENT_HINT})
 	pb.add_child(_set_chips)
-	pb.add_child(_note("回合上限：轮次结束后未分胜负则按总资产排名"))
+	pb.add_child(UIKit.note("回合上限：轮次结束后未分胜负则按总资产排名"))
 	_set_rounds_chips = UIKit.chip_row(GameSettings.ROUNDS_SW, GameSettings.ROUNDS_LABELS,
 		func(id: String) -> void:
 			_set_rounds = 0 if id == "none" else int(id)
@@ -375,7 +375,7 @@ func _build_settings_dialog() -> void:
 	wb.add_child(_set_win_chips)
 	# 目标现金金额：**只在 win = 目标现金 时出现**（用户 2026-10-09）——
 	# 其余模式下这个数字没有任何消费方，常显只会让人以为它一直生效。
-	_set_wincash_row = _num_row("目标现金", _set_wincash_edit)
+	_set_wincash_row = UIKit.num_row("目标现金", _set_wincash_edit)
 	wb.add_child(_set_wincash_row)
 
 	# —— 道具 / 商店 / 赌场 ——
@@ -384,11 +384,11 @@ func _build_settings_dialog() -> void:
 	var shb := shops.body()
 	# 三行只留名字，括注（关掉之后会发生什么）按用户 2026-10-09 全部去掉
 	_set_shop_sw = UIKit.switch_toggle(_set_shop, func(on: bool) -> void: _set_shop = on)
-	shb.add_child(_ctrl_row("小卖部", _set_shop_sw))
+	shb.add_child(UIKit.ctrl_row("小卖部", _set_shop_sw))
 	_set_black_sw = UIKit.switch_toggle(_set_black, func(on: bool) -> void: _set_black = on)
-	shb.add_child(_ctrl_row("黑市", _set_black_sw))
+	shb.add_child(UIKit.ctrl_row("黑市", _set_black_sw))
 	_set_casino_sw = UIKit.switch_toggle(_set_casino, func(on: bool) -> void: _set_casino = on)
-	shb.add_child(_ctrl_row("宿舍赌场", _set_casino_sw))
+	shb.add_child(UIKit.ctrl_row("宿舍赌场", _set_casino_sw))
 
 	# —— 开局科技（doc/game-design/开局科技.md）：关 = 本局不定档不选卡 ——
 	var tech := UIKit.section_box("开局科技")
@@ -397,13 +397,13 @@ func _build_settings_dialog() -> void:
 	_set_tech_sw = UIKit.switch_toggle(_set_tech, func(on: bool) -> void:
 		_set_tech = on
 		_sync_conditional_rows())   # 等级选择跟着开关显隐
-	tb.add_child(_ctrl_row("开局时每人三选一，科技整局游戏生效", _set_tech_sw))
+	tb.add_child(UIKit.ctrl_row("开局时每人三选一，科技整局游戏生效", _set_tech_sw))
 	# 科技等级（2026-10-07）：随机 = 系统随机选一档；指定 = 本局固定该档。
 	# **整块只在开关打开时露出**（用户 2026-10-09）—— 关着的时候这个选择没有任何消费方。
 	_set_tech_tier_box = VBoxContainer.new()
 	_set_tech_tier_box.add_theme_constant_override("separation", 7)
 	tb.add_child(_set_tech_tier_box)
-	_set_tech_tier_box.add_child(_note("等级：随机 = 系统随机选一档；白银 / 黄金 / 钻石 = 本局固定该档"))
+	_set_tech_tier_box.add_child(UIKit.note("等级：随机 = 系统随机选一档；白银 / 黄金 / 钻石 = 本局固定该档"))
 	_set_tech_tier_chips = UIKit.chip_row(GameSettings.TECH_TIERS, GameSettings.TECH_TIER_LABELS,
 		func(id: String) -> void:
 			_set_tech_tier = id
@@ -414,20 +414,20 @@ func _build_settings_dialog() -> void:
 	var ab := UIKit.section_box("畸变")
 	sv.add_child(ab)
 	var ab_body := ab.body()
-	ab_body.add_child(_note("回合开始时可能触发的全场事件；频率「关」= 整局不触发"))
+	ab_body.add_child(UIKit.note("回合开始时可能触发的全场事件；频率「关」= 整局不触发"))
 	_set_ab_chips = UIKit.chip_row(GameSettings.AB_FREQS, GameSettings.AB_FREQ_LABELS,
 		func(id: String) -> void:
 			_set_ab_freq = id
 			UIKit.chip_select(_set_ab_chips, id))
 	ab_body.add_child(_set_ab_chips)
-	ab_body.add_child(_note("持续（持续型畸变默认几回合）"))
+	ab_body.add_child(UIKit.note("持续（持续型畸变默认几回合）"))
 	_set_ab_dur_chips = UIKit.chip_row(GameSettings.AB_DURS, GameSettings.AB_DUR_LABELS,
 		func(id: String) -> void:
 			_set_ab_dur = int(id)
 			UIKit.chip_select(_set_ab_dur_chips, id))
 	ab_body.add_child(_set_ab_dur_chips)
 	_set_ab_cond_sw = UIKit.switch_toggle(_set_ab_cond, func(on: bool) -> void: _set_ab_cond = on)
-	ab_body.add_child(_ctrl_row("条件触发（满足条目条件时也会触发）", _set_ab_cond_sw))
+	ab_body.add_child(UIKit.ctrl_row("条件触发（满足条目条件时也会触发）", _set_ab_cond_sw))
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
@@ -440,35 +440,6 @@ func _build_settings_dialog() -> void:
 	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ok.pressed.connect(_on_settings_save)
 	row.add_child(ok)
-
-## 小节里的一行说明（暗色、**可折行**）。
-## 折行不是可选项：不带 `autowrap_mode` 的 Label 会把**整个弹窗撑宽** ——
-## 实测把「操作限时」那句说明写长一行之后，弹窗宽度从 680 涨到 **758**（中心容器按内容最小宽走）。
-func _note(text: String) -> Label:
-	var l := UIKit.label(text, 13, UIKit.TEXT_DIM)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	return l
-
-## 「说明 + 数字输入」一行（只收数字，越界在保存时钳制）
-func _num_row(text: String, edit: LineEdit) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	var l := UIKit.label(text, 13, UIKit.TEXT_DIM)
-	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(l)
-	row.add_child(edit)
-	return row
-
-## 「说明 + 任意控件」一行（开关 / 数字框都用它）：说明占满剩余宽度并折行，控件贴右内缘。
-func _ctrl_row(text: String, ctrl: Control) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	var l := UIKit.label(text, 13, UIKit.TEXT_DIM)
-	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.add_child(l)
-	row.add_child(ctrl)
-	return row
 
 ## 把弹窗里全部控件刷成当前 `_set_*` 值。
 ##

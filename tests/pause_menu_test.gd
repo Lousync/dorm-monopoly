@@ -154,6 +154,39 @@ func _run() -> void:
 	_click(set_btn)
 	await create_timer(0.2).timeout
 	_check(g.settings_panel.visible, "点「设置」后设置面板可见（暂停态下按钮可点）")
+	# 2026-10-09：对局内设置面板的**样式与大厅「游戏设置」弹窗统一** —— 同一套分节边框盒
+	# （`UIKit.SectionBox`）+ 同一套开关组件（`UIKit.Switch`）。这里钉住这两条，免得日后又分叉
+	# （原先这里是 Godot 自带的 `CheckButton` + 「关 / 开」两枚 chip）。
+	#
+	# ⚠ **不能写 `c is UIKit.SectionBox` 这种编译期类型引用**：`--script` 主脚本在 autoload 注册
+	# 之前编译，一旦在编译期点了 `UIKit`，`ui_kit.gd` 就被拽进同一编译单元，它里面那句
+	# `Fx.play("click", …)` 立刻 `Identifier not found: Fx` ⇒ 整条链编译失败（游戏场景跟着起不来、
+	# `shop_layer` 变 Nil、`_apply_shop_ui` 每帧刷错误刷到超时）。同 `hud_test` / `placard_test` /
+	# `layout_test` 顶部那几段说明，**一律运行期 `load`**。
+	# 两个内嵌类在常量表里（`get_script_constant_map()`），实例的 `get_script()` 就是它本身；
+	# 注意**不能用 `resource_path` 认**：内嵌类的脚本路径是**空串**（实测）。
+	var UK = load("res://scripts/ui_kit.gd")
+	var uk_consts: Dictionary = UK.get_script_constant_map()
+	_check(uk_consts.get("SectionBox") != null and uk_consts.get("Switch") != null,
+		"UIKit 常量表里取得到 SectionBox / Switch 两个内嵌类")
+	var boxes := 0
+	var switches := 0
+	var natives := 0
+	var stack: Array = [g.settings_panel]
+	while not stack.is_empty():
+		var c: Node = stack.pop_back()
+		if c.get_script() == uk_consts.get("SectionBox"):
+			boxes += 1
+		elif c.get_script() == uk_consts.get("Switch"):
+			switches += 1
+		elif c is CheckButton:
+			natives += 1
+		for ch in c.get_children():
+			stack.append(ch)
+	_check(boxes == 3, "设置面板 = 3 个分节边框盒（声音 / 操作限时 / 畸变，实得 %d）" % boxes)
+	_check(switches == 2 and natives == 0,
+		"开关组件 2 枚（静音 / 条件触发）、Godot 自带 CheckButton 0 枚（实得 %d / %d）"
+			% [switches, natives])
 	var back := _btn_text(g.settings_panel, "返回")
 	_check(back != null, "找到「返回」按钮")
 	_click(back)

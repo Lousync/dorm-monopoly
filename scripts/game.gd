@@ -23,8 +23,8 @@ var settings_panel: PanelContainer
 var confirm_panel: PanelContainer
 var confirm_note: Label
 var vol_slider: HSlider
-var mute_check: CheckButton
-var tier_title: Label          # 对局内设置面板：「操作限时」小标题（只跟 chips 一侧显隐）
+var mute_sw: UIKit.Switch      # 对局内设置面板：静音开关（与大厅的开关组件同款，2026-10-09）
+var tier_host_box: VBoxContainer  # 对局内设置面板：「操作限时」一节的房主内容（说明 + chips）
 var tier_row: HBoxContainer    # 对局内设置面板：挡位 chips（房主）
 var tier_readonly: Label       # 对局内设置面板：挡位只读文本（客户端）
 var pause_mask: ColorRect
@@ -153,10 +153,10 @@ var _ab_extra_peer: int = GameData.NO_PEER
 var ab_label: PanelContainer  # 「生效中」横幅（hud 层顶部居中，快照驱动，见 table_hud 里那段）
 var ab_label_l: Label         # 生效中横幅的内层文本
 var ab_wrap: Control          # 横幅的居中容器（TOP_WIDE + CenterContainer，见 table_hud 里那段）
+var ab_host_box: VBoxContainer  # 对局内设置面板：「畸变」一节的房主内容（说明 + chips + 开关）
 var ab_row: HBoxContainer     # 对局内设置面板：畸变频率 chips（房主）
 var ab_dur_row: HBoxContainer # 对局内设置面板：持续回合 chips（房主）
-var ab_cond_row: HBoxContainer  # 对局内设置面板：条件触发 chips（房主）
-var ab_title: Label           # 对局内设置面板：畸变小节标题（与只读行互斥显隐）
+var ab_cond_sw: UIKit.Switch  # 对局内设置面板：条件触发开关（房主；原为「关 / 开」两枚 chip）
 var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
 # ---------------- 开局科技（host 状态，规则见 doc/game-design/开局科技.md） ----------------
@@ -2888,17 +2888,18 @@ func _set_timeout_tier(id: String) -> void:
 		RulesPanel.select_tab(self, rules_tab)   # 规则文案里的秒数跟着变
 	_broadcast_state()
 
-## 刷新设置面板的「操作限时」一行：房主 = 小标题 + 可点 chips，客户端 = 一行只读文本。
-## 两侧互斥（小标题只跟 chips 一起显隐），否则客户端会看到「操作限时」两行同义文本。
+## 刷新设置面板的「操作限时」一节：房主 = 说明 + 可点 chips，客户端 = 一行只读文本。
+## 两侧互斥（说明与 chips 同属 `tier_host_box`，一起显隐），否则客户端会看到「操作限时」
+## 两段同义内容。**小节标题由 `UIKit.SectionBox` 的 legend 承担**（2026-10-09 统一样式时
+## 从原来的 `tier_title` 标签换成盒子标题），所以只读行不再重复「操作限时：」这个前缀。
 ## 只读行文案的唯一来源就在这里（table_hud.gd 只建空标签），别再复制一份格式串。
 func _refresh_tier_ui() -> void:
-	if tier_row == null or tier_readonly == null or tier_title == null:
+	if tier_row == null or tier_readonly == null or tier_host_box == null:
 		return
 	var is_host := multiplayer.is_server()
-	tier_title.visible = is_host
-	tier_row.visible = is_host
+	tier_host_box.visible = is_host
 	tier_readonly.visible = not is_host
-	tier_readonly.text = "操作限时：%s（房主设置）" % String(
+	tier_readonly.text = "%s（房主设置）" % String(
 		GameSettings.TIER_LABELS.get(_settings.timeout_tier, "现状"))
 	UIKit.chip_select(tier_row, _settings.timeout_tier)
 
@@ -2921,33 +2922,30 @@ func _set_ab_dur(id: String) -> void:
 	_refresh_ab_settings_ui()
 	_broadcast_state()
 
-func _set_ab_cond(id: String) -> void:
-	if not multiplayer.is_server() or not GameSettings.AB_COND_SW.has(id):
-		return
-	var on := id == "on"
-	if on == _settings.ab_cond:
+## 条件触发开关：面板上那枚 `UIKit.Switch` 直接给 bool（原先是「关 / 开」两枚 chip，收的是
+## "off"/"on" 字符串 —— 2026-10-09 统一样式时一并改掉，`AB_COND_SW` 那对常量对局内已无消费方）。
+func _set_ab_cond(on: bool) -> void:
+	if not multiplayer.is_server() or on == _settings.ab_cond:
 		return
 	_settings.ab_cond = on
-	_log("房主把畸变条件触发改为「%s」" % String(GameSettings.AB_COND_LABELS.get(id, id)), "#f0c064")
+	_log("房主把畸变条件触发改为「%s」" % ("开" if on else "关"), "#f0c064")
 	_refresh_ab_settings_ui()
 	_broadcast_state()
 
-## 刷新设置面板的「畸变」小节：房主 = 小节标题 + 三行可点 chips，客户端 = 一行只读文本。
-## 显隐分工与「操作限时」行同理（两侧互斥，见 _refresh_tier_ui 的注释）。
+## 刷新设置面板的「畸变」一节：房主 = 说明 + 三组可点控件，客户端 = 一行只读文本。
+## 显隐分工与「操作限时」一节同理（两侧互斥，见 `_refresh_tier_ui` 的注释）——
+## 房主那一侧整个收在 `ab_host_box` 里，一条开关线管住，不必逐个控件写 `visible`。
 func _refresh_ab_settings_ui() -> void:
-	if ab_row == null or ab_readonly == null or ab_title == null:
+	if ab_row == null or ab_readonly == null or ab_host_box == null:
 		return
 	var is_host := multiplayer.is_server()
-	ab_title.visible = is_host
-	ab_row.visible = is_host
-	ab_dur_row.visible = is_host
-	ab_cond_row.visible = is_host
+	ab_host_box.visible = is_host
 	ab_readonly.visible = not is_host
-	ab_readonly.text = "畸变：%s · 持续%d回合 · 条件触发%s（房主设置）" % [
+	ab_readonly.text = "频率 %s · 持续 %d 回合 · 条件触发%s（房主设置）" % [
 		_settings.ab_freq, _settings.ab_dur, "开" if _settings.ab_cond else "关"]
 	UIKit.chip_select(ab_row, _settings.ab_freq)
 	UIKit.chip_select(ab_dur_row, str(_settings.ab_dur))
-	UIKit.chip_select(ab_cond_row, "on" if _settings.ab_cond else "off")
+	ab_cond_sw.set_on(_settings.ab_cond, false)
 
 ## 「生效中」小标签：读快照的 aberrations 字段（s_state 两端同路径触发）。
 ## 界面美术重构后这里升级为正式横幅 + 座位卡角标（当前从简）。
