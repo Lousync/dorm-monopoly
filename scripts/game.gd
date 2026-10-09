@@ -1039,7 +1039,7 @@ func _close_tech_offer() -> void:
 # 触发载体 = 失物招领格：从**可获取池**等概率翻出 3 件候选（2026-10-10 重构：人为权重退场），
 # 只有本人看得到（私密 RPC），选中入包（受背包上限）；bot 按品质价自动选、超时随机兜底。
 # 「不限时」档不自动关。
-# 大卡复用 ItemCard.SIZE_LARGE（道具系统.md §十二：发现三选一用大卡）。
+# 大卡复用 ItemCard.SIZE_LARGE（道具系统.md §九「卡片规格」：发现三选一用大卡）。
 
 ## 「发现」三选一主流程：返回拿到的道具 id（"" = 没拿到：背包满 / 池空）。
 ## `guarantee` = 非空时，候选里**保底一件**该档（池里有的话）—— 淘宝达人用，键名随新四档。
@@ -5105,7 +5105,7 @@ func _open_card_gallery() -> void:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
 	v.add_child(head)
-	head.add_child(UIKit.label("道具卡片模板 · §12 规格（品质框 / 左上⚡或被动 / 右上计数 / 道具图案 / 价格不上卡）",
+	head.add_child(UIKit.label("道具卡片模板 · §九 规格（品质框 / 左上⚡或被动 / 右上计数 / 道具图案 / 价格不上卡）",
 		14, UIKit.ACCENT))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL

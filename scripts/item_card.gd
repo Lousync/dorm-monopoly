@@ -1,8 +1,8 @@
 class_name ItemCard
 extends Panel
-## 道具卡片模板（规格：doc/game-design/道具系统.md §12，二版已确认）
+## 道具卡片模板（规格：doc/game-design/道具系统.md §九「卡片规格」，二版已确认）
 ## 竖版卡：左上/右上外挂圆徽章（半出卡外）+ 图区 + 名称条 + 描述 + 底部品质条
-## 价格不上卡片（货架界面随货架展示）；图画区为占位，正式素材归美术对话
+## 价格不上卡片（货架界面随货架展示）；图画区 = 道具的 `icon` 图（2026-10-10 起 68 件全有图），缺素材才回退占位
 ## 三档尺寸共用：道具栏（小）/ 货架（中）/ 发现与使用展示（大）
 
 const SIZE_SMALL := Vector2(96, 132)    # 道具栏
@@ -47,7 +47,7 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	var icon_name := String(d.get("icon", ""))
 	var icon_path := "res://assets/icons/%s.png" % icon_name
 	if icon_name != "" and ResourceLoader.exists(icon_path):
-		# 图案：Twemoji 烘焙的 256px PNG（美术管线见 docs/gameplay/道具系统.md §12）
+		# 图案：Twemoji 烘焙的 256px PNG（美术管线见 doc/game-design/道具系统.md §九「卡片规格」）
 		var tr := TextureRect.new()
 		tr.texture = load(icon_path)
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED

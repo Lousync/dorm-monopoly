@@ -634,7 +634,7 @@ func take_shot(path: String) -> void:
 		# 与 level 分支同类（只在对局里注入状态，不动玩法代码）。
 		var me: Dictionary = g._player_by_peer(g.my_peer)
 		if not me.is_empty():
-			for hid_v in ["招财猫", "作弊器", "包租婆", "黑卡", "共享单车"]:
+			for hid_v in ["招财猫", "共享单车", "交换生", "作弊器", "黑卡"]:
 				g._grant_item(me, String(hid_v))
 		g._broadcast_state()
 		await get_tree().create_timer(0.35).timeout
@@ -678,7 +678,7 @@ func take_shot(path: String) -> void:
 		if pick != GameData.NO_PEER:
 			var opp: Dictionary = g._player_by_peer(pick)
 			if not opp.is_empty() and (opp.get("items", []) as Array).is_empty():
-				for hid_v in ["招财猫", "黑卡", "包租婆"]:
+				for hid_v in ["招财猫", "交换生", "作弊器", "黑卡"]:
 					g._grant_item(opp, String(hid_v))
 			g._broadcast_state()
 			await get_tree().create_timer(0.35).timeout
