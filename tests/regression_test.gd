@@ -637,7 +637,7 @@ func _test_new_items(g) -> void:
 	p1.items = [{"id": "招财猫", "cd": 0}]
 	_check(int(g._rent_gain(p1, 1000)) == 1400, "招财猫：租金 +400（实得 %d）" % int(g._rent_gain(p1, 1000)))
 	p1.items = [{"id": "保安巡逻", "cd": 0}]
-	_check(int(g._rent_gain(p1, 1000)) == 1300, "保安巡逻：收租 +30%（实得 %d）" % int(g._rent_gain(p1, 1000)))
+	_check(int(g._rent_gain(p1, 1000)) == 1300, "保安巡逻：收租 +30%%（实得 %d）" % int(g._rent_gain(p1, 1000)))
 	p1.items = [{"id": "校园卡", "cd": 0}]
 	_check(int(g._salary_amount(p1)) == GameData.SALARY + 1000, "校园卡：过起点 +1000")
 

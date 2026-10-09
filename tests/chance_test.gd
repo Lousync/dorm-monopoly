@@ -120,7 +120,7 @@ func _run() -> void:
 	await _test_deck_fields(g)
 	await _test_cancel_log(g)
 	_test_op_owner_card_target(g)
-	_test_choices_single_close(g)
+	await _test_choices_single_close(g)
 	if fails == 0:
 		print("CHANCE TEST: ALL PASS")
 		quit(0)
