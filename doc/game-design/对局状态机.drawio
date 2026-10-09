@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-10-08T00:00:00.000Z" agent="opencode" version="24.0.0" type="device">
+  <diagram id="turn-state-machine" name="对局状态机（回合内）">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="2339" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ============ 标题 / 图例 ============ -->
+        <mxCell id="title" value="宿舍大富翁 · 对局状态机（回合内）&#10;依据 scripts/game.gd _play_turn / _resolve_tile / _item_phase 与 doc/game-design/回合与行动.md。&#10;蓝=阶段状态　紫虚=等待(await)　绿=子状态机　橙note=正交/修饰状态　黄菱=分支判定" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=13;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="640" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 对局级（宏观） ============ -->
+        <mxCell id="pre" value="PRE_GAME&#10;开局科技三选一（每人 rpc_id 私发）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="320" y="30" width="240" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 主脊：回合循环 ============ -->
+        <mxCell id="start" value="S0 回合开始结算&#10;体力+1 / 冷却−1 / 香皂融化−1 / 信托基金+¥100 / 重置用具标记" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="170" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ab" value="S1 畸变窗口&#10;_aberration_window：全场畸变触发 / 持续−1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="270" width="280" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tech" value="S2 掷轮前科技询问（可跳过）&#10;任意门 / 天命在握" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="366" width="280" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="roll" value="S3 ① 掷轮盘（await=roll）&#10;真人等待（超时 35s 代掷）/ 机器人 / 休眠 自动掷&#10;点数 0~12；强制点数类道具在此生效" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="458" width="280" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="rollres" value="S4 掷轮结果处理&#10;悔棋询问(≤6点黄金科技) / 查寝判定(连续3次10+) / 强制点数覆盖" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="568" width="280" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="move" value="S5 移动（自动）&#10;逐格移动动画；踏过起点领工资；兼职达人路过结算" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="672" width="280" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="settle" value="S6 落地结算 _resolve_tile()&#10;按落点格型分派（见右侧分支）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="300" y="768" width="280" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="item" value="S7 ② 使用道具（await=item）&#10;选牌→选目标/格/点数→生效；每回合限 1 次；超时 12s 跳过&#10;休眠 / 出局跳过" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="864" width="280" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="end" value="S8 回合结束" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="974" width="280" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="next" value="S9 轮到下一位（跳过破产/出局）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1058" width="280" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="d_end" value="轮数上限 / 胜负已分 / 仅剩一人？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1140" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ended" value="ENDED 对局结束&#10;身家结算 / 排名" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="640" y="1158" width="200" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- 主脊连线 -->
+        <mxCell id="e_pre_start" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="pre" target="start"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_start_ab" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="start" target="ab"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_ab_tech" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="ab" target="tech"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_tech_roll" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="tech" target="roll"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_roll_rollres" value="点数确定" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="roll" target="rollres"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rollres_move" value="点数&gt;0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="rollres" target="move"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rollres_settle" value="点数=0 原地待命&#10;（仍进落地结算 re=true）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;" edge="1" parent="1" source="rollres" target="settle"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_move_settle" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="move" target="settle"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_settle_item" value="结算完成" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="settle" target="item"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_item_end" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="item" target="end"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_end_next" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="end" target="next"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_next_dend" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="next" target="d_end"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_dend_ended" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="d_end" target="ended"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_dend_start" value="否（回到首位则 round+1）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_end" target="start"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- 特殊回环：再行动 -->
+        <mxCell id="e_rollres_roll" value="满12 / 特浓咖啡 / 调休：本回合「再行动」→ 回掷轮" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="rollres" target="roll"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_settle_roll" value="特浓咖啡格 → 再行动（_extra_move）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="settle" target="roll"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_ab_item" value="调休：本回合禁转（_ab_no_roll）→ 直接到道具" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ab" target="item"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_gojail_tech" value="送监 / 查寝：跳过下一回合（skip），本回合终止" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="rollres" target="item"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- ============ 落地结算分支 ============ -->
+        <mxCell id="grp_settle" value="S6 落地结算 · 按格型分派（game.gd _resolve_tile）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6c8ebf;dashed=1;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="640" y="300" width="320" height="620" as="geometry" />
+        </mxCell>
+        <mxCell id="b_unowned" value="无主地 → 买地询问（await=prompt）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="660" y="336" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_own" value="自己的地 → 升级询问（await=prompt）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="660" y="386" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_other" value="别人的地 → 收租（自动）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="660" y="436" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_soil" value="焦土 → 捐款 / 修满恢复无主（自动）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="660" y="486" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_event" value="事件格（机会/命运）→ 抽卡演出（await=card）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="536" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_discover" value="失物招领 → 发现三选一（私密 _run_discover）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="586" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_shop" value="小卖部 → 逛店（await=shop）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="636" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_casino" value="赌场 → 赌场子状态机（见下）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="660" y="686" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_again" value="特浓咖啡 → 再行动（_extra_move）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="660" y="736" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_jail" value="送监格 → 跳到宿委会（下一回合 skip）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="660" y="786" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_free" value="起点 / 休息 / 空教室等 → 无结算或轻结算" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="660" y="836" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_re" value="注：re=true（掷0罚站）时只保留询问类（买/升级）+功能格效果，&#10;不重复收租/焦土捐款（别人地→“站着的客人不用再交租”）" style="text;html=1;strokeColor=none;fillColor=#fff2cc;align=left;verticalAlign=top;fontSize=11;fontColor=#b85450" vertex="1" parent="1">
+          <mxGeometry x="660" y="884" width="300" height="34" as="geometry" />
+        </mxCell>
+
+        <!-- settle → 分支 -->
+        <mxCell id="e_s_un" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_unowned"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_own" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_own"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_other" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_other"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_soil" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_soil"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_event" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_event"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_disc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_discover"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_shop" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_shop"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_casino" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_casino"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_again" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_again"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_jail" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_jail"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s_free" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="settle" target="b_free"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- 事件卡效果 → 可进黑市 -->
+        <mxCell id="b_event_eff" value="抽卡效果结算&#10;可：移动 / 给罚钱 / 进小卖部 / 进黑市 / 发现 / 送监 …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="520" width="260" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="e_event_eff" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_event" target="b_event_eff"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_eff_black" value="黑市开张 →" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_event_eff" target="grp_black"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- ============ 等待状态机（await） ============ -->
+        <mxCell id="grp_await" value="等待状态机 await（s_state + s_op_timer；超时兜底见 doc/development/联机协议.md §四）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;dashed=1;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1010" y="300" width="380" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="aw" value="roll   等掷轮（35s 代掷）&#10;prompt 等决定（买地/升级/悔棋/任意门/天命；25s=拒绝）&#10;card   抽卡演出等确认（25s 自动确认）&#10;item   道具阶段（12s 跳过）&#10;shop   逛小卖部（20s 请出）&#10;black  逛黑市（20s 自动出口；凑不齐挨打）&#10;discover 发现三选一（私密 rpc_id）" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=12" vertex="1" parent="1">
+          <mxGeometry x="1024" y="330" width="356" height="146" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 子状态机 ============ -->
+        <mxCell id="grp_casino" value="子状态机 · 赌场（casino.gd，全屏演出）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="640" y="1460" width="360" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="抽游戏&#10;（_draw_game）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="660" y="1500" width="140" height="44" as="geometry" /></mxCell>
+        <mxCell id="c2" value="逐轮投骰 / 操作&#10;（全员同步）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="830" y="1500" width="150" height="44" as="geometry" /></mxCell>
+        <mxCell id="c3" value="结算奖金 / 离场" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="745" y="1560" width="150" height="44" as="geometry" /></mxCell>
+        <mxCell id="ec12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="c1" target="c2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ec23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="c2" target="c3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ec3_item" value="回到 S7 道具阶段" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c3" target="item"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="grp_black" value="子状态机 · 黑市（black shop，仅机会卡进入；用地产支付）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1030" y="1460" width="470" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="k1" value="进入&#10;（机会卡）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1050" y="1500" width="110" height="44" as="geometry" /></mxCell>
+        <mxCell id="k2" value="选货 / 刷新&#10;（地皮计价）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1180" y="1500" width="120" height="44" as="geometry" /></mxCell>
+        <mxCell id="k3" value="支付地皮 / 兑换" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1320" y="1500" width="130" height="44" as="geometry" /></mxCell>
+        <mxCell id="k4" value="出口&#10;（付出口费）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1180" y="1560" width="120" height="44" as="geometry" /></mxCell>
+        <mxCell id="k5" value="凑不齐出口费 → 挨打（休眠）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1"><mxGeometry x="1320" y="1560" width="160" height="44" as="geometry" /></mxCell>
+        <mxCell id="ek12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="k1" target="k2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ek23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="k2" target="k3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ek34" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="k3" target="k4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ek35" value="凑不齐" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;" edge="1" parent="1" source="k3" target="k5"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ek4_item" value="回到 S7 道具阶段" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="k4" target="item"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ek5_skip" value="休眠 → 跳过本回合后续" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontColor=#b85450;" edge="1" parent="1" source="k5" target="end"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="grp_reveal" value="子状态机 · 抽卡演出（deck_reveal，屏幕层，全员同步）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="640" y="1340" width="860" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" value="翻牌动画" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="660" y="1378" width="140" height="44" as="geometry" /></mxCell>
+        <mxCell id="r2" value="HOLD 等「确定」（await=card）&#10;超时 / 托管自动确认" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="850" y="1378" width="240" height="44" as="geometry" /></mxCell>
+        <mxCell id="r3" value="收卡 → 应用效果" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1140" y="1378" width="160" height="44" as="geometry" /></mxCell>
+        <mxCell id="er12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="r1" target="r2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="er23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="r2" target="r3"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- ============ 正交 / 修饰状态 ============ -->
+        <mxCell id="grp_mod" value="正交修饰状态（可叠加到任意状态）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d79b00;dashed=1;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="20" y="300" width="240" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="mod_pause" value="PAUSE 暂停&#10;房主暂停全场 → SceneTree.paused，任何状态冻结" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;size=14" vertex="1" parent="1"><mxGeometry x="34" y="336" width="212" height="60" as="geometry" /></mxCell>
+        <mxCell id="mod_managed" value="MANAGED 托管&#10;超时 / 掉线 / 机器人：代掷、代决定、商店自动、赌场自动抽" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;size=14" vertex="1" parent="1"><mxGeometry x="34" y="410" width="212" height="70" as="geometry" /></mxCell>
+        <mxCell id="mod_sleep" value="SLEEP 休眠（小黑屋）&#10;被动照算 + 系统代掷 + 拒绝买卖 + 跳过道具；商店/赌场自动离" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;size=14" vertex="1" parent="1"><mxGeometry x="34" y="494" width="212" height="70" as="geometry" /></mxCell>
+        <mxCell id="mod_skip" value="SKIP 跳过回合&#10;宿委会反省：整回合不掷、不享被动、不用道具" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;size=14" vertex="1" parent="1"><mxGeometry x="34" y="578" width="212" height="60" as="geometry" /></mxCell>
+        <mxCell id="mod_disc" value="DISCONNECTED 掉线&#10;→ 转托管；座位保留，整局可凭 token 重连认领" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;size=14" vertex="1" parent="1"><mxGeometry x="34" y="652" width="212" height="60" as="geometry" /></mxCell>
+        <mxCell id="mod_bank" value="BANKRUPT 破产出局&#10;跳过、观战；清空道具（唯一件回池）、不可再用道具" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;size=14" vertex="1" parent="1"><mxGeometry x="34" y="726" width="212" height="70" as="geometry" /></mxCell>
+
+        <!-- 说明 -->
+        <mxCell id="note_src" value="实现锚点：&#10;回合循环 game.gd:1403 _play_turn（while running 的“再行动”环）&#10;落地结算 game.gd:1916 _resolve_tile（re=掷0罚站）&#10;道具阶段 game.gd:_item_phase　等待/超时 联机协议.md §四" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=11;fontColor=#666666" vertex="1" parent="1">
+          <mxGeometry x="20" y="840" width="600" height="80" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
