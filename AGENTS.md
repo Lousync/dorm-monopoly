@@ -80,6 +80,13 @@
 
 ## 三、常用命令（PowerShell）
 
+> **改完只跑「相关的那几套」测试，不要每次都跑全套**（用户 2026-10-09 定）：
+> 全套十几套跑一轮要好几分钟，开发期间是纯浪费。按改动面挑：改玩法逻辑跑对应系统那套
+> （`item_test` / `shop_test` / …）、改 `game.gd` 或公共代码跑 `regression_test`、
+> 改界面 / 输入链路跑对应的 GUI 回归（`settings_ui_test` / `pause_menu_test` / `hud_test` …）。
+> **`load_all` 例外 —— 它很便宜（几秒），改完任何 `.gd` 都先跑一遍**（它只做静态加载检查）。
+> **全套留给 CI 与发版前**（`.github/workflows/ci.yml` 里那份清单就是全套）。
+
 ```powershell
 # Godot 路径因机器而异：start.bat 会按已知目录自动查找；下面这行改成你机器上的实际路径。
 # 注意要用 _console.exe（带控制台，才有 stdout；不带的那个看不到 print 输出）。
