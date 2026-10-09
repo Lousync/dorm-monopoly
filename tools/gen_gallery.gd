@@ -60,17 +60,19 @@ const AB_PLACEHOLDER := "（占位，待数值专场）"
 const DOC_SYNONYM_KEYS := ["选目标"]
 
 var _warnings: Array[String] = []
+var _doc_lines: Array = []
 
 
 func _initialize() -> void:
-	var doc := _parse_item_doc()
+	_doc_lines = _read_lines(DOC_ITEMS)
+	var doc := _parse_item_doc(_doc_lines)
 	var sections: Array = [
 		_section("cards", "事件卡", _entries_cards()),
 		_section("items", "道具", _entries_items(doc)),
 		_section("techs", "开局科技", _entries_techs()),
 		_section("aberrations", "畸变", _entries_aberrations()),
 	]
-	_report_doc_gaps(doc)   # 缺项要在 entries 之后再补，见函数注释
+	_report_doc_gaps(doc, _doc_lines)   # 缺项要在 entries 之后再补，见函数注释
 	var total := 0
 	for s in sections:
 		total += (s.entries as Array).size()
@@ -359,8 +361,7 @@ func _parse_bullet(line: String) -> Dictionary:
 	return {"k": t.substr(4, a - 4), "v": t.substr(a + 3).strip_edges()}
 
 
-func _parse_item_doc() -> Dictionary:
-	var lines := _read_lines(DOC_ITEMS)
+func _parse_item_doc(lines: Array) -> Dictionary:
 	var heads: Array = []
 	for ln in lines:
 		heads.append(_parse_heading(ln))
@@ -403,14 +404,21 @@ func _read_lines(path: String) -> Array:
 ##   ① 代码有、文档没写（新加了道具忘了补文档）→ 页面少一块 prose
 ##   ② 文档有、代码没写（道具改名 / 删了，文档还留着）→ 页面上多一个孤儿条目
 ##   ③ 卡面文案两处不一致（`desc` vs 文档的「卡面文案」）→ 页面与游戏卡面对不上
-func _report_doc_gaps(doc: Dictionary) -> void:
+##
+## ①判的是「**全文查不到**」，不是「没有独立小节」：有的件本来就不该有独立小节
+## （`组队学习·寒暑` 是隐藏件，文档把它写在「组队学习」与「二青会酒寒暑」两条下面的
+## `- **强化版「组队学习·寒暑」**：` 里）。只认标题会把这种正常的写法报成缺项，
+## 而**常驻的假警会训练人忽略整条横幅** —— 那比不报还糟。
+func _report_doc_gaps(doc: Dictionary, lines: Array) -> void:
+	var text := "\n".join(PackedStringArray(lines))   # `String.join` 吃 PackedStringArray，不吃 Array
 	for id in ItemData.ITEMS:
-		if not doc.has(id):
-			_warnings.append("代码有、文档没写：道具「%s」在 道具图鉴.md 里没有条目" % id)
-		elif not doc[id].face.is_empty() and String(doc[id].face) != String(ItemData.ITEMS[id].get("desc", "")):
-			_warnings.append("卡面文案不一致：道具「%s」代码「%s」↔ 文档「%s」" % [
-				id, ItemData.ITEMS[id].get("desc", ""), doc[id].face])
-	var lines := _read_lines(DOC_ITEMS)
+		if doc.has(id):
+			if not String(doc[id].face).is_empty() \
+					and String(doc[id].face) != String(ItemData.ITEMS[id].get("desc", "")):
+				_warnings.append("卡面文案不一致：道具「%s」代码「%s」↔ 文档「%s」" % [
+					id, ItemData.ITEMS[id].get("desc", ""), doc[id].face])
+		elif not text.contains(String(id)):
+			_warnings.append("代码有、文档没写：道具「%s」在 道具图鉴.md 里查不到" % id)
 	for ln in lines:
 		var h := _parse_heading(ln)     # `_parse_heading` 已经挡掉了所有分节标题，这里只可能是条目
 		if h.is_empty():
