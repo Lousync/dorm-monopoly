@@ -109,6 +109,13 @@ func host_game(port: int) -> Error:
 	players = []
 	chat_history = []
 	last_error = ""
+	# **开房 = 新的一局 ⇒ 开局设置回到默认**（用户 2026-10-09 拍板）。`game_settings` 是
+	# autoload 上的**长命对象**，从不过期 —— 不重置的话，上一局改成「起始 4 万 / 60 轮」之后，
+	# 下一局开弹窗看到的还是那一套（"这次是新的局、设置却是旧的"）。
+	# **同一局里不重置**：房主在局内反复开弹窗复核自己的配置、以及打完一局在**同一个大厅**里
+	# 重开（那不走 `host_game`），都该看到自己刚设的那份。
+	# 「预设方案」整段删除之后，这里就是"每次都从默认值起"的唯一实现点（见 `开局设置.md` §九）。
+	game_settings = GameSettings.new()
 	room_name = "%s 的房间" % my_name
 	_add_player(1, my_name, false, true)
 	_start_disco_host()

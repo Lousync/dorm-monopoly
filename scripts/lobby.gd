@@ -27,7 +27,6 @@ var _set_casino_chips: HBoxContainer     # 赌场开关
 var _set_ab_chips: HBoxContainer         # 畸变频率
 var _set_ab_dur_chips: HBoxContainer     # 畸变持续回合
 var _set_ab_cond_chips: HBoxContainer    # 畸变条件触发
-var _set_preset_chips: HBoxContainer     # 预设方案
 var _set_cash_edit: LineEdit             # 起始资金
 var _set_salary_edit: LineEdit           # 起点补贴
 var _set_wincash_edit: LineEdit          # 目标现金金额
@@ -43,9 +42,6 @@ var _set_casino := true
 var _set_ab_freq := "关"
 var _set_ab_dur := 2
 var _set_ab_cond := true
-
-# 预设方案（开局设置.md §九；原表里的「计时 ×0.6」等倍率口径已作废，按现行字段适配）
-const PRESETS: Array[String] = ["标准局", "快节奏", "大富翁", "大乱斗", "新手局"]
 
 var _at_mode := ""
 var _shot_path := ""
@@ -306,12 +302,6 @@ func _build_settings_dialog() -> void:
 	_set_salary_edit = UIKit.line_edit("4500")
 	_set_wincash_edit = UIKit.line_edit("50000")
 
-	# 预设方案一键填（§九）
-	_set_preset_chips = UIKit.chip_row(PRESETS, {}, func(id: String) -> void:
-		_apply_preset(id)
-		_sync_panel())
-	v.add_child(_set_preset_chips)
-
 	_set_scroll = ScrollContainer.new()
 	_set_scroll.custom_minimum_size = Vector2(0, 430)
 	_set_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -458,48 +448,11 @@ func _sw_row(text: String, chips: HBoxContainer) -> HBoxContainer:
 	row.add_child(chips)
 	return row
 
-## 预设方案：按 §九 取向适配到现行字段（原表「计时 ×0.6」倍率口径已作废）
-func _apply_preset(name: String) -> void:
-	match name:
-		"标准局":
-			_set_cash_edit.text = str(GameData.START_MONEY)
-			_set_salary_edit.text = str(GameData.SALARY)
-			_set_liq = true
-			_set_tier = GameSettings.TIER_CURRENT
-			_set_rounds = 30
-			_set_win = "rounds"
-			_set_wincash_edit.text = "50000"
-			_set_shop = true
-			_set_black = true
-			_set_casino = true
-			_set_tech = false
-			_set_tech_tier = GameSettings.TECH_TIER_RANDOM
-			_set_ab_freq = "关"
-			_set_ab_dur = 2
-			_set_ab_cond = true
-		"快节奏":
-			_set_salary_edit.text = "6000"
-			_set_tier = "15"
-			_set_rounds = 30
-		"大富翁":
-			_set_cash_edit.text = "40000"
-			_set_rounds = 60
-		"大乱斗":
-			_set_tech = true
-			_set_tech_tier = GameSettings.TECH_TIER_RANDOM
-			_set_casino = true
-			_set_black = true
-			_set_shop = true
-			_set_liq = true
-			_set_ab_freq = "高"
-			_set_ab_cond = true
-		"新手局":
-			_set_salary_edit.text = "8000"
-			_set_tier = "60"
-			_set_tech = false
-			_set_ab_freq = "关"
-
-## 打开弹窗 / 预设后：把全部控件刷成当前 _set_* 值
+## 把弹窗里全部控件刷成当前 `_set_*` 值。
+##
+## 只在**打开弹窗时**调（`_on_open_settings`）—— 原先预设 chip 一键填之后也调一次，
+## **预设方案已整段删除**（用户 2026-10-09：改为「每次开新的一局都从默认值起、房主自行调整」，
+## 见 `net.host_game()` 里那次重置）。
 func _sync_panel() -> void:
 	_set_cash_edit.text = str(_read_num(_set_cash_edit))
 	_set_salary_edit.text = str(_read_num(_set_salary_edit))
@@ -531,7 +484,11 @@ func _on_start() -> void:
 		return
 	Net.start_game()
 
-## 「游戏设置」：打开设置弹窗（每次打开都从当前配置同步一遍）
+## 「游戏设置」：打开设置弹窗（每次打开都从**当前配置**同步一遍）。
+## **这份"当前配置"在一局新游戏开始时是默认值** —— `Net.host_game()` 每次开房都把
+## `game_settings` 重置成一份新的 `GameSettings`（用户 2026-10-09：预设方案删掉，改成
+## 「每次开新的一局都展示默认数值 / 开关，房主自行调整」）。同一局里反复开弹窗回显的是
+## 房主刚存的配置，方便复核；对局结束回主菜单、再开房 ⇒ 又是默认值。
 func _on_open_settings() -> void:
 	if not multiplayer.is_server():
 		return

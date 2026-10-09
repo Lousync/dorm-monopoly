@@ -65,7 +65,7 @@ func _run() -> void:
 	_check(lb._set_tier == "30", "再次打开时回显上次选的挡位")
 	lb._set_wrap.visible = false
 
-	# ---- 开局设置面板扩展（经济 / 回合上限 / 胜利条件 / 开关 / 预设 / 钳制） ----
+	# ---- 开局设置面板扩展（经济 / 回合上限 / 胜利条件 / 开关 / 钳制） ----
 	lb._settings_btn.pressed.emit()
 	var rounds: Dictionary = lb._set_rounds_chips.get_meta("chips", {})
 	var wins: Dictionary = lb._set_win_chips.get_meta("chips", {})
@@ -84,14 +84,24 @@ func _run() -> void:
 	_check(net.game_settings.win_mode == "cash", "胜利条件写进设置（目标现金）")
 	_check(net.game_settings.start_salary == 4500 and net.game_settings.win_cash == 50000,
 		"补贴与目标现金按输入写进设置")
-	# 预设一键填：大富翁 = 起始 4 万、60 轮
+
+	# ---- 开新的一局 ⇒ 开局设置回默认（用户 2026-10-09 拍板：预设方案整段删除，
+	#      改成「每次开新的一局都展示默认数值 / 开关，房主自行调整」） ----
+	# 前置：上面刚把这一局设成了非默认（起始 99999 / 不限 / 目标现金）——那正是"上一局的残留"
+	var before := GameSettings.new()
+	_check(net.game_settings.start_cash != before.start_cash and net.game_settings.max_rounds != before.max_rounds,
+		"（前置）开房之前，设置里留着上一局改过的非默认值")
+	# `host_game` = 开了一个新房间 = 新的一局
+	net.host_game(7796)
+	_check(net.game_settings.start_cash == before.start_cash
+		and net.game_settings.max_rounds == before.max_rounds
+		and net.game_settings.win_mode == before.win_mode,
+		"开房后开局设置回到默认（起始资金 / 回合上限 / 胜利条件）")
+	# 弹窗展示的应当就是这份默认值（不是上一局那套）
 	lb._settings_btn.pressed.emit()
-	lb._apply_preset("大富翁")
-	lb._sync_panel()
-	_check(lb._set_cash_edit.text == "40000" and lb._set_rounds == 60, "预设「大富翁」填起始 4 万、60 轮")
-	lb._on_settings_save()
-	_check(net.game_settings.start_cash == 40000 and net.game_settings.max_rounds == 60,
-		"预设值经「确定」写入设置")
+	_check(lb._set_cash_edit.text == str(before.start_cash), "弹窗展示默认起始资金")
+	_check(lb._set_rounds == before.max_rounds, "弹窗展示默认回合上限")
+	lb._set_wrap.visible = false
 	# 开局科技等级（2026-10-07）：chip 行 4 档，选「钻石」写进设置
 	var tier_chips: Dictionary = lb._set_tech_tier_chips.get_meta("chips", {})
 	_check(tier_chips.size() == 4, "科技等级 4 档 chip（随机/白银/黄金/钻石）")
