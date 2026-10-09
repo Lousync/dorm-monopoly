@@ -1925,6 +1925,10 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 					# 畸变卡：从现有畸变池抽一条，全场立即生效（绕过两道闸门；持续型新盖旧）
 					var pool := _ab_random_pool()
 					if pool.is_empty():
+						# `s_card` 的 deck 传空串时按契约**忽略 text**（只震屏 / 放音），调用方必须自己
+						# 先 `_log` —— 道具那支由 `_grant_item_of_quality` 记了原因，畸变这支原先一声不吭
+						#（玩家只听到一声卡音、屏幕上什么都没有）。
+						_log("%s 抽到畸变卡，可惜本局畸变池是空的" % p.name, "#8a90a5")
 						s_card.rpc("【畸变卡】%s 抽了个空" % p.name, "info")
 						await _wait(0.4)
 					else:
@@ -1947,7 +1951,7 @@ func _resolve_tile(p: Dictionary, re := false) -> void:
 				qi -= 1
 			var found := await _run_discover(p, ItemData.QUALITIES[qi], "失物招领")
 			if String(found) != "":
-				# 结果全员公示（背包本就公开），演这张道具的卡面：与机会/命运同一段演出
+				# 结果全员公示（背包本就公开），演这张道具的卡面：与机会卡同一段演出
 				_log("【失物招领】%s 发现了【%s】！" % [p.name, found], "#74d188")
 				s_card.rpc("【失物招领】%s 发现了【%s】！" % [p.name, found], "good", "失物招领", found)
 				await _await_card_confirm(p)
@@ -2007,6 +2011,10 @@ func _new_event_deck() -> Array:
 		pool = pool.filter(func(c: Dictionary) -> bool: return not c.has("enter_shop"))
 	if pool.is_empty():
 		pool = GameData.events_for()   # 过滤到空则回退全池（口径与改造前一致）
+	# 深拷贝：`events_for()` 只浅拷数组，里面的卡字典**仍是 `GameData.EVENTS` 的那几个实例**
+	# ⇒ 少了这一层，抽出的卡与常量表共享 Dictionary，谁手滑写一次 `card.x = …` 就把常量表
+	# 改烂一整局（批 2 要往卡里加 15 个字段，这层保护别丢）。
+	pool = pool.duplicate(true)
 	pool.shuffle()
 	return pool
 
@@ -2025,7 +2033,7 @@ func _roll_chance_kind() -> String:
 	var r := randf()
 	if String(_settings.ab_freq) == "关":
 		# 畸变被房主关掉 ⇒ 机会格不该绕过设置把它塞回来：**只有** 5% 那档并进机会卡，
-		# 道具卡那 10% 不动（设计稿 §一 边界规则 1「实际分布 90/10/0」）
+		# 道具卡那 10% 不动（doc/game-design/机会卡.md §一 边界规则 1「实际分布 90/10/0」）
 		return "card" if r < GameData.CHANCE_P + GameData.CHANCE_AB_P else "item"
 	if r < GameData.CHANCE_P:
 		return "card"

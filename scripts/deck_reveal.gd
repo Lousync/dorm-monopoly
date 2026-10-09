@@ -1,6 +1,6 @@
 class_name DeckReveal
 extends Control
-## 「机会 / 命运」抽卡演出的**屏幕层大字卡**（批次 8，见 doc/game-design/设计决策留痕.md §八）。
+## 「机会卡」抽卡演出的**屏幕层大字卡**（批次 8，见 doc/game-design/设计决策留痕.md §八）。
 ##
 ## 为什么搬到屏幕层：原先演在桌垫画布（`BoardView._world`）里，靠把 **2D 相机**拉近 2 倍
 ## （旧 `DECK_PUSH_FACTOR`）才读得出字 —— 那一推会让**印在桌垫上的图案**整体放大滑动，而手牌
@@ -235,7 +235,8 @@ func _ease_out_back(t: float) -> float:
 ## ① 正文锁宽用新的 `CARD_SIZE`（`CARD_SIZE.x - 104`）；② 字号放大（标题 24→30、正文 15→18、
 ##    行距 separation 6→8）。其余（卡背图案的 modulate、plate 的配色与内缩、描边）一字不改。
 
-## 机会 / 命运各用一套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）
+## 两套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）：卡类名是**机会**的用绿背，
+## 其余（道具卡 / 畸变卡 / 失物招领那道道具卡面）一律用蓝背。
 func _deck_back_tex(deck: String) -> Texture2D:
 	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
 		else "res://assets/cards/atlas_back_blue_brown.svg")
