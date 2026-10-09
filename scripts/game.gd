@@ -5511,14 +5511,14 @@ func _show_slot(digits: Array, prize: int) -> void:
 		if is_instance_valid(layer):
 			layer.queue_free())
 
-## 小抄：把命运牌堆顶卡私密发给该玩家。
+## 小抄：把机会牌堆顶卡私密发给该玩家。
 ## **注意是广播 + 收端自过滤**（`if peer == my_peer`），不是 `rpc_id` 私发 —— 调用点走 `.rpc()`。
 ## ⚠ 这个 `@rpc` 曾经被"老虎机"那一段的插入挤掉过（注解与函数被分开、函数就此不再是 RPC，
 ## `.rpc()` 在运行时才会炸），别再把注解和函数拆开。
 @rpc("authority", "call_local", "reliable")
 func s_peek_card(peer: int, text: String) -> void:
 	if peer == my_peer:
-		_log("（小抄）命运牌堆下一张：%s" % text, "#f0c064")
+		_log("（小抄）机会牌堆下一张：%s" % text, "#f0c064")
 
 func _run_shop(p: Dictionary, idx: int) -> void:
 	_shop_tile = idx
