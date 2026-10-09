@@ -2160,6 +2160,15 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 		else:
 			_log("%s 被查寝抄了近道，直接送宿委会（下一回合跳过）" % p.name, "#c9a6ff")
 			_send_to_jail(p)
+	# ---- 指定目标类（2026-10-09 批 2 §三）：先定点打击、再位移 ----
+	# 顺序即 `机会卡.md` §三 写死的那条（steal_from → charge_to → each_from_target →
+	# steal_item_from → jail_to）；逐条独立结算，一条作废（无人可选 / 目标持皂）不影响下一条。
+	for f in ["steal_from", "charge_to", "each_from_target", "steal_item_from", "jail_to"]:
+		if card.has(f):
+			var tgt: Dictionary = await _card_target_for(p, card, f)
+			if tgt.is_empty():
+				continue
+			_card_apply_target(p, tgt, card, f)
 	if card.has("move_steps"):
 		if int(card.move_steps) < 0 and (_immune_debuff(p) or _has_item(p, "雨伞")):
 			_log("%s 免疫了后退" % p.name, "#8fb7f2")
@@ -2190,6 +2199,82 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 		else:
 			await _run_blackshop(p)
 	_check_end()
+
+## 取这张卡要下手的目标（`{}` = 这张卡的目标部分作废）。
+##
+## 走正路 = 房主让**抽卡者本人**现选（`_await_card_target`，选目标基座见 `s_card_target`）。
+## 卡里的 `_target` 是**测试与摆拍用的注入键**（值 = peer），**不是玩法字段**：
+## `机会卡.md` §二的字段表里没有它、`EVENTS` 里也不该出现（真出现就等于一张不用玩家作答的卡）。
+##
+## 无论哪条路，最后都**归位到房主侧 `hp` 的真身**：`_await_card_target` 回的是 `st.players` 里
+## 那一份，而 `_broadcast_state` 每次广播都**新建**字典 ⇒ 那只是个快照副本，直接往它身上写
+##（扣钱 / 收道具 / 扣护腕的盾）一样都不会落地 —— 看着结算了、其实一分没动。
+## 合法性与 `_card_target_candidates` 同口径（排除自己、排除出局者）：注入键也只是"指定 peer"，
+## 不额外开一条能打自己 / 打出局者的后门。
+func _card_target_for(p: Dictionary, card: Dictionary, field: String) -> Dictionary:
+	var peer := int(card.get("_target", GameData.NO_PEER))
+	if peer == GameData.NO_PEER:
+		var picked: Dictionary = await _await_card_target(p, field)
+		peer = int(picked.get("peer", GameData.NO_PEER))
+	var tgt := _player_by_peer(peer)
+	if tgt.is_empty() or int(tgt.peer) == int(p.peer) or not bool(tgt.alive):
+		return {}
+	return tgt
+
+## 指定目标类效果逐条结算（`field` 由 `_apply_card` 的循环给出）。
+## 这五条**都**对目标不利 ⇒ 全按 debuff 判 ⇒ **目标持皂则整条免疫**（口径同 `from_each` 的
+## 逐受害者独立免疫；抽卡者自己持皂不影响这些字段）。
+##
+## 不在这里调 `_check_end()`：`_apply_card` 末尾那一次就是这张卡**唯一**的出口
+##（`_check_end` 的注释即"挂在每条动钱流程的出口"），多调一次只会在「目标现金」胜负下
+## 让同一句胜利战报刷两遍（`_end_game` 没有重入闸）。
+## 只读传入的 card（与 `_apply_card` 同规矩：本波没有 `card.x = …`），写的都是 `hp` 里那两个真身。
+func _card_apply_target(p: Dictionary, tgt: Dictionary, card: Dictionary, field: String) -> void:
+	if _immune_debuff(tgt):
+		_log("%s 的【空想者的香皂】挡下了【%s】" % [tgt.name, card.t], "#8fb7f2")
+		return
+	var tpeer := int(tgt.peer)
+	match field:
+		"steal_from", "charge_to":
+			# 不足则取其所有（`mini` 兜住"他要不起这么多"）⇒ 目标只会归零、不会变负，
+			# 所以这里**不走 `_pay`**：那会把"没钱可给"升级成破产出局，不是这两条的语义。
+			var amt: int = mini(int(card[field]), int(tgt.money))
+			tgt.money = int(tgt.money) - amt
+			p.money = int(p.money) + amt
+			_check_xiaojinku(p)
+			var how := ("从 %s 那里夺走" % tgt.name) if field == "steal_from" else ("向 %s 收取" % tgt.name)
+			_log("%s %s %s" % [p.name, how, GameData.fmt_money(amt)], "#f0c064")
+		"each_from_target":
+			# 「选定目标给**每位其他存活玩家**该金额」：出钱的是目标，收钱的是全宿舍（含抽卡者本人）。
+			# `mini` 写在内层 = 逐个收：目标见底时排在后面的人只拿得到剩下的（同他平时付钱的结算口径）。
+			var per: int = int(card.each_from_target)
+			for o in hp:
+				if int(o.peer) == tpeer or not bool(o.alive):
+					continue
+				var amt2: int = mini(per, int(tgt.money))
+				tgt.money = int(tgt.money) - amt2
+				o.money = int(o.money) + amt2
+				_check_xiaojinku(o)   # 进账出口照例查小金库（同 from_each 对抽卡者那一查）
+			_log("%s 请全宿舍：%s 掏钱" % [p.name, tgt.name], "#f0c064")
+		"steal_item_from":
+			# 背包满 ⇒ **整条作废**：不先把目标那件掏出来再发现没处放 —— 那个中间态会真的丢件
+			if p.items.size() >= _bag_cap(p):
+				_log("%s 背包已满，抢来的道具放不下" % p.name, "#8a90a5")
+				return
+			if tgt.items.is_empty():
+				_log("%s 背包空空，没得抢" % tgt.name, "#8a90a5")
+				return
+			# 抢的是**他手里那一件**：连实例状态（cd / melt_left）一起搬走，不是重新发一件新的
+			var k: int = randi_range(0, tgt.items.size() - 1)
+			var stolen: Dictionary = tgt.items[k]
+			tgt.items.remove_at(k)
+			p.items.append(stolen)
+			_log("%s 抢走了 %s 的【%s】" % [p.name, tgt.name, String(stolen.id)], "#c9a6ff")
+		"jail_to":
+			# 先记账再交 `_send_to_jail`：它里面还要判护身符（香皂那半已由上面的免疫闸挡掉）。
+			# 写法与既有 `go_jail` 字段一致 —— 护身符救下时战报会先说"送去了"，这是既有口径，本波不另立一套。
+			_log("%s 把 %s 送去了宿委会（他跳过下一回合）" % [p.name, tgt.name], "#c9a6ff")
+			_send_to_jail(tgt)
 
 ## 机会卡发道具（指定 id / 指定品质）；背包满则作废提示，唯一池过滤照旧
 func _grant_card_item(p: Dictionary, id: String) -> void:

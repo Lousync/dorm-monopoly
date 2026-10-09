@@ -1,6 +1,6 @@
 extends SceneTree
 ## 机会卡改造（2026-10-09 批 2）单测：三类卡分布 / 新字段效果 / 免疫口径 / **选目标**。
-## 本文件按任务逐个长起来，Task 9（选目标基座）先立起最后的「选目标」那一节。
+## 本文件按任务逐个长起来：Task 9 立「选目标基座」那一节，Task 10 接上「指定目标类 5 个字段」。
 ## godot --headless --path . --script tests/chance_test.gd
 ##
 ## 拿 game 实例的做法照 `tests/blackshop_test.gd`：起一个真实 server peer + 实例化对局场景。
@@ -99,6 +99,7 @@ func _run() -> void:
 	_test_refresh_keeps_card(g)
 	await _test_no_candidates(g)
 	await _test_managed(g)
+	await _test_target_fields(g)
 	if fails == 0:
 		print("CHANCE TEST: ALL PASS")
 		quit(0)
@@ -274,3 +275,208 @@ func _test_managed(g) -> void:
 	# 只有乙名下有地 ⇒ seize_tile 时自动选的一定是乙（按字段过滤后的名单）
 	var got2: Dictionary = await g._await_card_target(g.hp[0], "seize_tile")
 	_check(int(got2.get("peer", -1)) == 2, "按字段过滤后自动选的仍是合法目标（实得 %d）" % int(got2.get("peer", -1)))
+
+# ================= 指定目标类 5 个字段（Task 10） =================
+#
+# 多数用例用卡里的 `_target` 注入键喂目标（值 = peer），绕开选目标交互 —— 那条交互由上面 T9
+# 那节单独钉；**走正路**那一条（托管自动选）不喂，用来钉"`_target` 缺席时照常能选"。`_target`
+# **不是玩法字段**，只是测试 / 摆拍的旁路（见 `game.gd._card_target_for`）。
+
+## 摆一桌指定现金的局面：甲 5000 / 乙 1000 / 丙 800 / 丁（出局）。
+## 钱数彼此不同才看得出"谁给了谁多少"；留一个出局者，用来钉「存活」这道过滤。
+func _target_table(g, snap := false) -> void:
+	var t := _fresh_tiles()
+	var d := _mk_player(4, "丁")
+	d.alive = false
+	var ps := [_mk_player(1, "甲", 5000), _mk_player(2, "乙", 1000), _mk_player(3, "丙", 800), d]
+	_setup(g, ps, t)
+	if snap:
+		# 真实对局里 `st.players` 是 `_broadcast_state` **每次新建**的快照副本
+		#（`_setup` 图省事让两者同物 —— 用例要的是"能查到人"）。这条把副本关系摆回来。
+		var copies := []
+		for p in ps:
+			copies.append(p.duplicate(true))
+		g.st = {"players": copies, "tiles": t, "turn": 1}
+
+## 战报里从 `from` 起找 `needle` 的下标（-1 = 没有）—— 用来钉结算**先后**。
+## `g` 是无类型的 Variant，取回来的都是 Variant，显式 `int(...)` 收口（本仓静态类型的规矩）。
+func _log_at(g, needle: String, from: int) -> int:
+	return int(g.log_text.get_parsed_text().find(needle, from))
+
+## 战报当前长度（当"游标"用：只看一张卡**自己**新增的那几行，免得撞上前面用例的同名战报）
+func _log_len(g) -> int:
+	return int(g.log_text.get_parsed_text().length())
+
+func _test_target_fields(g) -> void:
+	await _test_steal_charge(g)
+	await _test_each_from_target(g)
+	await _test_steal_item(g)
+	await _test_jail_to(g)
+	await _test_target_soap(g)
+	await _test_owner_soap(g)
+	await _test_target_real_owner(g)
+	await _test_target_via_real_path(g)
+	await _test_field_order(g)
+
+func _test_steal_charge(g) -> void:
+	print("== 指定目标：夺取 / 索取 ==")
+	_target_table(g)
+	await g._apply_card(g.hp[0], {"t": "顺走外卖", "steal_from": 400, "_target": 2})
+	_check(int(g.hp[0].money) == 5400 and int(g.hp[1].money) == 600 and int(g.hp[2].money) == 800,
+		"steal_from 400：甲 5400 / 乙 600 / 丙 不被牵连（实得 %d / %d / %d）" % [
+			int(g.hp[0].money), int(g.hp[1].money), int(g.hp[2].money)])
+	# 不足则取其所有：乙只剩 600 ⇒ 夺 600。归零但**不出局**（不走 `_pay`，没钱可给 ≠ 破产）
+	await g._apply_card(g.hp[0], {"t": "讨债", "steal_from": 1000, "_target": 2})
+	_check(int(g.hp[0].money) == 6000 and int(g.hp[1].money) == 0 and bool(g.hp[1].alive),
+		"不足则取其所有：乙归零但仍存活（实得 %d / %d）" % [int(g.hp[0].money), int(g.hp[1].money)])
+
+	_target_table(g)
+	await g._apply_card(g.hp[0], {"t": "宿舍费", "charge_to": 300, "_target": 2})
+	_check(int(g.hp[0].money) == 5300 and int(g.hp[1].money) == 700,
+		"charge_to 300：甲 5300 / 乙 700（实得 %d / %d）" % [int(g.hp[0].money), int(g.hp[1].money)])
+
+	# 目标部分作废的三条路：出局者 / 自己是自己 / 查无此人 —— 都不动钱、也不该崩
+	_target_table(g)
+	for who in [4, 1, 99]:
+		await g._apply_card(g.hp[0], {"t": "点名", "steal_from": 400, "_target": who})
+	_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 1000 and int(g.hp[2].money) == 800,
+		"目标出局 / 是自己 / 查无此人 ⇒ 目标部分作废（三家钱都没动）")
+
+func _test_each_from_target(g) -> void:
+	print("== 指定目标：让他请客 ==")
+	_target_table(g)
+	await g._apply_card(g.hp[0], {"t": "请客", "each_from_target": 200, "_target": 2})
+	_check(int(g.hp[0].money) == 5200 and int(g.hp[2].money) == 1000 and int(g.hp[1].money) == 600,
+		"乙 给每位其他存活玩家 200：甲 5200 / 丙 1000 / 乙 600（实得 %d / %d / %d）" % [
+			int(g.hp[0].money), int(g.hp[2].money), int(g.hp[1].money)])
+	_check(int(g.hp[3].money) == 1000, "出局的丁不算「存活玩家」（一分没给他）")
+	# 见底：乙只有 300 ⇒ 先轮到的拿满、后轮到的只拿得到剩下的（按 hp 顺序，甲在丙前）
+	_target_table(g)
+	g.hp[1].money = 300
+	await g._apply_card(g.hp[0], {"t": "请客", "each_from_target": 200, "_target": 2})
+	_check(int(g.hp[1].money) == 0 and int(g.hp[0].money) == 5200 and int(g.hp[2].money) == 900,
+		"目标见底时按当时剩下的给：乙 0 / 甲 +200 / 丙 +100（实得 %d / %d / %d）" % [
+			int(g.hp[1].money), int(g.hp[0].money), int(g.hp[2].money)])
+
+func _test_steal_item(g) -> void:
+	print("== 指定目标：抢道具 ==")
+	_target_table(g)
+	g.hp[1].items = [{"id": "招财猫", "cd": 3}]
+	await g._apply_card(g.hp[0], {"t": "翻你抽屉", "steal_item_from": true, "_target": 2})
+	var got_it: bool = g.hp[0].items.size() == 1 and String(g.hp[0].items[0].id) == "招财猫"
+	_check(got_it, "抢走的那件进了甲的背包（实得 %s）" % str(g.hp[0].items))
+	# 取件状态那两条挂在前一条上：抢不着时 `items[0]` 会越界报错，就地中断会把后面几条用例一起吞掉
+	_check(got_it and int(g.hp[0].items[0].get("cd", -1)) == 3,
+		"抢的是他手里那一件：实例状态（cd）跟着走，不是重新发一件")
+	_check(g.hp[1].items.is_empty(), "乙的背包空了")
+	# 自己背包满 ⇒ 整条作废（不把目标那件掏出来再发现没处放 —— 中间态会真的丢件）
+	_target_table(g)
+	var fill := []
+	for _i in g._bag_cap(g.hp[0]):
+		fill.append({"id": "护腕", "cd": 0})
+	g.hp[0].items = fill
+	g.hp[1].items = [{"id": "招财猫", "cd": 0}]
+	await g._apply_card(g.hp[0], {"t": "翻你抽屉", "steal_item_from": true, "_target": 2})
+	_check(g.hp[0].items.size() == fill.size() and g.hp[1].items.size() == 1,
+		"自己背包满 ⇒ 抢不动（甲仍是 %d 件、乙那件还在）" % int(fill.size()))
+	# 目标空背包 ⇒ 没得抢（要走提示那条，不是静默无事）
+	_target_table(g)
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "翻你抽屉", "steal_item_from": true, "_target": 2})
+	_check(g.hp[0].items.is_empty() and _log_at(g, "没得抢", log0) >= 0,
+		"目标背包空空 ⇒ 提示「没得抢」、甲也没多东西")
+
+func _test_jail_to(g) -> void:
+	print("== 指定目标：送去宿委会 ==")
+	_target_table(g)
+	g.hp[1].pos = 8
+	await g._apply_card(g.hp[0], {"t": "举报你", "jail_to": true, "_target": 2})
+	_check(int(g.hp[1].pos) == GameData.JAIL_TILE and int(g.hp[1].skip) == 1,
+		"目标被送到宿委会并跳过下一回合（pos %d / skip %d）" % [int(g.hp[1].pos), int(g.hp[1].skip)])
+	_check(int(g.hp[0].pos) == 0 and int(g.hp[0].skip) == 0, "抽卡者自己没被牵连")
+	# 护身符照旧挡一次：它不是香皂 ⇒ 不走"整条免疫"那道闸，由 `_send_to_jail` 自己判
+	_target_table(g)
+	g.hp[1].pos = 8
+	g.hp[1].items = [{"id": "护身符"}]
+	await g._apply_card(g.hp[0], {"t": "举报你", "jail_to": true, "_target": 2})
+	_check(int(g.hp[1].pos) == 8 and g.hp[1].items.is_empty(),
+		"目标持护身符 ⇒ 免掉这次送监、护身符用掉（pos %d）" % int(g.hp[1].pos))
+
+## 五条**全部**对目标不利 ⇒ 目标持皂整条免疫（口径同 `from_each` 的逐受害者独立免疫）
+func _test_target_soap(g) -> void:
+	print("== 目标持皂 ⇒ 五条逐条整条免疫 ==")
+	for field in ["steal_from", "charge_to", "each_from_target", "steal_item_from", "jail_to"]:
+		_target_table(g)
+		g.hp[1].pos = 8
+		g.hp[1].items = [{"id": "空想者的香皂", "melt_left": 10}]
+		var card := {"t": "指定目标", "_target": 2}
+		card[field] = 200 if field in ["steal_from", "charge_to", "each_from_target"] else true
+		var log0 := _log_len(g)
+		await g._apply_card(g.hp[0], card)
+		_check(_log_at(g, "挡下了", log0) >= 0, "%s：战报写明被香皂挡下（真走了那道闸，不是整条没跑）" % field)
+		_check(int(g.hp[0].money) == 5000 and int(g.hp[1].money) == 1000 and int(g.hp[2].money) == 800,
+			"%s：三家的现金一分没动" % field)
+		_check(int(g.hp[1].pos) == 8 and int(g.hp[1].skip) == 0, "%s：位置 / 跳过都没动" % field)
+		_check(g.hp[0].items.is_empty() and g.hp[1].items.size() == 1,
+			"%s：连「抢道具」也抢不走那块香皂" % field)
+
+func _test_owner_soap(g) -> void:
+	print("== 抽卡者自己持皂：不影响这些字段 ==")
+	_target_table(g)
+	g.hp[0].items = [{"id": "空想者的香皂", "melt_left": 10}]
+	await g._apply_card(g.hp[0], {"t": "顺走外卖", "steal_from": 400, "_target": 2})
+	_check(int(g.hp[0].money) == 5400 and int(g.hp[1].money) == 600,
+		"甲持皂也照样夺得到钱（判的是**目标**那一方，实得 %d / %d）" % [int(g.hp[0].money), int(g.hp[1].money)])
+
+## `st.players` 是快照副本时，目标必须**归位到 hp 真身** —— 直接改副本就是"看着结算了、其实一分没动"。
+func _test_target_real_owner(g) -> void:
+	print("== 目标落在 hp 真身上 ==")
+	_target_table(g, true)
+	g.hp[1].money = 1234
+	_check(int(g._state_player(2).money) == 1000,
+		"前提：st.players 里那份不是 hp 真身（改真身不动它，实得 %d）" % int(g._state_player(2).money))
+	g.hp[1].money = 1000
+	await g._apply_card(g.hp[0], {"t": "顺走外卖", "steal_from": 400, "_target": 2})
+	_check(int(g.hp[1].money) == 600 and int(g.hp[0].money) == 5400,
+		"钱扣在 hp 真身上（实得 %d / %d）" % [int(g.hp[1].money), int(g.hp[0].money)])
+
+## 走**正路**（卡里不喂 `_target`）：托管玩家自动选目标，房主照常结算。
+## 这条把「`_apply_card` → 取目标 → `_await_card_target` → 落回 hp 真身」串起来钉一遍
+##（上一条只钉了最后那半）；`st` 摆成快照副本，正是真实对局的样子。
+func _test_target_via_real_path(g) -> void:
+	print("== 正路：托管自动选 ==")
+	_target_table(g, true)
+	g.hp[0].bot = true
+	await g._apply_card(g.hp[0], {"t": "顺走外卖", "steal_from": 400})
+	var lost := 0
+	if int(g.hp[1].money) == 600:
+		lost += 1
+	if int(g.hp[2].money) == 400:
+		lost += 1
+	_check(int(g.hp[0].money) == 5400 and lost == 1,
+		"自动点了一位：乙 / 丙 里**恰好一位** -400、甲 +400（实得 %d / %d，命中 %d 位）" % [
+			int(g.hp[1].money), int(g.hp[2].money), lost])
+	_check(int(g.hp[0].money) + int(g.hp[1].money) + int(g.hp[2].money) == 6800,
+		"三家现金总量守恒（5000+1000+800，实得 %d）" % (int(g.hp[0].money) + int(g.hp[1].money) + int(g.hp[2].money)))
+	_check(g._tgt_card == "" and g._hl_peers.is_empty() and g._target_pick == GameData.NO_PEER,
+		"选目标态收干净（不留给下一张卡）")
+
+## 插卡顺序：目标类必须**在 go_jail 之后、move_steps 之前**（机会卡.md §三）。
+## 钉法：一张卡同时带 `go_jail` + 目标字段 + `move_steps: -1`，且抽卡者持【雨伞】
+## —— `move_steps` 那条遇到后退会**提前 `return`**，目标类要是排在它后面就一并被跳过。
+func _test_field_order(g) -> void:
+	print("== 插卡顺序 ==")
+	_target_table(g)
+	g.hp[0].pos = 3
+	g.hp[0].items = [{"id": "雨伞"}]
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "顺序钉子", "go_jail": true, "steal_from": 100,
+		"_target": 2, "move_steps": -1})
+	_check(int(g.hp[1].money) == 900, "目标类生效（乙 1000 → 900）：没被 move_steps 的提前 return 跳过")
+	_check(int(g.hp[0].pos) == GameData.JAIL_TILE, "go_jail 也照常生效（甲被送监）")
+	var i_jail := _log_at(g, "查寝", log0)
+	var i_steal := _log_at(g, "夺走", log0)
+	var i_move := _log_at(g, "免疫了后退", log0)
+	_check(i_jail >= 0 and i_steal > i_jail, "战报次序：go_jail 在目标类之前（%d < %d）" % [i_jail, i_steal])
+	# `i_steal >= 0` 不能省：两条都缺时 `-1 < 160` 也成立，会白送一条假绿
+	_check(i_steal >= 0 and i_move > i_steal, "战报次序：目标类在 move_steps 之前（%d < %d）" % [i_steal, i_move])
