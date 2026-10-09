@@ -73,6 +73,13 @@ static func ui_icon(name: String) -> Texture2D:
 
 ## 给按钮挂 HUD 图标。图标缺货时静默跳过——按钮本身照常可用，
 ## 不会因为少一张 png 就少一个按钮（素材未导入时 UIKit.tex 会直接读文件兜底）。
+##
+## ⚠ **只适用于「宽度贴着内容」或「用 offset 钉死宽度」的按钮**（现有的三个调用点都是：
+## 左上「暂停」、右上「规则说明」「战报」）。原因：Godot 里图标的落点由 `icon_alignment` 定、
+## 文字的落点由 `alignment` 定，**两者互不相干** —— 按钮一旦比内容宽（比如撑满一行的菜单按钮），
+## 文字居中而图标贴左内缘，中间会空出一大截。窄按钮看着没问题只是因为两个落点恰好重合。
+## 遇到宽按钮请**改用文字符号**（如暂停菜单里「⚙ 设置」，与隔壁的「▶ 继续游戏」同例），
+## 或者把图标与文字组成一个 HBox 塞进按钮再整体居中。
 static func with_icon(b: Button, icon_name: String, side := 18) -> Button:
 	var t := ui_icon(icon_name)
 	if t != null:

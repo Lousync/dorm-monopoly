@@ -927,7 +927,11 @@ static func build_menu_ui(g: Node) -> void:
 	var cont_btn := UIKit.button("▶ 继续游戏", 15)
 	cont_btn.pressed.connect(g._menu_resume)
 	mv.add_child(cont_btn)
-	var set_btn := UIKit.with_icon(UIKit.button("设置", 15), "gear", 18)
+	# 「设置」用**文字符号**而不是 `with_icon(...)`：`Button` 的图标与文字是**各自独立**定位的
+	#（图标看 `icon_alignment`、文字看 `alignment`），这个按钮撑满 320 宽 ⇒ 文字居中、
+	# 图标却贴到左内缘，中间空一大截（用户 2026-10-09 报的就是这个）。隔壁「▶ 继续游戏」
+	# 「⏻ 退出游戏」本来就是文字符号，这里跟它们统一。齿轮的图（`ui_gear.png`）暂时不再引用。
+	var set_btn := UIKit.button("⚙ 设置", 15)
 	set_btn.pressed.connect(func() -> void:
 		g.vol_slider.value = g.audio_volume * 100.0   # 打开时把滑块刷回真值
 		g._menu_show("settings")
