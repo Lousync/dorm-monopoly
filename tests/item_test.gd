@@ -54,6 +54,7 @@ func _run() -> void:
 	root.add_child(g)
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	_test_quality_tiers(g)
+	_test_icons(g)
 	_test_egg(g)
 	_test_coco(g)
 	_test_use_guard(g)
@@ -264,6 +265,22 @@ func _test_quality_tiers(_g) -> void:
 	for q in ItemData.QUALITIES:
 		_check(ItemData.QUALITY_PRICES.has(q) and ItemData.QUALITY_COLORS.has(q),
 			"%s 档在定价表与配色表里都有" % q)
+
+## 图标齐备：68 件的 `icon` 字段都要能在 `assets/icons/` 找到对应 PNG。
+## 用 `FileAccess.file_exists` 而不是 `ResourceLoader.exists` —— 后者要求资源先导入过
+## （新克隆 / CI 未必导入），会把「文件真缺」和「没导入」混为一谈。
+func _test_icons(_g) -> void:
+	print("== 道具图标齐备 ==")
+	var missing: Array = []
+	var seen := 0
+	for id in ItemData.ITEMS:
+		seen += 1
+		var ic := String(ItemData.ITEMS[id].get("icon", ""))
+		if ic == "" or not FileAccess.file_exists("res://assets/icons/%s.png" % ic):
+			missing.append("%s→%s" % [id, ic])
+	# 防「空转」：循环得真的走过 68 件 —— 表一旦变空，上面那条会恒真。
+	_check(seen == 68, "遍历到 68 件道具（实得 %d）" % seen)
+	_check(missing.is_empty(), "68 件图标文件齐备（缺：%s）" % ", ".join(missing))
 
 ## 单件售价覆盖（二青会 ¥8000）+ 货架冷却预览状态
 func _test_price_state(g) -> void:
