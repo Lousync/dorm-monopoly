@@ -84,6 +84,7 @@ func _run() -> void:
 	await _test_discover(g)
 	await _test_taobao_guarantee(g)
 	await _test_bury(g)
+	_test_tile_shield(g)
 	if fails == 0:
 		print("ITEM TEST: ALL PASS")
 		quit(0)
@@ -797,4 +798,121 @@ func _test_bury(g) -> void:
 		"at_mode：短暂延时、没开真人那一窗（%d ms）" % (Time.get_ticks_msec() - t0))
 	g.at_mode = ""
 	g.running = false
+	g.hp = []
+
+## 把施放者摆回「这一件还没用过」的样子：备好道具 + 复位每回合闸门 / 体力 / 首件标记，
+## 并把 `_use_item` 的窗口开给他。
+## **本用例要连摆好几个方向，不重置就会假绿**：第二发会被 `_item_used_up`（每回合 1 件）
+## 或体力不足静默挡掉，断言以「什么都没发生」的样子通过 —— 看着绿、其实一行没跑到。
+func _arm_use(g, p: Dictionary, iid: String, stamina := 6) -> void:
+	p.items = [{"id": iid, "cd": 0}]
+	p.stamina = stamina
+	p.item_used_n = 0
+	p.item_used = false
+	p.first_used = false
+	p.cost_pen = []
+	g._awaiting_item = int(p.peer)
+	g._item_epoch = 0
+	g._item_action = {}
+
+## 园中叶（2026-10-10 M5）落定为「地产护罩」被动 —— 68 件里最后一件未实装的。
+## 设计稿（`doc/development/plans/道具重构.md` §二 金档最后一行，**该计划文件随本版本删除、历史见
+## `git log`**）：「你名下的地皮不会被降级、变无主或被收购」，被 `抄家队` / `强拆令` /
+## `宿舍改造` 三处读取；`implemented` 置 true。
+##
+## **两个方向各摆一次**：持罩 与 摘罩 摆同一副局面、结果必须相反。
+## 只摆持罩那一半的话，「抄家队整个坏掉」这类回归也会全绿（降级根本没发生 ≠ 被挡住了）。
+## 反向那几条本就在实现之前就是绿的（它们是"区分力"的对照组，不是待红的断言）；
+## 待红的是持罩那三条 + 选地表两条 + 首段候选那条。
+func _test_tile_shield(g) -> void:
+	print("== 园中叶：地产护罩 ==")
+	_check(bool(ItemData.def("园中叶").implemented), "园中叶已实装（68 件全实装）")
+	_check(String(ItemData.def("园中叶").desc) != "？？？",
+		"园中叶卡面文案已落定（desc 不再是占位：%s）" % String(ItemData.def("园中叶").desc))
+
+	var a := _prop_idx(0)
+	var b := _prop_idx(1)
+	var p0 := _mk_player(1, "甲")   # 施放者
+	var p1 := _mk_player(2, "乙")   # 受害者；自有地皮 b
+	g.hp = [p0, p1]
+	g.shops = {}
+	g.items_consumed = {}
+	var t := _fresh_tiles()
+	t[a].owner = 1
+	t[a].level = 1
+	t[b].owner = 2
+	t[b].level = 2
+	g.htiles = t
+
+	# ① 抄家队（降 1 级）：持罩不动 / 摘罩照降
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	_arm_use(g, p0, "抄家队")
+	g._use_item(1, 0, 2, b)   # arg = 目标 peer，arg2 = 目标格
+	_check(int(g.htiles[b].get("level", -1)) == 2, "持园中叶：自家地皮不被抄家降级（仍 Lv2）")
+	p1.items = []
+	g.htiles[b].level = 2
+	_arm_use(g, p0, "抄家队")
+	g._use_item(1, 0, 2, b)
+	_check(int(g.htiles[b].get("level", -1)) == 1, "无护罩（反向）：同一副局面照常降 1 级")
+
+	# ② 强拆令（归无主）
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	g.htiles[b].owner = 2
+	g.htiles[b].level = 2
+	_arm_use(g, p0, "强拆令", 8)
+	g._use_item(1, 0, 2, b)
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == 2, "持园中叶：自家地皮不被强拆（仍归乙）")
+	p1.items = []
+	g.htiles[b].owner = 2
+	g.htiles[b].level = 2
+	_arm_use(g, p0, "强拆令", 8)
+	g._use_item(1, 0, 2, b)
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == GameData.NO_OWNER,
+		"无护罩（反向）：照常强拆为无主")
+	_check(int(g.htiles[b].get("level", -1)) == 0, "无护罩（反向）：强拆后等级清零")
+
+	# ③ 宿舍改造（学校八折收购；只挑一块地，乙名下就 b 一块 ⇒ 落点确定）
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	g.htiles[b].owner = 2
+	g.htiles[b].level = 2
+	_arm_use(g, p0, "宿舍改造")
+	g._use_item(1, 0, 2)
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == 2, "持园中叶：自家地皮拒绝被收购（仍归乙）")
+	p1.items = []
+	g.htiles[b].owner = 2
+	g.htiles[b].level = 2
+	_arm_use(g, p0, "宿舍改造")
+	g._use_item(1, 0, 2)
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == GameData.NO_OWNER,
+		"无护罩（反向）：照常被征收为无主")
+
+	# ④ 两段式选地表（UI 侧）：护罩是**全有全无**的标记 —— 持罩者名下一块地都不进可选表；
+	#    转专业（互换，不是夺占）照旧可选，否则玩家点了受保护的地只会静默失败
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	g.htiles[b].owner = 2
+	g._broadcast_state()
+	_check(g._selectable_props(2, true).is_empty(), "两段式选地表（抄家/强拆）：持护罩者的地皮不入选")
+	_check(not g._selectable_props(2, false).is_empty(),
+		"普通选地表（转专业 / 顶楼加盖）：不受护罩影响")
+	p1.items = []
+	g._broadcast_state()
+	_check(not g._selectable_props(2, true).is_empty(), "无护罩（反向）：地皮重新进可选表")
+
+	# ⑤ 首段候选玩家（`_begin_peer_target`）：持罩者若名下一块地都动不了，就不该出现在「选谁」的
+	#    名单里（否则点了才说"没有可指定的地皮"）。**判据按 id 分流**：`then_prop` 同时覆盖
+	#    转专业（`then == "swap_both"`），拿它整体去过滤会把互换类也一起挡掉。
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	g.htiles[b].owner = 2
+	g._broadcast_state()
+	g.my_peer = 1
+	g._tgt_stage = ""
+	_arm_use(g, p0, "强拆令", 8)
+	g._begin_peer_target(0, false, true, true)
+	_check(g._tgt_stage != "peer", "首段候选：持护罩者不进「选谁」的名单（夺占地皮类）")
+	g._tgt_stage = ""
+	_arm_use(g, p0, "转专业", 8)
+	g._begin_peer_target(0, false, true, false)
+	_check(g._tgt_stage == "peer", "首段候选：互换类（转专业）照旧列得出持护罩者")
+	g._cancel_target()
+	g._tgt_stage = ""
 	g.hp = []

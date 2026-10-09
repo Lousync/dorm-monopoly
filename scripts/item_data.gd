@@ -175,8 +175,8 @@ const ITEMS := {
 		"desc": "每位玩家都会获得一份礼物，每局游戏仅限一次。", "implemented": true, "icon": "item_gift"},
 	"亡牌飞行员coco": {"quality": "金", "cost": 3, "type": "consumable", "unique": true, "cooldown": 3,
 		"desc": "每位玩家都有一块随机地皮被摧毁，每局游戏仅限一次。", "implemented": true, "icon": "item_pilot"},
-	"园中叶": {"quality": "金", "cost": 0, "type": "active", "unique": true, "cooldown": 0,
-		"desc": "？？？", "implemented": false, "icon": "item_leaf"},
+	"园中叶": {"quality": "金", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+		"desc": "你名下的地皮不会被降级、变无主或被收购。", "implemented": true, "icon": "item_leaf"},
 }
 
 static func def(id: String) -> Dictionary:

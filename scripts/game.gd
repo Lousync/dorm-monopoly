@@ -5148,7 +5148,7 @@ func _open_card_gallery() -> void:
 		_card_cell("黑卡", ItemCard.SIZE_LARGE, {}, "使用展示"),
 		_card_cell("亡牌飞行员coco", ItemCard.SIZE_LARGE, {}, "一次性 · 用后焚毁"),
 		_card_cell("空想者的香皂", ItemCard.SIZE_LARGE, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
-		_card_cell("园中叶", ItemCard.SIZE_LARGE, {}, "预留 · 效果未定"),
+		_card_cell("园中叶", ItemCard.SIZE_LARGE, {}, "传说 · 被动"),
 	]))
 
 	# 品质补全（草案 51 件）：按品质分组动态陈列，图案逐件核对用
@@ -5893,7 +5893,11 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			var props := _own_props(int(t.peer))
 			if props.is_empty():
 				return false
-			if _immune_debuff(t):
+			# 「园中叶」地产护罩：**判定在 `_immune_debuff` 之前** —— 它是地产层的标记，
+			# 与香皂 / 护腕那套 debuff 免疫**并列而非嵌套**，也**不消耗护腕的盾**。
+			if _has_item(t, "园中叶"):
+				_log("%s 的【园中叶】护住了他的地皮，抄家无用" % t.name, "#8fb7f2")
+			elif _immune_debuff(t):
 				_log("%s 被香皂/护盾挡下了抄家" % t.name, "#8fb7f2")
 			else:
 				var pi: int = arg2 if (arg2 in props) else props[randi_range(0, props.size() - 1)]
@@ -5962,7 +5966,10 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			var tp2 := _own_props(int(t.peer))
 			if tp2.is_empty():
 				return false
-			if _immune_debuff(t):
+			# 护罩判定在 `_immune_debuff` 之前（与抄家队同款，见该处的口径说明）
+			if _has_item(t, "园中叶"):
+				_log("%s 的【园中叶】护住了他的地皮，强拆无用" % t.name, "#8fb7f2")
+			elif _immune_debuff(t):
 				_log("%s 被香皂/护盾挡下了强拆" % t.name, "#8fb7f2")
 			else:
 				var si: int = arg2 if (arg2 in tp2) else tp2[randi_range(0, tp2.size() - 1)]
@@ -6005,6 +6012,11 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 		"宿舍改造":
 			var re_props := _own_props(int(t.peer))
 			if re_props.is_empty():
+				return false
+			# 「园中叶」地产护罩：学校**拒绝收购**，整件事不发生 ⇒ `return false` 让调用方
+			# 退还体力 / 冷却（抄家队、强拆令是"挡下但已用掉"，这三处口径不同是设计稿定的）
+			if _has_item(t, "园中叶"):
+				_log("%s 的【园中叶】拒绝收购" % t.name, "#8fb7f2")
 				return false
 			var ri: int = re_props[randi_range(0, re_props.size() - 1)]
 			var comp := int(float(int(GameData.TILES[ri].price)) * 0.8)
@@ -6706,7 +6718,8 @@ func _on_use_pressed() -> void:
 		if iid == "转专业" and _selectable_props(my_peer).is_empty():
 			_log("你没有可交换的地皮（退体力/冷却）", "#8a90a5")
 			return
-		_begin_peer_target(slot, iid == "交换生", then == "own_prop" or iid == "转专业")
+		_begin_peer_target(slot, iid == "交换生", then == "own_prop" or iid == "转专业",
+			then == "own_prop")
 	elif tgt == "tile":
 		_begin_tile_target(slot, range(GameData.TILES.size()))
 	elif tgt == "own_tile":
@@ -6824,7 +6837,14 @@ func _item_targets(exclude_peer: int) -> Array:
 	return out
 
 ## 某玩家名下可拆/可降的地皮序号（读已同步的 st.tiles，客户端也准）
-func _selectable_props(peer: int) -> Array:
+##
+## `for_removal = true`（`then == "own_prop"`：强拆令 / 抄家队那两条两段式选地）：
+## 持「园中叶」者名下一块也不可选 —— 护罩是**全有全无**的标记，不是逐块；这里不过滤的话，
+## 玩家会把受保护的地点进可选表、点了才发现静默失败。
+## `for_removal = false`（转专业 / 顶楼加盖）：**互换与自建都不算降级 / 无主 / 收购**，不受护罩影响。
+func _selectable_props(peer: int, for_removal := false) -> Array:
+	if for_removal and _has_item(_state_player(peer), "园中叶"):
+		return []
 	var out: Array = []
 	var tiles: Array = st.get("tiles", [])
 	for i in tiles.size():
@@ -6856,13 +6876,16 @@ func _push_peer_highlight(peers: Array) -> void:
 		_hl_peers.append(int(p))
 	_refresh_corner_highlight()
 
-## 进入「选玩家」阶段。only_with_items=交换生（目标须持有道具）；then_prop=两段式（目标须有地）
-func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool) -> void:
+## 进入「选玩家」阶段。only_with_items=交换生（目标须持有道具）；then_prop=两段式（目标须有地）；
+## for_removal=两段式的目标地皮是**被拆 / 被降**的（`then == "own_prop"`：强拆令 / 抄家队）——
+## 只有这一类会被「园中叶」地产护罩整体挡掉，过滤口径与 `_selectable_props` 同源；
+## 转专业（`then == "swap_both"`）是互换、不受护罩影响，故**不能拿 `then_prop` 整体去滤**。
+func _begin_peer_target(slot: int, only_with_items: bool, then_prop: bool, for_removal := false) -> void:
 	var peers: Array = []
 	for t in _item_targets(my_peer):
 		if only_with_items and (t.get("items", []) as Array).is_empty():
 			continue
-		if then_prop and _selectable_props(int(t.peer)).is_empty():
+		if then_prop and _selectable_props(int(t.peer), for_removal).is_empty():
 			continue
 		peers.append(int(t.peer))
 	if peers.is_empty():
@@ -6976,8 +6999,9 @@ func _on_seat_clicked(peer: int) -> void:
 			return
 		var then := String(ItemData.def(iid).get("then", ""))
 		if then == "own_prop":
-			# 两段式：进入选地块，只高亮该玩家名下地皮
-			var props := _selectable_props(peer)
+			# 两段式：进入选地块，只高亮该玩家名下**可拆 / 可降**的地皮
+			#（持「园中叶」者一块都不高亮 —— 护罩过滤见 `_selectable_props`）
+			var props := _selectable_props(peer, true)
 			if props.is_empty():
 				_log("该玩家名下没有可指定的地皮", "#8a90a5")
 				return
