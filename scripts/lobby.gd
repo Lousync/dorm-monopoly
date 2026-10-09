@@ -12,6 +12,26 @@ var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
 var _room_label: Label
 
+# 网络自检弹窗（fix/0.14.1）：本机地址分类 + 出网连通性探测
+var _net_btn: Button
+var _net_wrap: Control
+var _net_addr_lbl: Label
+var _net_v6_lbl: Label
+var _net_v4_lbl: Label
+# 出网探测目标（公网 DNS 的 53 端口）：aliDNS 有两个任播 v6 地址，
+# `2400:3200::1` 在本网 TCP 不通、`baba::1` 通，故以 baba 优先、::1 兜底。
+const NS_V6 := ["2400:3200:baba::1", "2400:3200::1"]      # 阿里 IPv6 DNS
+const NS_V4 := ["223.5.5.5", "119.29.29.29"]               # 阿里 / 腾讯 IPv4 DNS
+const NS_PORT := 53
+# 用 preload 取类，不依赖全局 class_name 缓存（新脚本的缓存要编辑器重建一次才在）
+const NetProbeScript := preload("res://scripts/net_probe.gd")
+var _ns_v6_probe = null
+var _ns_v6_i := 0
+var _ns_v4_probe = null
+var _ns_v4_i := 0
+var _ns_v6_done := true
+var _ns_v4_done := true
+
 # 房主开局设置弹窗（见 doc/game-design/开局设置.md）
 var _set_wrap: Control
 var _set_scroll: ScrollContainer
@@ -107,6 +127,11 @@ func _ready() -> void:
 	_settings_btn.tooltip_text = "开局设置（仅房主可改）"
 	_settings_btn.pressed.connect(_on_open_settings)
 	btn_row.add_child(_settings_btn)
+	_net_btn = UIKit.button("网络自检", 15)
+	_net_btn.custom_minimum_size = Vector2(0, 40)
+	_net_btn.tooltip_text = "检查本机 IPv6 地址、出网连通性与直连建议"
+	_net_btn.pressed.connect(_on_open_netself)
+	btn_row.add_child(_net_btn)
 	_start_btn = UIKit.button("开始游戏！", 17, "primary")
 	_start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_start_btn.custom_minimum_size = Vector2(0, 40)
@@ -172,6 +197,7 @@ func _ready() -> void:
 	_refresh()
 	_refresh_chat()
 	_build_settings_dialog()
+	_build_net_dialog()
 
 	if _at_mode == "host":
 		_autotest_host()
@@ -440,6 +466,127 @@ func _build_settings_dialog() -> void:
 	ok.pressed.connect(_on_settings_save)
 	row.add_child(ok)
 
+## 「网络自检」弹窗（fix/0.14.1）：本机地址分类 + 出网连通性才算真正「能不能用」。
+## 出网探测走 NetProbe（TCP 连公网 DNS 的 53 端口），在 `_process` 里逐帧轮询。
+func _build_net_dialog() -> void:
+	_net_wrap = Control.new()
+	_net_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_net_wrap.visible = false
+	add_child(_net_wrap)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_net_wrap.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_net_wrap.add_child(center)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 12)
+	panel.custom_minimum_size = Vector2(588, 0)
+	center.add_child(panel)
+	var m := UIKit.margins(18, 18, 14, 12)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	m.add_child(v)
+	v.add_child(UIKit.title_label("网络自检", 20))
+	_net_addr_lbl = UIKit.label("", 13, UIKit.TEXT)
+	_net_addr_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_net_addr_lbl)
+	v.add_child(UIKit.label("── 出网检测（连公网 DNS 的 53 端口）──", 13, UIKit.ACCENT))
+	_net_v6_lbl = UIKit.label("IPv6 出网：未检测", 14, UIKit.TEXT)
+	_net_v6_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_net_v6_lbl)
+	_net_v4_lbl = UIKit.label("IPv4 出网：未检测", 14, UIKit.TEXT)
+	_net_v4_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_net_v4_lbl)
+	var hint := UIKit.label(
+		"· 有「全球 IPv6」且 IPv6 出网 ✓ → 跨网直连可用，把该地址发给室友。\n"
+		+ "· 出网 ✓ ≠ 别人能连进来：入站常被 Windows 防火墙 / 校园网挡 —— 室友连不上先查这个。\n"
+		+ "· 两边都要有 IPv6；室友那边没有 IPv6 就只能走 IPv4。", 12, UIKit.TEXT_DIM)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(hint)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	v.add_child(row)
+	var again := UIKit.button("重新检测", 15)
+	again.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	again.pressed.connect(_start_netself)
+	row.add_child(again)
+	var close := UIKit.button("关闭", 15, "primary")
+	close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	close.pressed.connect(func() -> void: _net_wrap.visible = false)
+	row.add_child(close)
+
+func _on_open_netself() -> void:
+	_net_wrap.visible = true
+	_start_netself()
+
+## 刷新本机地址摘要 + 起一轮出网探测（IPv6 先走阿里、失败再试谷歌）。
+func _start_netself() -> void:
+	var a := NetAddr.split_addresses()
+	_net_addr_lbl.text = "── 本机地址 ──\n" \
+		+ "全球 IPv6：%s\n" % _join_cn(a.pub6) \
+		+ "内网 IPv6：%s\n" % _join_cn(a.lan6) \
+		+ "局域网 IPv4：%s\n" % _join_cn(a.lan4) \
+		+ "公网 IPv4：%s" % _join_cn(a.pub4)
+	_ns_v6_i = 0
+	_ns_v4_i = 0
+	_ns_v6_done = false
+	_ns_v4_done = false
+	_ns_v6_probe = NetProbeScript.new()
+	_ns_v6_probe.start(NS_V6[0], NS_PORT)
+	_ns_v4_probe = NetProbeScript.new()
+	_ns_v4_probe.start(NS_V4[0], NS_PORT)
+	_net_v6_lbl.text = "IPv6 出网：检测中…"
+	_net_v6_lbl.modulate = UIKit.TEXT_DIM
+	_net_v4_lbl.text = "IPv4 出网：检测中…"
+	_net_v4_lbl.modulate = UIKit.TEXT_DIM
+
+## 逗号分隔地址（Array → PackedStringArray，避免 String.join 类型不匹配）
+func _join_cn(arr: Array) -> String:
+	if arr.is_empty():
+		return "未检测到"
+	var ps := PackedStringArray()
+	for x in arr:
+		ps.append(String(x))
+	return "、".join(ps)
+
+func _process(_delta: float) -> void:
+	if _ns_v6_done and _ns_v4_done:
+		return
+	if not _ns_v6_done:
+		var s: int = _ns_v6_probe.poll()
+		if s == NetProbeScript.ST_FAIL and _ns_v6_i + 1 < NS_V6.size():
+			_ns_v6_i += 1
+			_ns_v6_probe = NetProbeScript.new()
+			_ns_v6_probe.start(NS_V6[_ns_v6_i], NS_PORT)
+			s = _ns_v6_probe.state
+		if s != NetProbeScript.ST_CONNECTING:
+			_ns_v6_done = true
+			_net_v6_lbl.text = "IPv6 出网（%s）：%s" % [NS_V6[_ns_v6_i], _ns_v6_probe.status_text()]
+			_net_v6_lbl.modulate = _ns_color(s)
+	if not _ns_v4_done:
+		var s2: int = _ns_v4_probe.poll()
+		if s2 == NetProbeScript.ST_FAIL and _ns_v4_i + 1 < NS_V4.size():
+			_ns_v4_i += 1
+			_ns_v4_probe = NetProbeScript.new()
+			_ns_v4_probe.start(NS_V4[_ns_v4_i], NS_PORT)
+			s2 = _ns_v4_probe.state
+		if s2 != NetProbeScript.ST_CONNECTING:
+			_ns_v4_done = true
+			_net_v4_lbl.text = "IPv4 出网（%s）：%s" % [NS_V4[_ns_v4_i], _ns_v4_probe.status_text()]
+			_net_v4_lbl.modulate = _ns_color(s2)
+
+func _ns_color(s: int) -> Color:
+	if s == NetProbeScript.ST_OK:
+		return Color(0.42, 0.82, 0.45)
+	if s == NetProbeScript.ST_FAIL:
+		return Color(0.90, 0.42, 0.45)
+	return UIKit.TEXT_DIM
+
 ## 小节标题
 func _sect_title(text: String) -> Label:
 	return UIKit.label("── %s ──" % text, 14, UIKit.ACCENT)
@@ -654,6 +801,8 @@ func _shot() -> void:
 	_refresh_chat()
 	if _shot_path.contains("settings"):
 		_on_open_settings()   # 摆拍：打开「游戏设置」弹窗（含操作限时 + 开局科技开关）
+	elif _shot_path.contains("netself"):
+		_on_open_netself()    # 摆拍：打开「网络自检」弹窗（fix/0.14.1）
 	await get_tree().create_timer(1.2).timeout
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(_shot_path)

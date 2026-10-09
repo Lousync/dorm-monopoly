@@ -73,6 +73,7 @@ func _run() -> void:
 	_test_endpoint_format()
 	_test_room_info_port()
 	_test_addr_display()
+	_test_net_probe()
 
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
@@ -503,6 +504,28 @@ func _test_addr_display() -> void:
 	var all: Array = c.lan4 + c.pub4 + c.lan6 + c.pub6
 	_check(not all.has("0:0:0:0:0:0:0:1") and not all.has("::1"), "回环（展开式 + 压缩式）都被过滤")
 	_check(not all.has("fe80:0:0:0:915:a333:7df9:ebd9"), "链路本地 IPv6 被过滤")
+
+func _test_net_probe() -> void:
+	print("== 出网探测：本机 TCP 服务判「通」、死地址判「不通」（fix/0.14.1） ==")
+	var Probe := preload("res://scripts/net_probe.gd")
+	var srv := TCPServer.new()
+	_check(srv.listen(0, "127.0.0.1") == OK, "起一个本机 TCP 服务")
+	var port := srv.get_local_port()
+	var good = Probe.new()
+	good.start("127.0.0.1", port)
+	var bad = Probe.new()
+	bad.timeout_ms = 800
+	bad.start("127.0.0.1", 1)
+	for i in 200:
+		srv.poll()
+		good.poll()
+		bad.poll()
+		if good.state != Probe.ST_CONNECTING and bad.state != Probe.ST_CONNECTING:
+			break
+		OS.delay_msec(10)
+	srv.stop()
+	_check(good.state == Probe.ST_OK, "连得上 → OK（实得 %s）" % good.status_text())
+	_check(bad.state == Probe.ST_FAIL, "连不上 → FAIL（实得 %s）" % bad.status_text())
 
 func _test_camera_window_resize(g) -> void:
 	print("== 镜头状态：窗口缩放不重置镜头 ==")
