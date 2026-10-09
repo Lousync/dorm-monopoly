@@ -100,8 +100,11 @@ func _entries_cards() -> Array:
 			rows.append({"k": "香皂", "v": soap})
 		out.append({
 			"title": String(card.t),
-			# 副标题只写「chips 没说的事」：卡类 chip 已经写了这一类是什么，这里补的是三类的关系
-			"subtitle": "机会格专属：机会 85% / 道具 10% / 畸变 5% 三类卡之一",
+			# 副标题只写「chips 没说的事」：卡类 chip 已经写了这一类是什么，这里补的是三类的关系。
+			# **别在这里写死 85/10/5**：畸变默认是**关**的，那时实际分布是 90/10/0（见
+			# `机会卡.md` §一「卡池过滤」与 `_roll_chance_kind`），写死会说谎 —— 规则说明面板
+			# 那边就是**刻意不写数字**的，两边口径要一致。
+			"subtitle": "机会格三类卡之一（机会 / 道具 / 畸变），概率随「畸变」开关变化",
 			"glyph": KIND_GLYPH.get(kind, "·"),
 			"accent": KIND_COLOR.get(kind, "#4a5b66"),
 			"chips": [
@@ -205,6 +208,10 @@ func _card_soap(card: Dictionary) -> String:
 		if card.has(f):
 			notes.append("**目标**持皂则整条免疫")
 			break
+	# 「雨伞」只挡**后退类**移动（同 `move_steps < 0` 那一处）：`push_back` 另加一道，
+	# `pull_target` 是**拉**不是**推**、雨伞不管它（口径照 `机会卡.md` §四「免疫点」表）。
+	if card.has("push_back"):
+		notes.append("**目标**持伞也免疫（后退类）")
 	if card.has("seize_tile"):
 		notes.append("夺地：目标持皂则整条免疫" if String(card.seize_tile) == "take" else "互换：中性，香皂无效")
 	# 抉择卡没有自己的效果：免不免疫要看**最终选中哪一支**（各支走同一套字段判定）。

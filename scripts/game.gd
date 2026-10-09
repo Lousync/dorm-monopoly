@@ -359,8 +359,10 @@ var _prompt_token := -1
 var _prompt_tile := -1
 ## 卡面确认（批次 12 C2 / ⑧⑪）：正在等谁点「确定」（0 = 没有）；他确认后 `_card_ack` 置真。
 ## **抉择卡复用同一个归属位**（批次 2 §三）：抉择的作答窗口同样挂在抽卡者身上
-##（`_op_window_owner` / `_broadcast_state` 的等待链都只认它一处），掉线 / 重连那两个既有钩子
-##（`_on_peer_disconnected` 的 `_card_ack = true`、`_rekey_transient` 的换 key）也就一并照上了。
+##（卡的三条等待里，「确认」「抉择」认它，「选目标」另认 `_awaiting_card_target` ——
+##  两条归属位都写进了 `_op_window_owner` 与 `_broadcast_state` 的等待链），掉线 / 重连那两个
+## 既有钩子（`_on_peer_disconnected` 的 `_card_ack = true`、`_rekey_transient` 的换 key）
+## 两条归属位都照上了。
 var _awaiting_card := 0
 var _card_ack := false
 ## 抉择卡：抽卡者选中的分支下标（-1 = 还没作答 ⇒ 房主按第一项兜底，见 `_await_card_choice`）。
@@ -2060,6 +2062,9 @@ func _peek_event() -> Dictionary:
 	return _event_deck[0]
 
 ## 这次落在机会格抽到哪一类。畸变总开关为「关」时第三档作废、并入机会卡（实际 90/10/0）。
+##
+## 三档**逐条显式列全**，末尾不再拿畸变当兜底：将来若在数据表里加了第四档概率常量却忘了在这里
+## 补分支，那个区间会被**静默算成畸变**（凭空发一张畸变卡），查起来极难 —— 这里宁可当场报错。
 func _roll_chance_kind() -> String:
 	var r := randf()
 	if String(_settings.ab_freq) == "关":
@@ -2070,7 +2075,11 @@ func _roll_chance_kind() -> String:
 		return "card"
 	if r < GameData.CHANCE_P + GameData.CHANCE_ITEM_P:
 		return "item"
-	return "aberr"
+	if r < GameData.CHANCE_P + GameData.CHANCE_ITEM_P + GameData.CHANCE_AB_P:
+		return "aberr"
+	push_error("机会格抽卡：r=%.4f 超出了三档概率之和（%.4f）—— 数据表加了第四档却没在 _roll_chance_kind 里补分支？" % [
+		r, GameData.CHANCE_P + GameData.CHANCE_ITEM_P + GameData.CHANCE_AB_P])
+	return "card"   # 兜底按最常见的一档落地（宁可是张机会卡，也别凭空塞一张畸变卡）
 
 func _resolve_buy(p: Dictionary, idx: int) -> void:
 	var d: Dictionary = GameData.TILES[idx]
@@ -2263,7 +2272,7 @@ func _apply_card(p: Dictionary, card: Dictionary) -> void:
 func _card_target_for(p: Dictionary, card: Dictionary, field: String) -> Dictionary:
 	var peer := int(card.get("_target", GameData.NO_PEER))
 	if peer == GameData.NO_PEER:
-		var picked: Dictionary = await _await_card_target(p, field)
+		var picked: Dictionary = await _await_card_target(p, field, String(card.t))
 		peer = int(picked.get("peer", GameData.NO_PEER))
 	var tgt := _player_by_peer(peer)
 	if tgt.is_empty() or int(tgt.peer) == int(p.peer) or not bool(tgt.alive):
@@ -3376,12 +3385,21 @@ func _op_timer_send(kind: String, left: float, total: float) -> void:
 
 ## 当前操作窗口的归属玩家（与 _broadcast_state 的 await 归属同一套判定；
 ## 各归属变量都在启动计时前赋值，见 _play_turn / _ask / 商店 / 黑市入口）。
-## 找不到时回退当前行动者。
+##
+## **回退到当前行动者是条假前提，别拿它当"抽卡者"**：`pull_target` / `push_back` 都会
+## `await _resolve_tile(tgt)`（被拉/被推的人照常结算落点，见 `_card_apply_tile_move`）——
+## 那一格要是机会格，**抽卡者就是被挪过去的那个人、不是当前行动者**；他抽到目标类卡时
+## 该作答的是他。所以卡的两条归属位都必须显式列出，回退只留给"确实没有等待窗口"。
 func _op_window_owner() -> int:
 	if _awaiting_roll != 0:
 		return _awaiting_roll
 	if _awaiting_prompt != 0:
 		return _awaiting_prompt
+	# 卡选目标（批次 2 §三）排在 `_awaiting_card` 之前：两者不会同时非零（确认 / 抉择窗口
+	# 都在 `_apply_card` 之前收干净、`_apply_card` 里才轮到选目标），但顺序与 `_broadcast_state`
+	# 的等待链保持一致，免得日后有人只改一处。
+	if _awaiting_card_target != 0:
+		return _awaiting_card_target
 	if _awaiting_card != 0:
 		return _awaiting_card
 	if _awaiting_item != 0:
@@ -3483,6 +3501,13 @@ func _broadcast_state() -> void:
 		# 破产变卖保底（经济与胜负.md §三）：等待玩家自选变卖 / 系统自动兜底
 		await_state = "liq"
 		await_peer = _liq_peer
+	elif _awaiting_card_target != 0:
+		# 卡选目标（批次 2 §三）：await_peer = 该选目标的人 = **抽卡者**。**必须与 `_op_window_owner`
+		# 的归属链同一套判定** —— `pull_target` / `push_back` 连环时抽卡者可能不是当前行动者
+		#（被挪到机会格的人抽到了这张卡，见 `_card_apply_tile_move` 与 `联机协议.md` §四）。
+		# 与「等确定 / 抉择」共用 `card` 这个 await 值（同一个 `_await_turn_window("card", …)` 挡位）。
+		await_state = "card"
+		await_peer = _awaiting_card_target
 	elif _awaiting_card != 0:
 		# 抽卡演出等「确定」（批次 12 C2）：await_peer = 该点确定的人（= 抽卡者）。
 		await_state = "card"
@@ -3836,7 +3861,8 @@ func _on_card_choice(idx: int) -> void:
 ##
 ## 骨架照 `_await_card_confirm`（托管走短暂延时、真人走**既有操作窗口**的 "card" 挡位 ⇒ 倒计时
 ## 挂在抽卡者那条身家条 / 名册行上、超时即取第一项）。两个差别：
-##   * 收卡（`s_card_close`）落在本函数末尾 —— 抉择卡不走「先确定、再选」：它的分支按钮**就是**
+##   * 收卡（`s_card_close`）**由本函数负责，两条出口各发一次**（末尾那条走完窗口，单项那条
+##     直接 return）—— 抉择卡不走「先确定、再选」：它的分支按钮**就是**
 ##     它的「确定」（`_play_turn` 的 "event" 分支据此不调 `_await_card_confirm`）。先确定的话，
 ##     那一步已经把卡收走了（`s_card_close` → BACK 相位），按钮就没处挂。
 ##   * 等待条件多并一个 `_card_ack`：掉线那条既有钩子（`_on_peer_disconnected` 的
@@ -3846,6 +3872,14 @@ func _await_card_choice(p: Dictionary, card: Dictionary) -> int:
 	if opts.size() <= 1:
 		# 0 项（数据写坏）/ 1 项：没什么可挑的 ⇒ **不进交互**（不开窗口、不发按钮），取第 0 项。
 		# 空表那一边由 `_apply_card` 的 `opts.is_empty()` 拦着，走不到这里。
+		#
+		# **收卡不能跟着一起省**：带 `choices` 的卡在 `_play_turn` 里是**跳过** `_await_card_confirm`
+		# 的（判据是 `card.has("choices")`），卡面从 `s_card` 起就挂在演出上 —— 这里的 return 是它
+		# **唯一**能收到的收尾口。漏了这句就没有任何人收它，桌上会一直压着这张卡（直到下次抽卡顶掉）。
+		# 1 项是数据契约允许的取值（`机会卡.md` §二「choices：二选一（最多 3 项）」），
+		# 将来卡面美化 / 卡表微调真写成 1 项时，这条路径就会天天被走到。
+		s_card_close.rpc()
+		_broadcast_state()
 		return 0
 	_choice_pick = -1
 	_card_ack = false
@@ -6147,8 +6181,10 @@ func _is_sleeping(p: Dictionary) -> bool:
 	return int(p.get("sleep", 0)) > 0
 
 ## 需要系统代为决策（机器人 / 休眠托管）
+## `bot` 走 `.get`：`s_card_choices` 拿 `_state_player(my_peer)` 的结果喂进来，而那份查不到人时
+## 返回的是**空字典**（客户端还没收到第一份快照等）—— 点号访问在空字典上会当场报 SCRIPT ERROR。
 func _is_managed(p: Dictionary) -> bool:
-	return bool(p.bot) or _is_sleeping(p)
+	return bool(p.get("bot", false)) or _is_sleeping(p)
 
 func _prop_indices_of(peer: int) -> Array:
 	var out := []
@@ -6890,7 +6926,9 @@ func c_card_target(target: int) -> void:
 ##
 ## 走**玩家侧**那套 `_tgt_stage` 状态机（与道具「跑腿券」同一个交互），只是判别位换成 `_tgt_card`。
 ## 超时走既有操作限位（同 `_await_card_confirm` 的 `"card"` 挡位 ⇒ 倒计时挂在抽卡者的条上）。
-func _await_card_target(p: Dictionary, field: String) -> Dictionary:
+##
+## `title` = 这张卡的卡面文案（只给"取消了"那句战报用，见下面的收尾；直接调本函数的用例可以不给）。
+func _await_card_target(p: Dictionary, field: String, title := "") -> Dictionary:
 	var cands := _card_target_candidates(p, field)
 	if cands.is_empty():
 		_log("没有可指定的目标，这张卡的目标部分作废", "#8a90a5")
@@ -6928,6 +6966,11 @@ func _await_card_target(p: Dictionary, field: String) -> Dictionary:
 	_card_target_ack = false
 	_awaiting_card_target = 0
 	if pick == GameData.NO_PEER:
+		# 取消（Esc）/ 超时都落到这儿（"无人可选"那条在函数开头就返回了、不经过这里）：**必须记一句**。
+		# 原先这里什么都不出 ⇒ 玩家按 Esc 之后桌上什么都没变、战报也一片静默，看着像卡住了；
+		# 上面两条调用路径（`_apply_card` 的目标类循环、`_card_apply_tile_move`）判到空目标也只是
+		# `continue` / `return`，同样不出声。
+		_log("%s 没有为【%s】指定目标，这张卡的目标部分作废" % [p.name, title], "#8a90a5")
 		return {}
 	return _state_player(pick)
 

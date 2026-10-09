@@ -101,6 +101,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/blackshop_test.gd # 黑市单测
 & $G --headless --path . --script tests/shop_test.gd      # 小卖部单测
 & $G --headless --path . --script tests/casino_test.gd    # 赌场单测
+& $G --headless --path . --script tests/chance_test.gd    # 机会卡单测（三类分布 / 15 个智斗字段 / 选目标 / 抉择）
 & $G --headless --path . --script tests/regression_test.gd # 回归单测（审查发现的问题逐条钉住）
 & $G --headless --path . --script tests/aberration_test.gd # 畸变单测（两道闸门 + 逐条效果）
 & $G --headless --path . --script tests/tech_test.gd    # 开局科技单测（定档抽卡 + 逐条效果）

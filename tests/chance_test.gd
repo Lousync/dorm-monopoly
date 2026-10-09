@@ -118,6 +118,9 @@ func _run() -> void:
 	await _test_choices(g)
 	_test_deck_iface(g)
 	await _test_deck_fields(g)
+	await _test_cancel_log(g)
+	_test_op_owner_card_target(g)
+	_test_choices_single_close(g)
 	if fails == 0:
 		print("CHANCE TEST: ALL PASS")
 		quit(0)
@@ -243,6 +246,56 @@ func _test_cancel(g) -> void:
 	g._cancel_target()
 	_check(g._target_pick == 7 and not g._card_target_ack, "道具取消路径不动卡的哨兵")
 	_check(g._tgt_stage == "" and g._tgt_slot == -1, "道具取消照旧清自己的态")
+
+## 取消要出声（C3 那个收尾洞）：`_apply_card` 的目标类循环与 `_card_apply_tile_move` 判到空目标时
+## 只是 `continue` / `return`，原先一个字都不写 —— 玩家按 Esc 之后桌上一动不动、战报也静默，
+## 看着像卡住了。这一条钉 `_await_card_target` 那个唯一出口。
+func _test_cancel_log(g) -> void:
+	print("== 取消卡选目标：战报要出声 ==")
+	_target_table(g)
+	g.running = false     # 窗口一次都不进 ⇒ 等价于"没作答"（取消 / 超时同一条落点）
+	var log0 := _log_len(g)
+	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from", "顺走外卖")
+	_check(got.is_empty(), "没作答 ⇒ 返回空字典（目标部分作废）")
+	_check(_log_at(g, "目标部分作废", log0) >= 0,
+		"战报写了一句「目标部分作废」（原先这条路一个字都没有）")
+	# "无人可选"那条自己那句照旧（别被上面那句顶掉）
+	_setup(g, [_mk_player(1, "甲")], _fresh_tiles())
+	log0 = _log_len(g)
+	await g._await_card_target(g.hp[0], "steal_from", "顺走外卖")
+	_check(_log_at(g, "没有可指定的目标", log0) >= 0, "无人可选那句照旧")
+
+## 倒计时归属（本波补的洞）：`_op_window_owner` 原先不认卡选目标，会**回退到当前行动者**。
+##
+## 那个回退的前提是假的：`pull_target` / `push_back` 都会 `await _resolve_tile(tgt)`，让**被拉 /
+## 被推的那个人**照常结算落点（`_card_apply_tile_move`）—— 落到机会格时，抽到目标类卡、该作答的是
+## 他，而 `turn_i` 还指着原来那个行动者 ⇒ 25 秒倒计时挂到了不需要作答的人身上。
+##
+## 这里就按那条真路的末态摆：甲(1) 在行动、乙(2) 被拉来抽到了目标卡。
+func _test_op_owner_card_target(g) -> void:
+	print("== 倒计时归属：被拉的人抽到目标卡 ⇒ 挂在他身上 ==")
+	_target_table(g)          # 甲(1) / 乙(2) / 丙(3,bot) / 丁(4,出局)
+	g.turn_i = 0              # 当前行动者 = 甲(1)
+	# 其它归属位清零（本套件别处把 `running` 打开过的用例可能留下残值）
+	g._awaiting_roll = 0
+	g._awaiting_prompt = 0
+	g._awaiting_card = 0
+	g._awaiting_item = 0
+	g._shop_peer = 0
+	g._black_peer = 0
+	_check(int(g._op_window_owner()) == 1, "（负例）没有等待窗口时回退当前行动者 = 甲(1)")
+	g._awaiting_card_target = 2
+	_check(int(g._op_window_owner()) == 2,
+		"卡选目标窗口归属 = 乙(2)（被拉来抽到这张卡的人），实得 %d" % int(g._op_window_owner()))
+	g._op_timer_send("card", 25.0, 25.0)
+	_check(int(g._op_owner) == 2, "s_op_timer 推的归属同样是乙(2)（实得 %d）" % int(g._op_owner))
+	# 快照那条等待链同源（C 案里点名的第二处）：await=card / await_peer=乙
+	g._broadcast_state()
+	_check(String(g.st.get("await", "")) == "card" and int(g.st.get("await_peer", -1)) == 2,
+		"快照 await=card / await_peer=乙(2)（实得「%s」/ %d）" % [
+			String(g.st.get("await", "")), int(g.st.get("await_peer", -1))])
+	g._awaiting_card_target = 0
+	g._op_timer_send("", 0.0, 0.0)
 
 func _test_refresh_keeps_card(g) -> void:
 	print("== 状态广播不冲掉卡选目标态 ==")
@@ -1042,6 +1095,26 @@ func _test_choices_single(g) -> void:
 	await g._apply_card(g.hp[0], {"t": "空抉择", "choices": []})
 	_check(int(g.hp[0].money) == 5000 and int(g.hp[0].pos) == 0,
 		"空抉择表 ⇒ 当这张卡没有那段（一分没动、也没崩）")
+
+## 1 项卡的**收卡**（本波补的洞）：带 `choices` 的卡在 `_play_turn` 里**跳过** `_await_card_confirm`，
+## 卡面从 `s_card` 起就挂在演出上 —— 收卡只由 `_await_card_choice` 负责，而它以前在 `size() <= 1`
+## 那一支**直接 return**、一个包都不发 ⇒ 没人收卡，桌上永远压着这张卡。
+##
+## **必须先把演出真的开起来**：只调 `_apply_card` 时 `deck_reveal` 压根没在演（上一条就是），
+## 少了这一层，"卡挂着没收" 与 "本来就没卡" 分不开，用例抓不到洞。
+func _test_choices_single_close(g) -> void:
+	print("== 抉择卡：1 项也要把卡面收掉 ==")
+	_target_table(g)          # 甲 5000
+	var dr = g.deck_reveal
+	if dr == null:
+		return                # 存在性闸已经报过红了
+	dr.show_card("机会", "info", "测试：单项抉择卡")
+	dr.tick(dr.CARD_TIME + 0.05)   # 快进到"停住等确定"那一档（真实帧也会继续推，不影响判据）
+	_check(dr.is_showing(), "（前置）卡面确实挂在演出上")
+	await g._apply_card(g.hp[0], {"t": "单选", "choices": [{"t": "唯一一支：+¥300", "money": 300}]})
+	_check(int(g.hp[0].money) == 5300, "1 项照常结算（甲 5300，实得 %d）" % int(g.hp[0].money))
+	dr.tick(dr.BACK + 0.05)        # 放行收尾相位（`s_card_close` → BACK → 自己收掉）
+	_check(not dr.is_showing(), "卡面被收掉（不会一直压在桌上，直到下次抽卡才顶掉）")
 
 ## bot / 休眠托管 / 自动回归（房主自己那张）都不等人点 ⇒ 取第一项。
 func _test_choices_managed(g) -> void:
