@@ -41,7 +41,7 @@ const ITEMS := {
 	"跑腿券": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "指定一名玩家给你 ¥200。", "implemented": true, "target": "player", "icon": "item_errand"},
 	"小抄": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
-		"desc": "偷看机会牌堆的下一张卡。", "implemented": true, "icon": "item_peek"},
+		"desc": "偷看机会牌堆的下一张卡，并可把它塞到底部。", "implemented": true, "icon": "item_peek"},
 	"许愿池": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "立刻随机获得 -¥400~+¥800。", "implemented": true, "icon": "item_fountain"},
 	"外卖箱": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,

@@ -15,6 +15,21 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 成员在位判据：**直接读不存在的属性只会在日志里刷 SCRIPT ERROR、判不出红** ⇒ 走属性表认。
+## 与 `chance_test.gd` 的同名小助手一字不差。
+func _has_prop(g, nm: String) -> bool:
+	for pd in g.get_property_list():
+		if String(pd.name) == nm:
+			return true
+	return false
+
+## 机会牌堆当前的牌面文案序列 —— 用例拿它比对**顺序**，不是只比张数。
+func _deck_titles(g) -> Array:
+	var out := []
+	for c in (g._event_deck as Array):
+		out.append(String((c as Dictionary).get("t", "?")))
+	return out
+
 func _fresh_tiles() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
@@ -68,6 +83,7 @@ func _run() -> void:
 	await _test_soil(g)
 	await _test_discover(g)
 	await _test_taobao_guarantee(g)
+	await _test_bury(g)
 	if fails == 0:
 		print("ITEM TEST: ALL PASS")
 		quit(0)
@@ -622,3 +638,161 @@ func _test_soil(g) -> void:
 	await g._resolve_tile(p2)
 	_check(p2.money == 5000, "香皂挡下焦土捐款（不扣钱）")
 	_check(int(g.htiles[a].soil_prog) == 100, "香皂挡下时进度不涨")
+
+## 真人分支的作答（模拟 `c_bury_ok` 的回程）：**等 `_await_bury_choice` 真的把窗口开起来**再写
+## 标志 —— 那个函数开头就会把它们清成 false（两分法的既定形状，同 `_await_card_target`），
+## 抢在复位之前作答必被冲掉。找不到开窗机会（实现缺席 / 走了托管分支）就自己退，不挂住套件。
+func _bury_answer_when_open(g, bury: bool) -> void:
+	for _i in 40:                       # ≈2s（`_WINDOW_TICK` 级轮询），足够覆盖 `_use_item` 那 0.4s 前摇
+		if int(g._awaiting_bury) != 0:
+			break
+		await create_timer(0.05).timeout
+	g._bury_pick = bury
+	g._bury_ack = true
+
+## 小抄升级（2026-10-10 M1）：看顶张 + 可把它塞到牌堆底 —— 复用机会卡已有的 `bury_deck` 原语。
+## 分七块钉：① 接口齐备；② 置底原语真的把顶张转到底、其余相对顺序不变；③ 托管分支；
+## ④ 归属链三处同源；⑤ `at_mode` 旁路；⑥ 真人分支（作答 / 取消，两半分开）；
+## ⑦ 整条 `_use_item` 链路真的改了牌序。
+##
+## **别用「预置 `_bury_ack`/`_bury_pick` 再调 `_use_item`」那种写法**：预置值必被复位冲掉，
+## 而且那条路会真的开操作窗口、无人作答 ⇒ 白等满一窗（「不限时」档更会挂住）。
+## 窗口类一律**直接测那个 await 函数**，真人那一支由 `_bury_answer_when_open` 在窗口开起来之后作答。
+func _test_bury(g) -> void:
+	print("== 小抄：看顶张 + 可置底 ==")
+	for nm in ["_bury_ack", "_bury_pick", "_awaiting_bury"]:
+		_check(_has_prop(g, nm), "成员 %s 在位" % nm)
+	_check(g.has_method("_await_bury_choice"), "方法 _await_bury_choice 在位")
+	for nm in ["s_ask_bury", "c_bury_ok"]:
+		_check(g.has_method(nm), "RPC %s 在位" % nm)
+	# 实现缺席时就地打住：再往下走只会在调用那一行报 SCRIPT ERROR、协程当场中断（套件要跑到
+	# 20s 看门狗才退，红得看不出是哪一条）。判据与 `chance_test._test_deck_fields` 同一套。
+	if not g.has_method("_await_bury_choice") or not _has_prop(g, "_bury_ack"):
+		return
+
+	# ①b 前端接线（`DeckReveal` 那一侧，Step 5）：只有作答者本人那一端出按钮
+	for nm2 in ["show_bury_ask", "is_bury_visible"]:
+		_check(g.deck_reveal.has_method(nm2), "DeckReveal.%s 在位" % nm2)
+	_check(g.deck_reveal.has_signal("bury_picked"), "DeckReveal.bury_picked 信号在位")
+	g.deck_reveal.show_bury_ask(true, true)
+	_check(g.deck_reveal.is_bury_visible(), "询问亮起（本机就是作答者）")
+	g.deck_reveal.show_bury_ask(true, false)
+	_check(not g.deck_reveal.is_bury_visible(), "旁观者那一端不出按钮")
+	g.deck_reveal.show_bury_ask(false, true)
+	_check(not g.deck_reveal.is_bury_visible(), "收尾（done）后按钮收掉")
+
+	# ② 置底原语（既有 `_card_apply_deck` 的 `bury_deck` 分支，本任务不重写它）
+	var p := _mk_player(1, "甲")
+	var q := _mk_player(2, "乙")   # 第二个活人：`_check_end` 见只剩一人会判胜、把 running 关掉
+	g.hp = [p, q]
+	g.htiles = _fresh_tiles()
+	g.shops = {}
+	g.items_consumed = {}
+	g._event_deck = [{"t": "顶张"}, {"t": "第二张"}, {"t": "第三张"}]
+	g._card_apply_deck(p, {"bury_deck": true}, "bury_deck")
+	_check(_deck_titles(g) == ["第二张", "第三张", "顶张"],
+		"置底原语：顶张去底、其余相对顺序不变（实得 %s）" % str(_deck_titles(g)))
+
+	# ③ 托管分支（bot）：不置底、不挂起、牌序一字不动、归属位不脏
+	g._event_deck = [{"t": "顶张"}, {"t": "第二张"}]
+	p.bot = true
+	var t0 := Time.get_ticks_msec()
+	_check(await g._await_bury_choice(p) == false, "托管：不置底（返回 false）")
+	_check(Time.get_ticks_msec() - t0 < 2000, "托管：短暂延时、不挂起（%d ms）" % (Time.get_ticks_msec() - t0))
+	_check(_deck_titles(g) == ["顶张", "第二张"], "托管：牌序一字不动")
+	_check(int(g._awaiting_bury) == 0, "托管：归属位没被写脏")
+
+	# ④ 归属链三处同源（体例照 `chance_test._test_op_owner_card_target`）
+	p.bot = false
+	# `turn_i` 指向**另一个玩家**：归属链全空时 `_op_window_owner` 会回退到当前行动者 ——
+	# 不这样摆，这一条会被回退值 1 蒙对（甲恰好也是 1 号位），等于没验到归属链。
+	g.turn_i = 1
+	g._awaiting_roll = 0
+	g._awaiting_prompt = 0
+	g._awaiting_card_target = 0
+	g._awaiting_card = 0
+	g._awaiting_item = 0
+	g._shop_peer = 0
+	g._black_peer = 0
+	g._awaiting_bury = 1
+	_check(int(g._op_window_owner()) == 1, "① 倒计时归属 = 小抄使用者（实得 %d）" % int(g._op_window_owner()))
+	g._op_timer_send("item", 12.0, 12.0)
+	_check(int(g._op_owner) == 1, "① 同源：s_op_timer 推的归属也是他（实得 %d）" % int(g._op_owner))
+	g._broadcast_state()
+	_check(String(g.st.get("await", "")) == "item" and int(g.st.get("await_peer", -1)) == 1,
+		"② 快照 await=item / await_peer=1（实得「%s」/%d）" % [
+			String(g.st.get("await", "")), int(g.st.get("await_peer", -1))])
+	# 这一条钉**插入位置**：置底窗口是在 `_use_item` 内部开的，那一刻 `_awaiting_item` 仍非零
+	# ⇒ 那一支必须排在 `elif _awaiting_item != 0:` **之前**，否则恒不可达（await_peer 会读到 2）。
+	g._awaiting_item = 2
+	g._broadcast_state()
+	_check(int(g.st.get("await_peer", -1)) == 1,
+		"② 同窗口期 `_awaiting_item` 也非零时，await_peer 仍归小抄使用者（实得 %d）" % int(g.st.get("await_peer", -1)))
+	g._awaiting_item = 0
+	g._awaiting_bury = 0
+	g._op_timer_send("", 0.0, 0.0)
+
+	# ⑧ 掉线放行钩子（`_on_peer_disconnected`）：正等的人掉线即视作「不置底」，别让全场白等一窗
+	g.running = true
+	g._awaiting_bury = 1
+	g._on_peer_disconnected(1)
+	_check(bool(g._bury_ack), "③ 掉线：置底询问当场放行（_bury_ack 置真）")
+	_check(int(g._awaiting_bury) == 1, "③ 掉线：不替掉线者清归属位（收尾留给等待方）")
+	g._bury_ack = false
+	p.bot = false   # `_on_peer_disconnected` 顺带把掉线者转成机器人托管，用完还原（后面几条要真人）
+
+	# ⑨ 重连换 key（`_rekey_transient`）：不换 key，重连者作答会被 `c_bury_ok` 当外人丢掉
+	g._awaiting_bury = 1
+	g._rekey_transient(1, 9)
+	_check(int(g._awaiting_bury) == 9, "④ 重连：归属位换到新 key（实得 %d）" % int(g._awaiting_bury))
+	g._awaiting_bury = 0
+	g._rekey_transient(9, 1)
+
+	# ⑥ 真人分支：点「塞到底」与点「算了」**分开**钉，两条各查返回值 + 牌序。
+	#
+	# 这一段刻意走**「不限时」档**（`sec <= 0` ⇒ `_await_turn_window` 根本不计时）：窗口只能被
+	# 「已作答」关掉。**判据写成 `_bury_pick`（选了置底吗）的实现在这里会当场挂住**（靠 20s
+	# 看门狗兜底），而不会像"12 秒窗口"那样恰好也返回 false 蒙混过关 —— 于是这条断言与机器的
+	# 计时精度无关（本机实测：无头模式下 `_wait` 的实测耗时与名义秒数不成比例，拿绝对耗时当判据不可靠）。
+	var prev_tier := String(g._settings.timeout_tier)
+	g._settings.timeout_tier = GameSettings.TIER_NONE
+	g.running = true
+	g._event_deck = [{"t": "顶张"}, {"t": "第二张"}, {"t": "第三张"}]
+	_bury_answer_when_open(g, true)
+	_check(await g._await_bury_choice(p) == true, "真人：点「塞到底」→ 返回 true")
+	_check(int(g._awaiting_bury) == 0, "真人：收窗后归属位清零")
+	g._card_apply_deck(p, {"bury_deck": true}, "bury_deck")   # 与 `_use_item` 小抄分支同一句
+	_check(_deck_titles(g) == ["第二张", "第三张", "顶张"],
+		"真人：置底真的改了牌序（实得 %s）" % str(_deck_titles(g)))
+
+	g._event_deck = [{"t": "顶张"}, {"t": "第二张"}]
+	_bury_answer_when_open(g, false)
+	_check(await g._await_bury_choice(p) == false, "真人：点「算了」→ 返回 false（不置底）")
+	_check(_deck_titles(g) == ["顶张", "第二张"], "真人：不置底 ⇒ 牌序不变")
+
+	# ⑦ 整条链路（`_use_item` → 小抄分支 → 请求 → 作答 → 置底原语）：牌堆真的被改
+	p.items = [{"id": "小抄", "cd": 0}]
+	p.stamina = 3
+	p.item_used = false
+	p.item_used_n = 0
+	g._awaiting_item = 1
+	g._item_epoch = 0
+	g._item_action = {}
+	g._event_deck = [{"t": "顶张"}, {"t": "第二张"}, {"t": "第三张"}]
+	_bury_answer_when_open(g, true)
+	await g._use_item(1, 0, -1)
+	_check(_deck_titles(g) == ["第二张", "第三张", "顶张"],
+		"整条链路：小抄真的把顶张塞到了底（实得 %s）" % str(_deck_titles(g)))
+	g._settings.timeout_tier = prev_tier
+
+	# ⑤ `at_mode` 旁路：自动回归里房主自己是「真人」（`_is_managed` 为假）⇒ 本机那张不白等一窗。
+	# **放在最后**：开了 `at_mode` 就会让游戏侧那条自动作答钩子（`_at_auto_bury`，0.4s 定时）
+	# 武装起来，它会替**之后**任何一次亮着的询问作答 —— 排在中间会干扰上面那两条真人断言。
+	g.at_mode = "host"
+	t0 = Time.get_ticks_msec()
+	_check(await g._await_bury_choice(p) == false, "at_mode：本机自动作答（不置底）")
+	_check(Time.get_ticks_msec() - t0 < 2000,
+		"at_mode：短暂延时、没开真人那一窗（%d ms）" % (Time.get_ticks_msec() - t0))
+	g.at_mode = ""
+	g.running = false
+	g.hp = []

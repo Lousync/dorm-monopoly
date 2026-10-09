@@ -595,6 +595,8 @@ static func build_play_ui(g: Node) -> void:
 	g.deck_reveal.confirmed.connect(g._on_card_confirm)
 	# 抉择卡那排分支按钮（批次 2 §三）：同一条路 —— 房主直接记下 / 客户端回 `c_choice`。
 	g.deck_reveal.choice_picked.connect(g._on_card_choice)
+	# 小抄置底询问那两枚（2026-10-10 M1）：同一条路 —— 房主本机直写 / 客户端回 `c_bury_ok`。
+	g.deck_reveal.bury_picked.connect(g._on_bury_picked)
 	hud.add_child(g.deck_reveal)
 
 	var hair := ColorRect.new()

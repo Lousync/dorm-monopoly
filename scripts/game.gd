@@ -2038,6 +2038,14 @@ var _event_deck: Array = []
 ## 只是**给测试 / 摆拍读**的诊断位 —— 玩法侧一个字都不读它（私密那半靠 `s_peek_card` 走战报）。
 var _peeked: Array = []
 
+## 小抄置底（2026-10-10 M1）：玩家侧**已作答**（选不选都算）与选中的结果。
+## 与 `_card_target_ack` / `_target_pick` 同一套两分法 —— 拿结果位当判据会把「选不置底」
+## 与「还没选」混为一谈，白等满一整个窗口。
+var _bury_ack := false
+var _bury_pick := false
+## 正在等谁作答（0 = 没有）。`c_bury_ok` 的归属校验用（做法同 `c_card_ok`）。
+var _awaiting_bury := 0
+
 func _new_event_deck() -> Array:
 	var pool := GameData.events_for()
 	if not blackshop_enabled:
@@ -3196,6 +3204,9 @@ func _on_peer_disconnected(id: int) -> void:
 	if _awaiting_item == id:
 		# 道具阶段不等掉线者：立即按托管跳过（与机器人「跳过」同一出口）
 		_item_action = {"epoch": _item_epoch, "action": "skip"}
+	if _awaiting_bury == id:
+		# 小抄置底（2026-10-10 M1 新窗口）：掉线即视作「不置底」，别让全场空等一窗
+		_bury_ack = true
 	if _awaiting_card == id:
 		# 抽卡演出等他点「确定」：掉线即视作确认，别让全场盯着一张卡等超时
 		_card_ack = true
@@ -3249,6 +3260,9 @@ func _rekey_transient(old_peer: int, new_peer: int) -> void:
 	if _awaiting_card_target == old_peer:
 		# 卡选目标（批 2）：归属闸（`c_card_target`）对的就是它 —— 不换 key，重连者作答会被当成外人丢掉
 		_awaiting_card_target = new_peer
+	if _awaiting_bury == old_peer:
+		# 小抄置底（2026-10-10 M1）：同上 —— 归属闸（`c_bury_ok`）对的就是它，不换 key 就收不到重连者的作答
+		_awaiting_bury = new_peer
 	if _awaiting_discover_peer == old_peer:
 		_awaiting_discover_peer = new_peer
 	# 科技三选一：全员同时 ⇒ 换掉该 peer 那一份 offer 的 peer（可能不在等待里，遍历无害）
@@ -3419,6 +3433,11 @@ func _op_window_owner() -> int:
 		return _awaiting_card_target
 	if _awaiting_card != 0:
 		return _awaiting_card
+	# 小抄置底询问（2026-10-10 M1）：与 `_broadcast_state` 的等待链同序、插在 `_awaiting_item`
+	# 之前。**这一处必须登记**（不是"返回同值所以无所谓"的死代码）——`_op_timer_send` 推的
+	# 归属人就是本函数的返回值，倒计时 / 按钮归属的唯一来源。
+	if _awaiting_bury != 0:
+		return _awaiting_bury
 	if _awaiting_item != 0:
 		return _awaiting_item
 	if _shop_peer != 0:
@@ -3529,6 +3548,14 @@ func _broadcast_state() -> void:
 		# 抽卡演出等「确定」（批次 12 C2）：await_peer = 该点确定的人（= 抽卡者）。
 		await_state = "card"
 		await_peer = _awaiting_card
+	elif _awaiting_bury != 0:
+		# 小抄置底询问（2026-10-10 M1）：与道具阶段同挡位（await 值就是 "item"），归属人单列。
+		# **必须排在下面 `_awaiting_item` 那一支之前**：本窗口是在 `_use_item` 内部开的，而
+		# `_use_item` 又是被 `c_use_item` 在 `_awaiting_item == peer` 时调进来的 ⇒ 那一刻
+		# `_awaiting_item` 仍非零。插在它后面就恒不可达（客户端读到的 await_peer 靠"两值恰好同人"
+		# 兜住，是巧合不是设计）。同上，与 `_op_window_owner` 的归属链顺序保持一致。
+		await_state = "item"
+		await_peer = _awaiting_bury
 	elif _awaiting_item != 0:
 		await_state = "item"
 		await_peer = _awaiting_item
@@ -3796,6 +3823,17 @@ func c_card_ok() -> void:
 func s_card_close() -> void:
 	if deck_reveal != null and is_instance_valid(deck_reveal):
 		deck_reveal.request_close()
+
+## 本机玩家点了小抄置底的「塞到底 / 算了」（`DeckReveal.bury_picked`）。
+## 分叉同 `_on_card_confirm`：房主本机那份**直接落**（房主也是玩家），客户端才回 `c_bury_ok`
+##（`c_*` 只走「客户端 → 房主」那半程，房主再调一次就成了自己给自己发请求）。
+func _on_bury_picked(bury: bool) -> void:
+	if multiplayer.is_server():
+		if _awaiting_bury == my_peer:
+			_bury_pick = bury
+			_bury_ack = true
+	else:
+		c_bury_ok.rpc(bury)
 
 ## 本机玩家点了「确定」（`DeckReveal.confirmed`）：房主直接放行，客户端回 `c_card_ok`。
 func _on_card_confirm() -> void:
@@ -5518,6 +5556,61 @@ func _arm_item_timeout(epoch: int, peer: int) -> void:
 		_log("%s 在道具阶段发呆，跳过" % _name_by_peer(peer), "#8a90a5")
 		_item_action = {"epoch": epoch, "action": "skip"}
 
+## 房主侧：等小抄的使用者决定要不要把顶张塞到底。返回 true = 置底。
+##
+## bot / 托管 / 超时 / 自动回归本机**一律返回 false**（不置底）—— 保留「白拿一张信息」的原效果、不卡节奏。
+##
+## **新窗口 ⇒ 四处登记，缺一不可**（挡位复用既有的 `"item"`，故 `s_op_timer` 不用单独改：
+## `_op_timer_send` 推的归属人**就是** `_op_window_owner()` 的返回值，与 ① 同源）：
+##   ① `_op_window_owner()` 的归属链；
+##   ② `_broadcast_state()` 的 await 链（`await_state` / `await_peer`）；
+##   ③ `_on_peer_disconnected()` 的放行钩子（掉线即视作「不置底」，别让全场白等一窗）；
+##   ④ `_rekey_transient()` 的换 key（重连者作答不能被当外人丢掉）。
+func _await_bury_choice(p: Dictionary) -> bool:
+	if _is_managed(p):
+		# 机器人 / 休眠托管：短暂延时后不置底（保留原效果，不卡节奏）
+		await _wait(0.4)
+		return false
+	_bury_ack = false
+	_bury_pick = false
+	_awaiting_bury = int(p.peer)
+	_broadcast_state()          # 快照 await 链（见 _broadcast_state 的等待链）
+	s_ask_bury.rpc(int(p.peer), false)
+	if at_mode != "" and int(p.peer) == my_peer:
+		# 自动回归里房主自己那张：不等真人点（口径同 `_await_card_confirm` / `_await_card_target`
+		# 那两支）。**别把它扩成"整局都自动置底"**：客户端那一张要走真操作窗口 + `c_bury_ok`
+		# 回程，联机回归才验得到协议。少了这一支，自动回归里每用一次小抄都要白等满一窗。
+		await _wait(0.3)
+	else:
+		# `alive` 的语义是"**还**在等"，判据必须是「已作答」（`_bury_ack`）而不是「选了置底」
+		#（`_bury_pick`）—— 后者会把「选不置底」和「还没选」混为一谈，白等满一整个窗口。
+		await _await_turn_window("item", func() -> bool: return not _bury_ack)
+	s_ask_bury.rpc(int(p.peer), true)
+	_awaiting_bury = 0
+	_broadcast_state()
+	return _bury_pick
+
+## 房主 → 全员：小抄的「要不要把顶张塞到底」询问。`done=true` 收尾（收按钮）。
+## 复用**既有**的 `"item"` 挡位 ⇒ `s_op_timer` 不用改。只有使用者本人那一端出按钮
+##（`owner_peer == my_peer`，同 `s_card_choices` / `s_card_target` 的口径）。
+@rpc("authority", "call_local", "reliable")
+func s_ask_bury(owner_peer: int, done: bool) -> void:
+	if deck_reveal == null or not is_instance_valid(deck_reveal):
+		return
+	deck_reveal.show_bury_ask(not done, owner_peer == my_peer)
+
+## 玩家侧：点了「塞到底」/「算了」。归属校验同 `c_card_ok`（注解形状也照它：`call_remote`
+## ⇒ 房主本机那份由 `_on_bury_picked` 直写，不走这条回程）。
+@rpc("any_peer", "call_remote", "reliable")
+func c_bury_ok(bury: bool) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != _awaiting_bury:
+		return
+	_bury_pick = bool(bury)
+	_bury_ack = true
+
 func _use_item(peer: int, slot: int, arg: int, arg2: int = -1, arg3: int = -1) -> void:
 	var p := _player_by_peer(peer)
 	if p.is_empty() or _awaiting_item != peer:
@@ -5693,6 +5786,12 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 			# 整行由这里拼好（`s_peek_card` 不再自带前缀，见它的函数注释）——措辞一字未改
 			s_peek_card.rpc(int(p.peer), "（小抄）机会牌堆下一张：%s" % String(_peek_event().get("t", "?")))
 			_log("%s 偷偷看了眼机会牌堆顶" % p.name, "#f0c064")
+			# 2026-10-10 M1：白拿信息 → 可操作。**复用 `_card_apply_deck` 的 `bury_deck` 原语**
+			#（牌堆是房主权威数据，客户端不能直接改，所以走「请求 → 确认」式）。
+			# 先给一拍：让那行私密战报与演出先落地，再弹询问（同 `_await_card_confirm` 前那类节拍）。
+			await _wait(0.4)
+			if await _await_bury_choice(p):
+				_card_apply_deck(p, {"bury_deck": true}, "bury_deck")
 		"占座":
 			var own := _own_props(int(p.peer))
 			if own.is_empty():

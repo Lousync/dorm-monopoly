@@ -24,6 +24,10 @@ signal confirmed
 ## 客户端回 `c_choice`）。**只有抽卡者那一端会有按钮**，见 `game.s_card_choices`。
 signal choice_picked(idx: int)
 
+## 小抄置底询问（2026-10-10 M1）：本机玩家挑了「塞到底」(true) / 「算了」(false)。
+## `game._on_bury_picked` 接手：房主本机直写、客户端回 `c_bury_ok`（同 `confirmed` 那一套分叉）。
+signal bury_picked(bury: bool)
+
 ## 卡的屏幕尺寸（2:3 —— 与旧 `BoardView.CARD_SIZE`(260×390) 同比例，放大到"大字"档）。
 const CARD_SIZE := Vector2(320.0, 480.0)
 ## 四段相位时长（秒）：抽出 → 翻面 → 停留 → 收回。数值与旧版一字不差。
@@ -35,6 +39,8 @@ const BACK := 0.28
 const CARD_TIME := OUT + FLIP + HOLD
 ## 抉择卡那排分支按钮的单枚尺寸（横向排一排、整排居中，见 `_place`）。
 const CHOICE_BTN := Vector2(168.0, 42.0)
+## 小抄置底那两枚（「塞到底 / 算了」）的单枚尺寸。
+const BURY_BTN := Vector2(140.0, 42.0)
 
 ## 摆拍用：强制让「确定」按钮出镜（`--shot` 的 card / itemreveal 分支置真，`_close()` 复位）。
 var dev_force_confirm := false
@@ -53,6 +59,9 @@ var _btn: Button              # 「确定」（停住之后才出镜；非抽卡
 var _choice_labels: Array = []   # 房主发下来的分支文案（`s_card_choices`）
 var _choice_btns: Array = []     # 按 `_choice_labels` 建出来的那几枚（1~3 枚）
 var _built_labels: Array = []    # `_choice_btns` 是按哪一份标签建的（用来免掉每帧重建）
+## 小抄置底询问（2026-10-10 M1）：「要把牌堆顶这张塞到底部吗？」那块面板（含两枚按钮）。
+## 与抽卡演出**互不相干** —— 小抄没有卡面（它只往私密战报写一行），所以这一块不能挂在 `_showing` 上。
+var _bury_box: PanelContainer
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -64,6 +73,34 @@ func _init() -> void:
 	_btn.visible = false
 	_btn.pressed.connect(func() -> void: confirmed.emit())
 	add_child(_btn)
+	# 小抄置底询问（2026-10-10 M1）：一块小面板 + 两枚按钮。**自己独立显示**，不等 `_showing`
+	#（小抄没有卡面，见 `show_bury_ask`）；卡演出的开 / 收也不会顺手把它收掉（见 `_close`）。
+	_bury_box = UIKit.panel_container(Color(0.045, 0.05, 0.078, 0.94), 14,
+		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.55), 2, 18)
+	_bury_box.visible = false
+	add_child(_bury_box)
+	var bm := UIKit.margins(18, 18, 14, 14)
+	_bury_box.add_child(bm)
+	var bcol := VBoxContainer.new()
+	bcol.add_theme_constant_override("separation", 10)
+	bm.add_child(bcol)
+	var bhint := UIKit.label("（小抄）把牌堆顶这张塞到底部？", 15, UIKit.TEXT)
+	bhint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bcol.add_child(bhint)
+	var brow := HBoxContainer.new()
+	brow.alignment = BoxContainer.ALIGNMENT_CENTER
+	brow.add_theme_constant_override("separation", 12)
+	bcol.add_child(brow)
+	var b_bury := UIKit.button("塞到底", 16, "primary")
+	b_bury.custom_minimum_size = BURY_BTN
+	b_bury.size = BURY_BTN
+	b_bury.pressed.connect(func() -> void: bury_picked.emit(true))
+	brow.add_child(b_bury)
+	var b_keep := UIKit.button("算了", 16, "normal")
+	b_keep.custom_minimum_size = BURY_BTN
+	b_keep.size = BURY_BTN
+	b_keep.pressed.connect(func() -> void: bury_picked.emit(false))
+	brow.add_child(b_keep)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# 压在棋盘 / 四角身家条之上、**模态带之下**（暂停菜单 / 结算 50 / 弹问 60 / 小卖部 70）。
 	# 40 < 模态带里最低的 50 ⇒ 卡绝不压在模态面板之上（模态面板也绝不被卡盖住）。
@@ -249,6 +286,8 @@ func is_showing() -> bool:
 ## 把卡摆到本层正中（+ 停留段的浮动），「确定」按钮摆在卡的正下方。
 ## 本层是 FULL_RECT ⇒ 屏幕一改尺寸这里跟着重摆。
 func _place() -> void:
+	# 置底询问那块与卡各摆各的：它不依赖 `_card`，卡不在时照样摆（早退放在它后面）
+	_place_bury()
 	if _card == null or not is_instance_valid(_card):
 		return
 	_card.position = (size - CARD_SIZE) * 0.5 + Vector2(0.0, _bob)
@@ -285,7 +324,38 @@ func _close() -> void:
 	# 不留在上一张的标签上（留着的话，新卡停住时那排旧按钮会自己冒出来）
 	_choice_labels = []
 	_sync_choice_btns([])   # 走它 = 顺带把那几枚按钮节点真回收掉（不能只清数组，会留孤儿节点）
-	visible = false
+	# 置底询问**不归本函数管**：小抄没有卡面、那块面板与演出各自独立（见 `show_bury_ask`）——
+	# 这里只按它自己的显隐决定整层收不收。无脑 `visible = false` 会把正等着的询问一起吞掉。
+	visible = _bury_box != null and _bury_box.visible
+
+
+## 小抄置底询问（2026-10-10 M1）：`ask=true` 亮出「塞到底 / 算了」；`ask=false` 收掉。
+## `mine` = 本机就是该作答的人（房主只把按钮给它，同 `s_card_choices` / `s_card_target` 的口径）。
+##
+## 与抽卡演出**各自独立**：小抄只往私密战报写一行、**没有卡面**，所以这一块不能等 `_showing`
+##（等它就永远不亮）；反过来，本层要自己亮起来 —— 卡不在演时 `show_card` 那条路走不到。
+func show_bury_ask(ask: bool, mine: bool) -> void:
+	if _bury_box == null:
+		return
+	_bury_box.visible = ask and mine
+	if _bury_box.visible:
+		visible = true
+		_place_bury()
+	elif not _showing:
+		visible = false   # 收尾：没卡在演就把整层收回去（有卡在演则由它自己那一路收）
+
+## 置底询问按钮此刻是不是亮着（`item_test` 的接线用例读它）。
+func is_bury_visible() -> bool:
+	return _bury_box != null and _bury_box.visible
+
+## 把置底面板块摆到本层正中（本层 FULL_RECT ⇒ 屏幕一改尺寸跟着重摆）。
+## 本层不是 Container，得自己算尺寸：`get_combined_minimum_size()` 再手动居中。
+func _place_bury() -> void:
+	if _bury_box == null:
+		return
+	var m := _bury_box.get_combined_minimum_size()
+	_bury_box.size = m
+	_bury_box.position = (size - m) * 0.5
 
 ## 翻面：true = 显示卡背，false = 显示卡面
 func _show_deck_face(back: bool) -> void:
