@@ -110,6 +110,7 @@ func _run() -> void:
 	_test_refresh_keeps_card(g)
 	await _test_no_candidates(g)
 	await _test_managed(g)
+	_test_target_disconnect(g)
 	await _test_target_fields(g)
 	await _test_tile_move_fields(g)
 	await _test_choices(g)
@@ -276,20 +277,64 @@ func _test_no_candidates(g) -> void:
 	_check(got.is_empty() and Time.get_ticks_msec() - t0 < 300, "托管且无人可选时同样立刻返回")
 
 func _test_managed(g) -> void:
-	print("== 托管（机器人）自动选 ==")
+	print("== 托管（机器人）自动选：按设计稿挑（钱最多 / 地最多） ==")
+	# 同一份局面里两条策略各指一个人，才看得出"按字段挑"（而不是碰巧都对）：
+	# 现金 丙(1800) > 乙(1000)；地皮 乙(2 块) > 丙(1 块)。
 	var t := _fresh_tiles()
-	t[_prop_idx(0)].owner = 2   # 只有乙名下有地
-	_setup(g, [_mk_player(1, "机器人甲", 1000, true), _mk_player(2, "乙"), _mk_player(3, "丙")], t)
+	t[_prop_idx(0)].owner = 2
+	t[_prop_idx(1)].owner = 2
+	t[_prop_idx(2)].owner = 3
+	_setup(g, [_mk_player(1, "机器人甲", 1000, true),
+		_mk_player(2, "乙", 1000), _mk_player(3, "丙", 1800)], t)
 	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
 	var pick := int(got.get("peer", -1))
-	_check(pick == 2 or pick == 3, "托管时自动挑了一位候选（实得 %d）" % pick)
+	_check(pick == 3, "钱类字段取**现金最多**的（丙 1800 > 乙 1000，实得 %d）" % pick)
 	_check(g._tgt_card == "" and g._tgt_stage == "" and g._tgt_slot == -1, "自动选完收尾清干净")
 	_check(g._hl_peers.is_empty(), "自动选完高亮熄灭")
 	_check(g._target_pick == GameData.NO_PEER and not g._card_target_ack, "哨兵与 ack 都复位")
 	_check(g._awaiting_card_target == 0, "归属位复位")
-	# 只有乙名下有地 ⇒ seize_tile 时自动选的一定是乙（按字段过滤后的名单）
+	# 换一个字段、同一份局面 ⇒ 换个人：夺地 / 强买取**地最多**的（乙 2 块 > 丙 1 块）。
+	# 这条同时钉住"候选名单按字段过滤"（只有名下有地的人进名单）。
 	var got2: Dictionary = await g._await_card_target(g.hp[0], "seize_tile")
-	_check(int(got2.get("peer", -1)) == 2, "按字段过滤后自动选的仍是合法目标（实得 %d）" % int(got2.get("peer", -1)))
+	_check(int(got2.get("peer", -1)) == 2,
+		"夺地 / 强买取**地最多**的（乙 2 块，实得 %d）" % int(got2.get("peer", -1)))
+	# 并列时取 **peer 最小者**（确定性：同一份局面每次跑出的战报都一样，用例也钉得住）。
+	# 别用随机 —— 那会让机器人夺钱夺到穷人、夺地夺到无地者，且每次跑的结果都不同。
+	_setup(g, [_mk_player(1, "机器人甲", 1000, true),
+		_mk_player(2, "乙", 900), _mk_player(3, "丙", 900)], _fresh_tiles())
+	var got3: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	_check(int(got3.get("peer", -1)) == 2,
+		"现金并列 ⇒ 取 peer 最小者（实得 %d）" % int(got3.get("peer", -1)))
+	# **超时那条路保持原样**（设计稿 §3.4「超时走现有兜底」= 这个目标部分作废，**不**套 bot 那套策略）：
+	# `running = false` ⇒ 窗口一次都不进（`_await_turn_window` 的 `while running`，同
+	# `_test_choices_managed` 末条），等价于"没等到作答"。真人玩家（非托管）才走这条。
+	_setup(g, [_mk_player(1, "甲", 1000), _mk_player(2, "乙", 900), _mk_player(3, "丙", 900)],
+		_fresh_tiles())
+	var got4: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	_check(got4.is_empty(), "没作答（超时 / 窗口没开）⇒ 目标部分作废、不自动挑人")
+	_check(g._awaiting_card_target == 0 and g._target_pick == GameData.NO_PEER, "收尾干净（哨兵与归属位都复位）")
+
+
+## 掉线钩子照看「卡选目标」窗口：抽卡者中途掉线要**立刻放行**，别让整桌空等满一个操作窗口
+##（同族的 `_await_card_confirm` 就是这么做的）。**单进程能测的只有房主侧那一半** ——
+## 真断线（网络层触发 `peer_disconnected`）与重连换 key 那两半单进程跑不出来，留给联机回归。
+func _test_target_disconnect(g) -> void:
+	print("== 卡选目标：掉线立刻放行 / 重连换 key ==")
+	_target_table(g)          # hp[1] = 乙（真人），正好当"掉线的抽卡者"
+	g.running = true          # `_on_peer_disconnected` 要求 running（同 `_broadcast_state`）
+	g._awaiting_card_target = 2
+	g._card_target_ack = false
+	g._on_peer_disconnected(2)
+	g.running = false
+	_check(g._card_target_ack, "抽卡者掉线 ⇒ 立刻 ack（不空等满一窗）")
+	_check(bool(g.hp[1].get("bot", false)), "（前提）掉线者已被机器人托管")
+	# 重连认领：归属位跟着换 key（`c_card_target` 的闸对的就是它；不换则重连者作答被当成外人丢掉）
+	g._awaiting_card_target = 2
+	g._rekey_transient(2, 77)
+	_check(g._awaiting_card_target == 77, "重连认领 ⇒ 归属位换到新 peer（实得 %d）" % g._awaiting_card_target)
+	g._awaiting_card_target = 0
+	g._card_target_ack = false
+
 
 # ================= 指定目标类 5 个字段（Task 10） =================
 #
@@ -394,6 +439,16 @@ func _test_steal_item(g) -> void:
 	await g._apply_card(g.hp[0], {"t": "翻你抽屉", "steal_item_from": true, "_target": 2})
 	_check(g.hp[0].items.size() == fill.size() and g.hp[1].items.size() == 1,
 		"自己背包满 ⇒ 抢不动（甲仍是 %d 件、乙那件还在）" % int(fill.size()))
+	# 「注定作废」排在免疫闸**之前**：抢不动时这张卡本来就没有结果，不该白吃目标的护腕
+	#（盾被扣掉、还写一条"挡下了"）。判据没变，只是先判"会不会有结果"、再判"能不能免疫"。
+	g.hp[1].items = [{"id": "护腕"}, {"id": "招财猫", "cd": 0}]
+	g.hp[1].shield = 1
+	var logx := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "翻你抽屉", "steal_item_from": true, "_target": 2})
+	_check(_log_at(g, "挡下了", logx) < 0 and int(g.hp[1].get("shield", 0)) == 1 \
+		and g.hp[1].items.size() == 2,
+		"背包满时**不走免疫闸**：目标的护腕与盾都没被白吃（盾 %d / 背包 %d 件）" % [
+			int(g.hp[1].get("shield", 0)), g.hp[1].items.size()])
 	# 目标空背包 ⇒ 没得抢（要走提示那条，不是静默无事）
 	_target_table(g)
 	var log0 := _log_len(g)
@@ -463,14 +518,9 @@ func _test_target_via_real_path(g) -> void:
 	_target_table(g, true)
 	g.hp[0].bot = true
 	await g._apply_card(g.hp[0], {"t": "顺走外卖", "steal_from": 400})
-	var lost := 0
-	if int(g.hp[1].money) == 600:
-		lost += 1
-	if int(g.hp[2].money) == 400:
-		lost += 1
-	_check(int(g.hp[0].money) == 5400 and lost == 1,
-		"自动点了一位：乙 / 丙 里**恰好一位** -400、甲 +400（实得 %d / %d，命中 %d 位）" % [
-			int(g.hp[1].money), int(g.hp[2].money), lost])
+	_check(int(g.hp[0].money) == 5400 and int(g.hp[1].money) == 600 and int(g.hp[2].money) == 800,
+		"自动选了**现金最多**的乙：甲 +400 / 乙 -400 / 丙一点没动（实得 %d / %d / %d）" % [
+			int(g.hp[0].money), int(g.hp[1].money), int(g.hp[2].money)])
 	_check(int(g.hp[0].money) + int(g.hp[1].money) + int(g.hp[2].money) == 6800,
 		"三家现金总量守恒（5000+1000+800，实得 %d）" % (int(g.hp[0].money) + int(g.hp[1].money) + int(g.hp[2].money)))
 	_check(g._tgt_card == "" and g._hl_peers.is_empty() and g._target_pick == GameData.NO_PEER,
@@ -519,6 +569,7 @@ func _test_tile_move_fields(g) -> void:
 	await _test_swap_pos(g)
 	await _test_pull_target(g)
 	await _test_push_back(g)
+	await _test_push_back_umbrella(g)
 	await _test_shuffle_pos(g)
 	await _test_tile_soap(g)
 
@@ -650,6 +701,34 @@ func _test_push_back(g) -> void:
 		"途中跨过起点领工资 +%d、落点又付租金 %d（实得 %d）" % [
 			sal, rent2, int(g.hp[1].money)])
 
+## 雨伞挡「后退类」（道具图鉴：`雨伞 = 你免疫「后退类」移动`）：目标撑伞 ⇒ `push_back` 无效
+##（也**不结算落点**，因为人根本没挪）。但 `pull_target` 是**拉**不是**推**，雨伞不管它 ——
+## 判据与 `move_steps < 0` 那一处同源，两处别写岔。
+func _test_push_back_umbrella(g) -> void:
+	print("== 位置：推退吃「雨伞」（拉人不受影响） ==")
+	var p0 := _prop_idx(0)
+	var from_idx := p0 + 2   # 从 p0 往后 2 格正好落回 p0（不经过起点）
+	_tile_table(g, {1: [p0]})
+	g.hp[0].pos = 0
+	g.hp[1].pos = from_idx
+	g.hp[1].items = [{"id": "雨伞"}]
+	var log0 := _log_len(g)
+	await g._apply_card(g.hp[0], {"t": "推你一把", "push_back": 2, "_target": 2})
+	_check(int(g.hp[1].pos) == from_idx, "目标持雨伞 ⇒ 后退没发生（pos 仍是 %d）" % int(g.hp[1].pos))
+	_check(_log_at(g, "雨伞", log0) >= 0, "战报写明被雨伞挡下（真走了那道闸，不是整条没跑）")
+	_check(int(g.hp[1].money) == 5000 and int(g.hp[0].money) == 5000,
+		"落点同样没结算：他仍站着甲的地，租金一分没动")
+	# 拉人不受雨伞影响：甲站自己地上，乙被拉过来照常付租
+	_tile_table(g, {1: [p0]})
+	g.hp[0].pos = p0
+	g.hp[1].pos = 8
+	g.hp[1].items = [{"id": "雨伞"}]
+	await g._apply_card(g.hp[0], {"t": "拽你过来", "pull_target": true, "_target": 2})
+	var rent := GameData.rent_for(p0, g.htiles)
+	_check(int(g.hp[1].pos) == p0 and int(g.hp[1].money) == 5000 - rent,
+		"拉人是**拉**不是**推**：持雨伞也照样被拉到甲这一格并付租 %d（pos %d）" % [
+			rent, int(g.hp[1].pos)])
+
 func _test_shuffle_pos(g) -> void:
 	print("== 位置：全场洗位（shuffle_pos，无目标） ==")
 	var p0 := _prop_idx(0)
@@ -774,6 +853,8 @@ func _test_choices(g) -> void:
 	await _test_choices_managed(g)
 	await _test_choices_pick(g)
 	_test_choices_spectator(g)
+	_test_choices_client(g)
+	_test_choices_btn_index(g)
 	_test_choices_ownership(g)
 
 ## 存在性闸（同上 `_test_iface` 那条）：实现缺席时下面每条都会在调用处中断、`fails` 一个都不涨。
@@ -926,6 +1007,56 @@ func _test_choices_spectator(g) -> void:
 	dr.tick(dr.BACK + 0.05)
 	_check(not dr.is_showing(), "（收尾）演出照旧收回")
 
+## **客户端形态**：客户端的 `hp` 是空的（`hp` 只在 `_host_setup` / `lab_reset` 里填，两处都在房主侧）
+## —— 照 `tests/regression_test.gd` 的既有做法摆这一份形态。归属判据若读 `hp`
+##（`_player_by_peer`），真人客户端上 `me` 恒为 `{}` ⇒ `mine` 恒为 false ⇒ 按钮一次都不出、
+## 只能等窗口超时由房主取第一项 —— 本批头号功能在联机形态下等于没实装。
+## 上面那几条（含 `_test_choices_spectator`）都跑在**房主进程**里、`hp` 是满的，
+## 断言的恰好是**相反**的行为，逮不住这个 bug ⇒ 必须单独有这一条。
+func _test_choices_client(g) -> void:
+	print("== 抉择卡：客户端形态（hp 空）也出按钮 ==")
+	_setup(g, [_mk_player(1, "甲"), _mk_player(2, "乙")], _fresh_tiles())   # my_peer = 1
+	var dr = g.deck_reveal
+	if dr == null:
+		return   # 存在性闸已经报过红了
+	g.hp = []          # 客户端没有房主的 hp（见 regression_test.gd 同款做法）
+	dr.show_card("机会", "info", "测试：抉择卡")
+	dr.tick(dr.CARD_TIME + 0.05)
+	g.s_card_choices.rpc(["包庇", "告密"], 1)   # 本机（1）就是抽卡者
+	_check(dr.is_choice_visible(), "hp 空（客户端）时**抽卡者本人仍然出按钮**")
+	_check((dr._choice_btns as Array).size() == 2,
+		"按钮照样建 2 枚（实得 %d 枚）" % (dr._choice_btns as Array).size())
+	g.s_card_choices.rpc([], 1)                 # 收尾（空标签 = 退出抉择态）
+	_check(not dr.is_choice_visible(), "收尾包 ⇒ 退出抉择态")
+	g.s_card_choices.rpc(["包庇", "告密"], 2)   # 抽卡者是 2，本机是 1
+	_check(not dr.is_choice_visible(), "hp 空时旁观者仍不出按钮（owner_peer 那道判据还在）")
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)
+	_check(not dr.is_showing(), "（收尾）演出照旧收回")
+
+## 每枚按钮捕的是**自己的下标**（`DeckReveal._sync_choice_btns` 的闭包按值捕获）：
+## 点第 2 枚收到的就该是 1。既有用例一条直接调 `_on_card_choice(idx)`、一条只数按钮枚数 ⇒
+##「三枚一起报同一个下标」这类回归一条都抓不到。这里**真触发按钮节点的信号**，不走回调。
+func _test_choices_btn_index(g) -> void:
+	print("== 抉择卡：按钮下标接线（点第 2 枚 ⇒ idx 1） ==")
+	_setup(g, [_mk_player(1, "甲"), _mk_player(2, "乙")], _fresh_tiles())   # my_peer = 1
+	var dr = g.deck_reveal
+	if dr == null:
+		return
+	var got: Array = []
+	dr.choice_picked.connect(func(idx: int) -> void: got.append(idx))
+	dr.show_card("机会", "info", "测试：抉择卡")
+	dr.tick(dr.CARD_TIME + 0.05)
+	g.s_card_choices.rpc(["甲支", "乙支", "丙支"], 1)   # 本机（1）就是抽卡者
+	var btns: Array = dr._choice_btns as Array
+	_check(btns.size() == 3, "（前置）三枚按钮都在（实得 %d 枚）" % btns.size())
+	if btns.size() == 3:
+		(btns[1] as Button).pressed.emit()
+	_check(got == [1], "点第 2 枚 ⇒ 收到 idx = 1（实得 %s）" % str(got))
+	g.s_card_choices.rpc([], 1)
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)
+
 ## 作答只有抽卡者本人算数（做法同 `c_card_ok` / `c_card_target`）：`s_card_choices` 是全员广播，
 ## 别人那端也有同一张卡与同一排按钮 —— 少了这道闸，谁先点一下就能替抽卡者定下分支。
 func _test_choices_ownership(g) -> void:
@@ -1036,6 +1167,9 @@ func _test_peek_deck(g) -> void:
 	var log1 := _log_len(g)
 	await g._apply_card(g.hp[0], {"t": "小道消息", "peek_deck": 2})
 	_check(_log_at(g, "私密甲", log1) >= 0, "抽卡者本人看得到内容（走的仍是既有 `s_peek_card`）")
+	# 前缀由**调用方**给：这条以前串的是小抄那句「（小抄）机会牌堆下一张：…」（N>1 时"下一张"
+	# 本身也不对）。措辞归各调用点，那条 RPC 只管"发给谁看"。
+	_check(_log_at(g, "小抄", log1) < 0, "私密文案没串上「小抄」的前缀")
 	_deck_table(g, ["私密丙", "私密丁"])
 	g.my_peer = 2   # 本机是乙，抽卡的是甲
 	var log2 := _log_len(g)
@@ -1151,6 +1285,9 @@ func _test_kind_and_dist(g) -> void:
 	var st = load("res://scripts/game_settings.gd").new()
 	g._settings = st
 	var n := 20000
+	# 容差 **±0.01**：n=20000 时 σ = √(p(1-p)/n) ≈ 0.0025（最坏 0.0035）⇒ ±0.01 ≈ 4σ；
+	# 加上本套件开头 `seed(2026)` 是固定的 ⇒ 零抖动（不会偶发假红）。原来的 ±0.03 是 12σ，
+	# 连「把 CHANCE_P 与 CHANCE_ITEM_P 各挪 0.05」那种笔误都照放 —— 收紧了才抓得到。
 	# 开档（畸变「中」）：85 / 10 / 5
 	st.ab_freq = "中"
 	var cnt := {"card": 0, "item": 0, "aberr": 0}
@@ -1159,9 +1296,9 @@ func _test_kind_and_dist(g) -> void:
 	var pc := float(cnt.card) / float(n)
 	var pi := float(cnt.item) / float(n)
 	var pa := float(cnt.aberr) / float(n)
-	_check(absf(pc - 0.85) < 0.03, "开档：机会卡 ≈85%%（实得 %.3f）" % pc)
-	_check(absf(pi - 0.10) < 0.03, "开档：道具卡 ≈10%%（实得 %.3f）" % pi)
-	_check(absf(pa - 0.05) < 0.03, "开档：畸变卡 ≈5%%（实得 %.3f）" % pa)
+	_check(absf(pc - 0.85) < 0.01, "开档：机会卡 ≈85%%（实得 %.3f）" % pc)
+	_check(absf(pi - 0.10) < 0.01, "开档：道具卡 ≈10%%（实得 %.3f）" % pi)
+	_check(absf(pa - 0.05) < 0.01, "开档：畸变卡 ≈5%%（实得 %.3f）" % pa)
 	# 关档（畸变「关」）：那 5% **并入机会卡** ⇒ 90 / 10 / 0（机会卡.md §一 边界规则 1）。
 	# **三条都要钉**：只断言「aberr == 0」钉不住任何东西 —— 把道具卡那 10% 也一并吞掉的写法
 	# （阈值误写成 `CHANCE_P + CHANCE_ITEM_P + CHANCE_AB_P`）同样能让 aberr 归零、照样绿。
@@ -1172,6 +1309,6 @@ func _test_kind_and_dist(g) -> void:
 	pc = float(cnt.card) / float(n)
 	pi = float(cnt.item) / float(n)
 	_check(int(cnt.aberr) == 0, "关档：畸变一次都不出（实得 %d 次）" % int(cnt.aberr))
-	_check(absf(pc - 0.90) < 0.03, "关档：机会卡 ≈90%%——5%% 那档并进来了（实得 %.3f）" % pc)
-	_check(absf(pi - 0.10) < 0.03, "关档：道具卡 ≈10%%——没被那 5%% 顺手吞掉（实得 %.3f）" % pi)
+	_check(absf(pc - 0.90) < 0.01, "关档：机会卡 ≈90%%——5%% 那档并进来了（实得 %.3f）" % pc)
+	_check(absf(pi - 0.10) < 0.01, "关档：道具卡 ≈10%%——没被那 5%% 顺手吞掉（实得 %.3f）" % pi)
 	g._settings = saved

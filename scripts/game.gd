@@ -360,7 +360,7 @@ var _prompt_tile := -1
 ## 卡面确认（批次 12 C2 / ⑧⑪）：正在等谁点「确定」（0 = 没有）；他确认后 `_card_ack` 置真。
 ## **抉择卡复用同一个归属位**（批次 2 §三）：抉择的作答窗口同样挂在抽卡者身上
 ##（`_op_window_owner` / `_broadcast_state` 的等待链都只认它一处），掉线 / 重连那两个既有钩子
-##（`_disconnect` 的 `_card_ack = true`、`_rekey_transient` 的换 key）也就一并照上了。
+##（`_on_peer_disconnected` 的 `_card_ack = true`、`_rekey_transient` 的换 key）也就一并照上了。
 var _awaiting_card := 0
 var _card_ack := false
 ## 抉择卡：抽卡者选中的分支下标（-1 = 还没作答 ⇒ 房主按第一项兜底，见 `_await_card_choice`）。
@@ -2277,6 +2277,17 @@ func _card_target_for(p: Dictionary, card: Dictionary, field: String) -> Diction
 ## 让同一句胜利战报刷两遍（`_end_game` 没有重入闸）。
 ## 只读传入的 card（与 `_apply_card` 同规矩：本波没有 `card.x = …`），写的都是 `hp` 里那两个真身。
 func _card_apply_target(p: Dictionary, tgt: Dictionary, card: Dictionary, field: String) -> void:
+	# 「注定作废」的两条**排在免疫闸之前**：自己背包满 / 目标背包空时这条卡根本没有结果，
+	# 先过 `_immune_debuff` 的话会白吃目标一件护腕 —— 盾被扣掉、还写一条「挡下了」，
+	# 而那张卡本来就什么都抢不着（判据没变，只是先判"会不会有结果"、再判"能不能免疫"）。
+	if field == "steal_item_from":
+		# 背包满 ⇒ **整条作废**：不先把目标那件掏出来再发现没处放 —— 那个中间态会真的丢件
+		if p.items.size() >= _bag_cap(p):
+			_log("%s 背包已满，抢来的道具放不下" % p.name, "#8a90a5")
+			return
+		if tgt.items.is_empty():
+			_log("%s 背包空空，没得抢" % tgt.name, "#8a90a5")
+			return
 	if _immune_debuff(tgt):
 		_log("%s 的【空想者的香皂】挡下了【%s】" % [tgt.name, card.t], "#8fb7f2")
 		return
@@ -2304,13 +2315,7 @@ func _card_apply_target(p: Dictionary, tgt: Dictionary, card: Dictionary, field:
 				_check_xiaojinku(o)   # 进账出口照例查小金库（同 from_each 对抽卡者那一查）
 			_log("%s 请全宿舍：%s 掏钱" % [p.name, tgt.name], "#f0c064")
 		"steal_item_from":
-			# 背包满 ⇒ **整条作废**：不先把目标那件掏出来再发现没处放 —— 那个中间态会真的丢件
-			if p.items.size() >= _bag_cap(p):
-				_log("%s 背包已满，抢来的道具放不下" % p.name, "#8a90a5")
-				return
-			if tgt.items.is_empty():
-				_log("%s 背包空空，没得抢" % tgt.name, "#8a90a5")
-				return
+			# 两条"注定作废"的判据已挪到函数开头的免疫闸之前（见那里的注释）
 			# 抢的是**他手里那一件**：连实例状态（cd / melt_left）一起搬走，不是重新发一件新的
 			var k: int = randi_range(0, tgt.items.size() - 1)
 			var stolen: Dictionary = tgt.items[k]
@@ -2328,9 +2333,11 @@ func _card_apply_target(p: Dictionary, tgt: Dictionary, card: Dictionary, field:
 ## 候选名单只列名下有地的人，见 `_card_target_candidates`）。
 ##
 ## 免疫口径（`机会卡.md` §四）：`seize_tile:"take"` / `force_buy_tile` / `pull_target` /
-## `push_back` 对目标不利 ⇒ debuff、**目标持皂整条免疫**；`seize_tile:"swap"` 与 `swap_pos`
-## 是**中性**（一 debuff 一 buff 相抵，口径同畸变「斗地主」）⇒ 香皂无效。中性那几条
-## **一概不调 `_immune_debuff`**：它除了香皂还会**扣掉护腕的盾**，拿它当"中性也过一道闸"用会白吃一件道具。
+## `push_back` 对目标不利 ⇒ debuff、**目标持皂整条免疫**；`push_back` **另加雨伞**
+##（图鉴：「雨伞 = 免疫『后退类』移动」，判据同 `move_steps < 0`；`pull_target` 是拉不是推，
+## 雨伞不管它）。`seize_tile:"swap"` 与 `swap_pos` 是**中性**（一 debuff 一 buff 相抵，
+## 口径同畸变「斗地主」）⇒ 香皂无效。中性那几条**一概不调 `_immune_debuff`**：
+## 它除了香皂还会**扣掉护腕的盾**，拿它当"中性也过一道闸"用会白吃一件道具。
 ##
 ## 不在这里调 `_check_end()`（同 `_card_apply_target`：`_apply_card` 末尾那一次才是这张卡唯一的出口）。
 ## 只读传入的 card（与 `_apply_card` 同规矩：本波没有 `card.x = …`）。
@@ -2351,9 +2358,16 @@ func _card_apply_tile_move(p: Dictionary, card: Dictionary, field: String) -> vo
 	var tgt: Dictionary = await _card_target_for(p, card, field)
 	if tgt.is_empty():
 		return
-	if _card_tile_move_harmful(card, field) and _immune_debuff(tgt):
-		_log("%s 的【空想者的香皂】挡下了【%s】" % [tgt.name, card.t], "#8fb7f2")
-		return
+	if _card_tile_move_harmful(card, field):
+		if _immune_debuff(tgt):
+			_log("%s 的【空想者的香皂】挡下了【%s】" % [tgt.name, card.t], "#8fb7f2")
+			return
+		# 「雨伞」另挡**后退类**（道具图鉴：雨伞 = 你免疫「后退类」移动）—— 判据与
+		# `move_steps < 0` 那一处同源（`_has_item(tgt, "雨伞")`），别自创一套。
+		# 只认 `push_back`：`pull_target` 是**拉**不是**推**，图鉴只写"后退类"，雨伞不管它。
+		if field == "push_back" and _has_item(tgt, "雨伞"):
+			_log("%s 撑开【雨伞】免疫了【%s】" % [tgt.name, card.t], "#8fb7f2")
+			return
 	var tpeer := int(tgt.peer)
 	match field:
 		"swap_pos":
@@ -2492,8 +2506,10 @@ func _card_apply_deck(p: Dictionary, card: Dictionary, field: String) -> void:
 				seen.append(_event_deck[i])
 				names.append(String((_event_deck[i] as Dictionary).get("t", "?")))
 			_peeked = seen
-			# **私密**：走既有的 `s_peek_card`（广播 + 收端自过滤，见它的函数注释 —— 别改成 rpc_id）
-			s_peek_card.rpc(int(p.peer), "牌堆顶 %d 张：%s" % [n, ", ".join(names)])
+			# **私密**：走既有的 `s_peek_card`（广播 + 收端自过滤，见它的函数注释 —— 别改成 rpc_id）。
+			# 整行由这里拼好（前缀也是）：那条 RPC 只负责"发给谁看"，措辞归各调用点
+			#（小抄是"下一张"、这里是"顶 N 张"，硬编码前缀会串味）。
+			s_peek_card.rpc(int(p.peer), "（偷看牌堆）牌堆顶 %d 张：%s" % [n, ", ".join(names)])
 		"shuffle_deck":
 			_event_deck.shuffle()
 			_peeked = []   # 预知作废：洗过之后谁都别想还记着旧牌序
@@ -3155,6 +3171,11 @@ func _on_peer_disconnected(id: int) -> void:
 	if _awaiting_card == id:
 		# 抽卡演出等他点「确定」：掉线即视作确认，别让全场盯着一张卡等超时
 		_card_ack = true
+	if _awaiting_card_target == id:
+		# 卡选目标（批 2 新窗口）：同上一支 —— 掉线者不再作答，立刻放行、别空等满一窗。
+		# **它和 `_card_ack` 是两处独立的窗口**（选目标自己那份 `_await_card_target`），
+		# 两个钩子（本函数 + `_rekey_transient`）都得各照看一处，漏了就是整桌白等 25 秒。
+		_card_target_ack = true
 	_broadcast_state()
 
 # ================= 房主：掉线重连认领（协议 §六，规格见 doc/development/联机协议.md） =================
@@ -3197,6 +3218,9 @@ func _rekey_transient(old_peer: int, new_peer: int) -> void:
 		_awaiting_item = new_peer
 	if _awaiting_card == old_peer:
 		_awaiting_card = new_peer
+	if _awaiting_card_target == old_peer:
+		# 卡选目标（批 2）：归属闸（`c_card_target`）对的就是它 —— 不换 key，重连者作答会被当成外人丢掉
+		_awaiting_card_target = new_peer
 	if _awaiting_discover_peer == old_peer:
 		_awaiting_discover_peer = new_peer
 	# 科技三选一：全员同时 ⇒ 换掉该 peer 那一份 offer 的 peer（可能不在等待里，遍历无害）
@@ -3773,8 +3797,13 @@ func s_card_choices(labels: Array, owner_peer: int) -> void:
 	# 但按钮整排不出镜 —— 他也**不该**作答（另有 `c_choice` 的归属校验兜底）。
 	# 本机被托管（机器人 / 休眠）时同样不出：房主那边短暂延时后自动取第一项，
 	# 按钮闪一下反而像"能点"。
-	var me := _player_by_peer(my_peer)
-	var mine: bool = owner_peer == my_peer and not me.is_empty() and not _is_managed(me)
+	#
+	# 判据必须走**两端都有**的数据源：`hp` 只在 `_host_setup` / `lab_reset`（都在房主侧）里填充，
+	# **客户端上 `hp` 是空的** ⇒ 拿 `_player_by_peer(my_peer)` 判时 `me` 恒为 `{}`、`mine` 恒为 false，
+	# 真人客户端永远看不到按钮、只能等窗口超时由房主取第一项（本批头号功能在联机形态下等于没实装）。
+	# `_state_player` 读的是状态快照（`st.players`，两端都有），且快照里**带** `bot` / `sleep`
+	#（见 `_broadcast_state` 的 plist）⇒ 「本机被托管」这半照样判得准。
+	var mine: bool = owner_peer == my_peer and not _is_managed(_state_player(my_peer))
 	deck_reveal.show_choices(labels if mine else [])
 
 ## 客户端 → 房主：本机玩家挑了抉择卡的第 `idx` 个分支。
@@ -3808,7 +3837,7 @@ func _on_card_choice(idx: int) -> void:
 ##   * 收卡（`s_card_close`）落在本函数末尾 —— 抉择卡不走「先确定、再选」：它的分支按钮**就是**
 ##     它的「确定」（`_play_turn` 的 "event" 分支据此不调 `_await_card_confirm`）。先确定的话，
 ##     那一步已经把卡收走了（`s_card_close` → BACK 相位），按钮就没处挂。
-##   * 等待条件多并一个 `_card_ack`：掉线那条既有钩子（`_disconnect` 的
+##   * 等待条件多并一个 `_card_ack`：掉线那条既有钩子（`_on_peer_disconnected` 的
 ##     `_awaiting_card == id` ⇒ `_card_ack = true`）也适用于这里，掉线者不留全场空等一窗。
 func _await_card_choice(p: Dictionary, card: Dictionary) -> int:
 	var opts: Array = card.choices
@@ -5574,7 +5603,8 @@ func _apply_item_effect(p: Dictionary, it: Dictionary, arg: int, arg2: int = -1,
 				p.money = int(p.money) + amt
 				_log("%s 支使 %s 跑腿，收 ¥%d" % [p.name, t.name, amt], "#c9a6ff")
 		"小抄":
-			s_peek_card.rpc(int(p.peer), String(_peek_event().get("t", "?")))
+			# 整行由这里拼好（`s_peek_card` 不再自带前缀，见它的函数注释）——措辞一字未改
+			s_peek_card.rpc(int(p.peer), "（小抄）机会牌堆下一张：%s" % String(_peek_event().get("t", "?")))
 			_log("%s 偷偷看了眼机会牌堆顶" % p.name, "#f0c064")
 		# ---- 绿 ----
 		"占座":
@@ -5935,14 +5965,17 @@ func _show_slot(digits: Array, prize: int) -> void:
 		if is_instance_valid(layer):
 			layer.queue_free())
 
-## 小抄：把机会牌堆顶卡私密发给该玩家。
+## 私密战报：把**一整行**只给 `peer` 看的内容发出去（「小抄」与卡面 `peek_deck` 两处共用）。
+## 前缀由**调用方**给，这里一个字都不写死 —— 两处口径本就不同（小抄看的是"下一张"、
+## `peek_deck` 看的是"顶 N 张"）；写死前缀会让后者串成
+##「（小抄）机会牌堆下一张：牌堆顶 2 张：一, 二」，且 N>1 时"下一张"本身就不对。
 ## **注意是广播 + 收端自过滤**（`if peer == my_peer`），不是 `rpc_id` 私发 —— 调用点走 `.rpc()`。
 ## ⚠ 这个 `@rpc` 曾经被"老虎机"那一段的插入挤掉过（注解与函数被分开、函数就此不再是 RPC，
 ## `.rpc()` 在运行时才会炸），别再把注解和函数拆开。
 @rpc("authority", "call_local", "reliable")
-func s_peek_card(peer: int, text: String) -> void:
+func s_peek_card(peer: int, line: String) -> void:
 	if peer == my_peer:
-		_log("（小抄）机会牌堆下一张：%s" % text, "#f0c064")
+		_log(line, "#f0c064")
 
 func _run_shop(p: Dictionary, idx: int) -> void:
 	_shop_tile = idx
@@ -6836,7 +6869,7 @@ func _await_card_target(p: Dictionary, field: String) -> Dictionary:
 	if _is_managed(p):
 		await _wait(0.6)
 		if _target_pick == GameData.NO_PEER:
-			_target_pick = int(cands[randi_range(0, cands.size() - 1)])
+			_target_pick = _card_target_bot_pick(cands, field)
 	else:
 		# `alive` 的语义是"**还**在等"（同 `_ask` / `_await_card_confirm`）—— 等的是**作答**而不是
 		# "选到了人"：取消传回的就是 `NO_PEER`，拿 `_target_pick` 当判据的话取消也要空等一整窗。
@@ -6849,6 +6882,27 @@ func _await_card_target(p: Dictionary, field: String) -> Dictionary:
 	if pick == GameData.NO_PEER:
 		return {}
 	return _state_player(pick)
+
+## bot / 休眠托管选目标时的兜底（设计稿 §3.4「bot 自动选（现金最多 / 地最多）」）：
+##   * `seize_tile` / `force_buy_tile` ⇒ 取**名下地皮最多**的（这两条的候选本来就只列"有地"的人）；
+##   * 其余目标类字段 ⇒ 取**现金最多**的。
+## **并列取 peer 最小者**，不用 `randi_range`：随机挑会让机器人夺钱夺到穷人、夺地夺到无地者，
+## 而且同一份局面每次跑出的战报都不一样、用例钉不住。
+## 只跑在房主侧（`_await_card_target` 的托管支），读 `hp` 真身即可。
+func _card_target_bot_pick(cands: Array, field: String) -> int:
+	var by_props: bool = field == "seize_tile" or field == "force_buy_tile"
+	var best := GameData.NO_PEER
+	var best_v := -1
+	for peer in cands:
+		var v := 0
+		if by_props:
+			v = (_own_props(int(peer)) as Array).size()
+		else:
+			v = int(_player_by_peer(int(peer)).get("money", 0))
+		if v > best_v or (v == best_v and int(peer) < best):
+			best_v = v
+			best = int(peer)
+	return best
 
 ## 这张卡此刻可选的目标（按字段过滤）：`seize_tile` / `force_buy_tile` 只列**名下有地**的人
 ##（夺地 / 强买没有地皮可下手）；其余字段列所有其他存活玩家。
