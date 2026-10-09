@@ -803,7 +803,7 @@ func _grant_tech(p: Dictionary, name: String) -> bool:
 	_broadcast_state()
 	return true
 
-## 是否持有某条科技。2026-10-10 方案 B：`p.tech`（单字符串）→ `p.techs`（列表）——
+## 是否持有某条科技。2026-10-10 方案 B：该字段由**单字符串**改为**列表**——
 ## **只有实现这一行变了，签名与语义不变**，所以全仓 54 处调用点一行都不用改。
 func _has_tech(p: Dictionary, name: String) -> bool:
 	return name in p.get("techs", [])
@@ -3551,7 +3551,10 @@ func _broadcast_state() -> void:
 			"sleep": int(p.get("sleep", 0)),
 			"stamina": int(p.get("stamina", 3)), "items": p.get("items", []),
 			"item_used": bool(p.get("item_used", false)), "silence": int(p.get("silence", 0)),
-			"shield": int(p.get("shield", 0)), "tech": String(p.get("tech", "")),
+			"shield": int(p.get("shield", 0)),
+			# 科技（2026-10-10 方案 B）：单值 String → 列表。**键名与类型都改了** ⇒
+			# 客户端读键（`_open_player_popup`）必须同步，且 `联机协议.md` 要同一步改。
+			"techs": (p.get("techs", []) as Array).duplicate(),
 			# 客户端手牌置灰 / 卡面红绿要算「已用几件 / 是否首件 / 消耗修正 / 独立次数」，
 			# 这几项必须随快照下发（原先缺 item_used_n，双开档客户端会误判还能用）。
 			"item_used_n": int(p.get("item_used_n", 0)), "first_used": bool(p.get("first_used", false)),
@@ -7001,8 +7004,9 @@ func _open_player_popup(peer: int) -> void:
 		"alive": bool(p.get("alive", true)),
 		"color_idx": int(p.get("color", 0)), "rank": _rank_of(peer),
 		"items": p.get("items", []),
-		# 已选科技（§六）：名字 + 描述由 player_popup 显示（空串 / 出局则不显）
-		"tech": String(p.get("tech", "")),
+		# 已选科技（§六）：**列表**（2026-10-10 方案 B），名字 + 描述由 player_popup 循环显示
+		#（空列表 / 出局者整段不显）
+		"techs": (p.get("techs", []) as Array).duplicate(),
 	})
 
 ## 某玩家的名次（`standing` 里的 rank；查不到给 0 = 不画徽章）。

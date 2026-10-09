@@ -247,15 +247,15 @@ func _test_card_state(g) -> void:
 	_check(int(s.get("cost_eff", -1)) == 2 and int(s.get("cost_base", -1)) == 3, "错峰用电：首件能量 -1（3→2）")
 	# 手速惊人：冷却 -1（绿）
 	p.items = [{"id": "交换生", "cd": 0}]
-	p.tech = "手速惊人"
+	p.techs = ["手速惊人"]
 	s = g._card_state(p, p.items[0])
 	_check(int(s.get("cd_preview", -1)) == 2 and int(s.get("cd_base", -1)) == 3, "手速惊人：冷却预览 -1（3→2）")
 	# 熟能生巧：冷却 →0（绿）
-	p.tech = "熟能生巧"
+	p.techs = ["熟能生巧"]
 	s = g._card_state(p, p.items[0])
 	_check(int(s.get("cd_preview", -1)) == 0 and int(s.get("cd_base", -1)) == 3, "熟能生巧：冷却预览 →0")
 	# 冷却中：不给预览（由 badge_state 给剩余）
-	p.tech = ""
+	p.techs = []
 	p.items = [{"id": "交换生", "cd": 2}]
 	s = g._card_state(p, p.items[0])
 	_check(not s.has("cd_preview"), "冷却中不给冷却预览（改显剩余）")

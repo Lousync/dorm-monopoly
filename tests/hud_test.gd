@@ -1790,12 +1790,12 @@ func _run() -> void:
 	g.player_popup.close()
 
 	print("== 弹窗：显示「已选科技」（§六）==")
-	# 数据来源已就绪（`st.players[].tech`）：面板在**能量行之后**加一行「科技：<名>」+ 其下小字描述，
-	# 空串（未选 / 未开科技）/ 出局者则整行不显。
+	# 数据来源已就绪（`st.players[].techs`）：面板在**能量行之后**为每条科技加一行「科技：<名>」+ 其下小字描述，
+	# 空列表（未选 / 未开科技）/ 出局者则整段不显。
 	var s_tech: Dictionary = _state(3, false)
 	for p in s_tech.players:
 		if int(p.peer) == 1:
-			p.tech = "工资上调"
+			p.techs = ["工资上调"]
 			p.items = []
 	g.s_state(s_tech)
 	await process_frame
@@ -1806,12 +1806,30 @@ func _run() -> void:
 	_check(tech_labels.has("科技：工资上调"), "弹窗显示科技名（实得 %s）" % str(tech_labels))
 	_check(tech_labels.has(String(TechData.def("工资上调").get("desc", ""))),
 		"弹窗显示科技描述（= TechData.def(tech).desc）")
+	# 行数随条数增长（2026-10-10 方案 B）：两条 ⇒ 两行名字、两行描述
+	var s_two: Dictionary = _state(3, false)
+	for p in s_two.players:
+		if int(p.peer) == 1:
+			p.techs = ["工资上调", "天选之人"]
+			p.items = []
+	g.s_state(s_two)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	var two_labels: Array = _popup_labels(g.player_popup)
+	var name_rows := 0
+	for t in two_labels:
+		if String(t).begins_with("科技："):
+			name_rows += 1
+	_check(two_labels.has("科技：天选之人"), "第二条科技也显示（实得 %s）" % str(two_labels))
+	_check(name_rows == 2, "科技行数随条数增长（2 条 ⇒ 2 行，实得 %d）" % name_rows)
 	g.player_popup.close()
 	# 出局者：整行不显示
 	var s_out: Dictionary = _state(3, false)
 	for p in s_out.players:
 		if int(p.peer) == 1:
-			p.tech = "工资上调"
+			p.techs = ["工资上调"]
 			p.alive = false
 			p.items = []
 	g.s_state(s_out)

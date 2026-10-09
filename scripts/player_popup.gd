@@ -191,18 +191,22 @@ func _fill(data: Dictionary) -> void:
 			Color(0.95, 0.78, 0.35) if i < cur else Color(0.22, 0.20, 0.18),
 			4, Color(0, 0, 0, 0.4), 1))
 		e_row.add_child(pip)
-	# 已选科技（§六）：**仅存活且确实选了科技**时显示 —— 名字一行 + 其下小字描述。
-	# 空串（未开科技 / 未选 / 已出局）则整段不显示。
-	var tech := String(data.get("tech", ""))
-	if alive and tech != "":
-		_body.add_child(UIKit.label("科技：%s" % tech, 15, UIKit.TEXT))
-		var tdesc := String(TechData.def(tech).get("desc", ""))
-		if tdesc != "":
-			var tl := UIKit.label(tdesc, 12, UIKit.TEXT_DIM)
-			tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			tl.custom_minimum_size = Vector2(panel_w - PANEL_PAD * 2.0, 0)
-			tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			_body.add_child(tl)
+	# 已选科技（§六）：**仅存活且列表非空**时显示 —— 每条一行「科技：<名>」+ 其下小字描述，循环 N 次。
+	# 2026-10-10 方案 B：`tech`（单字符串）→ `techs`（列表），结构上允许多条（中局科技卡留给将来）。
+	# 逐行重复「科技：」前缀是**有意的**：N 行同构、与既有单行断言兼容；本批最多 1 条，条数多了怎么排
+	#（换行堆叠 / 折叠 / 滚动）等科技卡落地时按实际条数再定。
+	var techs: Array = data.get("techs", [])
+	if alive and not techs.is_empty():
+		for tname in techs:
+			var tn := String(tname)
+			_body.add_child(UIKit.label("科技：%s" % tn, 15, UIKit.TEXT))
+			var tdesc := String(TechData.def(tn).get("desc", ""))
+			if tdesc != "":
+				var tl := UIKit.label(tdesc, 12, UIKit.TEXT_DIM)
+				tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				tl.custom_minimum_size = Vector2(panel_w - PANEL_PAD * 2.0, 0)
+				tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				_body.add_child(tl)
 	# 卡牌列表（批次 12 B2：一行一件的"小图标 + 名字"改成**一整张 `ItemCard`**；
 	# **批次 13 ⑤：按规则上限画固定槽位** —— 已拥有的是整张卡，未拥有的是**细边框占位框**
 	#（**不是虚线**：Compatibility 渲染器没有虚线画笔，见 `_empty_slot`），

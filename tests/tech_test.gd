@@ -660,7 +660,11 @@ func _run() -> void:
 	g._broadcast_state()
 	await process_frame
 	var plist: Array = g.st.get("players", [])
-	_check(plist.size() >= 2 and String(plist[1].get("tech", "")) == "助学金", "快照：players[].tech 随状态下发")
+	# **双向钉住**：只看「有 techs」不够 —— 同时留着旧键 `tech` 也能过。
+	_check(plist.size() >= 2 and (plist[1].get("techs", []) as Array).has("助学金"),
+		"快照：players[].techs 随状态下发（列表）")
+	_check(plist.size() >= 2 and not plist[1].has("tech"),
+		"快照：旧键 tech 已退场，players 条目里不留双份真相")
 	_check(String(g.st.get("tech_tier", "")) == "白银", "快照：tech_tier 随状态下发")
 	g.st = {}
 

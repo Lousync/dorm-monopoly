@@ -68,12 +68,12 @@ func _run() -> void:
 	_check(bool(g._tech_ok.disabled) == false, "选中后「确定」点亮")
 	g._tech_ok.pressed.emit()
 
-	# 等科技阶段收尾：三个玩家都有 tech，弹层已收
+	# 等科技阶段收尾：三个玩家都有 techs，弹层已收
 	waited = 0.0
 	while waited < 8.0:
 		var done := true
 		for p in g.hp:
-			if String(p.get("tech", "")) == "":
+			if (p.get("techs", []) as Array).is_empty():
 				done = false
 		if done and not bool(g._tech_open):
 			break
@@ -81,7 +81,7 @@ func _run() -> void:
 		waited += 0.25
 	var all_tech := true
 	for p in g.hp:
-		if String(p.get("tech", "")) == "":
+		if (p.get("techs", []) as Array).is_empty():
 			all_tech = false
 	_check(all_tech, "全员都拿到科技（房主选了「%s」）" % String(my_offer[0]))
 	_check(g._tech_offer_layer == null, "应答后选卡弹层已收")
