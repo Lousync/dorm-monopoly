@@ -110,6 +110,7 @@ func _run() -> void:
 	_test_refresh_keeps_card(g)
 	await _test_no_candidates(g)
 	await _test_managed(g)
+	await _test_at_mode(g)
 	_test_target_disconnect(g)
 	await _test_target_fields(g)
 	await _test_tile_move_fields(g)
@@ -313,6 +314,77 @@ func _test_managed(g) -> void:
 	var got4: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
 	_check(got4.is_empty(), "没作答（超时 / 窗口没开）⇒ 目标部分作废、不自动挑人")
 	_check(g._awaiting_card_target == 0 and g._target_pick == GameData.NO_PEER, "收尾干净（哨兵与归属位都复位）")
+
+## 自动回归（`--autotest=host|client`）里**本机自己**抽到的那张卡：不等真人点，短暂延时后自动作答。
+##
+## 为什么非有不可：自动回归里的玩家是 `at_mode` 驱动的"真人"、**不是 bot** ⇒ `_is_managed` 为假。
+## 少了这一支，本机抽到的每一张带目标字段 / 带 `choices` 的卡（50 张里三十多张）都要白等满一个
+## 操作窗口（25s；3 倍速下 ≈8.3s）—— 见计划 T15 的 ruling AB。
+##
+## 判据分两层：① 自动作答**按既有兜底**（目标走 bot 那套挑法、抉择取第一项）；
+## ② 这条路**根本不开操作窗口**（真人那一支才开）—— 由旁路 `_watch_card_window` 逐帧看
+## `_op_kind`（只有 `_await_turn_window` 会把它写成 kind）钉。
+##
+## **必须把 `running` 打开**（本套件其余用例关着它）：关着时真人那一支的 `_await_turn_window`
+## 一次都不进、连窗口都不会开，判不出"等的到底是哪一窗"（同 `_test_managed` 末条那条说明）。
+## 而开着它、若这一支缺席（RED），真人窗口会真的开出来并等满 25 s —— 旁路一旦看见窗口就
+## 立刻 `running = false` 放行，免得把套件顶上那条 30 s 总闸也一起烧掉（那会让整份汇总假糊）。
+func _test_at_mode(g) -> void:
+	print("== 自动回归：本机那张卡自动作答，不白等一窗 ==")
+	# 甲(1) 是本机抽卡者、乙(2) 现金最多 ⇒ bot 兜底策略会挑乙；丙(3) 更少（挑错了看得见）。
+	var t := _fresh_tiles()
+	_setup(g, [_mk_player(1, "房主", 1000), _mk_player(2, "乙", 1800), _mk_player(3, "丙", 900)], t)
+	g.at_mode = "host"
+	g.running = true
+	var stop: Array = []
+	var saw: Array = []
+	_watch_card_window(g, saw, stop)   # 不 await：旁路逐帧盯窗口
+	var t0 := Time.get_ticks_msec()
+	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	var ms_target := Time.get_ticks_msec() - t0
+	stop.append(1)   # 停掉旁路（免得它活到后面几条用例里去）
+	_check(int(got.get("peer", -1)) == 2,
+		"本机那张自动作答、且按 bot 兜底挑（现金最多 = 乙，实得 %d）" % int(got.get("peer", -1)))
+	_check(saw.is_empty(), "且**没开真人那一扇操作窗口**（开过的话这里记得下 card，实得 %s）" % str(saw))
+	_check(ms_target < 2000, "整段是短暂延时（实耗 %d ms，真人那一窗是 25000 ms 一档）" % ms_target)
+	_check(g._awaiting_card_target == 0 and g._target_pick == GameData.NO_PEER
+			and g._card_target_ack == false, "收尾照样干净（归属位 / 哨兵 / ack 都复位）")
+	# 抉择卡：同一支口径（本任务把 50 张卡带上了 `choices`，这条路第一次会被真卡走到）。
+	# `running` 重新打开一遍：上一条若在 RED 下被旁路关掉了，这条就会退化成"窗口一次都不进"的
+	# 空跑 —— 那样连缺了抉择那一支也照样绿，是条假绿。
+	g.running = true
+	stop = []
+	saw = []
+	_watch_card_window(g, saw, stop)
+	t0 = Time.get_ticks_msec()
+	var pick: int = await g._await_card_choice(g.hp[0], {"t": "翘课去兼职", "choices": [
+		{"t": "去兼职：+¥1200", "money": 1200},
+		{"t": "去上课：前进 4 格", "move_steps": 4}]})
+	var ms_choice := Time.get_ticks_msec() - t0
+	stop.append(1)
+	g.running = false
+	g.at_mode = ""
+	_check(pick == 0, "抉择卡自动取**第一项**（实得 %d）" % pick)
+	_check(saw.is_empty(), "同样没开真人那一扇窗口（实得 %s）" % str(saw))
+	_check(ms_choice < 2000, "同样是短暂延时（实耗 %d ms）" % ms_choice)
+	_check(g._awaiting_card == 0 and g._choice_pick == -1, "收尾干净（归属位与判别位复位）")
+
+## 旁路观察（不 await，写法同 `_answer_choice_when_waiting` 那条）：逐帧看 `_op_kind` —— 只有
+## `_await_turn_window` 会把操作窗口开出来（`_op_timer_send` ⇒ `s_op_timer` ⇒ `_op_kind = kind`）。
+## **只认 `card` 那一扇**：卡选目标 / 抉择 / 确认用的都是这个 kind，本用例期间也只跑这三个；
+## 放开成"任何窗口"会撞上测试脚手架的既有噪声 —— 本文件把 `running` 打开的那几条用例
+## 会把 `_start` 留下的掷轮协程一起放行，那扇 `roll` 窗口与本用例要证的事无关。
+## 看见 `card` 窗口就记下并**把 `running` 关掉**放行：本用例只想证明"at_mode 那条路不开窗"，
+## 没打算让缺了那一支的 RED 真等满 25 s。`stop` 非空即收工（免得活到后面几条用例里去）。
+func _watch_card_window(g, out: Array, stop: Array) -> void:
+	for _i in 600:
+		await process_frame
+		if not stop.is_empty():
+			return
+		if String(g._op_kind) == "card":
+			out.append(String(g._op_kind))
+			g.running = false
+			return
 
 
 ## 掉线钩子照看「卡选目标」窗口：抽卡者中途掉线要**立刻放行**，别让整桌空等满一个操作窗口

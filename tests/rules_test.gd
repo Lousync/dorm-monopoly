@@ -172,6 +172,25 @@ func _test_board_shape() -> void:
 	for e in GameData.EVENTS:
 		if e.has("move_steps"):
 			_check(int(e.move_steps) != 0, "事件移动步数非零")
+	# ---- 机会卡池的规模与构成（2026-10-09 批 3 卡表落地；口径见 机会卡.md §四）----
+	_check(GameData.EVENTS.size() == 50, "机会卡 50 张（实得 %d）" % GameData.EVENTS.size())
+	# 智斗比例：纯经济/位移/通用卡不超过 15 张
+	var plain := 0
+	for e in GameData.EVENTS:
+		var fighting: bool = e.has("steal_from") or e.has("charge_to") or e.has("jail_to") \
+			or e.has("each_from_target") or e.has("steal_item_from") or e.has("seize_tile") \
+			or e.has("force_buy_tile") or e.has("swap_pos") or e.has("pull_target") \
+			or e.has("push_back") or e.has("shuffle_pos") or e.has("choices") \
+			or e.has("peek_deck") or e.has("shuffle_deck") or e.has("bury_deck")
+		if not fighting:
+			plain += 1
+	_check(plain <= 15, "智斗卡占多数（纯通用卡 %d 张 ≤ 15）" % plain)
+	# 黑市唯一入口必须在
+	var black := 0
+	for e in GameData.EVENTS:
+		if e.has("enter_blackshop"):
+			black += 1
+	_check(black >= 1, "机会卡池保留黑市入口（黑市的唯一通道）")
 
 func _test_paths() -> void:
 	var steps: Array = GameData.compute_path(54, 3)

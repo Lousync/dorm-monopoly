@@ -6870,6 +6870,20 @@ func _await_card_target(p: Dictionary, field: String) -> Dictionary:
 		await _wait(0.6)
 		if _target_pick == GameData.NO_PEER:
 			_target_pick = _card_target_bot_pick(cands, field)
+	elif at_mode != "" and int(p.peer) == my_peer:
+		# 自动回归里房主自己那张：不等真人点（口径同 `_await_card_confirm` / `_await_card_choice`
+		# 那两支）。**别把它扩成"整局都自动选"** —— 客户端那一张要走真正的操作窗口 + `c_card_target`
+		# 回程，联机回归才验得到协议。
+		#
+		# 为什么非有不可：自动回归里的玩家是 `at_mode` 驱动的"真人"、不是 bot ⇒ `_is_managed` 为假。
+		# 少了这一支，本机抽到的**每一张**带目标字段的卡都要白等满一个操作窗口（25s，3 倍速下 ≈8.3s）
+		# —— 50 张里这类卡三十多张，轮数一多就把联机回归拖垮（本机实测 3 轮那一跑两版都过，
+		# 但那只是"没超时"，每张卡那一次等待是纯浪费）。
+		# 作答口径与托管完全一致（同一套 bot 兜底策略），只是延时更短；真人若在这 0.3s 内先点了，
+		# 下面那个 `NO_PEER` 判据会保住他的选择。
+		await _wait(0.3)
+		if _target_pick == GameData.NO_PEER:
+			_target_pick = _card_target_bot_pick(cands, field)
 	else:
 		# `alive` 的语义是"**还**在等"（同 `_ask` / `_await_card_confirm`）—— 等的是**作答**而不是
 		# "选到了人"：取消传回的就是 `NO_PEER`，拿 `_target_pick` 当判据的话取消也要空等一整窗。
