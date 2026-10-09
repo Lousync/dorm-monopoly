@@ -22,14 +22,12 @@ var menu_state: Label
 var settings_panel: PanelContainer
 var confirm_panel: PanelContainer
 var confirm_note: Label
-var vol_slider: HSlider
-var mute_sw: UIKit.Switch      # 对局内设置面板：静音开关（与大厅的开关组件同款，2026-10-09）
+var vol_slider: HSlider        # 对局内设置面板：音量（0 = 静音；原「静音」开关已删，见 _apply_audio）
 var tier_host_box: VBoxContainer  # 对局内设置面板：「操作限时」一节的房主内容（说明 + chips）
 var tier_row: HBoxContainer    # 对局内设置面板：挡位 chips（房主）
 var tier_readonly: Label       # 对局内设置面板：挡位只读文本（客户端）
 var pause_mask: ColorRect
-var audio_volume := 1.0
-var audio_mute := false
+var audio_volume := 1.0        # 音量（0 = 静音，见 `_apply_audio`）
 
 # ---------------- 开局设置（房主权威，见 doc/game-design/开局设置.md §三之一） ----------------
 const _WINDOW_TICK := 0.1            # 操作窗口的探测分片（秒）；也是 _ask 的应答粒度：
@@ -437,7 +435,6 @@ func _ready() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load("user://settings.cfg") == OK:
 		audio_volume = clampf(float(cfg.get_value("audio", "volume", 1.0)), 0.0, 1.0)
-		audio_mute = bool(cfg.get_value("audio", "mute", false))
 		# 正式导出版（release）不带开发者模式：F1 面板 / --dev / --lab 全部只在
 		# 编辑器或调试构建里存在（见 dev_tools.toggle 与主菜单入口的同款门控）。
 		dev.enabled = (bool(cfg.get_value("dev", "enabled", false)) or dev_flag) \
@@ -6612,9 +6609,25 @@ func _set_rules_open(on: bool) -> void:
 		rules_panel.modulate.a = 1.0
 		rules_panel.scale = Vector2.ONE
 
+## 音量落到总线（总线 0 = Master —— 全项目只有 `fx.gd` 那池音效，都挂在 Master 上）。
+## **0 档 = 真静音**：拖到底直接走总线的 mute 标志（数字零）。原先另有一枚「静音」开关，
+## 2026-10-09 用户拍板去掉 —— 既然 0 就能静音，一个控件够了；而且原来那个「0」只是把总线
+## 压到 `linear_to_db(0.0001)` = **−80 dB**（万分之一振幅，听不见但不是零），去掉开关前
+## 必须先把这档做成真静音，否则项目里就再没有「绝对无声」这一档了。
 func _apply_audio() -> void:
-	AudioServer.set_bus_mute(0, audio_mute)
+	AudioServer.set_bus_mute(0, audio_volume <= 0.0)
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(audio_volume, 0.0001)))
+
+## 音量改动后落盘（`user://settings.cfg` 的 `[audio]` 段）。
+## **必须先 load 再 save**：新建一个空 `ConfigFile` 直接覆盖保存会把 `[dev]` / `[player]` /
+## `[net]` 整个抹掉（`main_menu._save_cfg()` 顶部那条注释记的就是这个坑，`dev_tools.toggle()`
+## 同样是先 load 再存的）。这段原先**只有读、没有任何地方写** ⇒ 音量改了根本记不住。
+## 只在**松开滑块**和**离开面板**时写，不在 `value_changed` 里写 —— 那是拖动时每个像素一次写盘。
+func _save_audio_cfg() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load("user://settings.cfg")
+	cfg.set_value("audio", "volume", audio_volume)
+	cfg.save("user://settings.cfg")
 
 ## 某玩家的身家条 / 名册行在**屏幕**上的中心（查不到或那一条此刻不可见 ⇒ `null`）。
 ## 收租 / 付租的飞钞终点：批次 9 起立牌退场，终点从天上的立牌牌心换成屏幕层的条；

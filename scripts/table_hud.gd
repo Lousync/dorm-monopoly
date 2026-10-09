@@ -929,10 +929,7 @@ static func build_menu_ui(g: Node) -> void:
 	mv.add_child(cont_btn)
 	var set_btn := UIKit.with_icon(UIKit.button("设置", 15), "gear", 18)
 	set_btn.pressed.connect(func() -> void:
-		# 打开时把本地那两项刷回真值：开关组件不像 `CheckButton` 有 `button_pressed` 那种
-		# 双向绑定，得显式同步（`animate = false` ⇒ 直接落位，不该自己滑一遍）
-		g.vol_slider.value = g.audio_volume * 100.0
-		g.mute_sw.set_on(g.audio_mute, false)
+		g.vol_slider.value = g.audio_volume * 100.0   # 打开时把滑块刷回真值
 		g._menu_show("settings")
 	)
 	mv.add_child(set_btn)
@@ -946,8 +943,9 @@ static func build_menu_ui(g: Node) -> void:
 
 	# 设置：**样式与大厅「游戏设置」弹窗统一**（2026-10-09 用户要求）—— 同一套分节边框盒
 	# （`UIKit.SectionBox`，小标题骑在上边框正中）、同一套「说明 + 控件」行
-	# （`UIKit.note` / `UIKit.ctrl_row`）、同一套**开关组件**（`UIKit.Switch`：静音与条件触发
-	# 原先分别是 Godot 自带的 `CheckButton` 与「关 / 开」两枚 chip，现在都换掉了）。
+	# （`UIKit.note` / `UIKit.ctrl_row`）、同一套**开关组件**（`UIKit.Switch`：条件触发原先
+	# 是「关 / 开」两枚 chip，已换成开关；原先那枚「静音」开关连同 Godot 自带的 `CheckButton`
+	# 一起**去掉了** —— 音量拖到 0 就是真静音，见 `game._apply_audio`）。
 	# 房主 / 客户端的只读分工照旧，显隐由 `game._refresh_tier_ui` /
 	# `game._refresh_ab_settings_ui` 管（它们跟每次 `s_state` 走），这里只建空壳。
 	var sc := CenterContainer.new()
@@ -973,7 +971,7 @@ static func build_menu_ui(g: Node) -> void:
 	var vol_row := HBoxContainer.new()
 	vol_row.add_theme_constant_override("separation", 10)
 	sndb.add_child(vol_row)
-	vol_row.add_child(UIKit.label("音效音量", 13, UIKit.TEXT_DIM))
+	vol_row.add_child(UIKit.label("音量", 13, UIKit.TEXT_DIM))
 	g.vol_slider = HSlider.new()
 	g.vol_slider.min_value = 0
 	g.vol_slider.max_value = 100
@@ -982,14 +980,10 @@ static func build_menu_ui(g: Node) -> void:
 	g.vol_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	g.vol_slider.value_changed.connect(func(v: float) -> void:
 		g.audio_volume = v / 100.0
-		g._apply_audio()
+		g._apply_audio()          # 拖动中**不落盘**（每像素一次写盘太密），松手/离开面板才存
 	)
+	g.vol_slider.drag_ended.connect(func(_changed: bool) -> void: g._save_audio_cfg())
 	vol_row.add_child(g.vol_slider)
-	g.mute_sw = UIKit.switch_toggle(g.audio_mute, func(on: bool) -> void:
-		g.audio_mute = on
-		g._apply_audio()
-	)
-	sndb.add_child(UIKit.ctrl_row("静音", g.mute_sw))
 
 	# —— 操作限时（房主可点，客户端只读；见 doc/game-design/开局设置.md §三之一）——
 	var tsec := UIKit.section_box("操作限时")
@@ -1030,7 +1024,9 @@ static func build_menu_ui(g: Node) -> void:
 
 	var back_btn := UIKit.button("‹ 返回", 15)
 	back_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back_btn.pressed.connect(func() -> void: g._menu_show("menu"))
+	back_btn.pressed.connect(func() -> void:
+		g._save_audio_cfg()   # 兜底：拖到一半没松手就点返回 / 用键盘改的值，都得记住
+		g._menu_show("menu"))
 	sv.add_child(back_btn)
 
 	# 退出二次确认

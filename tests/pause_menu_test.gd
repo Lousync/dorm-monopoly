@@ -184,9 +184,21 @@ func _run() -> void:
 		for ch in c.get_children():
 			stack.append(ch)
 	_check(boxes == 3, "设置面板 = 3 个分节边框盒（声音 / 操作限时 / 畸变，实得 %d）" % boxes)
-	_check(switches == 2 and natives == 0,
-		"开关组件 2 枚（静音 / 条件触发）、Godot 自带 CheckButton 0 枚（实得 %d / %d）"
+	_check(switches == 1 and natives == 0,
+		"开关组件 1 枚（条件触发）、Godot 自带 CheckButton 0 枚（实得 %d / %d）"
 			% [switches, natives])
+	# 音量：0 档 = **真静音**（2026-10-09 用户拍板：既然 0 就能静音，去掉原来的「静音」开关）
+	var vol_before: float = g.audio_volume
+	g.vol_slider.value = 0
+	_check(g.audio_volume == 0.0 and AudioServer.is_bus_mute(0),
+		"滑块拖到 0 ⇒ 音量 0 且 Master 总线 mute（真静音，不只是压到 −80 dB）")
+	g.vol_slider.value = 100
+	_check(g.audio_volume == 1.0 and not AudioServer.is_bus_mute(0), "滑块回 100 ⇒ 解除 mute")
+	# ⚠ 断言里动过的音量**必须还回去**：下面点「返回」会落盘（`game._save_audio_cfg`），
+	#   不还的话就把真机上用户自己那份音量覆盖成测试值了。
+	#   （`settings_test` 那条 [audio] 用例是靠快照 / 还原整个 settings.cfg 做的。）
+	g.audio_volume = vol_before
+	g._apply_audio()
 	var back := _btn_text(g.settings_panel, "返回")
 	_check(back != null, "找到「返回」按钮")
 	_click(back)

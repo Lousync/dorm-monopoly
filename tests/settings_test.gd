@@ -23,6 +23,7 @@ func _run() -> void:
 	_test_in_game_tier()   # 无 await，直接调
 	await _test_window()   # 协程：不等它跑完 quit() 会先执行，断言全部落空（假绿）
 	await _test_save_cfg_keeps_sections()   # 同为协程：不 await 会假绿（见上）
+	await _test_audio_persist()             # 音量落盘 + 0 = 真静音（同为协程）
 	await _test_economy_and_liq()           # 经济设置 + 变卖保底（协程）
 	print("SETTINGS TEST: %s" % ("PASS" if fails == 0 else "%d FAILURES" % fails))
 	quit(0 if fails == 0 else 1)
@@ -310,6 +311,44 @@ func _test_save_cfg_keeps_sections() -> void:
 		"保存昵称/端口后 [dev] enabled 保留（开发者入口还在）")
 	_check(absf(float(after.get_value("audio", "volume", 0.0)) - 0.5) < 0.001,
 		"[audio] volume 保留")
+	if raw == "":
+		DirAccess.open("user://").remove("settings.cfg")   # 原本没有此文件 → 还原成没有
+	else:
+		var f := FileAccess.open(CFG, FileAccess.WRITE)
+		f.store_string(raw)
+		f.close()
+
+## 音量必须落盘（2026-10-09 用户报「改了记不住」）：`[audio]` 段在 `game.gd` 里**只有读、
+## 全项目没有任何地方写** ⇒ 每局都回到「100」。这条钉住「改了就写」，并且钉住
+## **写入时不许抹掉别的段**（同 `_test_save_cfg_keeps_sections` 那条教训：新建空 ConfigFile
+## 直接覆盖保存，会把 [dev] / [player] / [net] 整个抹掉）。
+func _test_audio_persist() -> void:
+	print("== 音量落盘 ==")
+	const CFG := "user://settings.cfg"
+	var raw := FileAccess.get_file_as_string(CFG)   # 真机可能没有此文件（空串）
+	var seedc := ConfigFile.new()
+	seedc.set_value("player", "name", "存档守卫")
+	seedc.save(CFG)
+	var g := _host_game(7802)
+	if g == null:
+		return
+	g.audio_volume = 0.375
+	g._save_audio_cfg()
+	var after := ConfigFile.new()
+	var loaded := after.load(CFG) == OK
+	_check(loaded and absf(float(after.get_value("audio", "volume", -1.0)) - 0.375) < 0.001,
+		"改音量后落盘（实得 %s）" % str(after.get_value("audio", "volume", "<无此键>")))
+	_check(String(after.get_value("player", "name", "")) == "存档守卫",
+		"落盘时 [player] 段没被抹掉（先 load 再 save）")
+	# 音量 0 = 真静音（原来另有一枚「静音」开关，2026-10-09 去掉）：面板上的滑块拖到底
+	# 走的就是 `_apply_audio()`，这里直接调它，钉住「0 档不是只压到 −80 dB」。
+	g.audio_volume = 0.0
+	g._apply_audio()
+	_check(AudioServer.is_bus_mute(0), "音量 0 ⇒ Master 总线 mute（真静音）")
+	g.audio_volume = 1.0
+	g._apply_audio()
+	_check(not AudioServer.is_bus_mute(0), "音量 100 ⇒ 解除 mute")
+	g.queue_free()
 	if raw == "":
 		DirAccess.open("user://").remove("settings.cfg")   # 原本没有此文件 → 还原成没有
 	else:
