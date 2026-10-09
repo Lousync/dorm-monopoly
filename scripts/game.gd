@@ -169,7 +169,7 @@ var ab_cond_sw: UIKit.Switch  # 对局内设置面板：条件触发开关（房
 var ab_readonly: Label        # 对局内设置面板：畸变只读文本（客户端）
 
 # ---------------- 科技（host 状态，规则见 doc/game-design/科技.md） ----------------
-var _tech_tier := ""          # 本局科技等级（掷骰 / 房主指定，空 = 未开科技）
+var _tech_tier := ""          # 本局科技等级（随机 / 房主指定，空 = 未开科技）
 var _tech_offers := {}        # token -> {"peer": int, "names": Array}：本局**同时**三选一的各份
 var _tech_picks := {}         # peer -> 选中的科技名（房主权威；全员同时选，2026-10-07）
 var _tech_open := false       # 科技三选一阶段进行中（驱动客户端弹层显隐 / 快照 await）
@@ -602,14 +602,14 @@ func _host_setup() -> void:
 	if hp.is_empty():
 		return
 	if _settings.tech_on:
-		await _tech_phase()   # 科技：掷骰定档 + 全员三选一（见科技.md）
+		await _tech_phase()   # 科技：定档（随机 / 指定）+ 全员三选一（见科技.md）
 	_broadcast_state()
 	if at_mode == "host":
 		get_tree().create_timer(3.0).timeout.connect(_autotest_watch)
 	_run_game()
 
 # ================= 房主：科技 =================
-# 定档 → 每人私密同档三选一（bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。
+# 定档 → 每人同档三选一（候选私发、结果公开；bot / 超时随机兜底）→ 结果公告 + 即时型效果生效。
 # 规则：doc/game-design/科技.md。定档 = **系统等概率选一档**（三档各 1/3）——
 # 原「掷 1~6 点再映射」于 2026-10-09 去掉（分布本就是等分，去掉骰子不改平衡，
 # 见 TechData.random_tier）。

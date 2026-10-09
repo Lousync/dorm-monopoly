@@ -49,13 +49,13 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# 等房主的选卡弹层出现（_host_setup 1.5s 节拍 + 科技阶段逐人询问）
+	# 等房主的选卡弹层出现（_host_setup 1.5s 节拍 + 科技阶段全员同时选卡）
 	var waited := 0.0
 	while waited < 12.0 and g._tech_offer_layer == null:
 		await create_timer(0.25).timeout
 		waited += 0.25
 	_check(g._tech_offer_layer != null, "真实开局链路：房主收到选卡弹层（等待 %.2fs）" % waited)
-	_check(String(g._tech_tier) in TechData.TIERS, "本局档位合法（掷骰定档）")
+	_check(String(g._tech_tier) in TechData.TIERS, "本局档位合法（随机定档，必落在 TechData.TIERS 内）")
 	_check(g._tech_names_for(1).size() == 3, "房主拿到 3 个候选")
 	if g._tech_offer_layer == null:
 		printerr("TECH E2E: 弹层未出现，中止")
