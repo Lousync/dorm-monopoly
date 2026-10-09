@@ -127,6 +127,44 @@ func _card_rows(card: Dictionary) -> Array:
 		rows.append({"k": "请客", "v": "你给每位其他存活玩家 ¥%d" % int(card.to_each)})
 	if card.has("go_jail"):
 		rows.append({"k": "传送", "v": "直接前往宿委会（下一回合跳过）"})
+	# ---- 2026-10-09 批 2 的 15 个智斗字段（机会卡.md §三：插在 go_jail 之后、move_steps 之前；
+	# 组内次序照 机会卡.md §二 的字段表：目标类 → 地皮与位置类 → 抉择与情报类） ----
+	if card.has("steal_from"):
+		rows.append({"k": "夺取", "v": "从选定目标处夺取 ¥%d" % int(card.steal_from)})
+	if card.has("charge_to"):
+		rows.append({"k": "索取", "v": "向选定目标收取 ¥%d" % int(card.charge_to)})
+	if card.has("each_from_target"):
+		rows.append({"k": "请客", "v": "选定目标给每位其他存活玩家 ¥%d" % int(card.each_from_target)})
+	if card.has("steal_item_from"):
+		rows.append({"k": "抢道具", "v": "从选定目标随机夺一件道具"})
+	if card.has("jail_to"):
+		rows.append({"k": "送回宿委会", "v": "选定目标跳过下一回合"})
+	if card.has("seize_tile"):
+		rows.append({"k": "夺地", "v": "夺走目标投入最少的一块地" if String(card.seize_tile) == "take"
+			else "与目标各随机一块地互换"})
+	if card.has("force_buy_tile"):
+		rows.append({"k": "强买", "v": "以原价 %d%% 强买目标投入最少的一块地" % int(card.force_buy_tile)})
+	if card.has("swap_pos"):
+		rows.append({"k": "换位", "v": "与选定目标交换棋子位置（不结算落点）"})
+	if card.has("pull_target"):
+		rows.append({"k": "拉人", "v": "把选定目标拉到你当前格（照常结算落点）"})
+	if card.has("push_back"):
+		rows.append({"k": "推退", "v": "选定目标后退 %d 格（照常结算落点）" % int(card.push_back)})
+	if card.has("shuffle_pos"):
+		rows.append({"k": "洗位", "v": "全场玩家位置随机重排"})
+	if card.has("choices"):
+		# `String.join` 吃 PackedStringArray、**不吃 Array** ⇒ 先中转一道（本仓已踩过，见
+		# `_report_doc_gaps` 里同一句注释）。
+		var labels := PackedStringArray()
+		for o in (card.choices as Array):
+			labels.append(String((o as Dictionary).get("t", "?")))
+		rows.append({"k": "抉择", "v": " / ".join(labels)})
+	if card.has("peek_deck"):
+		rows.append({"k": "情报", "v": "私密偷看机会牌堆顶 %d 张" % int(card.peek_deck)})
+	if card.has("shuffle_deck"):
+		rows.append({"k": "情报", "v": "重洗机会牌堆"})
+	if card.has("bury_deck"):
+		rows.append({"k": "情报", "v": "把牌堆顶一张塞到底部"})
 	if card.has("move_steps"):
 		var n := int(card.move_steps)
 		rows.append({"k": "移动", "v": ("前进 %d 格" if n >= 0 else "后退 %d 格") % absi(n)})
@@ -158,6 +196,20 @@ func _card_soap(card: Dictionary) -> String:
 		notes.append("可免疫")
 	if card.has("move_steps") and int(card.move_steps) < 0:
 		notes.append("倒退可免疫")
+	# 2026-10-09 批 2 的 15 个新字段（口径照 机会卡.md §四「免疫点」）：
+	# 目标类里那 8 个都是 debuff ⇒ **目标**持皂则整条免疫（判的是目标那一方，不是抽卡者）；
+	# 其余（互换 / 换位 / 洗位 / 情报）是中性 ⇒ 香皂无效，落到下面那句兜底里。
+	var target_debuff := ["steal_from", "charge_to", "each_from_target", "steal_item_from",
+		"jail_to", "force_buy_tile", "pull_target", "push_back"]
+	for f in target_debuff:
+		if card.has(f):
+			notes.append("**目标**持皂则整条免疫")
+			break
+	if card.has("seize_tile"):
+		notes.append("夺地：目标持皂则整条免疫" if String(card.seize_tile) == "take" else "互换：中性，香皂无效")
+	# 抉择卡没有自己的效果：免不免疫要看**最终选中哪一支**（各支走同一套字段判定）。
+	if card.has("choices"):
+		notes.append("按所选分支**逐项**判定")
 	if notes.is_empty():
 		return "不受影响（收益 / 中性）"
 	return "；".join(notes)

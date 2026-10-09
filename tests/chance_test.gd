@@ -101,6 +101,7 @@ func _run() -> void:
 	# 先立一道存在性闸：实现缺席时下面每条用例都会在赋值 / 调用处报 SCRIPT ERROR 就地中断，
 	# `fails` 一个都不涨 —— 汇总会**假绿**成 "ALL PASS"。有了这几条，"功能没写"才是红的。
 	_test_iface(g)
+	_test_kind_and_dist(g)
 	_test_candidates(g)
 	_test_enter_exit(g)
 	_test_spectator(g)
@@ -1104,3 +1105,73 @@ func _test_deck_order(g) -> void:
 	var i_deck := _log_at(g, "塞到了最底下", log0)
 	_check(i_move >= 0, "（前提）move_steps 那条确实提前 return 了")
 	_check(i_deck >= 0 and i_deck < i_move, "战报次序：情报类在 move_steps 之前（%d < %d）" % [i_deck, i_move])
+
+# ================= 卡型配色 + 三类卡分布（Task 14，批 2 收尾） =================
+#
+# 卡型（`GameData.card_kind`）决定**卡面配色**：抽卡演出（`s_card.rpc(..., kind, ...)`）与
+# 图鉴页读的是同一份，所以这里是「15 个新字段都认得」的钉子 —— 漏认的字段会掉进兜底的 info，
+# 卡面配色当场错（口径见 机会卡.md §三）。
+#
+# 分布这块是本批补上的：批 1 立三类抽卡时，85/10/5 一直**没有测试钉住**（批 1 审查时明确
+# 记了「接受欠到批 2」）。概率是写死的常量（`GameData.CHANCE_P` 等），大样本 + ±3% 足够。
+
+## 只摆一个字段的卡，取它的卡型 —— 省得 15 份字典字面量抄一遍。
+func _kind_of(field: String, val: Variant) -> String:
+	var card := {}
+	card[field] = val
+	return GameData.card_kind(card)
+
+func _test_kind_and_dist(g) -> void:
+	print("== 卡型配色 + 三类卡分布 ==")
+	var good_f := {"steal_from": 400, "charge_to": 300, "each_from_target": 200,
+		"steal_item_from": true, "seize_tile": "take", "force_buy_tile": 33}
+	for f in good_f:
+		_check(_kind_of(f, good_f[f]) == "good", "%s ⇒ good（目标 / 地皮类：对抽卡者有利）" % f)
+	var move_f := {"swap_pos": true, "pull_target": true, "push_back": 2, "shuffle_pos": true}
+	for f in move_f:
+		_check(_kind_of(f, move_f[f]) == "move", "%s ⇒ move（位移类）" % f)
+	var info_f := {"choices": [{"t": "甲"}], "peek_deck": 2, "shuffle_deck": true, "bury_deck": true}
+	for f in info_f:
+		_check(_kind_of(f, info_f[f]) == "info", "%s ⇒ info（抉择 / 情报类）" % f)
+	_check(_kind_of("jail_to", true) == "jail", "jail_to ⇒ jail（送**别人**去宿委会，单列一色）")
+	# 契约：`jail_to` 的判定**先于** `go_jail`（今天没有同时带两者的卡，但顺序是契约）。
+	# 能钉住的是「jail_to 压过新插进来那一整块」：同带位移字段时仍取 jail。
+	_check(GameData.card_kind({"jail_to": true, "swap_pos": true}) == "jail",
+		"jail_to 先命中：同带位移字段仍是 jail")
+	_check(_kind_of("go_jail", true) == "jail", "go_jail 照旧 ⇒ jail（原有那份判定没被顶掉）")
+	# 新插的整块排在 `move_steps` 之前：好字段压过位移（同带两者时按更重的那类上色）
+	_check(GameData.card_kind({"force_buy_tile": 33, "move_steps": 3}) == "good",
+		"新块先于 move_steps：地皮字段压过位移")
+
+	# ---- 分布 ----
+	# `_settings` 是**静态类型** `GameSettings`，赋字典会当场 SCRIPT ERROR ⇒ 运行期
+	# `load()` 一份真 settings 换进去（别写 `GameSettings.` 那个编译期类名标识符，
+	# 本仓 `--script` 下踩过，见 doc/game-design/设计决策留痕.md §二十三）。
+	var saved = g._settings
+	var st = load("res://scripts/game_settings.gd").new()
+	g._settings = st
+	var n := 20000
+	# 开档（畸变「中」）：85 / 10 / 5
+	st.ab_freq = "中"
+	var cnt := {"card": 0, "item": 0, "aberr": 0}
+	for _i in n:
+		cnt[g._roll_chance_kind()] += 1
+	var pc := float(cnt.card) / float(n)
+	var pi := float(cnt.item) / float(n)
+	var pa := float(cnt.aberr) / float(n)
+	_check(absf(pc - 0.85) < 0.03, "开档：机会卡 ≈85%%（实得 %.3f）" % pc)
+	_check(absf(pi - 0.10) < 0.03, "开档：道具卡 ≈10%%（实得 %.3f）" % pi)
+	_check(absf(pa - 0.05) < 0.03, "开档：畸变卡 ≈5%%（实得 %.3f）" % pa)
+	# 关档（畸变「关」）：那 5% **并入机会卡** ⇒ 90 / 10 / 0（机会卡.md §一 边界规则 1）。
+	# **三条都要钉**：只断言「aberr == 0」钉不住任何东西 —— 把道具卡那 10% 也一并吞掉的写法
+	# （阈值误写成 `CHANCE_P + CHANCE_ITEM_P + CHANCE_AB_P`）同样能让 aberr 归零、照样绿。
+	st.ab_freq = "关"
+	cnt = {"card": 0, "item": 0, "aberr": 0}
+	for _i in n:
+		cnt[g._roll_chance_kind()] += 1
+	pc = float(cnt.card) / float(n)
+	pi = float(cnt.item) / float(n)
+	_check(int(cnt.aberr) == 0, "关档：畸变一次都不出（实得 %d 次）" % int(cnt.aberr))
+	_check(absf(pc - 0.90) < 0.03, "关档：机会卡 ≈90%%——5%% 那档并进来了（实得 %.3f）" % pc)
+	_check(absf(pi - 0.10) < 0.03, "关档：道具卡 ≈10%%——没被那 5%% 顺手吞掉（实得 %.3f）" % pi)
+	g._settings = saved
