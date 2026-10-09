@@ -38,7 +38,34 @@ func _mk_player(peer: int, nm: String) -> Dictionary:
 	return {"peer": peer, "name": nm, "color": peer - 1, "bot": false, "money": 20000,
 		"pos": 0, "alive": true, "skip": 0, "sleep": 0, "stamina": 3, "items": [],
 		"item_used": false, "cheat_roll": -1, "hot_chain": 0,
-		"tech": "", "wuyun_left": 0, "yanguang_left": 0, "kingtu": 0}
+		"techs": [], "wuyun_left": 0, "yanguang_left": 0, "kingtu": 0}
+
+## 科技容器与发放函数（2026-10-10 方案 B）：`p.techs` 是列表、`_grant_tech` 幂等且走 implemented 闸。
+## 「科技可以有多条」从这一天起是**数据形状上的事实** —— 但唯一发放路径仍是发车前那次三选一（恰好 1 条）。
+func _test_grant_tech(g) -> void:
+	print("== _grant_tech：幂等 + implemented 闸 ==")
+	var p := _mk_player(1, "甲")
+	_check((p.techs as Array).is_empty(), "_mk_player 造出来的科技列表是空的")
+	_check(bool(TechData.def("助学金").implemented), "（前置）助学金已实装")
+	_check(g._has_tech(p, "助学金") == false, "（前置）空列表下 _has_tech 为假")
+	p.techs = ["助学金"]
+	_check(g._has_tech(p, "助学金") == true, "_has_tech 认列表里的条目")
+	_check(g._has_tech(p, "天选之人") == false, "_has_tech 对不在列表里的条目为假")
+	# 幂等：重复发放不叠加、不改动列表，且返回 false（`_grant_tech` **不是协程**，直接调、不用 await）
+	p.techs = []
+	_check(g._grant_tech(p, "助学金") == true, "首次发放成功（true）")
+	_check((p.techs as Array) == ["助学金"], "列表里就这一条")
+	_check(g._grant_tech(p, "助学金") == false, "重复发放返回 false（幂等，不做数值补偿）")
+	_check((p.techs as Array).size() == 1, "重复发放不叠加（仍然是 1 条）")
+	# implemented 闸：此刻「眼尖手快」是**唯一**一条未定稿的（T5 会翻成 true）—— 用它当活体样本。
+	# ⚠ T5 落地时这两行**整段删掉**（它一实装这条就红），见 T5 Step 1。
+	_check(g._grant_tech(p, "眼尖手快") == false, "未定稿的科技发不出去（implemented 闸）")
+	_check(g._grant_tech(p, "查无此科技") == false, "表里没有的名字发不出去")
+	_check((p.techs as Array).size() == 1, "被闸门挡下的都没进列表")
+	# 多条共存：结构上成立（本批在对局上仍不可达，唯一路径是发车前那次三选一）
+	g._grant_tech(p, "天选之人")
+	_check((p.techs as Array).size() == 2 and g._has_tech(p, "助学金") and g._has_tech(p, "天选之人"),
+		"两条共存：结构上支持「科技可以有多条」")
 
 func _run() -> void:
 	seed(4321)
@@ -121,8 +148,9 @@ func _run() -> void:
 	g.running = false
 	_check(g._tech_tier in TechData.TIERS,
 		"随机定档：本局档落在三档之内 = %s" % g._tech_tier)
-	_check(String(p1.tech) != "" and String(p1.tech) in TechData.pool(g._tech_tier)
-		and String(p2.tech) in TechData.pool(g._tech_tier), "全员都拿到了本档科技")
+	_check((p1.techs as Array).size() == 1 and String(p1.techs[0]) in TechData.pool(g._tech_tier)
+		and (p2.techs as Array).size() == 1 and String(p2.techs[0]) in TechData.pool(g._tech_tier),
+		"全员都拿到了本档科技（各 1 条）")
 	_check(not bool(g._tech_open), "科技阶段结束：三选一阶段收口（tech_open=false）")
 	g._settings.tech_on = false
 
@@ -137,7 +165,8 @@ func _run() -> void:
 	await g._tech_phase()
 	g.running = false
 	_check(g._tech_tier == "钻石", "指定「钻石」→ 不随机，本局档 = 钻石（实得 %s）" % g._tech_tier)
-	_check(String(g.hp[0].tech) in TechData.pool("钻石"), "指定档抽卡来自钻石池")
+	_check((g.hp[0].techs as Array).size() == 1 and String(g.hp[0].techs[0]) in TechData.pool("钻石"),
+		"指定档抽卡来自钻石池（各 1 条）")
 	g._settings.tech_tier = GameSettings.TECH_TIER_RANDOM
 	g._settings.tech_on = false
 
@@ -173,10 +202,13 @@ func _run() -> void:
 		await create_timer(0.1).timeout
 		w += 0.1
 	_check(not bool(g._tech_open), "两份都答完 → 阶段收口")
-	_check(String(h1.tech) != "" and String(h2.tech) != "", "两个真人都拿到科技")
+	_check((h1.techs as Array).size() == 1 and (h2.techs as Array).size() == 1, "两个真人都拿到科技")
 	g._settings.tech_tier = GameSettings.TECH_TIER_RANDOM
 	g._settings.tech_on = false
 	g.running = false
+
+	# ---------- 科技容器与发放函数（方案 B） ----------
+	_test_grant_tech(g)
 
 	# ---------- 即时型效果 ----------
 	print("== 即时型效果 ==")
@@ -227,7 +259,7 @@ func _run() -> void:
 	print("== 精力充沛 ==")
 	var pc := _mk_player(3, "丙")
 	_check(g._stamina_cap(pc) == 5, "无科技：体力上限 5")
-	pc.tech = "精力充沛"
+	pc.techs = ["精力充沛"]
 	_check(g._stamina_cap(pc) == 6, "精力充沛：体力上限 6")
 	pc.items.append({"id": "充电宝", "cd": 0})
 	_check(g._stamina_cap(pc) == 7, "精力充沛 + 充电宝：叠加到 7")
@@ -235,35 +267,35 @@ func _run() -> void:
 	# ---------- 回合开始型 ----------
 	print("== 回合开始型 ==")
 	var pt := _mk_player(1, "丁")
-	pt.tech = "零花钱规划"
+	pt.techs = ["零花钱规划"]
 	g._item_turn_start(pt)
 	_check(int(pt.money) == 20000 + 100, "零花钱规划：回合开始 +100")
-	pt.tech = "天选之人"
+	pt.techs = ["天选之人"]
 	pt.money = 20000
 	pt.stamina = 3
 	g._item_turn_start(pt)
 	_check(int(pt.money) == 20500, "天选之人：回合开始 +500")
-	pt.tech = "风险投资"
+	pt.techs = ["风险投资"]
 	pt.money = 20000
 	g._item_turn_start(pt)
 	_check(int(pt.money) == 20500, "风险投资：回合开始 +500（2026-10-07 定稿降档）")
-	pt.tech = "反思津贴"
+	pt.techs = ["反思津贴"]
 	pt.money = 20000
 	pt.skip = 1
 	g._item_turn_start(pt)
 	_check(int(pt.money) == 20500, "反思津贴：反省回合 +500")
 	pt.skip = 0
-	pt.tech = "助困金"
+	pt.techs = ["助困金"]
 	pt.money = 800
 	g._item_turn_start(pt)
 	_check(int(pt.money) == 1300, "助困金：贫困线（<1000）回合开始 +500")
-	pt.tech = "卷王"
+	pt.techs = ["卷王"]
 	pt.money = 20000
 	pt.stamina = 3
 	g._item_turn_start(pt)
 	_check(int(pt.stamina) == 5, "卷王：回合开始体力 +1+1（上限内）")
 	pt.stamina = 6   # 上限 5（无上限类科技）
-	pt.tech = ""
+	pt.techs = []
 	g._item_turn_start(pt)
 	_check(int(pt.stamina) == 6, "满体力不再 +1（对照）")
 
@@ -279,7 +311,7 @@ func _run() -> void:
 			elif prop_b < 0:
 				prop_b = i
 	var pp := _mk_player(2, "戊")
-	pp.tech = "兼职达人"
+	pp.techs = ["兼职达人"]
 	var m0 := int(pp.money)
 	g._tech_pass_gain(pp, 0)
 	_check(int(pp.money) == m0, "兼职达人：起点格不触发")
@@ -291,7 +323,7 @@ func _run() -> void:
 	g.htiles[prop_b] = {"owner": 2, "level": 0, "soil": true}
 	g._tech_pass_gain(pp, prop_b)
 	_check(int(pp.money) == m0 + 300, "兼职达人：焦土期间不触发")
-	pp.tech = ""
+	pp.techs = []
 	g._tech_pass_gain(pp, prop_a)
 	_check(int(pp.money) == m0 + 300, "兼职达人：无科技不触发")
 
@@ -299,7 +331,7 @@ func _run() -> void:
 	print("== 学生折扣 ==")
 	var ps := _mk_player(1, "己")
 	ps.money = 2000
-	ps.tech = "学生折扣"
+	ps.techs = ["学生折扣"]
 	g.hp = [ps, pp]
 	g.shops = {prop_a: {"slots": ["饭卡", "", ""]}}
 	g._shop_peer = 1   # _shop_buy 要求商店处于打开态
@@ -315,7 +347,7 @@ func _run() -> void:
 	var pb := _mk_player(2, "庚")
 	pb.bot = true
 	pb.money = 50000
-	pb.tech = "地产眼光"
+	pb.techs = ["地产眼光"]
 	g._tech_apply_instant(pb, "地产眼光")
 	g.hp = [pb]
 	g.htiles = _fresh_tiles()
@@ -330,7 +362,7 @@ func _run() -> void:
 	# ---------- 开疆拓土 ----------
 	print("== 开疆拓土 ==")
 	var pk := _mk_player(1, "辛")
-	pk.tech = "开疆拓土"
+	pk.techs = ["开疆拓土"]
 	pk.money = 20000
 	for i in range(5):
 		g.htiles = g.htiles   # 保持引用
@@ -355,27 +387,27 @@ func _run() -> void:
 	var pe := _mk_player(1, "壬")
 	pe.money = 5000
 	pe.wuyun_left = 4
-	pe.tech = "厄运保单"
+	pe.techs = ["厄运保单"]
 	g.hp = [pe, pb]   # 两名存活玩家，避免 _apply_card 末尾 _check_end 误判终局
 	await g._apply_card(pe, {"money": -800})
 	_check(int(pe.money) == 5000 and int(pe.wuyun_left) == 3, "厄运保单：抵消一次扣款（剩 3）")
-	pe.tech = ""
+	pe.techs = []
 	await g._apply_card(pe, {"money": -800})
 	_check(int(pe.money) == 4200, "无保单：正常扣款")
-	pe.tech = "喜报频传"
+	pe.techs = ["喜报频传"]
 	await g._apply_card(pe, {"money": 500})
 	_check(int(pe.money) == 4900, "喜报频传：事件进账 +200")
 
 	# ---------- 心理素质 / 旧物回收 / 装修返现 ----------
 	print("== 其余钩子 ==")
 	var pm := _mk_player(1, "癸")
-	pm.tech = "心理素质"
+	pm.techs = ["心理素质"]
 	_check(not g._note_roll_hot(pm, 10) and not g._note_roll_hot(pm, 12) and not g._note_roll_hot(pm, 11),
 		"心理素质：连续三次 10+ 不查寝")
 	_check(int(pm.get("hot_chain", 0)) == 0, "心理素质：触发后链路清零")
 	var pd := _mk_player(1, "甲二")
 	pd.money = 1000
-	pd.tech = "旧物回收"
+	pd.techs = ["旧物回收"]
 	pd.items.append({"id": "饭卡", "cd": 0})
 	var pv := _mk_player(2, "乙二")
 	pv.bot = true
@@ -383,7 +415,7 @@ func _run() -> void:
 	g._discard_item(1, 0)
 	_check(pd.items.size() == 0 and int(pd.money) == 1150, "旧物回收：丢弃回收 ¥150")
 	pv.money = 50000
-	pv.tech = "装修返现"
+	pv.techs = ["装修返现"]
 	g.htiles = _fresh_tiles()
 	g.htiles[prop_a] = {"owner": 2, "level": 0}
 	var lv_cost: int = GameData.upgrade_cost(prop_a)
@@ -395,11 +427,11 @@ func _run() -> void:
 	print("== 工资三件（工资上调 / 金饭碗 / 预支未来） ==")
 	var pw := _mk_player(1, "工资员")
 	_check(g._salary_amount(pw) == 4500, "无科技：工资 4500")
-	pw.tech = "工资上调"
+	pw.techs = ["工资上调"]
 	_check(g._salary_amount(pw) == 6000, "工资上调：每次经过起点 4500 → 6000")
-	pw.tech = "金饭碗"
+	pw.techs = ["金饭碗"]
 	_check(g._salary_amount(pw) == 8500, "金饭碗：4500 → 8500")
-	pw.tech = "预支未来"
+	pw.techs = ["预支未来"]
 	_check(g._salary_amount(pw) == 0, "预支未来：本局工资归零")
 	pw.money = 20000
 	await g._pass_start(pw, "顺路踏上起点")
@@ -410,7 +442,7 @@ func _run() -> void:
 	var pz := _mk_player(2, "装修师")
 	pz.bot = true
 	pz.money = 50000
-	pz.tech = "装修师傅"
+	pz.techs = ["装修师傅"]
 	g.hp = [pz, _mk_player(1, "旁人甲")]
 	g.htiles = _fresh_tiles()
 	g.htiles[prop_a] = {"owner": 2, "level": 0}
@@ -421,7 +453,7 @@ func _run() -> void:
 	var py := _mk_player(2, "置业商")
 	py.bot = true
 	py.money = 50000
-	py.tech = "置业补贴"
+	py.techs = ["置业补贴"]
 	g.hp = [py, _mk_player(1, "旁人乙")]
 	g.htiles = _fresh_tiles()
 	await g._resolve_buy(py, prop_a)
@@ -430,7 +462,7 @@ func _run() -> void:
 	var ppf := _mk_player(2, "批发商")
 	ppf.bot = true
 	ppf.money = 50000
-	ppf.tech = "批发拿地"
+	ppf.techs = ["批发拿地"]
 	g.hp = [ppf, _mk_player(1, "旁人丙")]
 	g.htiles = _fresh_tiles()
 	await g._resolve_buy(ppf, prop_a)
@@ -440,14 +472,14 @@ func _run() -> void:
 
 	print("== 定期存款 / 复利 / 大器晚成 ==")
 	var pi := _mk_player(1, "储户")
-	pi.tech = "定期存款"
+	pi.techs = ["定期存款"]
 	pi.money = 1000
 	g._item_turn_start(pi)
 	_check(int(pi.money) == 1020, "定期存款：现金 ×2%（¥1000 → +20）")
 	pi.money = 200000
 	g._item_turn_start(pi)
 	_check(int(pi.money) == 200600, "定期存款：单次上限 ¥600")
-	pi.tech = "复利"
+	pi.techs = ["复利"]
 	pi.money = 1000
 	g._item_turn_start(pi)
 	_check(int(pi.money) == 1025, "复利：现金 ×2.5%（¥1000 → +25）")
@@ -455,7 +487,7 @@ func _run() -> void:
 	g._item_turn_start(pi)
 	_check(int(pi.money) == 201000, "复利：单次上限 ¥1000")
 	var pdw := _mk_player(1, "晚成")
-	pdw.tech = "大器晚成"
+	pdw.techs = ["大器晚成"]
 	pdw.money = 20000
 	g.round_no = 14
 	g._item_turn_start(pdw)
@@ -467,7 +499,7 @@ func _run() -> void:
 
 	print("== 活力全开 ==")
 	var pv2 := _mk_player(3, "活力")
-	pv2.tech = "活力全开"
+	pv2.techs = ["活力全开"]
 	_check(g._stamina_cap(pv2) == 7, "活力全开：体力上限 5 → 7")
 	pv2.items.append({"id": "充电宝", "cd": 0})
 	_check(g._stamina_cap(pv2) == 8, "活力全开 + 充电宝：叠加到 8（科技与道具上限可叠）")
@@ -476,7 +508,7 @@ func _run() -> void:
 	print("== 会员卡 / 小金库 ==")
 	var pvip := _mk_player(1, "会员")
 	pvip.money = 2000
-	pvip.tech = "会员卡"
+	pvip.techs = ["会员卡"]
 	g.hp = [pvip, pp]
 	g.shops = {prop_a: {"slots": ["饭卡", "", ""]}}
 	g._shop_peer = 1
@@ -487,7 +519,7 @@ func _run() -> void:
 	_check(int(pvip.money) == 2000 - 480 and pvip.items.size() == 1,
 		"会员卡：饭卡 600 → 480（8 折）")
 	var px := _mk_player(1, "金库")
-	px.tech = "小金库"
+	px.techs = ["小金库"]
 	px.money = 29999
 	g._check_xiaojinku(px)
 	_check(int(px.money) == 29999, "小金库：未达 30000 不发")
@@ -501,7 +533,7 @@ func _run() -> void:
 	var pduo := _mk_player(1, "双开侠")
 	pduo.money = 0
 	pduo.stamina = 5
-	pduo.tech = "双开"
+	pduo.techs = ["双开"]
 	pduo.items = [{"id": "兼职中介", "cd": 0}]
 	var foe := _mk_player(2, "陪练")
 	g.hp = [pduo, foe]
@@ -516,7 +548,7 @@ func _run() -> void:
 	var pcd := _mk_player(1, "手速")
 	pcd.stamina = 5
 	pcd.money = 0
-	pcd.tech = "手速惊人"
+	pcd.techs = ["手速惊人"]
 	pcd.items = [{"id": "兼职中介", "cd": 0}]
 	g.hp = [pcd, foe]
 	g._awaiting_item = 1
@@ -525,7 +557,7 @@ func _run() -> void:
 	var pshu := _mk_player(1, "熟练")
 	pshu.stamina = 5
 	pshu.money = 0
-	pshu.tech = "熟能生巧"
+	pshu.techs = ["熟能生巧"]
 	pshu.items = [{"id": "兼职中介", "cd": 0}]
 	g.hp = [pshu, foe]
 	g._awaiting_item = 1
@@ -536,7 +568,7 @@ func _run() -> void:
 		var pr := _mk_player(1, "回收%d" % i)
 		pr.stamina = 5
 		pr.money = 0
-		pr.tech = "能量回收"
+		pr.techs = ["能量回收"]
 		pr.items = [{"id": "兼职中介", "cd": 0}]
 		g.hp = [pr, foe]
 		g._awaiting_item = 1
@@ -547,13 +579,13 @@ func _run() -> void:
 
 	print("== 谈判专家 / 金字招牌 ==")
 	var ptn := _mk_player(1, "谈判")
-	ptn.tech = "谈判专家"
+	ptn.techs = ["谈判专家"]
 	_check(g._rent_pay(ptn, 1000) == 600, "谈判专家：付租 −40%")
-	ptn.tech = "宿舍威望"
+	ptn.techs = ["宿舍威望"]
 	_check(g._rent_pay(ptn, 1000) == 700, "宿舍威望：付租 −30%（对照）")
 	var pjz := _mk_player(1, "招牌")
 	pjz.money = 10000
-	pjz.tech = "金字招牌"
+	pjz.techs = ["金字招牌"]
 	g.htiles = _fresh_tiles()
 	g.htiles[prop_a] = {"owner": 1, "level": 2}
 	var plain: int = g._net_worth(pjz)
@@ -564,7 +596,7 @@ func _run() -> void:
 
 	print("== 广置家业 ==")
 	var pgz := _mk_player(1, "广置")
-	pgz.tech = "广置家业"
+	pgz.techs = ["广置家业"]
 	pgz.money = 20000
 	g.htiles = _fresh_tiles()
 	for i in range(2):
@@ -588,7 +620,7 @@ func _run() -> void:
 	g._settings.liq_on = false
 	var pds := _mk_player(1, "东山")
 	pds.money = 100
-	pds.tech = "东山再起"
+	pds.techs = ["东山再起"]
 	var foe2 := _mk_player(2, "对手乙")
 	g.hp = [pds, foe2]
 	g.htiles = _fresh_tiles()
@@ -602,7 +634,7 @@ func _run() -> void:
 	var taker := _mk_player(2, "接收者")
 	taker.bot = true
 	taker.money = 50000
-	taker.tech = "接收大员"
+	taker.techs = ["接收大员"]
 	g.hp = [bust, taker]
 	g.htiles = _fresh_tiles()
 	g.htiles[prop_a] = {"owner": 1, "level": 2}
@@ -623,7 +655,7 @@ func _run() -> void:
 
 	# ---------- 快照 ----------
 	print("== 快照字段 ==")
-	g.hp[1].tech = "助学金"   # 当前 hp[1] = 接收者（前面用例换过 hp，不再用旧的 pv）
+	g.hp[1].techs = ["助学金"]   # 当前 hp[1] = 接收者（前面用例换过 hp，不再用旧的 pv）
 	g._tech_tier = "白银"
 	g._broadcast_state()
 	await process_frame

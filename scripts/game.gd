@@ -563,8 +563,10 @@ func _build_hp() -> Array:
 			"bonus_used": 0,
 			"roll_bonus": 0, "reroll_next": false, "silence": 0, "silence2": 0, "shield": 0,
 			"charm_used": false, "emg_used": false, "loan_left": 0, "rework": 3,
-			# 科技新增字段（tech = 所选科技名；wuyun/yanguang/kingtu = 对应科技的计数）
-			"tech": "", "wuyun_left": 0, "yanguang_left": 0, "kingtu": 0,
+			# 科技（2026-10-10 方案 B）：**列表**，允许同时持有多条（当前唯一发放路径 = 发车前那次三选一，
+			# 恰好 1 条；中局科技卡留给将来，见 doc/game-design/科技.md）。
+			# wuyun/yanguang/kingtu = 对应科技的计数
+			"techs": [], "wuyun_left": 0, "yanguang_left": 0, "kingtu": 0,
 			# 2026-10-07 批次：悔棋/天命在握/任意门（次数）、东山再起/接收大员（一次性）、
 			# 广置家业（档位）、小金库（一次性）；tianming_roll = 天命在握指定的本盘点数
 			"meiqi_left": 0, "tianming_left": 0, "tianming_roll": -1, "renmen_left": 0,
@@ -660,7 +662,8 @@ func _tech_phase() -> void:
 			break
 		await _wait(_WINDOW_TICK)
 	_tech_open = false
-	# 落地：未答的按超时随机兜底
+	# 落地：未答的按超时随机兜底。**发放走 `_grant_tech`**（幂等 + implemented 闸 + 战报 + 广播），
+	# 它顺带把那句「获得」战报带出来，所以这里不再单独 `_log` 选卡结果。
 	for p in hp:
 		var picked := String(_tech_picks.get(int(p.peer), ""))
 		if picked == "":
@@ -669,9 +672,8 @@ func _tech_phase() -> void:
 				continue
 			picked = String(names[randi_range(0, names.size() - 1)])
 			_log("%s 选科技超时，随机拍了一张" % p.name, "#8a90a5")
-		p.tech = picked
-		_log("【科技】%s 选了「%s」：%s" % [p.name, picked, String(TechData.def(picked).get("desc", ""))], "#74d188")
 		_tech_apply_instant(p, picked)
+		_grant_tech(p, picked)
 	_broadcast_state()
 	_log("【科技】全员选定，发车！", "#f0c064")
 
@@ -776,8 +778,35 @@ func _tech_apply_instant(p: Dictionary, picked: String) -> void:
 		_:
 			pass
 
+## 发放一条科技（房主侧）：**幂等**，重复获得直接返回 false、不做任何数值补偿。
+##
+## ① 走 `implemented` 闸 —— `TechData.pool()` 的那道闸只在**按档抽卡**时生效，
+##    按名发放会绕过它（本函数按名发放，所以闸要写在这里）；
+## ② 幂等是唯一**不需要逐条拍板**的规则：科技里有一批计数器型（厄运保单 4 次 / 天命在握 4 次 /
+##    任意门 2 次 / 悔棋 1 次 / 东山再起 1 次 / 接收大员 1 次），允许叠加就得逐条定义「可不可叠」——
+##    在没有科技卡的今天那是凭空发明规则（见 doc/game-design/科技.md）。
+## ③ 本批唯一的调用者是 `_tech_phase()`；将来的中局科技卡也走这里。
+##
+## 战报与广播都在这儿做 ⇒ 调用方只负责「决定发哪条」。
+func _grant_tech(p: Dictionary, name: String) -> bool:
+	var d := TechData.def(name)
+	if d.is_empty() or not bool(d.get("implemented", false)):
+		_log("%s 的科技【%s】未定稿，发不了" % [p.name, name], "#8a90a5")
+		return false
+	var arr: Array = p.get("techs", [])
+	if arr.has(name):
+		_log("%s 已持有科技【%s】，不再重复发放" % [p.name, name], "#8a90a5")
+		return false
+	arr.append(name)
+	p.techs = arr
+	_log("【科技】%s 获得「%s」：%s" % [p.name, name, String(d.get("desc", ""))], "#74d188")
+	_broadcast_state()
+	return true
+
+## 是否持有某条科技。2026-10-10 方案 B：`p.tech`（单字符串）→ `p.techs`（列表）——
+## **只有实现这一行变了，签名与语义不变**，所以全仓 54 处调用点一行都不用改。
 func _has_tech(p: Dictionary, name: String) -> bool:
-	return String(p.get("tech", "")) == name
+	return name in p.get("techs", [])
 
 @rpc("authority", "call_local", "reliable")
 func s_tech_offer(token: int, tier: String, names: Array) -> void:
