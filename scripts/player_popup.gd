@@ -60,7 +60,9 @@ func _init() -> void:
 	visible = false
 
 ## 打开某玩家的弹窗。`data` 形如：
-## {name, worth, money, stamina, cap, bag_cap, alive, color_idx, items: [{id, cd, charges}]}
+## {name, worth, money, stamina, cap, bag_cap, alive, color_idx, rank, props, items: [{id, cd, charges}]}
+## **`props` = 名下地皮数**（读已同步的 `st.tiles`，见 `game._state_props`）—— 原先只在仪表盘的
+## 「玩家纵览」里报，玩家纵览删除后收进这里（用户 2026-10-09）。
 ## **`cap` 与 `bag_cap` 是两件事、别互相顶替**：前者是**体力上限**（画「能量」那排小格），
 ## 后者是**背包上限**（决定画几个槽位）。两者会分叉（「充电宝」只抬体力、「置物架」只抬背包），
 ## 所以各占一个键；混用会让"还能装几张"读错 —— 批次 13 ⑤ 修过一次，见 `_fill` 里那两段注释。
@@ -168,7 +170,10 @@ func _fill(data: Dictionary) -> void:
 	_body.add_child(UIKit.label("已出局" if not alive else GameData.fmt_money(int(data.get("worth", 0))),
 		26, UIKit.ACCENT if alive else UIKit.TEXT_DIM))
 	if alive:
-		_body.add_child(UIKit.label("现金 %s" % GameData.fmt_money(int(data.get("money", 0))),
+		# 现金 + **地皮数**（名下地皮块数）一行 —— 地皮数原先在仪表盘的「玩家纵览」里，
+		# 玩家纵览删除后收进这里（用户 2026-10-09）。
+		_body.add_child(UIKit.label("现金 %s · 地皮 %d 块" % [
+			GameData.fmt_money(int(data.get("money", 0))), int(data.get("props", 0))],
 			14, UIKit.TEXT_DIM))
 	# 能量（体力）：读数 + 一排点亮/熄灭的小格。
 	# 两个色值取自**已随批次 7 退场的桌上体力件**（亮金 / 熄灭），不引用 `TableProps.PIP_*`

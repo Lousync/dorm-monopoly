@@ -27,6 +27,33 @@ var room_name := "宿舍房间"
 var host_port := 0             # 房主实际使用的端口
 var last_error := ""           # 返回主菜单时展示给玩家看
 
+# ---------------- 直连探测与超时（fix/0.14.1） ----------------
+## 连 ENet 的同时并行向目标发发现协议探针（UDP DISCO_REQ）：有合法回复 = 对方在线，
+## 局域网 / 公网都能秒判；迟迟无响应就自动断开，不再让玩家对着「正在连接…」无限转圈。
+var _probe_socket: PacketPeerUDP
+var _probe_host := ""
+var _probe_enabled := false    # 探针 socket 是否建起（建失败则只靠硬超时兜底）
+var _probe_seen := false       # 收到过合法 INFO 回复
+var _connecting := false       # 正在尝试加入（join_game → 进大厅 / 失败）
+var _net_connected := false    # ENet 握手已成功（connected_to_server 置位）
+var _probe_last := 0           # 上次发探针的 tick（毫秒）
+var _connect_start := 0        # 本次 join 开始的 tick（毫秒）
+
+const PROBE_INTERVAL_MS := 400     # 探针发送间隔
+const PROBE_TIMEOUT_MS := 3000     # 无任何回复 → 判定地址不可达
+const CONNECT_TIMEOUT_MS := 12000  # 整体硬超时（连上了但大厅不来也走这条）
+
+# ---------------- 延迟 / 信号质量（fix/0.14.1） ----------------
+## 非房主每 1s `c_ping` 一发，房主 `s_pong` 原样回；客户端用**同一时钟**算 RTT。
+## `latency_ms = -1` 表示未知 / 超时未更新（UI 显示「延迟 --」）。
+signal latency_changed(ms: int)
+var latency_ms := -1
+var _ping_timer := 0.0
+var _ping_last_ms := 0
+
+const PING_INTERVAL := 1.0
+const PING_STALE_MS := 3000        # 这么久没更新过 pong → 视为未知
+
 # ---------------- 掉线重连（协议 §六） ----------------
 ## 重连凭证：开局时房主私发（s_assign_token）；掉线后随 c_hello 带回认领座位。
 ## 整局有效、可重复使用；认领成功 token 不变、座位表换绑新 peer。
@@ -90,6 +117,8 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_poll_disco(delta)
+	_poll_probe()
+	_poll_ping(delta)
 
 # ---------------- 创建 / 加入 / 离开 ----------------
 
@@ -134,7 +163,14 @@ func join_game(address: String, port: int) -> Error:
 		return err
 	multiplayer.multiplayer_peer = peer
 	is_host = false
+	_start_probe(address)
 	return OK
+
+## 用户主动取消「正在连接」：立刻断开并回到可操作状态（fix/0.14.1）。
+func cancel_join() -> void:
+	if not _connecting:
+		return
+	_fail_join("已取消连接")
 
 func leave(keep_seat := false) -> void:
 	_reset_peer()
@@ -147,6 +183,10 @@ func leave(keep_seat := false) -> void:
 	_persist_rejoin()
 
 func _reset_peer() -> void:
+	_connecting = false
+	_net_connected = false
+	_stop_probe()
+	latency_ms = -1
 	stop_disco()
 	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		multiplayer.multiplayer_peer.close()
@@ -240,6 +280,9 @@ func broadcast_lobby() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func s_lobby(rname: String, plist: Array) -> void:
+	_connecting = false
+	_net_connected = false
+	_stop_probe()
 	room_name = rname
 	var had := players.size() > 0
 	players = plist
@@ -271,6 +314,9 @@ func s_assign_token(token: int) -> void:
 @rpc("authority", "call_remote", "reliable")
 func s_reclaim() -> void:
 	rejoined = true
+	_connecting = false
+	_net_connected = false
+	_stop_probe()
 	print("AUTOTEST RECLAIM client ok")
 	Fx.go_to("res://scenes/game.tscn")
 
@@ -365,6 +411,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	print("NET: connected_to_server, sending hello")
+	_net_connected = true
 	_hello_retry()
 
 ## 进房握手重试：ENet 连接建立瞬间高层握手可能未完成，
@@ -381,8 +428,7 @@ func _hello_retry() -> void:
 		if not players.is_empty() or rejoined:
 			return
 	if multiplayer.multiplayer_peer is ENetMultiplayerPeer:
-		_reset_peer()
-		join_failed.emit("已连上房间但始终无响应，请让房主重新创建房间")
+		_fail_join("已连上房间但始终无响应，请让房主重新创建房间")
 
 ## 昵称清洗：剔除 `|`（会破坏发现报文的字段分隔、让整个房间搜不到）、
 ## 换行/制表等控制字符（会伪造聊天与战报行），限长 12，空则回落「玩家」。
@@ -455,8 +501,7 @@ func _token_seat(token: int) -> int:
 
 func _on_connection_failed() -> void:
 	print("NET: connection_failed")
-	_reset_peer()
-	join_failed.emit("连接失败：请检查地址、端口和防火墙设置")
+	_fail_join("连接失败：请检查地址、端口和防火墙设置")
 
 func _on_server_disconnected() -> void:
 	print("NET: server_disconnected")
@@ -570,6 +615,100 @@ func _poll_disco(delta: float) -> void:
 		for ip3 in found_rooms.keys():
 			if now - int(found_rooms[ip3].time) > 6000:
 				found_rooms.erase(ip3)
+
+# ---------------- 直连探测 / 超时（fix/0.14.1） ----------------
+
+## 开始一次加入：建探针 socket 并起计时。地址为空（回退）时也能工作。
+func _start_probe(host: String) -> void:
+	_stop_probe()
+	_probe_host = host
+	_probe_enabled = false
+	_probe_seen = false
+	_probe_last = 0
+	_connect_start = Time.get_ticks_msec()
+	_connecting = true
+	_net_connected = false
+	_probe_socket = PacketPeerUDP.new()
+	if _probe_socket.bind(0) == OK:
+		_probe_enabled = true
+	else:
+		_probe_socket = null
+
+func _stop_probe() -> void:
+	if _probe_socket != null:
+		_probe_socket.close()
+	_probe_socket = null
+
+## 每帧驱动探针：发 DISCO_REQ、收 INFO；超时/无响应就自动断开。
+## **用真实墙钟**（Time.get_ticks_msec）而非 delta 累加 —— 自动化 3 倍速 / 卡帧都不影响判定。
+func _poll_probe() -> void:
+	if not _connecting:
+		return
+	var now := Time.get_ticks_msec()
+	if _probe_socket != null:
+		while _probe_socket.get_available_packet_count() > 0:
+			var info := NetAddr.parse_room_info(_probe_socket.get_packet().get_string_from_utf8())
+			if not info.is_empty() and String(info.proto) == DISCO_PROTO:
+				_probe_seen = true
+	if _net_connected:
+		_stop_probe()   # 握手成功，探针使命完成；后续交给 hello 重试自身超时
+		if now - _connect_start > CONNECT_TIMEOUT_MS:
+			_fail_join("已连上房间但始终无响应，请让房主重新创建房间")
+		return
+	if _probe_enabled and _probe_socket != null and now - _probe_last >= PROBE_INTERVAL_MS:
+		_probe_last = now
+		_probe_socket.set_dest_address(_probe_host, DISCO_PORT)
+		_probe_socket.put_packet(DISCO_REQ.to_utf8_buffer())
+	if _probe_enabled and not _probe_seen and now - _connect_start > PROBE_TIMEOUT_MS:
+		_fail_join("地址 %s 无响应：房主不在、端口不对，或被防火墙拦截" % _probe_host)
+		return
+	if now - _connect_start > CONNECT_TIMEOUT_MS:
+		_fail_join("连接超时：请检查地址、端口和防火墙设置")
+
+## 统一失败出口：清探针 + 断连 + 通知 UI（幂等，重复调用只生效一次）。
+func _fail_join(reason: String) -> void:
+	if not _connecting:
+		return
+	_connecting = false
+	_net_connected = false
+	_stop_probe()
+	_reset_peer()
+	players = []
+	join_failed.emit(reason)
+
+# ---------------- 延迟 / 信号质量（fix/0.14.1） ----------------
+
+## 非房主：每 PING_INTERVAL 发一枚 `c_ping`（带本机时间戳）；房主回 `s_pong` 原样带回，
+## 客户端用同一时钟算 RTT（无需对时）。pong 超时未更新 → `latency_ms = -1`。
+func _poll_ping(delta: float) -> void:
+	if is_host:
+		return
+	var mp := multiplayer.multiplayer_peer
+	if not (mp is ENetMultiplayerPeer):
+		return
+	if mp.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	_ping_timer -= delta
+	if _ping_timer <= 0.0:
+		_ping_timer = PING_INTERVAL
+		c_ping.rpc_id(1, Time.get_ticks_msec())
+	if latency_ms >= 0 and Time.get_ticks_msec() - _ping_last_ms > PING_STALE_MS:
+		latency_ms = -1
+		latency_changed.emit(latency_ms)
+
+@rpc("any_peer", "call_remote", "unreliable")
+func c_ping(t: int) -> void:
+	if not multiplayer.is_server():
+		return
+	s_pong.rpc_id(multiplayer.get_remote_sender_id(), t)
+
+@rpc("authority", "call_remote", "unreliable")
+func s_pong(t: int) -> void:
+	var rtt := maxi(Time.get_ticks_msec() - int(t), 0)
+	# 轻平滑（0.5 权重），避免单帧抖动让数字乱跳
+	latency_ms = rtt if latency_ms < 0 else int(round(float(latency_ms) * 0.5 + float(rtt) * 0.5))
+	_ping_last_ms = Time.get_ticks_msec()
+	latency_changed.emit(latency_ms)
 
 # ---------------- 地址工具 ----------------
 # 实现在 NetAddr（纯函数、可单测），这里保留同名入口方便旧调用点。

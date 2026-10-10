@@ -14,6 +14,9 @@ var board: BoardView
 var table3d: TableView3D      # 2.5D 桌面容器（scripts/table_3d.gd）
 var log_head: Label
 var opt_btn: Button
+var net_ind: PanelContainer          # 网络质量指示（仅非房主；暂停按钮旁，fix/0.14.1）
+var net_ind_pips: Array = []         # 4 格信号条（ColorRect）
+var net_ind_text: Label
 var menu_layer: Control
 var menu_dim: ColorRect
 var menu_wraps := {}          # 面板名 -> 外层全屏容器（切换时连外层一起切，见 _menu_show）
@@ -252,6 +255,10 @@ var hud_layer: Control
 ## 载体从画布搬到屏幕层的原因与 z 档见那里；内容 / 数据源（`board._peers_info`）与显隐由
 ## `_on_table_hover` / `_set_token_hover` / `_place_token_tip` 负责，`_process` 每帧重摆一次。
 var token_tip: Control
+## 对局仪表盘（顶部指挥带 + 右侧玩家纵览，2026-10-09）：`TableHud.build_play_ui` 建的屏幕层
+## 管理器（`scripts/dashboard.gd`，Node；两块控件挂在 `hud_layer` 上），自行 `_process` 逐帧刷新。
+## 数据全读已同步的 `st` / `_op_*`。
+var dashboard: Dashboard
 var _tip_name: Label                # 条里那行昵称（颜色 = 该玩家的棋子色）
 var _tip_sub: Label                 # 第二行「身家 … · 第 N 名（· 已出局）」
 ## 当前悬停到谁（哨兵是 `GameData.NO_PEER`，**不是 -1** —— 机器人 peer 从 -1 起编号）。
@@ -506,6 +513,8 @@ func _lab_hide_hud() -> void:
 	for c in [opt_btn, log_panel, log_toggle, log_toast]:
 		if c != null and is_instance_valid(c):
 			c.visible = false
+	if dashboard != null and is_instance_valid(dashboard):
+		dashboard.hide_all()
 
 ## 重建一局沙盒（同步版，不跑回合循环）
 func lab_reset() -> void:
@@ -7040,11 +7049,20 @@ func _open_player_popup(peer: int) -> void:
 		"cap": _stamina_cap(p), "bag_cap": _bag_cap(p),
 		"alive": bool(p.get("alive", true)),
 		"color_idx": int(p.get("color", 0)), "rank": _rank_of(peer),
+		"props": _state_props(peer),
 		"items": p.get("items", []),
 		# 已选科技（§六）：**列表**（2026-10-10 方案 B），名字 + 描述由 player_popup 循环显示
 		#（空列表 / 出局者整段不显）
 		"techs": (p.get("techs", []) as Array).duplicate(),
 	})
+
+## 某玩家名下地皮数（读已同步的 `st.tiles`，客户端也准）。喂玩家道具弹窗的「地皮」指标。
+func _state_props(peer: int) -> int:
+	var n := 0
+	for t in st.get("tiles", []):
+		if int((t as Dictionary).get("owner", GameData.NO_OWNER)) == peer:
+			n += 1
+	return n
 
 ## 某玩家的名次（`standing` 里的 rank；查不到给 0 = 不画徽章）。
 ## 批次 12 D1 起读 `_standing_by_peer` **那张表**，不再回头去条里翻：四角条只剩「我」一条之后，
@@ -7720,6 +7738,32 @@ func _process(_delta: float) -> void:
 		_at_target_done = false
 	if dev.enabled:
 		dev.refresh_panel()
+	_refresh_net_indicator()
+
+## 暂停按钮旁的「延迟 / 信号」读数（仅非房主；`net_ind == null` = 房主，直接返回）。
+## 数据源是 `Net.latency_ms`（Net._process 里的 ping/pong 维护），这里只做显示与配色。
+func _refresh_net_indicator() -> void:
+	if net_ind == null or not is_instance_valid(net_ind):
+		return
+	var ms := Net.latency_ms
+	var filled := 0
+	var col := UIKit.TEXT_DIM
+	var label := "延迟 --"
+	if ms >= 0:
+		label = "延迟 %d ms" % ms
+		if ms > 200:
+			filled = 1; col = Color(0.90, 0.42, 0.45); label += " · 信号较差"
+		elif ms > 120:
+			filled = 2; col = Color(0.95, 0.75, 0.35); label += " · 信号一般"
+		elif ms > 60:
+			filled = 3; col = Color(0.42, 0.82, 0.45); label += " · 信号良好"
+		else:
+			filled = 4; col = Color(0.42, 0.82, 0.45); label += " · 信号极佳"
+	var dim := Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.35)
+	for i in net_ind_pips.size():
+		net_ind_pips[i].color = col if i < filled else dim
+	net_ind_text.text = label
+	net_ind_text.modulate = col
 
 ## 操作倒计时（D 方案）：**只挂当前行动者那一块**（留痕 §四 的原设计：嵌在行动者的
 ## 座位卡里 —— 载体换过两次（立牌已于批次 9 退场），这条"只挂行动者"的语义一字未改）。

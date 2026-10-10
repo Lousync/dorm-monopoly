@@ -7,10 +7,30 @@ var _add_bot_btn: Button
 var _remove_bot_btn: Button
 var _start_btn: Button
 var _settings_btn: Button
-var _addr_label: Label
+var _addr_box: VBoxContainer
 var _chat_box: RichTextLabel
 var _chat_edit: LineEdit
 var _room_label: Label
+
+# 网络自检弹窗（fix/0.14.1）：本机地址分类 + 出网连通性探测
+var _net_btn: Button
+var _net_wrap: Control
+var _net_addr_lbl: Label
+var _net_v6_lbl: Label
+var _net_v4_lbl: Label
+# 出网探测目标（公网 DNS 的 53 端口）：aliDNS 有两个任播 v6 地址，
+# `2400:3200::1` 在本网 TCP 不通、`baba::1` 通，故以 baba 优先、::1 兜底。
+const NS_V6 := ["2400:3200:baba::1", "2400:3200::1"]      # 阿里 IPv6 DNS
+const NS_V4 := ["223.5.5.5", "119.29.29.29"]               # 阿里 / 腾讯 IPv4 DNS
+const NS_PORT := 53
+# 用 preload 取类，不依赖全局 class_name 缓存（新脚本的缓存要编辑器重建一次才在）
+const NetProbeScript := preload("res://scripts/net_probe.gd")
+var _ns_v6_probe = null
+var _ns_v6_i := 0
+var _ns_v4_probe = null
+var _ns_v4_i := 0
+var _ns_v6_done := true
+var _ns_v4_done := true
 
 # 房主开局设置弹窗（见 doc/game-design/开局设置.md）
 var _set_wrap: Control
@@ -107,6 +127,11 @@ func _ready() -> void:
 	_settings_btn.tooltip_text = "开局设置（仅房主可改）"
 	_settings_btn.pressed.connect(_on_open_settings)
 	btn_row.add_child(_settings_btn)
+	_net_btn = UIKit.button("网络自检", 15)
+	_net_btn.custom_minimum_size = Vector2(0, 40)
+	_net_btn.tooltip_text = "检查本机 IPv6 地址、出网连通性与直连建议"
+	_net_btn.pressed.connect(_on_open_netself)
+	btn_row.add_child(_net_btn)
 	_start_btn = UIKit.button("开始游戏！", 17, "primary")
 	_start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_start_btn.custom_minimum_size = Vector2(0, 40)
@@ -129,24 +154,12 @@ func _ready() -> void:
 	var av := VBoxContainer.new()
 	av.add_theme_constant_override("separation", 4)
 	am.add_child(av)
-	av.add_child(UIKit.label("把下面的地址发给室友（加入时填入「地址」框）", 14, UIKit.TEXT_DIM))
-	_addr_label = UIKit.label("", 14, UIKit.TEXT)
-	_addr_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	av.add_child(_addr_label)
-	var copy_row := HBoxContainer.new()
-	copy_row.add_theme_constant_override("separation", 6)
-	av.add_child(copy_row)
-	var copy_btn := UIKit.button("复制地址", 13)
-	copy_btn.pressed.connect(func() -> void:
-		DisplayServer.clipboard_set(_addr_label.text)
-		copy_btn.text = "已复制 ✓"
-		Fx.play("pop", -6.0)
-		await get_tree().create_timer(1.2).timeout
-		if is_instance_valid(copy_btn):
-			copy_btn.text = "复制地址"
-	)
-	copy_row.add_child(copy_btn)
-	copy_row.add_child(UIKit.label("点击复制全部地址", 12, UIKit.TEXT_DIM))
+	av.add_child(UIKit.label("点「复制」把地址发给室友（加入时粘进「地址」框）", 14, UIKit.TEXT_DIM))
+	# 逐条地址 + 各自的「复制」（fix/0.14.1）：以前是一个按钮复制**整块带标签的多行文本**，
+	# 室友粘进地址框根本解析不出 host —— 现在每条复制的是**裸地址**（可直接粘）。
+	_addr_box = VBoxContainer.new()
+	_addr_box.add_theme_constant_override("separation", 4)
+	av.add_child(_addr_box)
 
 	var chat_panel := UIKit.panel_container(UIKit.PANEL, 12, _card_border(), 1, 8)
 	chat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -184,6 +197,7 @@ func _ready() -> void:
 	_refresh()
 	_refresh_chat()
 	_build_settings_dialog()
+	_build_net_dialog()
 
 	if _at_mode == "host":
 		_autotest_host()
@@ -250,22 +264,47 @@ func _refresh() -> void:
 	_start_btn.disabled = not (Net.players.size() >= 2 and human_ready)
 	_start_btn.tooltip_text = "" if not _start_btn.disabled else "需要所有真人都点「准备」"
 
+	for c in _addr_box.get_children():
+		c.queue_free()
 	if Net.is_host:
 		var a := Net.split_addresses()
 		var port := Net.host_port if Net.host_port > 0 else Net.PORT
-		var lines: Array[String] = []
 		# IPv6 必须带方括号，否则朋友粘贴后解析不出端口（见 fix/v0.0.2）
+		var entries: Array = []
 		for ip in a.lan4:
-			lines.append("局域网 IPv4：%s" % NetAddr.format_endpoint(ip, port))
+			entries.append(["局域网 IPv4", ip])
 		for ip in a.lan6:
-			lines.append("内网 IPv6：%s" % NetAddr.format_endpoint(ip, port))
+			entries.append(["内网 IPv6", ip])
 		for ip in a.pub6:
-			lines.append("全球 IPv6（跨网直连）：%s" % NetAddr.format_endpoint(ip, port))
+			entries.append(["全球 IPv6（跨网直连）", ip])
 		for ip in a.pub4:
-			lines.append("公网 IPv4：%s" % NetAddr.format_endpoint(ip, port))
-		if lines.is_empty():
-			lines.append("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）")
-		_addr_label.text = "\n".join(lines)
+			entries.append(["公网 IPv4", ip])
+		if entries.is_empty():
+			_addr_box.add_child(UIKit.label("未检测到可用地址，室友可尝试 127.0.0.1（同机测试）", 13, UIKit.TEXT_DIM))
+		for e in entries:
+			_addr_box.add_child(_make_addr_row(String(e[0]), String(e[1]), port))
+
+## 一条直连地址行：标签 + 裸地址 + 复制按钮（复制的是**裸** `[v6]:port`，可直接粘进地址框）。
+func _make_addr_row(tag: String, ip: String, port: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var ep := NetAddr.format_endpoint(ip, port)
+	var lab := UIKit.label("%s　%s" % [tag, ep], 14, UIKit.TEXT)
+	lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lab.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(lab)
+	var cb := UIKit.button("复制", 12)
+	cb.tooltip_text = "复制 %s（直接粘进「地址」框）" % ep
+	cb.pressed.connect(func() -> void:
+		DisplayServer.clipboard_set(ep)
+		cb.text = "已复制 ✓"
+		Fx.play("pop", -6.0)
+		await get_tree().create_timer(1.2).timeout
+		if is_instance_valid(cb):
+			cb.text = "复制"
+	)
+	row.add_child(cb)
+	return row
 
 func _card_border() -> Color:
 	return Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.85)
@@ -441,6 +480,127 @@ func _build_settings_dialog() -> void:
 	ok.pressed.connect(_on_settings_save)
 	row.add_child(ok)
 
+## 「网络自检」弹窗（fix/0.14.1）：本机地址分类 + 出网连通性才算真正「能不能用」。
+## 出网探测走 NetProbe（TCP 连公网 DNS 的 53 端口），在 `_process` 里逐帧轮询。
+func _build_net_dialog() -> void:
+	_net_wrap = Control.new()
+	_net_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_net_wrap.visible = false
+	add_child(_net_wrap)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_net_wrap.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_net_wrap.add_child(center)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 12)
+	panel.custom_minimum_size = Vector2(588, 0)
+	center.add_child(panel)
+	var m := UIKit.margins(18, 18, 14, 12)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	m.add_child(v)
+	v.add_child(UIKit.title_label("网络自检", 20))
+	_net_addr_lbl = UIKit.label("", 13, UIKit.TEXT)
+	_net_addr_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_net_addr_lbl)
+	v.add_child(UIKit.label("── 出网检测（连公网 DNS 的 53 端口）──", 13, UIKit.ACCENT))
+	_net_v6_lbl = UIKit.label("IPv6 出网：未检测", 14, UIKit.TEXT)
+	_net_v6_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_net_v6_lbl)
+	_net_v4_lbl = UIKit.label("IPv4 出网：未检测", 14, UIKit.TEXT)
+	_net_v4_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_net_v4_lbl)
+	var hint := UIKit.label(
+		"· 有「全球 IPv6」且 IPv6 出网 ✓ → 跨网直连可用，把该地址发给室友。\n"
+		+ "· 出网 ✓ ≠ 别人能连进来：入站常被 Windows 防火墙 / 校园网挡 —— 室友连不上先查这个。\n"
+		+ "· 两边都要有 IPv6；室友那边没有 IPv6 就只能走 IPv4。", 12, UIKit.TEXT_DIM)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(hint)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	v.add_child(row)
+	var again := UIKit.button("重新检测", 15)
+	again.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	again.pressed.connect(_start_netself)
+	row.add_child(again)
+	var close := UIKit.button("关闭", 15, "primary")
+	close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	close.pressed.connect(func() -> void: _net_wrap.visible = false)
+	row.add_child(close)
+
+func _on_open_netself() -> void:
+	_net_wrap.visible = true
+	_start_netself()
+
+## 刷新本机地址摘要 + 起一轮出网探测（IPv6 先走阿里、失败再试谷歌）。
+func _start_netself() -> void:
+	var a := NetAddr.split_addresses()
+	_net_addr_lbl.text = "── 本机地址 ──\n" \
+		+ "全球 IPv6：%s\n" % _join_cn(a.pub6) \
+		+ "内网 IPv6：%s\n" % _join_cn(a.lan6) \
+		+ "局域网 IPv4：%s\n" % _join_cn(a.lan4) \
+		+ "公网 IPv4：%s" % _join_cn(a.pub4)
+	_ns_v6_i = 0
+	_ns_v4_i = 0
+	_ns_v6_done = false
+	_ns_v4_done = false
+	_ns_v6_probe = NetProbeScript.new()
+	_ns_v6_probe.start(NS_V6[0], NS_PORT)
+	_ns_v4_probe = NetProbeScript.new()
+	_ns_v4_probe.start(NS_V4[0], NS_PORT)
+	_net_v6_lbl.text = "IPv6 出网：检测中…"
+	_net_v6_lbl.modulate = UIKit.TEXT_DIM
+	_net_v4_lbl.text = "IPv4 出网：检测中…"
+	_net_v4_lbl.modulate = UIKit.TEXT_DIM
+
+## 逗号分隔地址（Array → PackedStringArray，避免 String.join 类型不匹配）
+func _join_cn(arr: Array) -> String:
+	if arr.is_empty():
+		return "未检测到"
+	var ps := PackedStringArray()
+	for x in arr:
+		ps.append(String(x))
+	return "、".join(ps)
+
+func _process(_delta: float) -> void:
+	if _ns_v6_done and _ns_v4_done:
+		return
+	if not _ns_v6_done:
+		var s: int = _ns_v6_probe.poll()
+		if s == NetProbeScript.ST_FAIL and _ns_v6_i + 1 < NS_V6.size():
+			_ns_v6_i += 1
+			_ns_v6_probe = NetProbeScript.new()
+			_ns_v6_probe.start(NS_V6[_ns_v6_i], NS_PORT)
+			s = _ns_v6_probe.state
+		if s != NetProbeScript.ST_CONNECTING:
+			_ns_v6_done = true
+			_net_v6_lbl.text = "IPv6 出网（%s）：%s" % [NS_V6[_ns_v6_i], _ns_v6_probe.status_text()]
+			_net_v6_lbl.modulate = _ns_color(s)
+	if not _ns_v4_done:
+		var s2: int = _ns_v4_probe.poll()
+		if s2 == NetProbeScript.ST_FAIL and _ns_v4_i + 1 < NS_V4.size():
+			_ns_v4_i += 1
+			_ns_v4_probe = NetProbeScript.new()
+			_ns_v4_probe.start(NS_V4[_ns_v4_i], NS_PORT)
+			s2 = _ns_v4_probe.state
+		if s2 != NetProbeScript.ST_CONNECTING:
+			_ns_v4_done = true
+			_net_v4_lbl.text = "IPv4 出网（%s）：%s" % [NS_V4[_ns_v4_i], _ns_v4_probe.status_text()]
+			_net_v4_lbl.modulate = _ns_color(s2)
+
+func _ns_color(s: int) -> Color:
+	if s == NetProbeScript.ST_OK:
+		return Color(0.42, 0.82, 0.45)
+	if s == NetProbeScript.ST_FAIL:
+		return Color(0.90, 0.42, 0.45)
+	return UIKit.TEXT_DIM
+
 ## 把弹窗里全部控件刷成当前 `_set_*` 值。
 ##
 ## 只在**打开弹窗时**调（`_on_open_settings`）—— 原先预设 chip 一键填之后也调一次，
@@ -614,6 +774,8 @@ func _shot() -> void:
 		if _shot_path.contains("settings_end"):
 			await get_tree().create_timer(0.4).timeout
 			_set_scroll.scroll_vertical = 100000
+	elif _shot_path.contains("netself"):
+		_on_open_netself()    # 摆拍：打开「网络自检」弹窗（fix/0.14.1）
 	await get_tree().create_timer(1.2).timeout
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(_shot_path)

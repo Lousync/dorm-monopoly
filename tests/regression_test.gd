@@ -74,6 +74,8 @@ func _run() -> void:
 	_test_lobby_rules(_net)
 	_test_endpoint_format()
 	_test_room_info_port()
+	_test_addr_display()
+	_test_net_probe()
 
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
@@ -128,9 +130,11 @@ func _test_net_reset(net) -> void:
 	# 模拟「玩家曾在房间里」的残留状态
 	net.players = [{"peer": 7, "name": "旧玩家", "color": 0, "bot": false, "ready": true}]
 	net.chat_history = [{"name": "旧玩家", "text": "hi"}]
+	net.latency_ms = 123
 	net._reset_peer()
 	_check(net.players.is_empty(), "重置后 players 清空")
 	_check(net.chat_history.is_empty(), "重置后 chat_history 清空")
+	_check(net.latency_ms == -1, "重置把延迟读数清回未知（fix/0.14.1）")
 
 	# 行为层：重置后再加入新房间，必须触发 lobby_joined（否则主菜单永久卡住）
 	net.is_host = false
@@ -514,6 +518,48 @@ func _test_room_info_port() -> void:
 	_check(String(info.get("count", "")) == "2/4", "解析出人数")
 	_check(int(info.get("port", 0)) == 8123, "解析出房主端口")
 	_check(NetAddr.parse_room_info("bad").is_empty(), "坏报文返回空")
+
+func _test_addr_display() -> void:
+	print("== 直连地址展示：回环必须过滤、同 /64 必须去重（fix/0.14.1） ==")
+	# 实测 Godot/Windows 把回环给成展开式 0:0:0:0:0:0:0:1，只判 == "::1" 会漏
+	var c: Dictionary = NetAddr.classify_addresses([
+		"0:0:0:0:0:0:0:1", "::1", "fe80:0:0:0:915:a333:7df9:ebd9",
+		"127.0.0.1", "169.254.196.125", "0.0.0.0",
+		"2001:da8:a012:389:0:0:0:829", "2001:da8:a012:389:5ad4:323e:fbc7:ec94",
+		"2001:db8:1:2:3:4:5:6", "fd12:3456:789a::1",
+		"10.11.151.104", "8.8.8.8",
+	])
+	_check(c.pub6.size() == 2, "全球 IPv6 同 /64 去重为 2 条（实得 %d：%s）" % [c.pub6.size(), str(c.pub6)])
+	_check(c.lan6.size() == 1, "内网(ULA) IPv6 保留 1 条")
+	_check(c.lan4 == ["10.11.151.104"], "局域网 IPv4")
+	_check(c.pub4 == ["8.8.8.8"], "公网 IPv4")
+	var all: Array = c.lan4 + c.pub4 + c.lan6 + c.pub6
+	_check(not all.has("0:0:0:0:0:0:0:1") and not all.has("::1"), "回环（展开式 + 压缩式）都被过滤")
+	_check(not all.has("fe80:0:0:0:915:a333:7df9:ebd9"), "链路本地 IPv6 被过滤")
+
+func _test_net_probe() -> void:
+	print("== 出网探测：本机 TCP 服务判「通」、死地址判「不通」（fix/0.14.1） ==")
+	var Probe := preload("res://scripts/net_probe.gd")
+	var srv := TCPServer.new()
+	_check(srv.listen(0, "127.0.0.1") == OK, "起一个本机 TCP 服务")
+	var port := srv.get_local_port()
+	var good = Probe.new()
+	good.start("127.0.0.1", port)
+	var bad = Probe.new()
+	bad.timeout_ms = 800
+	bad.start("127.0.0.1", 1)
+	for i in 200:
+		# ⚠ `TCPServer` **没有 `poll()`** —— 那是 Godot 3 的 API，Godot 4 的监听套接字由引擎自己
+		# 泵，握手完成与否看客户端的 `StreamPeerTCP` 状态即可。原写法每次跑都吐一条
+		# `Invalid call. Nonexistent function 'poll' in base 'TCPServer'`（断言仍绿，但污染输出）。
+		good.poll()
+		bad.poll()
+		if good.state != Probe.ST_CONNECTING and bad.state != Probe.ST_CONNECTING:
+			break
+		OS.delay_msec(10)
+	srv.stop()
+	_check(good.state == Probe.ST_OK, "连得上 → OK（实得 %s）" % good.status_text())
+	_check(bad.state == Probe.ST_FAIL, "连不上 → FAIL（实得 %s）" % bad.status_text())
 
 func _test_camera_window_resize(g) -> void:
 	print("== 镜头状态：窗口缩放不重置镜头 ==")
