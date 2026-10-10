@@ -43,8 +43,8 @@ const CHOICE_BTN := Vector2(168.0, 42.0)
 const BURY_BTN := Vector2(140.0, 42.0)
 ## 文字卡卡面那两枚徽章的基准尺寸（**不是**相位常量：改它不影响任何时长，`hud_test` 的
 ## `CARD_TIME` 断言照绿）。`ItemCard` 那两枚是 `size.y * 0.15` = 72px，在 320×480 这档相当抢眼；
-## 文字卡只有一枚文字标题、放两枚 72px 会盖掉版面 ⇒ 取 36（见 doc/development/plans/卡面美化.md
-## §二 A.2）。
+## 文字卡只有一枚文字标题、放两枚 72px 会盖掉版面 ⇒ 取 36（规格见 doc/game-design/道具系统.md
+## §九「抽卡演出里的道具卡面」：左上家族徽章直径 36、右上卡型徽章胶囊高 36）。
 const BADGE_SIZE := 36.0
 ## 卡面那层 `layer` 被 `card` 的 stylebox 内缩掉的**内容边距**（`UIKit.card_stylebox` 走
 ## `_sbt` 的默认值：左右 12 / 上下 8 —— 实测 `layer.position` 就是 `(12, 8)`）。
@@ -138,7 +138,7 @@ func _process(delta: float) -> void:
 func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	_close()
 	var item_face := item_id != ""
-	# ---- 家族键派生（2026-10-10 卡面美化，见 doc/development/plans/卡面美化.md §4.1）----
+	# ---- 家族键派生（2026-10-10 卡面美化，见 doc/game-design/设计决策留痕.md §二十九）----
 	# `deck` 从此**只担"标题 / 演出标题"一个角色**，配色键归 `family`。三档依据（今天完整且无歧义）：
 	#   ① 道具卡面（道具卡 / 失物招领）：一律带 `item_id`；
 	#   ② 畸变公告：`s_card` 那一路 deck = "🌀 畸变 · 名"、kind 恒为 "aberr"；
@@ -152,7 +152,7 @@ func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	# 第四类文字卡冒出来时**在这里当场叫**：否则它静默落进 chance —— 配色错、还不报错。
 	# 口径同步写在 `doc/development/联机协议.md` 的 `s_card` 行（T6）。
 	assert(family != "chance" or deck == "机会",
-		"DeckReveal: 未登记的文字卡标题「%s」—— 家族键派生要补一行（见 卡面美化.md §4.1）" % deck)
+		"DeckReveal: 未登记的文字卡标题「%s」—— 家族键派生要补一行（见 doc/development/联机协议.md 的 `s_card` 行）" % deck)
 	var fam: Dictionary = GameData.CARD_FAMILIES[family]
 	_fam_edge = fam["edge"]
 	var card := Control.new()
@@ -400,11 +400,11 @@ func _ease_out_back(t: float) -> float:
 ## ① 正文锁宽用新的 `CARD_SIZE`（`CARD_SIZE.x - 104`）；② 字号放大（标题 24→30、正文 15→18、
 ##    行距 separation 6→8）。其余（plate 的配色与内缩）一字不改。
 ## **2026-10-10 卡面美化**又动了两处：卡背图案的 modulate / 描边 / 圆角改由**家族表**给
-## （原先那个"是机会就用绿背"的三元判断已拆成家族键，见 §4.1）—— 机会族取到的 tint 与旧值同，
+## （原先那个"是机会就用绿背"的三元判断已拆成家族键，见 doc/game-design/设计决策留痕.md §二十九）—— 机会族取到的 tint 与旧值同，
 ## 畸变族**不同**（旧值走的是"非机会"那一支）；圆角 16 → 18。
 
 ## 牌背图案按**家族键**取（家族表是唯一来源）。2026-10-10 之前这里是拿标题字符串比较当配色键
-##（`deck` 是「机会」就用绿背），与"标题"这个角色撞在一起（见 卡面美化.md §4.1）。
+##（`deck` 是「机会」就用绿背），与"标题"这个角色撞在一起。
 func _deck_back_tex(family: String) -> Texture2D:
 	return UIKit.tex(String(GameData.CARD_FAMILIES[family]["tex"]))
 
@@ -460,7 +460,7 @@ func _card_face_front(family: String, kind: String, deck: String, text: String) 
 	v.add_theme_constant_override("separation", 8)
 	# 2026-10-10：原先「标题 + 分隔线 + 正文**整块纵向居中**」⇒ 标题落点随正文长短浮动。
 	# 实拍里那块文字只占卡面中间约 1/3、上下各空 ~230 / ~290 px（"大卡面、小内容"最扎眼）——
-	# 改成**标题贴顶 + 上留白**是收掉这个观感最便宜的一刀（见 卡面美化.md §1.2(3) / §二 A.3）。
+	# 改成**标题贴顶 + 上留白**是收掉这个观感最便宜的一刀（见 doc/game-design/设计决策留痕.md §二十九「看图之后改过的三处」③）。
 	v.alignment = BoxContainer.ALIGNMENT_BEGIN
 	m.add_child(v)
 	var title := UIKit.bold_label(deck, 30, edge)
@@ -501,7 +501,7 @@ func _card_face_front(family: String, kind: String, deck: String, text: String) 
 
 ## 卡面那两枚**骑在卡边外**的徽章（与 `ItemCard` 同一套语言）。**只给文字卡** ——
 ## 道具卡面不叠：它已经有"品质色外框 + ⚡消耗 / 被动 + 一次性 / ⏳计数"两套，再叠必打架
-##（见 卡面美化.md §3.2；`hud_test` 也钉着"道具卡面前面恰好 1 张 `ItemCard`"）。
+##（见 doc/game-design/道具系统.md §九「抽卡演出里的道具卡面」；`hud_test` 也钉着"道具卡面前面恰好 1 张 `ItemCard`"）。
 ##
 ## ⚠ 只许加在 `layer`（普通 `Control`）上：`card` 是 `PanelContainer`，会把**每一个**直接子节点
 ## 拉满整卡 ⇒ 徽章的 `position` 当场被抹掉（两枚糊在卡正中）。`layer` 排在 `plate` 之后

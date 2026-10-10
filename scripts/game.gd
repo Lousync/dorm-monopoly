@@ -3792,9 +3792,12 @@ func s_move(peer: int, path: Array, step_time: float) -> void:
 
 ## 房主 → 全员：`deck != ""` 时在屏幕正中亮一张大字卡（演机会卡的文字卡 / 道具卡面 / 畸变公告），
 ## 否则只播震屏 / 音效那类强调。
-## `deck` = **卡类名**（机会 / 道具卡 / 畸变卡）—— 2026-10-09 起不再是牌堆名（牌堆已删）；
-## 它同时充当卡面标题与卡背配色键（"机会" 绿背、其余蓝背），所以畸变那一路传的是
-## 演出标题「🌀 畸变 · 名」。
+## `deck` = **卡类名 / 演出标题**（机会 / 道具卡 / 畸变卡）—— 2026-10-09 起不再是牌堆名（牌堆已删），
+## 2026-10-10 卡面美化起**只担"标题 / 演出标题"这一个角色**：卡背 / 外框的**家族键**
+##（chance / item / aberr）由 `DeckReveal.show_card()` 内部**显式派生**，不再拿标题字符串当配色键
+##（所以畸变那一路传的是演出标题「🌀 畸变 · 名」，其家族键靠 `kind == "aberr"` 认出）。
+## ⚠ **将来新增第四类文字卡时，要在那个派生处补一行**，否则它会静默落进 `chance`（配色错、还不报错）；
+## `show_card` 里已放了一条 `assert` 当场叫住这种事（口径同 `doc/development/联机协议.md` 的 `s_card` 行）。
 @rpc("authority", "call_local", "reliable")
 func s_card(text: String, kind: String = "info", deck: String = "", card_item: String = "") -> void:
 	Fx.play("card", -4.0)

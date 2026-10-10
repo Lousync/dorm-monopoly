@@ -274,8 +274,11 @@ static func card_kind(card: Dictionary) -> String:
 
 ## 家族三色（卡背 / 正面外框 / 标题 / 光晕 / 家族徽章）。
 ## 键 = **家族键**，只由 `DeckReveal.show_card()` 显式派生（那是全仓唯一出现"机会"这个值的比较处）——
-## 2026-10-10 之前是拿标题字符串 `deck == "机会"` 当配色键，一个值担两种角色（卡面美化.md §4.1）。
+## 2026-10-10 之前是拿标题字符串 `deck == "机会"` 当配色键，一个值担两种角色（见 doc/game-design/设计决策留痕.md §二十九）。
 ##	bg    卡背底色；edge 描边 + 光晕 + 标题；tex 牌背 SVG；tint 底纹色调；glyph 家族徽章图标
+## ⚠ `item` 族的 `glyph` 是**预留**：今天**没有任何绘制路径会读它** —— 家族徽章只在
+## `DeckReveal._add_card_badges()` 里画，而它只被文字卡的 `_card_face_front()` 调；道具族正面
+## 是共用件 `ItemCard`、家族身份只由卡背承担。保留它是为让三族**表结构同形**（`chance_test` 也钉着"三族字段齐"）。
 const CARD_FAMILIES := {
 	"chance": {
 		"bg": Color(0.075, 0.068, 0.045),
@@ -289,7 +292,7 @@ const CARD_FAMILIES := {
 		"edge": Color(0.42, 0.70, 0.95),
 		"tex": "res://assets/cards/atlas_back_blue_brown.svg",
 		"tint": Color(0.78, 0.72, 1.0, 0.30),
-		"glyph": "📦",
+		"glyph": "📦",   # 预留：无绘制路径读它（道具族不画家族徽章），仅保持三族表结构同形
 	},
 	"aberr": {
 		"bg": Color(0.070, 0.048, 0.105),
@@ -307,7 +310,7 @@ const CARD_FAMILIES := {
 ## 顺带修掉一处已经烂掉的不一致：`info` 原先在旧的按卡型取色的适配函数里**没有自己的键**
 ##（那个函数已随本次审查修复删除）、靠 `_` 兜底撞上 `ACCENT`（是"没写"、不是"写了金"），
 ## 图鉴页那边又是灰蓝 `#9fb3c0`；
-## `jail` 更是"卡面紫、页面琥珀"两个完全不同的颜色（卡面美化.md §4.3 的逐色对照表）。
+## `jail` 更是"卡面紫、页面琥珀"两个完全不同的颜色（逐色对照见 doc/game-design/设计决策留痕.md §二十九）。
 const CARD_KINDS := {
 	"good": {"glyph": "💰", "label": "收益", "color": Color(0.455, 0.812, 0.529)},
 	"bad": {"glyph": "💸", "label": "损失", "color": Color(0.94, 0.45, 0.42)},

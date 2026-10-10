@@ -599,7 +599,7 @@ func take_shot(path: String) -> void:
 		# 一个都不用改。
 		#   `ckind_<kind>`  —— 文字卡 + 指定卡型，用来逐类核对右上卡型徽章（图标 / 中文 / 色）：
 		#                       如 `--shot=shots/kp_ckind_jail_card.png`（kind 五种：good bad move jail info）
-		#   `ckback_<family>` —— 拍**卡背**（只有 `deckout` 那两帧拍得到，见 卡面美化.md §4.5(3)）。
+		#   `ckback_<family>` —— 拍**卡背**（只有 `deckout` 那两帧拍得到，见 doc/game-design/设计决策留痕.md §二十九「看图之后改过的三处」①）。
 		#                       家族键决定卡背配色 ⇒ 按家族选卡源：机会 / 道具 / 畸变三族各一条：
 		#                       如 `--shot=shots/kp_deckout_ckback_item_card.png`
 		var sd := "机会"

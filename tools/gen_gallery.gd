@@ -37,7 +37,7 @@ const SOURCES := [
 
 ## 卡型展示（2026-10-10 卡面美化）：**与演出 / 卡面同源** —— 改由 `GameData.CARD_KINDS` 现算，
 ## 不再手写 hex。原先这三张表与演出**五路全不等**（`jail` 页面琥珀 / 卡面紫，`info` 页面灰蓝 / 卡面金），
-## 正是"三处共用但没人对账"的下场（见 doc/development/plans/卡面美化.md §4.3）。
+## 正是"三处共用但没人对账"的下场（裁决见 doc/game-design/设计决策留痕.md §二十九）。
 ## **裁决：以「演出 / 卡面」那套为准** —— 玩家真看到的是卡面，这页是给团队查的参考手册。
 ## `GameData` 是纯 `class_name` 数据类、不依赖 autoload ⇒ `--script` 下能直接用（本文件一直如此）。
 var KIND := {}     # {kind: {"label": String, "glyph": String, "color": "#rrggbb"}}
