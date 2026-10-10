@@ -106,6 +106,7 @@ func _run() -> void:
 	_test_deck_key_is_gone()
 	_test_card_style(g)
 	_test_card_face(g)
+	_test_gallery_kind_colors()
 	_test_candidates(g)
 	_test_enter_exit(g)
 	_test_spectator(g)
@@ -1844,3 +1845,80 @@ func _test_card_face(g) -> void:
 		"道具卡面不叠家族 / 卡型徽章（它自己那两套照旧）")
 	dr.request_close()
 	dr.tick(dr.BACK + 0.05)
+
+
+## 卡面美化（2026-10-10）：**图鉴页的卡型色与卡面同源**。原先它自己手写五个 hex、与演出**五路全不等**
+##（`jail` 卡面紫 / 页面琥珀，`info` 卡面金 / 页面灰蓝）。生成器改读 `GameData.CARD_KINDS` 之后，
+## 页面里必须出现**表里的新值**、且**不再出现那三个旧值**。
+## 与 CI 的「重新生成后 git diff --exit-code」是一对：这条管"改没改对"，
+## CI 那条管"提交进去的是不是最新产物"。
+##
+## ⚠ 与计划原稿的两处偏差（2026-10-10 实跑后改，见 task-5-report.md）：原稿那两条查的是
+## **整页**里"不再有旧 jail 色 `#f0c064` / 旧 info 色 `#9fb3c0`"，但这两个 hex 在页面里
+## **另有正当来源、与卡型表无关**：
+##   `#f0c064` = 模板 CSS 的 `--gold`（`gallery_template.html`，本批不许动）；
+##   `#9fb3c0` = `TAG_COLOR["中性"]`（畸变节的"中性"标签色，与卡型无关）。
+## ⇒ 那两条在不动这两处时**永假**（实测：改完生成器后仍 2 FAILURES）。改为查生成器
+## **真正喂的那一段**：内嵌 JSON 的 `cards` 分节 —— 卡型色在页面里唯一的落点。
+func _test_gallery_kind_colors() -> void:
+	print("== 卡面美化：图鉴页的卡型色与卡面同源 ==")
+	var html := FileAccess.get_file_as_string("res://doc/game-design/图鉴.html")
+	_check(not html.is_empty(), "图鉴页读得到（改动后跑过 tools/gen_gallery.gd）")
+	if html.is_empty():
+		return
+	var news: Array = []
+	for k in ["good", "bad", "move", "jail", "info"]:
+		var hex := "#" + (GameData.CARD_KINDS[k]["color"] as Color).to_html(false)
+		news.append(hex)
+		_check(html.find(hex) >= 0, "图鉴页有 %s 的新色 %s" % [k, hex])
+	var cards := _gallery_cards(html)
+	_check(not cards.is_empty(), "内嵌 JSON 里读得到 `cards` 分节（%d 条）" % cards.size())
+	if cards.is_empty():
+		return
+	# 卡型色在页面上的**两个落点**：卡片的 `accent`（左侧色条）与「卡型」chip 的字色。
+	# 两者都必须**只**取自 `CARD_KINDS` —— 只要生成器还在手写 hex，这里就会漏出旧值。
+	var accents := {}
+	var chips := {}
+	for e in cards:
+		accents[String((e as Dictionary).get("accent", ""))] = true
+		for ch in ((e as Dictionary).get("chips", []) as Array):
+			if (ch as Dictionary).has("color"):
+				chips[String((ch as Dictionary)["color"])] = true
+	_check(_all_in(accents.keys(), news),
+		"机会卡的 `accent` 全取自 `CARD_KINDS`（实得 %s）" % str(accents.keys()))
+	_check(_all_in(chips.keys(), news),
+		"卡型 chip 的字色全取自 `CARD_KINDS`（实得 %s）" % str(chips.keys()))
+	_check(accents.keys().size() == 5,
+		"五个卡型色在这 50 张卡上**都用到了**（实得 %d 个）" % accents.keys().size())
+	for oldhex in ["#f0c064", "#9fb3c0"]:
+		_check(not (accents.has(oldhex) or chips.has(oldhex)),
+			"旧值 %s（卡面美化前的 jail / info 色）没留在机会卡上" % oldhex)
+	_check(html.find("#a885f2") >= 0 and html.find("#f5b342") >= 0,
+		"jail 变紫、info 变金（与卡面一致）")
+
+
+## 抠出图鉴页内嵌的那份 JSON（`<script id="gallery-data" type="application/json">`），
+## 返回 `cards` 分节的条目数组；拿不到就返回空（调用方各自报红）。
+func _gallery_cards(html: String) -> Array:
+	var a := html.find("id=\"gallery-data\"")
+	if a < 0:
+		return []
+	var b := html.find("</script>", a)
+	var gt := html.find(">", a)
+	if b < 0 or gt < 0 or gt > b:
+		return []
+	var parsed: Variant = JSON.parse_string(html.substr(gt + 1, b - gt - 1))
+	if not (parsed is Dictionary):
+		return []
+	for s in ((parsed as Dictionary).get("sections", []) as Array):
+		if String((s as Dictionary).get("id", "")) == "cards":
+			return (s as Dictionary).get("entries", [])
+	return []
+
+
+## 一个字符串集合是否整体落在白名单里（`Dictionary.keys()` 给的 Array）。
+func _all_in(have: Array, want: Array) -> bool:
+	for h in have:
+		if not want.has(String(h)):
+			return false
+	return true

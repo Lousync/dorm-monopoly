@@ -35,11 +35,27 @@ const SOURCES := [
 	"doc/game-design/道具图鉴.md",
 ]
 
-## `GameData.card_kind()` 的五个卡型 → 中文 / 配色 / 图案（配色与抽卡演出的
-## `s_card.rpc(..., kind, ...)` 同一套语义，见 机会卡.md §三）
-const KIND_LABEL := {"good": "收益", "bad": "损失", "move": "移动", "jail": "查寝", "info": "其他"}
-const KIND_COLOR := {"good": "#7ddc9b", "bad": "#f08b7a", "move": "#7cc4f0", "jail": "#f0c064", "info": "#9fb3c0"}
-const KIND_GLYPH := {"good": "💰", "bad": "💸", "move": "🚶", "jail": "🚨", "info": "ℹ️"}
+## 卡型展示（2026-10-10 卡面美化）：**与演出 / 卡面同源** —— 改由 `GameData.CARD_KINDS` 现算，
+## 不再手写 hex。原先这三张表与演出**五路全不等**（`jail` 页面琥珀 / 卡面紫，`info` 页面灰蓝 / 卡面金），
+## 正是"三处共用但没人对账"的下场（见 doc/development/plans/卡面美化.md §4.3）。
+## **裁决：以「演出 / 卡面」那套为准** —— 玩家真看到的是卡面，这页是给团队查的参考手册。
+## `GameData` 是纯 `class_name` 数据类、不依赖 autoload ⇒ `--script` 下能直接用（本文件一直如此）。
+var KIND := {}     # {kind: {"label": String, "glyph": String, "color": "#rrggbb"}}
+
+## 把 `GameData.CARD_KINDS` 摊成本文件要的形状（由 `_initialize()` 最前面调一次）。
+## hex 一律 `Color.to_html(false)` 现算 —— 手写 hex 就是"会烂的第二来源"。
+func _build_kind_table() -> void:
+	for k in GameData.CARD_KINDS:
+		var d: Dictionary = GameData.CARD_KINDS[k]
+		KIND[k] = {
+			"label": String(d["label"]),
+			"glyph": String(d["glyph"]),
+			"color": "#" + (d["color"] as Color).to_html(false),
+		}
+
+## 取一个卡型的展示字段（缺键时给空字典，调用方各自带兜底值）。
+func _kind(kind: String) -> Dictionary:
+	return KIND.get(kind, {})
 
 const TYPE_LABEL := {"consumable": "一次性", "active": "主动", "passive": "被动"}
 const TARGET_LABEL := {"player": "选一名玩家", "tile": "选地图上一格", "own_tile": "选自己名下的一块地皮"}
@@ -62,6 +78,7 @@ var _doc_lines: Array = []
 
 
 func _initialize() -> void:
+	_build_kind_table()
 	_doc_lines = _read_lines(DOC_ITEMS)
 	var doc := _parse_item_doc(_doc_lines)
 	var sections: Array = [
@@ -103,13 +120,14 @@ func _entries_cards() -> Array:
 			# `机会卡.md` §一「卡池过滤」与 `_roll_chance_kind`），写死会说谎 —— 规则说明面板
 			# 那边就是**刻意不写数字**的，两边口径要一致。
 			"subtitle": "机会格三类卡之一（机会 / 道具 / 畸变），概率随「畸变」开关变化",
-			"glyph": KIND_GLYPH.get(kind, "·"),
-			"accent": KIND_COLOR.get(kind, "#4a5b66"),
+			"glyph": String(_kind(kind).get("glyph", "·")),
+			"accent": String(_kind(kind).get("color", "#4a5b66")),
 			"chips": [
 				{"t": "机会卡"},
-				{"t": KIND_LABEL.get(kind, kind), "color": KIND_COLOR.get(kind, "")},
+				{"t": String(_kind(kind).get("label", kind)),
+					"color": String(_kind(kind).get("color", ""))},
 			],
-			"facets": {"卡类": "机会卡", "卡型": KIND_LABEL.get(kind, kind)},
+			"facets": {"卡类": "机会卡", "卡型": String(_kind(kind).get("label", kind))},
 			"rows": rows,
 		})
 	return out
@@ -517,8 +535,8 @@ func _facet_order(sec: String, key: String) -> Array:
 		"cards":
 			match key:
 				"卡类": return ["机会卡"]
-				"卡型": return [KIND_LABEL["good"], KIND_LABEL["bad"], KIND_LABEL["move"],
-					KIND_LABEL["jail"], KIND_LABEL["info"]]
+				"卡型": return [KIND["good"]["label"], KIND["bad"]["label"], KIND["move"]["label"],
+					KIND["jail"]["label"], KIND["info"]["label"]]
 		"items":
 			match key:
 				"品质": return ItemData.QUALITIES.duplicate()
