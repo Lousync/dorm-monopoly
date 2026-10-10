@@ -96,7 +96,7 @@
 $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --version                                            # 先确认路径可用
 & $G --path .                                             # 运行（或双击 start.bat）
-& $G --headless --path . --script tests/load_all.gd       # 脚本静态加载检查（改完先跑）
+& $G --headless --path . --script tests/load_all.gd       # 静态加载检查 + game.gd 体积棘轮（改完先跑）
 & $G --headless --path . --script tests/rules_test.gd     # 规则单测
 & $G --headless --path . --script tests/item_test.gd      # 道具单测
 & $G --headless --path . --script tests/blackshop_test.gd # 黑市单测
@@ -116,6 +116,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
 & $G --headless --path . --script tools/gen_gallery.gd  # 图鉴页生成（改了数据表 / 道具图鉴.md 后**必须重跑**）
+& $G --headless --path . --script tools/gen_game_index.gd # game.gd 导航索引生成（改了它的区块横幅后**必须重跑**）
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
 
@@ -249,6 +250,14 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 - **Godot 生成文件已忽略**（`*.import` / `*.uid` / `shots/`）：新克隆后先用编辑器打开项目一次重建，否则可能报资源缺失。
 - **整数除法**：GDScript 的 `total / n` 返回 int（向零截断），注意取整预期。
 - **风格**：GDScript、**Tab 缩进**、中文注释；数据/工具类用 `class_name`；业务逻辑尽量静态类型（`var x := ...` / `: int`）。
+- **`game.gd` 体积棘轮**（2026-10-10 定）：`tests/load_all.gd` 里卡着 `GAME_GD_LINE_BUDGET`，
+  **只降不升** —— 要往里加代码，就得先搬点东西出去（照抄 `casino.gd` / `dev_tools.gd` 的
+  「子节点 + `var g` 反向引用」模式，或把纯数据 / 纯查询下沉进 `*_data.gd`），搬完把预算调小。
+  理由：本仓 CHANGELOG 自己记着它曾从 3439 行拆到 ~2400 行、又长回 8000+ 行 ——
+  **没有持续约束的拆分会被新功能淹没**。
+- **`game.gd` 的导航索引是生成产物**：文件头 `# >>>>>>>>>> 导航索引` 标记块由
+  `tools/gen_game_index.gd` 从该文件自身的区块横幅生成（只列「区块 → 函数名」，不写行号），
+  **勿手改**；改了区块横幅要重跑，CI 有一道「重跑后 `git diff --exit-code`」的闸。
 
 ## 五、改文档
 

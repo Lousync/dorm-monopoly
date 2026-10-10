@@ -52,6 +52,16 @@ jobs:
           godot --headless --path . --script tools/gen_gallery.gd
           git diff --exit-code -- doc/game-design/图鉴.html
 
+      # game.gd 的导航索引同样是**生成产物**：由 tools/gen_game_index.gd 从 game.gd
+      # 自身的区块横幅生成、写回文件头的标记块之间（手写的索引必然烂——参见
+      # tests/load_all.gd 里体积棘轮那段注释）。改了区块/函数却忘了重跑 ⇒ 这一闸逮住。
+      # 重跑：godot --headless --path . --script tools/gen_game_index.gd
+      - name: 游戏索引不过期
+        run: |
+          set -euo pipefail
+          godot --headless --path . --script tools/gen_game_index.gd
+          git diff --exit-code -- scripts/game.gd
+
       # 房主即服务器：起一个后台房主，再跑一个客户端自动对打 3 轮
       - name: 联机回归（房主 + 客户端 3 轮）
         run: |

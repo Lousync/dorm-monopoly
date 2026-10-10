@@ -5,6 +5,103 @@ extends Control
 ## 表现层：56 格棋盘（缩放/平移/自动跟随）、中央转盘与事件卡抽卡动画、
 ## 金额飘字与滚动、聊天并入战报、结算排名 + 彩带、程序合成音效。
 
+# >>>>>>>>>> 导航索引（由 tools/gen_game_index.gd 生成，勿手改） >>>>>>>>>>
+# 生成器 tools/gen_game_index.gd ｜ 闸门 tests/load_all.gd 会校验它是否过期
+# 约定：只列「区块 → 函数名」，不写行号（行号会烂，见 AGENTS.md §五）
+#
+# 【文件头（模块注释 / 常量 / 成员 / 生命周期）】 _ready, _exit_tree
+# 【道具试验场（Item Lab）宿主接口】 enter_lab_mode, _lab_hide_hud, lab_reset
+# 【界面构建】 _build_ui, _build_hp, _host_setup
+# 【房主：科技】 _tech_phase
+# 【全员**同时**三选一（2026-10-07 改：原先逐个问，一个人选完才轮到下一个）】 _tech_names_for
+# 【定档演出（2026-10-07；2026-10-09 去掉骰面）】 s_tech_tier, _show_tech_tier, _tech_sample
+#     _tech_apply_instant, _grant_tech, _has_tech, s_tech_offer, c_tech_pick, _tech_answer
+#     _ask_tianming, _show_tianming_picker, _close_tianming_picker, _tianming_answer
+#     s_tianming_ask, c_tianming_pick, _ask_renmen_cell, _send_renmen_pick, c_renmen_pick
+#     _show_tech_offer, _tech_pick_card, _tech_refresh_cards, _close_tech_offer
+# 【房主：「发现」三选一（术语表.md）】 _run_discover, _discover_bot_pick, s_discover, c_discover_pick
+#     _discover_answer, _show_discover_offer, _discover_pick_card, _discover_refresh_cards
+#     _close_discover
+# 【房主：回合主干（推进 · 掷轮 · 行动 · 托管 · 自动对局）】 _check_tech_milestone, _tech_pass_gain, _autotest_watch
+#     _run_game, _rounds_exhausted, _advance_turn, _alive_count, _note_roll_hot
+#     _apply_roll_mods, _play_turn, _arm_roll_timeout, _bot_roll_later
+# 【房主：畸变】 _aberration_window, _ab_tick, _ab_end_active, _ab_candidates, _ab_random_pool
+#     _ab_cond_met, _ab_pick, _ab_enqueue, _ab_trigger, _ab_announce_text, _ab_apply_instant
+#     _ab_apply_persistent_start, _ab_has, _ab_rent_mult, _ab_move_cut
+# 【房主：结算】 _resolve_tile, _new_event_deck, _draw_chance_card, _peek_event, _roll_chance_kind
+#     _resolve_buy, _resolve_upgrade, _resolve_rent, _apply_card
+# 【抉择卡（批次 2 §三）：**排在最后** —— 分支自己那段效果字段要按同一套分派结算，】 _card_target_for, _card_apply_target
+#     _card_apply_tile_move, _card_tile_move_harmful, _least_invested, _transfer_tile
+#     _card_after_tile_move, _card_apply_deck, _grant_card_item, _grant_item_of_random
+#     _grant_item_of_quality, _pay, _run_receiver_sale
+# 【破产变卖保底（房主权威；开关 = 开局设置「破产变卖保底」）】 _liq_value, _run_liquidation, _liq_auto_sell
+#     _liq_sell_tile, _liq_finish, _liq_click, c_liq_sell, _send_to_jail, s_tp
+#     _player_by_peer, _state_player, _check_end, _end_by_wealth, _net_worth_final, _net_worth
+#     _end_game
+# 【房主：交互】 _on_table_click
+# 【悬停棋子的信息条（批次 11 Task 3）+ 悬停手牌放大（批次 12 B3）】 _on_table_hover, _set_token_hover
+#     _fill_token_tip, _place_token_tip, _hand_clickable, _hand_unusable_slots
+#     _hand_card_states, _card_state, _on_hand_clicked, _clear_item_selection
+#     _on_roll_pressed, _bot_decide, _ask, _answer, c_decision, c_roll, _on_peer_disconnected
+# 【房主：掉线重连认领（协议 §六，规格见 doc/development/联机协议.md）】 reclaim_seat, _rekey_transient
+#     _resend_reclaim_ui
+# 【房主：广播】 _set_timeout_tier, _refresh_tier_ui, _set_ab_freq, _set_ab_dur, _set_ab_cond
+#     _refresh_ab_settings_ui, _refresh_ab_ui, s_op_timer, _op_timer_send, _op_window_owner
+#     _refresh_liq_ui, _broadcast_state, _log, s_aberr
+# 【全员：接收 RPC】 s_state, _autotest_client_finish, _autotest_tier_ok, s_roll, _flair_roll, s_move
+#     s_card, s_log, _push_log_toast, s_prompt, c_card_ok, s_card_close, _on_bury_picked
+#     _on_card_confirm, _await_card_confirm, s_card_choices, c_choice, _on_card_choice
+#     _await_card_choice
+# 【界面刷新】 _board_follow_ready, _refresh_board_followers, _refresh_tokens, _refresh_houses
+#     _cache_house_levels, _token_screen_pos, _refresh_followers_if_cam_moved
+#     _refresh_table_props, _state_worth, _seat_peers, _name_by_peer, _chars_node, _char_react
+#     _react_chars, _refresh_players, _refresh_corner_bars, _fill_peer_bar, _refresh_my_energy
+#     _refresh_placards, _hl_bars, _refresh_corner_highlight, _apply_corner_style
+#     _refresh_actions, _at_auto_card_confirm, _at_auto_card_choice, _at_auto_card_target
+#     _refresh_action_button, _on_action_pressed, _reopen_decision_panel, _unhandled_input
+#     _toggle_log, _set_log_open, _at_auto_roll, _on_tile_clicked, _show_info_panel
+#     _board_to_screen, _place_info_panel
+# 【弹窗与结算】 _show_game_over, _standings, _show_prompt, _arm_decision, _refresh_decision_area
+#     _pending_tile_for_me, _on_decision_yes, _on_decision_no, _close_prompt, _prompt_bar_arm
+#     _refresh_chat
+# 【道具卡图鉴（模板预览）】 _open_card_gallery, _card_section, _card_cell
+# 【道具系统：host 逻辑与 RPC（阶段一）】 _refresh_price, _has_item, _immune_debuff, _remove_item, _bag_cap
+#     _stamina_cap, _salary_amount, _pass_start, _check_xiaojinku, _buy_price, _rent_gain
+#     _rent_pay, _maybe_emergency, _item_cost, _consume_cost_pen, _move_and_resolve
+#     _grant_item, _item_pool, _filled_slots, _stock_one, _stock_shop, _item_turn_start
+# 【科技：回合开始型（见 tech_data / 科技.md）】 _item_limit, _item_used_up, _item_usable_now, _has_usable
+#     _item_phase, _bot_use_one, _arm_item_timeout, _await_bury_choice, s_ask_bury, c_bury_ok
+#     _use_item, _own_props, _apply_item_effect
+# 【老虎机（紫·新批次）】 _run_slot_machine, _is_consecutive, s_slot, _show_slot, s_peek_card, _run_shop
+#     _arm_shop_timeout, _bot_shop, _shop_buy, _shop_refresh, _shop_leave, _set_shop_collapsed
+#     _apply_shop_ui
+# 【黑市（§8：仅由机会卡进入，一切消费用地产）】 _is_sleeping, _is_managed, _prop_indices_of, _prop_indices_sorted
+#     _black_stock_one, _black_stock, _run_blackshop, _arm_black_timeout, _black_beat
+#     _black_buy, _black_refresh, _black_leave, _black_pay, _black_settle, _black_force_exit
+#     _bot_blackshop, c_black_buy, c_black_refresh, c_black_leave, c_black_pay, c_use_item
+#     c_item_skip, c_shop_buy, c_shop_refresh, c_shop_leave, _apply_egg_festival, _apply_coco
+#     _on_item_slot_clicked, _on_use_pressed, _on_skip_pressed, _on_discard_clicked
+#     _clear_discard_pending, _sync_hand_discard_pending, _discard_item, c_discard
+#     _send_use_item, _open_cheat_picker, _close_cheat_picker
+# 【指向性道具：点棋盘选目标（选玩家 / 选地块 / 两段式）】 _item_targets, _selectable_props, _push_peer_highlight
+#     _begin_peer_target, _begin_tile_target, _on_corner_bar_clicked, _open_player_popup
+#     _state_props, _rank_of, _on_seat_clicked
+# 【卡选目标（批 2 §三）：复用同一套状态机，判别位换成 `_tgt_card`】 s_card_target, c_card_target, _await_card_target
+#     _card_target_bot_pick, _card_target_candidates, _begin_renmen_pick, _finish_tile_target
+#     _target_item_id, _place_target_hint, _show_target_hint, _cancel_target
+# 【拖动指向：收尾（#24）】 _on_table_release, _resolve_release_target, _target_peer_at
+#     _update_aim_arrow, _set_hand_preview
+# 【选项菜单 / 房主暂停 / 设置】 _build_menu_ui, _menu_show, _open_menu, _menu_resume, s_pause
+# 【HUD 入场】 _hud_intro
+# 【规则说明面板（右上角）】 _set_rules_open, _apply_audio, _save_audio_cfg, _corner_bar_screen_center
+#     _spawn_money_fly, _process, _refresh_net_indicator, _refresh_op_timer
+#     _refresh_corner_timer, _refresh_shop_timer, _dock_band, _clamp_dock_x
+#     _place_overlay_bar, _shop_ordinal, _refresh_shop_ui, _refresh_black_ui
+#     _rebuild_black_picker, _on_conn_lost, _on_exit, _wait, _await_turn_window
+#
+# 合计 30 个区块 / 350 个函数
+# <<<<<<<<<< 导航索引结束 <<<<<<<<<<
+
 signal roll_received
 
 const STEP_TIME := 0.15   # 每格跳子时长
@@ -1321,6 +1418,8 @@ func _close_discover() -> void:
 	_discover_cards = []
 	_discover_picked = [-1]
 	_discover_ok = null
+
+# ================= 房主：回合主干（推进 · 掷轮 · 行动 · 托管 · 自动对局） =================
 
 ## 开疆拓土：名下地皮首达 5 / 10 / 15 块各 +¥800（获得地皮后调用）
 func _check_tech_milestone(p: Dictionary) -> void:
