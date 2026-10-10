@@ -102,6 +102,9 @@ func _run() -> void:
 	# `fails` 一个都不涨 —— 汇总会**假绿**成 "ALL PASS"。有了这几条，"功能没写"才是红的。
 	_test_iface(g)
 	_test_kind_and_dist(g)
+	_test_card_kind_order_is_frozen()
+	_test_deck_key_is_gone()
+	_test_card_style(g)
 	_test_candidates(g)
 	_test_enter_exit(g)
 	_test_spectator(g)
@@ -1529,3 +1532,138 @@ func _test_kind_and_dist(g) -> void:
 	_check(absf(pc - 0.90) < 0.01, "关档：机会卡 ≈90%%——5%% 那档并进来了（实得 %.3f）" % pc)
 	_check(absf(pi - 0.10) < 0.01, "关档：道具卡 ≈10%%——没被那 5%% 顺手吞掉（实得 %.3f）" % pi)
 	g._settings = saved
+
+# ================= 卡面美化（Task 1，2026-10-10） =================
+#
+# 那一版把「机会」这个字面量拆开：它原先**既是卡背配色键、又是卡类名 / 演出标题**
+#（`_deck_back_tex` 拿 `deck == "机会"` 当配色键）⇒ 三类卡（机会 / 道具 / 畸变）根本没法各自配色。
+# 改法是显式派生**家族键**（`item_id != "" → item`；`kind == "aberr" → aberr`；否则 `chance`），
+# `deck` 从此只担"标题"一个角色。展示映射收进 `GameData.CARD_FAMILIES` / `CARD_KINDS` 两张表。
+#
+# 本节的钉子分两类：
+#   ① **源码钉子**（不需要对局实例）：判定顺序是契约、以及"拿标题当键"是否真的绝迹；
+#   ② **要实例的那条**：两张表的内容 + `DeckReveal` 真的按家族键取值。
+# ⚠ 本文件**一律运行期 `load`**（见 doc/game-design/设计决策留痕.md §二十三）：`--script` 主脚本
+#   编译早于 autoload 注册，静态点 `UIKit.` 会把 `ui_kit.gd` 拽进同一编译单元 ⇒ 它里面的
+#   `Fx.play(...)` 当场 `Identifier not found: Fx` ⇒ 整链编译失败。
+
+## 取 `src` 里某个函数的**函数体**那一段（从 `signature` 起到下一个顶层 `func ` 之前）。
+## 形参改名的核对要问的是"这个函数**体内**还认不认标题"，得按函数切段 —— 不能全文数子串。
+func _body_of(src: String, signature: String) -> String:
+	var i0 := src.find(signature)
+	if i0 < 0:
+		return ""
+	var i1 := src.find("\nfunc ", i0 + 1)
+	return src.substr(i0, (i1 - i0) if i1 >= 0 else src.length() - i0)
+
+## 卡面美化（2026-10-10）的**契约钉子**：卡型配色改成"读展示表"了，而 `card_kind()` 的**判定顺序**
+## 是契约（`jail_to` 先于 `go_jail`、`seize_tile` 的 take / swap 分开判）。
+## 判定函数**没有可断言的返回值**能表达"顺序"（今天的 50 张卡里没有同时带两者的），
+## 所以直接读源码、断言那 10 个判定令牌**按契约顺序**出现（顺序错 ⇒ 位置不再递增 ⇒ 当场红）。
+## 读源码在 `layout_test` 读 `wheel_view.gd` 已有先例。**改 `card_kind()` 时这条会先红。**
+func _test_card_kind_order_is_frozen() -> void:
+	print("== 卡面美化：card_kind() 的判定顺序是契约（只准动展示映射）==")
+	var src := FileAccess.get_file_as_string("res://scripts/game_data.gd")
+	var i0 := src.find("static func card_kind(")
+	_check(i0 >= 0, "card_kind() 还在 game_data.gd 里")
+	if i0 < 0:
+		return
+	var body := src.substr(i0, src.find("static func ", i0 + 1) - i0)
+	var order := ["card.has(\"jail_to\")", "card.has(\"choices\")", "card.has(\"steal_from\")",
+		"card.has(\"swap_pos\")", "card.has(\"go_jail\")", "card.has(\"move_steps\")",
+		"card.has(\"money\")", "card.has(\"from_each\")", "card.has(\"to_each\")",
+		"card.has(\"enter_blackshop\")"]
+	var at := 0
+	for tok in order:
+		var j := body.find(tok, at)
+		_check(j >= 0, "判定令牌 %s 仍在契约序位上（不早于上一个）" % tok)
+		at = maxi(at, j)
+	_check(body.find("card.get(\"seize_tile\", \"\") == \"take\"") >= 0
+			and body.find("card.get(\"seize_tile\", \"\") == \"take\"")
+				< body.find("card.has(\"swap_pos\")"),
+		"`seize_tile:\"take\"` 仍压在 `swap_pos` 那一块里（take / swap 分开判）")
+
+## 卡面美化（2026-10-10）：**"拿标题当键"这个纠缠真的解掉了吗？**
+##
+## ⚠ **判据是"语义"，不是"某个子串在全仓零命中"** —— 后者**永远不可能为 0**：本批新增的那条
+## `assert(family != "chance" or deck == "机会", …)` **本身就含这个子串**（它是"派生之后的守卫"，
+## 不是"拿标题当配色键"）。所以这里**不数子串**，改问三件**结构上说得清**的事：
+##   ① `_deck_back_tex` / `_make_card_art` / `_card_face_back` 的**形参已经是家族键**（精确匹配签名）；
+##   ② 这三个函数的**函数体里一次都不再提**标识符 `deck`（不再拿标题比较 / 当配色键 / 往下传）；
+##      找之前要把 `_deck_back_tex` 这个**函数名**遮掉 —— 它的名字里就含着 "deck" 四个字母
+##      （那是名字、不是键），不遮的话这条**永远为假**；
+##   ③ 全文件里对 `deck` 做**相等比较**的**只剩 1 处**，且落在 `show_card` 的函数体内
+##      （= 那条派生守卫）。**实跑基线（2026-10-10 改前）**：`deck_reveal.gd` 里 `deck ==` **2 处**
+##      （`_deck_back_tex` 与 `_make_card_art` 各一）；改后 **1 处** ⇒ 判据可达。
+## 注意**不覆盖** `_card_face_front` / `show_card`：它们本就该提 `deck`（一个取标题文字、一个派家族键）。
+## 本文件一律**运行期 `load`**（见约束 7）。
+func _test_deck_key_is_gone() -> void:
+	print("== 卡面美化：「机会」不再既是配色键又是卡类名 ==")
+	var src := FileAccess.get_file_as_string("res://scripts/deck_reveal.gd")
+	_check(not src.is_empty(), "读得到 deck_reveal.gd（源码钉子读不到就无从谈起）")
+	if src.is_empty():
+		return
+	# ① 三个取色 / 取纹 / 画卡背的函数，形参已是家族键
+	for sig in ["func _deck_back_tex(family: String) -> Texture2D:",
+			"func _make_card_art(family: String) -> TextureRect:",
+			"func _card_face_back(family: String) -> Control:"]:
+		_check(src.find(sig) >= 0, "形参已改成家族键：%s" % sig)
+	# ② 它们的函数体里再也不出现**标识符** `deck`（不拿标题当键）。
+	# ⚠ 得先把 `_deck_back_tex` 这个**函数名**遮掉再找 —— `_make_card_art` 体内会调它，
+	#   它的名字里就含着 "deck" 四个字母（那是名字、不是键）。不遮的话这条**永远为假**。
+	for sig in ["func _deck_back_tex(", "func _make_card_art(", "func _card_face_back("]:
+		var body := _body_of(src, sig)
+		_check(not body.is_empty(), "切得出 %s 的函数体" % sig)
+		_check(body.replace("_deck_back_tex", "").find("deck") < 0,
+			"%s 的**函数体内**不再出现标识符 deck（改前它在这里拿标题比 / 往下传）" % sig)
+	# ③ 对 deck 的相等比较只剩 show_card 里那一条派生守卫
+	_check(src.count("deck ==") == 1
+			and _body_of(src, "func show_card(").find("deck == \"机会\"") >= 0,
+		"对 deck 的相等比较只有 show_card 里那一条派生守卫（实得 %d 处；改前 2 处）" % src.count("deck =="))
+
+## 卡面美化（2026-10-10）：展示映射的单一来源 = `GameData.CARD_FAMILIES` + `GameData.CARD_KINDS`。
+## 这里钉三件事：① 家族表三族齐全、字段齐；② 卡型表**恰好覆盖** `card_kind()` 会吐出来的所有值
+## （漏一个 ⇒ 那个卡型掉进兜底、徽章色当场错）；③ `DeckReveal` 真的按**家族键**取值，
+## 不再是"拿标题字符串比"。③ 这条是本批的核心：`_deck_back_tex("chance")` 改前返回**蓝**背
+##（`"chance" != "机会"`），改后必须返回绿背 —— **red → green 就在这一条上**。
+## ⚠ `UIKit` 一律**运行期 `load`**（见**约束 7**）：静态写 `UIKit.GOOD` 会在 `--script` 注册 autoload
+## 之前把 `ui_kit.gd` 拽进编译单元 ⇒ `Identifier not found: Fx` ⇒ 本函数**整段跑不起来**。
+func _test_card_style(g) -> void:
+	print("== 卡面美化：家族表 / 卡型表 / 家族键取值 ==")
+	var UK = load("res://scripts/ui_kit.gd")   # 见约束 7：不许静态写 `UIKit.`
+	for f in ["bg", "edge", "tex", "tint", "glyph"]:
+		for famkey in ["chance", "item", "aberr"]:
+			_check(GameData.CARD_FAMILIES.has(famkey)
+					and (GameData.CARD_FAMILIES[famkey] as Dictionary).has(f),
+				"家族表 %s 有字段 %s" % [famkey, f])
+	# 卡型表恰好覆盖 card_kind() 的五类：拿 50 张真卡跑一遍，一个都不许漏
+	var kinds := {}
+	for card in GameData.EVENTS:
+		kinds[GameData.card_kind(card)] = true
+	for k in kinds:
+		_check(GameData.CARD_KINDS.has(k), "卡型 %s（EVENTS 里真出现的）在展示表里" % k)
+	_check(GameData.CARD_KINDS.size() == 5, "展示表恰好五类（实得 %d）" % GameData.CARD_KINDS.size())
+	# 色以**演出**为准：good / info 与 UIKit 那两个常量同值（表在 GameData、不许引 UIKit ⇒ 靠这条钉住）
+	_check(GameData.CARD_KINDS["good"]["color"] == UK.GOOD, "收益色 = UIKit.GOOD")
+	_check(GameData.CARD_KINDS["info"]["color"] == UK.ACCENT, "其他色 = UIKit.ACCENT（原先靠兜底）")
+	# 家族键取值：`_deck_back_tex` / `_make_card_art` 的形参语义已由"标题"改成"家族键"
+	var dr = g.deck_reveal
+	if dr == null:
+		return   # 存在性闸已经报过红了（同 `_test_at_client_auto` 的写法）
+	_check(dr._deck_back_tex("chance") == UK.tex(String(GameData.CARD_FAMILIES["chance"]["tex"])),
+		"`_deck_back_tex(\"chance\")` = 绿背（改前这里拿标题比、返回的是蓝背）")
+	_check(dr._deck_back_tex("item") == UK.tex(String(GameData.CARD_FAMILIES["item"]["tex"])),
+		"`_deck_back_tex(\"item\")` = 蓝背")
+	_check(dr._deck_back_tex("aberr") == UK.tex(String(GameData.CARD_FAMILIES["aberr"]["tex"])),
+		"`_deck_back_tex(\"aberr\")` = 蓝背（复用那张，靠底色 / 描边偏紫）")
+	_check(dr._make_card_art("aberr").modulate == GameData.CARD_FAMILIES["aberr"]["tint"],
+		"底纹色调按家族给（畸变那档 = 家族表里的 tint）")
+	# 三行派生：用 `_fam_edge` 这个可观察量钉住（不看像素）
+	dr.show_card("机会", "good", "测试：机会族")
+	_check(dr._fam_edge == GameData.CARD_FAMILIES["chance"]["edge"], "deck=「机会」⇒ family=chance")
+	dr.show_card("失物招领", "good", "测试：道具族", "招财猫")
+	_check(dr._fam_edge == GameData.CARD_FAMILIES["item"]["edge"], "带 item_id ⇒ family=item")
+	dr.show_card("🌀 畸变 · 测试", "aberr", "测试：畸变族")
+	_check(dr._fam_edge == GameData.CARD_FAMILIES["aberr"]["edge"], "kind=aberr ⇒ family=aberr")
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)

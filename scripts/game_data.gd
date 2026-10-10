@@ -258,6 +258,63 @@ static func card_kind(card: Dictionary) -> String:
 		return "bad"
 	return "info"
 
+## ---- 抽卡演的**展示映射**（2026-10-10 卡面美化）------------------------------------------------
+##
+## 本块是**三处共用的单一来源**：抽卡演出（`DeckReveal`）、卡型色（`UIKit.card_palette`）、
+## 图鉴页（`tools/gen_gallery.gd` 的 `KIND_*`）都读这里。**判定不在这里** —— `card_kind()` 的
+## 判定顺序是契约（见该函数注释），本块只回答"长什么样"。
+##
+## 为什么住 `GameData`：① 它已经是 `card_kind()` 的家，`LEVEL_COLORS` / `LEVEL_NAMES` 也有
+## "展示色住数据类"的先例；② **`ui_kit.gd` 里有 `Fx.play` 这类 autoload 引用，`--script` 模式
+## （图鉴生成器）不能 import 它** —— 同下面 `CASINO_STAKE` 那条注释踩过的坑；③ 新建
+## `class_name`（备选的 `CardStyle`）要先跑一次 `--import` 才会被 `--script` 认到（本仓已踩过）。
+## ⚠ 因此本块**不许引 `UIKit.*`**：`good` 的绿与 `UIKit.GOOD`、`info` 的金与 `UIKit.ACCENT`
+## 是同值但**各写一份**，靠 `tests/chance_test.gd` 的 `_test_card_style()` 钉住"两处同值"。
+## ⚠ 若 `const` 嵌套字典在这里编不过（老版本 GDScript 有先例），改用 `static var`（同 `MAX_ROUNDS`）。
+
+## 家族三色（卡背 / 正面外框 / 标题 / 光晕 / 家族徽章）。
+## 键 = **家族键**，只由 `DeckReveal.show_card()` 显式派生（那是全仓唯一出现"机会"这个值的比较处）——
+## 2026-10-10 之前是拿标题字符串 `deck == "机会"` 当配色键，一个值担两种角色（卡面美化.md §4.1）。
+##	bg    卡背底色；edge 描边 + 光晕 + 标题；tex 牌背 SVG；tint 底纹色调；glyph 家族徽章图标
+const CARD_FAMILIES := {
+	"chance": {
+		"bg": Color(0.075, 0.068, 0.045),
+		"edge": Color(0.961, 0.702, 0.259),
+		"tex": "res://assets/cards/atlas_back_green_darkred.svg",
+		"tint": Color(1.0, 0.86, 0.55, 0.30),
+		"glyph": "🎲",
+	},
+	"item": {
+		"bg": Color(0.045, 0.062, 0.092),
+		"edge": Color(0.42, 0.70, 0.95),
+		"tex": "res://assets/cards/atlas_back_blue_brown.svg",
+		"tint": Color(0.78, 0.72, 1.0, 0.30),
+		"glyph": "📦",
+	},
+	"aberr": {
+		"bg": Color(0.070, 0.048, 0.105),
+		"edge": Color(0.79, 0.65, 1.0),
+		# 复用蓝那张：三色里只有机会、道具各有一张现成 SVG，**不新增素材**（AGENTS.md §四 的
+		# "能用程序化手段画出来的就别加素材"）。畸变的紫靠底色 + 描边 + 光晕 + 底纹色调做出来。
+		"tex": "res://assets/cards/atlas_back_blue_brown.svg",
+		"tint": Color(0.82, 0.70, 1.0, 0.34),
+		"glyph": "🌀",
+	},
+}
+
+## 卡型展示（`card_kind()` 的五个返回值 → 徽章图标 / 中文 / 色）。
+## **色以「演出 / 卡面」那套为准**（2026-10-10 裁决）：玩家真看到的是卡面，图鉴页是参考手册。
+## 顺带修掉一处已经烂掉的不一致：`info` 原先在 `UIKit.card_palette` 里**没有自己的键**、
+## 靠 `_` 兜底撞上 `ACCENT`（是"没写"、不是"写了金"），图鉴页那边又是灰蓝 `#9fb3c0`；
+## `jail` 更是"卡面紫、页面琥珀"两个完全不同的颜色（卡面美化.md §4.3 的逐色对照表）。
+const CARD_KINDS := {
+	"good": {"glyph": "💰", "label": "收益", "color": Color(0.455, 0.812, 0.529)},
+	"bad": {"glyph": "💸", "label": "损失", "color": Color(0.94, 0.45, 0.42)},
+	"move": {"glyph": "🚶", "label": "移动", "color": Color(0.42, 0.70, 0.95)},
+	"jail": {"glyph": "🚨", "label": "查寝", "color": Color(0.66, 0.52, 0.95)},
+	"info": {"glyph": "ℹ️", "label": "其他", "color": Color(0.961, 0.702, 0.259)},
+}
+
 ## 四角格位置：0 起点(右下) / 34 宿委会(左下) / 56 卧谈会(左上) / 90 查寝(右上)
 ## 该格子是不是四个角上的**地标格**（起点 / 宿委会 / 卧谈会 / 查寝）。
 ## 注意不能按格型判：`rest` 是「免费休息」，四角上的卧谈会和沿途 4 个空教室共用这个格型，

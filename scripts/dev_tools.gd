@@ -594,11 +594,35 @@ func take_shot(path: String) -> void:
 		# 挪到牌堆（旧版是给 `play_deck_card` 的推近兜底），只等一拍让场景稳定。
 		await get_tree().create_timer(0.2).timeout
 	if not path.contains("plain") or path.contains("card"):
-		g.deck_reveal.show_card("机会", "good", "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600")
+		# 卡面美化（2026-10-10）：文件名可以指定演**哪一型 / 哪一族**的卡，默认与原先一字不差
+		#（机会 / good）⇒ 既有文件名（kp_chance_card / kp_itemreveal_card / kp_deckout_card…）
+		# 一个都不用改。
+		#   `ckind_<kind>`  —— 文字卡 + 指定卡型，用来逐类核对右上卡型徽章（图标 / 中文 / 色）：
+		#                       如 `--shot=shots/kp_ckind_jail_card.png`（kind 五种：good bad move jail info）
+		#   `ckback_<family>` —— 拍**卡背**（只有 `deckout` 那两帧拍得到，见 卡面美化.md §4.5(3)）。
+		#                       家族键决定卡背配色 ⇒ 按家族选卡源：机会 / 道具 / 畸变三族各一条：
+		#                       如 `--shot=shots/kp_deckout_ckback_item_card.png`
+		var sd := "机会"
+		var sk := "good"
+		var si := ""
+		var stxt := "帮宿管阿姨搬了一下午矿泉水，辛苦费 +600"
+		if path.contains("ckind"):
+			for k in ["good", "bad", "move", "jail", "info"]:
+				if path.contains("ckind_%s" % k):
+					sk = k
+			stxt = "【摆拍】%s 型机会卡" % sk
+		if path.contains("ckback_item"):
+			sd = "失物招领"; sk = "good"; si = "招财猫"; stxt = "【摆拍】道具族的卡背（蓝）"
+		elif path.contains("ckback_aberr"):
+			sd = "🌀 畸变 · 枪打出头鸟"; sk = "aberr"; stxt = "【摆拍】畸变族的卡背（紫）"
+		elif path.contains("ckback_chance"):
+			sd = "机会"; sk = "good"; stxt = "【摆拍】机会族的卡背（绿）"
+		g.deck_reveal.show_card(sd, sk, stxt, si)
 		# 批次 12 C2 起演出**停在 HOLD 等「确定」**：按钮要 CARD_TIME（2.14s）之后才出镜，
 		# 而下面那三帧连拍落在 0.6/1.2/1.8s ⇒ 不处理的话一张都拍不到按钮。
 		# 这里用**真接口**（`dev_force_confirm` + `tick` 快进）把它推到"停住等确定"那一档；
-		# `deckout` 要的正是"刚抽出"那一瞬，不动它。
+		# ⚠ `deckout` 要的正是"刚抽出"那一瞬，**别快进**（卡背只在 `OUT` 那 0.34s 里）——
+		# 同理 `ckback_*` 也不许快进，否则拍到的又是正面（`itemreveal` 踩过这个坑）。
 		if not path.contains("deckout"):
 			g.deck_reveal.dev_force_confirm = true
 			g.deck_reveal.set_can_confirm(true)

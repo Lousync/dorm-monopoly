@@ -311,17 +311,27 @@ static func card_stylebox(bg: Color, corner := 10, border := Color(0, 0, 0, 0), 
 	var tp := _rounded_tex(corner, top, bottom, border, border_w, glow, 5.0, sh, Vector2(0, 2))
 	return _sbt(tp)
 
-## 事件/公告卡配色：按 kind 返回 [边框色, 底色]（牌堆抽卡与顶部公告共用）
+## 事件/公告卡配色：按 kind 返回 [边框色, 底色]（牌堆抽卡与顶部公告共用）。
+## **2026-10-10 卡面美化**：卡型色的**单一来源改到 `GameData.CARD_KINDS`**（图鉴页与演出同源），
+## 本函数只做"取色 + 补底色"的适配，不再自己写色 —— 原先三处各写一套、五路全不等
+##（`jail` 卡面紫 / 页面琥珀，`info` 卡面金 / 页面灰蓝）。
+## `bust` / `aberr` 是**公告类**、不在 `card_kind()` 的五个返回值里 ⇒ 不进 `CARD_KINDS`，照旧字面量。
+## 注意：本文件不能反过来被 `game_data.gd` 引（它要在 `--script` 下裸用），所以是单向依赖。
 static func card_palette(kind: String) -> Array:
+	var fg := func(k: String, fb: Color) -> Color:
+		var d: Dictionary = GameData.CARD_KINDS.get(k, {})
+		return d.get("color", fb)
 	match kind:
 		"good":
-			return [GOOD, Color(0.10, 0.18, 0.12, 0.95)]
+			return [fg.call("good", GOOD), Color(0.10, 0.18, 0.12, 0.95)]
 		"bad":
-			return [Color(0.94, 0.45, 0.42), Color(0.20, 0.09, 0.09, 0.95)]
-		"jail":
-			return [Color(0.66, 0.52, 0.95), Color(0.13, 0.10, 0.20, 0.95)]
+			return [fg.call("bad", Color(0.94, 0.45, 0.42)), Color(0.20, 0.09, 0.09, 0.95)]
 		"move":
-			return [Color(0.42, 0.70, 0.95), Color(0.09, 0.14, 0.21, 0.95)]
+			return [fg.call("move", Color(0.42, 0.70, 0.95)), Color(0.09, 0.14, 0.21, 0.95)]
+		"jail":
+			return [fg.call("jail", Color(0.66, 0.52, 0.95)), Color(0.13, 0.10, 0.20, 0.95)]
+		"info":
+			return [fg.call("info", ACCENT), Color(0.16, 0.14, 0.08, 0.95)]
 		"bust":
 			return [Color(0.95, 0.35, 0.35), Color(0.22, 0.07, 0.07, 0.95)]
 		"aberr":

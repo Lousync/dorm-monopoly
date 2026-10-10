@@ -62,6 +62,9 @@ var _built_labels: Array = []    # `_choice_btns` 是按哪一份标签建的（
 ## 小抄置底询问（2026-10-10 M1）：「要把牌堆顶这张塞到底部吗？」那块面板（含两枚按钮）。
 ## 与抽卡演出**互不相干** —— 小抄没有卡面（它只往私密战报写一行），所以这一块不能挂在 `_showing` 上。
 var _bury_box: PanelContainer
+## 当前这张卡的**家族色**（`show_card` 派生 family 后立刻写上）。T4 的呼吸偏色 / 地面光读它；
+## 默认白 = 不偏色，免得测试在没演过卡时读到脏值。
+var _fam_edge := Color(1, 1, 1)
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -123,21 +126,34 @@ func _process(delta: float) -> void:
 func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	_close()
 	var item_face := item_id != ""
-	var style: Array = UIKit.card_palette(kind)
+	# ---- 家族键派生（2026-10-10 卡面美化，见 doc/development/plans/卡面美化.md §4.1）----
+	# `deck` 从此**只担"标题 / 演出标题"一个角色**，配色键归 `family`。三档依据（今天完整且无歧义）：
+	#   ① 道具卡面（道具卡 / 失物招领）：一律带 `item_id`；
+	#   ② 畸变公告：`s_card` 那一路 deck = "🌀 畸变 · 名"、kind 恒为 "aberr"；
+	#   ③ 其余 = 机会卡（`_run_chance` 传 deck = "机会"）。
+	# ⚠ **不要再加 `deck.begins_with("🌀")` 那种判法** —— 那只是"另一种拿标题当键"，标题一改配色就坏。
+	var family := "chance"
 	if item_face:
-		# 道具卡面：描边 / 卡背的金色跟着**该道具的品质色**走（与货架上那张卡同一套配色）
-		var q := String(ItemData.def(item_id).get("quality", "白"))
-		style = [ItemData.QUALITY_COLORS.get(q, UIKit.TEXT), UIKit.PANEL]
-	var accent: Color = style[0]
+		family = "item"
+	elif kind == "aberr":
+		family = "aberr"
+	# 第四类文字卡冒出来时**在这里当场叫**：否则它静默落进 chance —— 配色错、还不报错。
+	# 口径同步写在 `doc/development/联机协议.md` 的 `s_card` 行（T6）。
+	assert(family != "chance" or deck == "机会",
+		"DeckReveal: 未登记的文字卡标题「%s」—— 家族键派生要补一行（见 卡面美化.md §4.1）" % deck)
+	var fam: Dictionary = GameData.CARD_FAMILIES[family]
+	_fam_edge = fam["edge"]
 	var card := Control.new()
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.size = CARD_SIZE
 	card.pivot_offset = CARD_SIZE * 0.5        # 绕自己中心压扁 / 缩放
 	add_child(card)
-	# 道具卡面没有卡类名，卡背借用「机会」那套绿背（同一段演出的卡背不必再画一份）
-	_back = _card_face_back("机会" if item_face else deck, accent)
+	# 卡背 / 卡面都按**家族键**取色取纹（不再吃卡型色、也不再拿标题当键）
+	_back = _card_face_back(family)
 	card.add_child(_back)
-	_front = ItemCard.make(item_id, CARD_SIZE) if item_face else _card_face_front(deck, text, style)
+	# 道具卡面那一路仍是**那张 `ItemCard`**（与货架 / 手牌 / 弹窗同一张卡，`hud_test` 按脚本类型数
+	# 节点、断言恰好 1 张）；文字卡走 `_card_face_front`。两路的家族痕记见各自函数。
+	_front = ItemCard.make(item_id, CARD_SIZE) if item_face else _card_face_front(family, kind, deck, text)
 	_front.visible = false
 	card.add_child(_front)
 	card.modulate = Color(1, 1, 1, 0.0)
@@ -370,27 +386,31 @@ func _ease_out_back(t: float) -> float:
 
 ## ---- 以下四个构建函数**从 board_view.gd 原样搬来**，只改两处：
 ## ① 正文锁宽用新的 `CARD_SIZE`（`CARD_SIZE.x - 104`）；② 字号放大（标题 24→30、正文 15→18、
-##    行距 separation 6→8）。其余（卡背图案的 modulate、plate 的配色与内缩、描边）一字不改。
+##    行距 separation 6→8）。其余（plate 的配色与内缩）一字不改。
+## **2026-10-10 卡面美化**又动了两处：卡背图案的 modulate / 描边 / 圆角改由**家族表**给
+## （原先那个"是机会就用绿背"的三元判断已拆成家族键，见 §4.1）—— 机会族取到的 tint 与旧值同，
+## 畸变族**不同**（旧值走的是"非机会"那一支）；圆角 16 → 18。
 
-## 两套 CC0 的 Atlas 牌卡背（矢量，来源见根目录 LICENSE）：卡类名是**机会**的用绿背，
-## 其余（道具卡 / 畸变卡 / 失物招领那道道具卡面）一律用蓝背。
-func _deck_back_tex(deck: String) -> Texture2D:
-	return UIKit.tex("res://assets/cards/atlas_back_green_darkred.svg" if deck == "机会"
-		else "res://assets/cards/atlas_back_blue_brown.svg")
+## 牌背图案按**家族键**取（家族表是唯一来源）。2026-10-10 之前这里是拿标题字符串比较当配色键
+##（`deck` 是「机会」就用绿背），与"标题"这个角色撞在一起（见 卡面美化.md §4.1）。
+func _deck_back_tex(family: String) -> Texture2D:
+	return UIKit.tex(String(GameData.CARD_FAMILIES[family]["tex"]))
 
-## 铺满整张牌的卡背图案（压成低透明度线纹）
-func _make_card_art(deck: String) -> TextureRect:
+## 铺满整张牌的卡背图案（压成低透明度线纹）；色调按家族
+func _make_card_art(family: String) -> TextureRect:
 	var tr := TextureRect.new()
-	tr.texture = _deck_back_tex(deck)
+	tr.texture = _deck_back_tex(family)
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_SCALE
 	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tr.modulate = Color(1.0, 0.86, 0.55, 0.30) if deck == "机会" else Color(0.78, 0.72, 1.0, 0.30)
+	tr.modulate = GameData.CARD_FAMILIES[family]["tint"]
 	return tr
 
-## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（卡类名 + 卡文）
-func _card_face_front(deck: String, text: String, style: Array) -> Control:
+## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（卡类名 + 卡文）。
+## 形参 `family` 本批**只用来说明来源**（卡型徽章 / 光晕在 T2 才接）——本批正面与改前逐像素相同。
+func _card_face_front(family: String, kind: String, deck: String, text: String) -> Control:
+	var style: Array = UIKit.card_palette(kind)
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -398,7 +418,7 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	var layer := Control.new()
 	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(layer)
-	layer.add_child(_make_card_art(deck))
+	layer.add_child(_make_card_art(family))
 	var plate := UIKit.panel_container(Color(0.045, 0.05, 0.078, 0.88), 12,
 		Color(style[0].r, style[0].g, style[0].b, 0.5), 1, 0)
 	plate.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -440,16 +460,18 @@ func _card_face_front(deck: String, text: String, style: Array) -> Control:
 	v.add_child(body)
 	return card
 
-## 卡背：整张铺 CC0 的 Atlas 牌卡背图案
-func _card_face_back(deck: String, accent: Color) -> Control:
+## 卡背：整张铺 CC0 的 Atlas 牌卡背图案 + **家族色**的底色 / 描边 / 光晕。
+## ⚠ **卡背没有那块深色 `plate`**（它整张就是满铺格纹）—— 与卡面本来就不同，别"顺手统一"。
+func _card_face_back(family: String) -> Control:
+	var fam: Dictionary = GameData.CARD_FAMILIES[family]
+	var edge: Color = fam["edge"]
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
-		Color(0.075, 0.068, 0.045), 16, accent, 3, 12,
-		Color(accent.r, accent.g, accent.b, 0.12)))
+		fam["bg"], 18, edge, 3, 12, Color(edge.r, edge.g, edge.b, 0.12)))
 	var layer := Control.new()
 	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(layer)
-	layer.add_child(_make_card_art(deck))
+	layer.add_child(_make_card_art(family))
 	return card
