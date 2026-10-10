@@ -69,6 +69,7 @@ func _run() -> void:
 	root.add_child(g)
 	g.running = false  # 冻结主循环：本测试手动摆状态
 	_test_quality_tiers(g)
+	_test_unique_set(g)
 	_test_item_numbers(g)
 	_test_icons(g)
 	_test_egg(g)
@@ -285,6 +286,33 @@ func _test_quality_tiers(_g) -> void:
 	for q in ItemData.QUALITIES:
 		_check(ItemData.QUALITY_PRICES.has(q) and ItemData.QUALITY_COLORS.has(q),
 			"%s 档在定价表与配色表里都有" % q)
+
+## 唯一性判据（2026-10-10 拍板）：**按效果判、不按品质档** —— 只留给「多件会破坏某件事」的件。
+## 全仓 `unique: true` 的集合必须**恰好**是这 4 件（按 id 集合比，不是只断件数）：
+##   招财猫 / 保安巡逻 —— **倍率型**租金增益，多件会加速雪球；
+##   空想者的香皂 —— **全局**负面免疫，多件会稀释整套 debuff 体系（它自带 10 回合限时）；
+##   园中叶 —— 地皮护罩，多件会让抄家 / 强拆 / 征收整套攻击玩法失效。
+## **改前**全仓是 21 件（白 10 / 蓝 3 / 紫 3 / 金 5 —— 金档 5 件全唯一）⇒ 本断言在改前必然红。
+func _test_unique_set(_g) -> void:
+	print("== 唯一性判据 ==")
+	var want: Array = ["招财猫", "保安巡逻", "空想者的香皂", "园中叶"]
+	var got: Array = []
+	for id in ItemData.ITEMS:
+		if bool(ItemData.ITEMS[id].get("unique", false)):
+			got.append(id)
+	got.sort()
+	want.sort()
+	_check(got == want, "全仓 unique 恰为 4 件（实得 %d 件：%s）"
+		% [got.size(), ", ".join(PackedStringArray(got))])
+	# 金档**不再一律唯一**：改前 5 件金货全 unique，改后只剩香皂 / 园中叶两件。
+	var gold_unique: Array = []
+	for id in ItemData.ITEMS:
+		if String(ItemData.ITEMS[id].get("quality", "")) == "金" \
+				and bool(ItemData.ITEMS[id].get("unique", false)):
+			gold_unique.append(id)
+	gold_unique.sort()
+	_check(gold_unique == ["园中叶", "空想者的香皂"],
+		"金档仅剩 2 件唯一（实得 %s）" % ", ".join(PackedStringArray(gold_unique)))
 
 ## 逐件平衡（2026-10-10 道具重构 §三 3.2）：12 处数值，效果逻辑不变。
 ## **数值一律从数据类读出核对**（不是把设计稿的那张表再抄一份进断言）—— 表与设计稿一脱钩就红。

@@ -24,13 +24,16 @@ const BLACK_REFRESH_COST := 1                  # 刷新固定 1 块地皮（不�
 const BLACK_EXIT_COST := 1                     # 出口费 1 块地皮
 const BLACK_TIMEOUT := 20.0                    # 逛黑市发呆兜底
 
+## `unique`: **按效果判、不按品质档**（2026-10-10 拍板）—— 只留给「**多件会破坏某件事**」的件：
+## 倍率型租金增益（招财猫 / 保安巡逻）· 全局负面免疫（空想者的香皂）· 地皮护罩（园中叶）。
+## 金档**不再一律唯一**；改前 21 件（含金档 5 件全唯一）会让金池整个空掉、黑市退化成只出紫。
 ## target: "player" = 需选玩家；"tile" = 需点地图选格；"own_tile" = 需点自己名下的一块地皮（顶楼加盖）；缺省 = 自身/全体。
 ## then: "own_prop" = 选完玩家后再点他名下的一块地皮（两段式，如强拆令/抄家队）。
 const ITEMS := {
 	# ---- 白·普通（27）----
 	"招财猫": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "你的每块地皮租金收入 +400。", "implemented": true, "icon": "item_cat"},
-	"砍价高手": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"砍价高手": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你购买地皮时少花 ¥300。", "implemented": true, "icon": "item_tag"},
 	"兼职中介": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "立刻获得 ¥800。", "implemented": true, "icon": "item_parttime"},
@@ -46,15 +49,15 @@ const ITEMS := {
 		"desc": "立刻随机获得 -¥400~+¥800。", "implemented": true, "icon": "item_fountain"},
 	"外卖箱": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "前进 1 格并获得 ¥200。", "implemented": true, "icon": "item_takeout"},
-	"幸运数7": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"幸运数7": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你掷出 7 时额外获得 ¥1000。", "implemented": true, "icon": "item_luck"},
-	"校园卡": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"校园卡": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你每次经过起点时多领 ¥1000。", "implemented": true, "icon": "item_campus"},
-	"校历": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"校历": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你的回合开始时，若体力已满，改为获得 ¥300。", "implemented": true, "icon": "item_cal"},
-	"公交卡": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"公交卡": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你前进时额外多走 1 格。", "implemented": true, "icon": "item_bus"},
-	"信托基金": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"信托基金": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你的回合开始时，获得 ¥200。", "implemented": true, "icon": "item_fund"},
 	"占座": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "立刻移动到离你最近的一块自有地皮。", "implemented": true, "icon": "item_seat"},
@@ -66,15 +69,15 @@ const ITEMS := {
 		"desc": "弃掉本道具，获得 ¥1500。", "implemented": true, "icon": "item_recycle"},
 	"校园卡充值": {"quality": "白", "cost": 1, "type": "active", "unique": false, "cooldown": 1,
 		"desc": "花 ¥500 恢复 3 点体力。", "implemented": true, "icon": "item_recharge"},
-	"雨伞": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"雨伞": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你不会被事件后退。", "implemented": true, "icon": "item_umbrella"},
 	"刮刮乐": {"quality": "白", "cost": 1, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "刮开涂层，随机 ¥100~¥1000。", "implemented": true, "icon": "item_scratch"},
 	"喇叭": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 2,
 		"desc": "指定一名玩家下个道具消耗能量 +1。", "implemented": true, "target": "player", "icon": "item_horn"},
-	"应急基金": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"应急基金": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "现金不足 ¥5000 时补足到 ¥5000，每局一次。", "implemented": true, "icon": "item_emergency"},
-	"护身符": {"quality": "白", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"护身符": {"quality": "白", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "每局游戏你第一次被送进宿委会时免疫。", "implemented": true, "icon": "item_amulet"},
 	"体测": {"quality": "白", "cost": 2, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "指定一名玩家体力 -2。", "implemented": true, "target": "player", "icon": "item_fittest"},
@@ -84,9 +87,9 @@ const ITEMS := {
 		"desc": "指定一名玩家下回合点数 +3。", "implemented": true, "target": "player", "icon": "item_rollcall"},
 
 	# ---- 蓝·稀有（20）----
-	"置物架": {"quality": "蓝", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"置物架": {"quality": "蓝", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你的道具背包增加 2 格。", "implemented": true, "icon": "item_shelf"},
-	"充电宝": {"quality": "蓝", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"充电宝": {"quality": "蓝", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你的体力上限 +1。", "implemented": true, "icon": "item_powerbank"},
 	"夜跑": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "再转一次轮盘。", "implemented": true, "icon": "item_nightrun"},
@@ -115,7 +118,7 @@ const ITEMS := {
 		"desc": "指定一名玩家随机一件道具冷却 +2。", "implemented": true, "target": "player", "icon": "item_chief"},
 	"反作弊": {"quality": "蓝", "cost": 3, "type": "active", "unique": false, "cooldown": 5,
 		"desc": "本回合其他所有玩家不能使用道具。", "implemented": true, "icon": "item_ban"},
-	"错峰用电": {"quality": "蓝", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"错峰用电": {"quality": "蓝", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "你每回合第一件道具消耗 -1。", "implemented": true, "icon": "item_offpeak"},
 	"抄家队": {"quality": "蓝", "cost": 2, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家的一块地皮降 1 级。", "implemented": true, "target": "player", "then": "own_prop", "icon": "item_raiders"},
@@ -145,7 +148,7 @@ const ITEMS := {
 		"desc": "指定一名玩家下一回合休眠。", "implemented": true, "target": "player", "icon": "item_pause"},
 	"包场": {"quality": "紫", "cost": 4, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "指定一名玩家接下来两个回合不能使用道具。", "implemented": true, "target": "player", "icon": "item_bookout"},
-	"重修卡": {"quality": "紫", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
+	"重修卡": {"quality": "紫", "cost": -1, "type": "passive", "unique": false, "cooldown": 0,
 		"desc": "每回合你可以使用两次道具，共三次。", "implemented": true, "icon": "item_retake"},
 	"代课": {"quality": "紫", "cost": 3, "type": "consumable", "unique": false, "cooldown": 0,
 		"desc": "你的下一笔租金，由房东替你付。", "implemented": true, "icon": "item_substitute"},
@@ -157,7 +160,7 @@ const ITEMS := {
 		"desc": "复印他的随机一件道具（金货拒印）。", "implemented": true, "target": "player", "icon": "item_copy"},
 	"交换课表": {"quality": "紫", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "与一名指定玩家各随机交换一块地皮。", "implemented": true, "target": "player", "icon": "item_timetable"},
-	"二两寒暑": {"quality": "紫", "cost": 3, "type": "active", "unique": true, "cooldown": 3,
+	"二两寒暑": {"quality": "紫", "cost": 3, "type": "active", "unique": false, "cooldown": 3,
 		"desc": "指定一名玩家接下来两个道具的消耗各 +2。", "implemented": true, "target": "player", "icon": "item_thermo"},
 	# 「二青会酒寒暑」：紫·一次性·用后焚毁（不回池）；效果 = 获得一个强化版「组队学习」。
 	# `price` 单件覆盖 ¥2600（不随紫档整体定价）：它是兑换券、产出只是一件蓝档强化件，
@@ -167,13 +170,13 @@ const ITEMS := {
 		"implemented": true, "icon": "item_erging"},
 
 	# ---- 金·传说（5）----
-	"黑卡": {"quality": "金", "cost": 4, "type": "active", "unique": true, "cooldown": 4,
+	"黑卡": {"quality": "金", "cost": 4, "type": "active", "unique": false, "cooldown": 4,
 		"desc": "接下来 3 次购买免费。", "implemented": true, "icon": "item_blackcard"},
 	"空想者的香皂": {"quality": "金", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "免疫所有负面效果。10 回合后融化。", "implemented": true, "icon": "item_soap"},
-	"蛋蛋节": {"quality": "金", "cost": 1, "type": "consumable", "unique": true, "cooldown": 1,
+	"蛋蛋节": {"quality": "金", "cost": 1, "type": "consumable", "unique": false, "cooldown": 1,
 		"desc": "每位玩家都会获得一份礼物，每局游戏仅限一次。", "implemented": true, "icon": "item_gift"},
-	"亡牌飞行员coco": {"quality": "金", "cost": 3, "type": "consumable", "unique": true, "cooldown": 3,
+	"亡牌飞行员coco": {"quality": "金", "cost": 3, "type": "consumable", "unique": false, "cooldown": 3,
 		"desc": "每位玩家都有一块随机地皮被摧毁，每局游戏仅限一次。", "implemented": true, "icon": "item_pilot"},
 	"园中叶": {"quality": "金", "cost": -1, "type": "passive", "unique": true, "cooldown": 0,
 		"desc": "你名下的地皮不会被抄家降级、被强拆成无主，也不会被学校征收。", "implemented": true, "icon": "item_leaf"},
