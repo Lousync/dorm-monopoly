@@ -643,7 +643,7 @@ func _apply_hand_layout() -> void:
 		var d := ItemData.def(id)
 		# 品质色是**数据契约**：键就是 `ItemData.QUALITIES`（"白"/"蓝"/"紫"/"金"，见 item_data.gd）。
 		# 选中 → 提亮一档（不改品质色的语义，只是加亮）；待确认丢弃 → 染红（红色优先）。
-		var q: Color = ItemData.QUALITY_COLORS.get(String(d.get("quality", "白")), Color.WHITE)
+		var q: Color = CardDB.category_color(CardDB.FAMILY_ITEM, String(d.get("quality", "白")))
 		if i == _hand_disc:
 			_hand_body_mats[i].albedo_color = HAND_DISCARD_COLOR
 		else:

@@ -854,7 +854,7 @@ func _show_tech_tier(tier: String) -> void:
 	var t := UIKit.title_label("科技 · 本局等级", 22)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
-	var banner := UIKit.label("本局科技等级 · %s" % tier, 26, TechData.tier_color(tier))
+	var banner := UIKit.label("本局科技等级 · %s" % tier, 26, CardDB.category_color(CardDB.FAMILY_TECH, tier))
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(banner)
 	Fx.play("cash", 0.0)
@@ -5036,9 +5036,9 @@ func _show_info_panel(idx: int) -> void:
 				GameData.fmt_money(GameData.rent_for(idx, tiles)), level, GameData.level_name(level),
 				owner_name]
 		"item":
-			accent = ItemData.QUALITY_COLORS["紫"]
+			accent = CardDB.category_color(CardDB.FAMILY_ITEM, "紫")
 		"again":
-			accent = ItemData.QUALITY_COLORS["金"]
+			accent = CardDB.category_color(CardDB.FAMILY_ITEM, "金")
 	info_title.text = "【%s】" % String(d.name)
 	info_title.add_theme_color_override("font_color", accent)
 	info_body.text = body
@@ -5372,7 +5372,7 @@ func _open_card_gallery() -> void:
 		var q_cells: Array = []
 		for id3 in q_ids:
 			q_cells.append(_card_cell(id3, ItemCard.SIZE_MEDIUM, {}, ""))
-		gv.add_child(_card_section("%s档 · 品质补全（%d 件）" % [ItemData.QUALITY_NAMES.get(q, q), q_ids.size()], q_cells))
+		gv.add_child(_card_section("%s档 · 品质补全（%d 件）" % [CardDB.category_label(CardDB.FAMILY_ITEM, q), q_ids.size()], q_cells))
 
 func _card_section(title: String, cells: Array) -> Control:
 	var box := VBoxContainer.new()
@@ -8113,7 +8113,7 @@ func _refresh_black_ui() -> void:
 		else:
 			var q := String(ItemData.def(id).quality)
 			var cost := int(ItemData.BLACK_COST.get(q, 1))
-			b.text = "买【%s】·%s（%d地）" % [id, String(ItemData.QUALITY_NAMES.get(q, q)), cost]
+			b.text = "买【%s】·%s（%d地）" % [id, CardDB.category_label(CardDB.FAMILY_ITEM, q), cost]
 			b.disabled = pay_mode != ""
 	if pay_mode == "":
 		black_hint.text = "选一件商品，或直接交费离开。"

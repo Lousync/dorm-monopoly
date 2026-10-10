@@ -271,9 +271,9 @@ static func build_play_ui(g: Node) -> void:
 		dot.custom_minimum_size = Vector2(13, 13)
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		dot.add_theme_stylebox_override("panel", UIKit.stylebox(
-			ItemData.QUALITY_COLORS[ItemData.QUALITIES[qi]], 6, Color(0, 0, 0, 0.4), 1))
+			CardDB.category_color(CardDB.FAMILY_ITEM, ItemData.QUALITIES[qi]), 6, Color(0, 0, 0, 0.4), 1))
 		legend.add_child(dot)
-		legend.add_child(UIKit.label(ItemData.QUALITY_NAMES[ItemData.QUALITIES[qi]], 13,
+		legend.add_child(UIKit.label(CardDB.category_label(CardDB.FAMILY_ITEM, ItemData.QUALITIES[qi]), 13,
 			Color(0.78, 0.7, 0.58)))
 	g.shop_refresh_btn = UIKit.button("刷新", 14)
 	g.shop_refresh_btn.pressed.connect(func() -> void:
