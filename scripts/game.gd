@@ -428,6 +428,18 @@ func _ready() -> void:
 	# 必须早于 _build_ui：规则说明面板构建时就要按本局挡位取秒数（见 RulesPanel.build）
 	_settings = Net.game_settings.copy() if Net.game_settings != null else GameSettings.new()
 
+	# 摆拍：单人直达对局（`--shot-game=1`，即 `at_mode == ""`）时**关掉科技**。
+	# 为什么必须关：`_tech_phase` 会**先 `_broadcast_state()`、再演 1.75 s**（定档横幅 1.4 s
+	# + 0.35 s 余量），而 `at_mode == ""` 的摆拍在**第一份快照**上就触发 ⇒ 三帧连拍
+	# （0.6 / 1.2 / 1.8 s）**整段落在演出里**，「干净全景」那张直接作废（实测三帧全被盖住）。
+	# 文件名点名 `techroll` 时不关 —— 那一张要的就是定档演出本身。
+	# 只作用于 `at_mode == ""`：`--autotest=host --rounds=N --shot=` 那条要等到第 N 轮才拍，
+	# 科技早演完了、本来就不受影响 —— 别去动它的局，否则摆出来的局面跟默认真实局不一样。
+	# 放在 `_build_ui()` **之前**：对局内设置面板的科技开关要显示成「关」，与实际一致。
+	if _shot_path != "" and at_mode == "" and not _shot_path.contains("techroll"):
+		_settings.tech_on = false
+		print("SHOT: 摆拍关掉科技（本局不跑定档 / 三选一）；要拍定档演出请把文件名带上 techroll")
+
 	_build_ui()
 	board.start_salary = _settings.start_salary   # 起点格上的「+工资」随设置走
 
@@ -447,6 +459,17 @@ func _ready() -> void:
 	# 底栏已随批次 3 Task 6 取消（等房主的首份 s_state 广播即可，见 _broadcast_state）。
 	if multiplayer.is_server():
 		_host_setup()
+		# 摆拍（`at_mode == ""`，即 `--shot-game=1`）**不真的打对局**：局面建好就停在那儿。
+		# 不这么做就拍不到干净桌面 —— 单人局（这个开关不补机器人）一进 `_run_game()` 就被
+		# `_check_end` 判「最后存活 · 房主获胜」结束，结算层糊在正中间（`main` 上也一样，
+		# 本分支此前只是**恰好**被科技定档那 1.75 s 挡住了，关掉科技就露出来）。
+		# `lab_mode` 必须**一起**置：`phase` 读的是 `running or lab_mode`，只关 `running`
+		# 会让快照落到 "ended"、`s_state` 照样给你弹结算层（口径同 `tests/hud_test.gd` 的脚手架）。
+		# ⚠ 只能在 `_host_setup()` **之后**置 —— 它开头就把 `running` 置回 true 了。
+		# 要拍「真的在打」的对局请走 `--autotest=host --rounds=N --shot=`（那条不受影响）。
+		if _shot_path != "" and at_mode == "":
+			running = false
+			lab_mode = true
 
 	board.item_slot_clicked.connect(_on_item_slot_clicked)
 	board.item_discard_clicked.connect(_on_discard_clicked)
