@@ -23,6 +23,24 @@ func _has_prop(g, nm: String) -> bool:
 			return true
 	return false
 
+## 某方法的形参个数（含带默认值的那些）。用它当「新入参在不在」的**存在性闸**：
+## 少了它，多传一个参数会在**运行期**直接报错中断、`fails` 一个都不涨 ⇒ 汇总会**假绿**成
+## "ALL PASS"（理由同 `chance_test._run` 里那道存在性闸）。查不到方法回 -1。
+func _arg_count(g, nm: String) -> int:
+	for md in g.get_method_list():
+		if String(md.get("name", "")) == nm:
+			return (md.get("args", []) as Array).size()
+	return -1
+
+## 战报里从 `from` 起找 `needle` 的下标（-1 = 没有）—— 只看这一段**新增**的战报，
+## 免得撞上前面用例的同名行（口径同 `chance_test.gd` 的同名小助手）。
+func _log_at(g, needle: String, from: int) -> int:
+	return int(g.log_text.get_parsed_text().find(needle, from))
+
+## 战报当前长度（当"游标"用）
+func _log_len(g) -> int:
+	return int(g.log_text.get_parsed_text().length())
+
 ## 机会牌堆当前的牌面文案序列 —— 用例拿它比对**顺序**，不是只比张数。
 func _deck_titles(g) -> Array:
 	var out := []
@@ -68,6 +86,12 @@ func _run() -> void:
 	var g = load("res://scenes/game.tscn").instantiate()
 	root.add_child(g)
 	g.running = false  # 冻结主循环：本测试手动摆状态
+	# 脚手架那局**不要跑科技（定档 + 全员三选一）**（2026-10-09 起 `tech_on` 默认开；口径同
+	# `chance_test.gd` 那条）：`_start()` 起跑时先 `_wait(1.5)`，之后只要 `hp` 非空就照跑定档 +
+	# 给在场每家发一件科技并**结算它的即时效果（会动钱）**。本文件一上来就往 `hp` 里塞人 ⇒ 撞得上；
+	# 原先套件跑得快、这段多落在用例之间的空档，`_test_shield_cards` 带的等待更长才显形
+	#（实测：甲那 1000 现金被后台科技清零，误判成"强买动了钱"）。
+	g._settings.tech_on = false
 	_test_quality_tiers(g)
 	_test_unique_set(g)
 	_test_item_numbers(g)
@@ -87,6 +111,7 @@ func _run() -> void:
 	await _test_taobao_guarantee(g)
 	await _test_bury(g)
 	_test_tile_shield(g)
+	await _test_shield_cards(g)
 	if fails == 0:
 		print("ITEM TEST: ALL PASS")
 		quit(0)
@@ -942,6 +967,120 @@ func _test_tile_shield(g) -> void:
 	_arm_use(g, p0, "转专业", 8)
 	g._begin_peer_target(0, false, true, false)
 	_check(g._tgt_stage == "peer", "首段候选：互换类（转专业）照旧列得出持护罩者")
+	g._cancel_target()
+	g._tgt_stage = ""
+	g.hp = []
+
+## 「园中叶」地产护罩**扩宽**（2026-10-10 交接书 ㉗ 拍板选 ②）：把「同样让地皮**单方面**易主」的
+## 另外三处（机会卡 `seize_tile:"take"` / `force_buy_tile`、`亡牌飞行员coco` 炸地）一并挡掉。
+## 判据照 `_card_tile_move_harmful(card, field)` 来（香皂免疫那一份，已把 take / swap 分开），
+## 不另创一套。
+##
+## **反向对照与正向同样重要**：互换（`seize_tile:"swap"` / `转专业`）与金钱类**都不挡** ——
+## 那几条改动前后都该绿，钉的是「没有扩过头」。逐条「改前会红」的实证见
+## `.superpowers/sdd/道具重构-实施计划/task-shield-report.md`
+##（该报告随本 SDD 任务留档；`plans/*` 才随版本删除，这里不是）。
+func _test_shield_cards(g) -> void:
+	print("== 园中叶：夺地 / 强买 / 炸地（㉗ 扩宽）==")
+	# 存在性闸：入参没加上时，下面的三参调用会在**运行期**报错中断、`fails` 一个都不涨
+	# ⇒ 汇总会假绿。先把它钉成一条红断言（这就是本文件 `_test_iface` 那条的理由）。
+	var argc := _arg_count(g, "_card_target_candidates")
+	_check(argc >= 3, "_card_target_candidates 收下了 card（`seize_tile` 的 take / swap 必须分开判）")
+
+	var a := _prop_idx(0)
+	var b := _prop_idx(1)
+	var c := _prop_idx(2)
+	var p0 := _mk_player(1, "甲")   # 抽卡者 / 施放者
+	var p1 := _mk_player(2, "乙")   # 受害者；自有地皮 b
+	g.shops = {}
+	g.items_consumed = {}
+
+	# ① 候选名单（玩家可见的那张表）：持护罩者只在"单方面夺走"那两条上剔除
+	g.hp = [p0, p1]
+	g.htiles = _fresh_tiles()
+	g.htiles[b].owner = 2
+	g.htiles[b].level = 2
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	if argc >= 3:
+		_check(g._card_target_candidates(p0, "seize_tile", {"seize_tile": "take"}).is_empty(),
+			"持园中叶：「没收房产」（take）的候选里没有他（改前 = [2]）")
+		_check(g._card_target_candidates(p0, "force_buy_tile", {"force_buy_tile": 50}).is_empty(),
+			"持园中叶：「半价强买」的候选里没有他（改前 = [2]）")
+		_check(g._card_target_candidates(p0, "seize_tile", {"seize_tile": "swap"}) == [2],
+			"反向对照：互换（`seize_tile:\"swap\"`）照旧列得出持护罩者")
+		_check(g._card_target_candidates(p0, "pull_target", {"pull_target": true}) == [2],
+			"反向对照：位置类（拉人）不受护罩影响")
+		_check(g._card_target_candidates(p0, "steal_from", {"steal_from": 400}) == [2],
+			"反向对照：金钱类（夺钱）不受护罩影响")
+		p1.items = []
+		_check(g._card_target_candidates(p0, "seize_tile", {"seize_tile": "take"}) == [2],
+			"反向对照：无护罩照旧是候选（不是整个筛选坏掉）")
+		p1.items = [{"id": "园中叶", "cd": 0}]
+
+	# ② 走**正路**（卡里不喂 `_target`：托管自动选目标、房主照常结算）：
+	#    候选为空 ⇒ 这张卡作废、地皮没易主。改前这里会选中乙、把地夺走。
+	g._broadcast_state()
+	p0.bot = true
+	var log0 := _log_len(g)
+	await g._apply_card(p0, {"t": "没收他的房产", "seize_tile": "take"})
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == 2,
+		"持园中叶：抽卡者（托管）走 take 夺不走乙的地（仍归乙）")
+	_check(_log_at(g, "没有可指定的目标", log0) >= 0,
+		"持园中叶：候选为空 ⇒ 战报写明这张卡的目标部分作废（不是静默卡住）")
+
+	# ③ 同上，走 `force_buy_tile`（半价强买）：地皮没易主、钱一分没动
+	g.htiles[b].owner = 2         # 与 ② 各摆一副独立局面（② 若真夺走了地，别把脏状态带进来）
+	p0.money = 5000              # 钱给够（乙那块一半 ≈¥1270）：改前这一买是**真的成交**，
+	p1.money = 1000              # 否则"买不动"会把断言伪装成绿的（假判据）
+	var m0 := int(p0.money)
+	var m1 := int(p1.money)
+	await g._apply_card(p0, {"t": "半价强买", "force_buy_tile": 50})
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == 2, "持园中叶：强买不走乙的地")
+	_check(int(p0.money) == m0 and int(p1.money) == m1,
+		"持园中叶：强买连钱都没动（实得 %d / %d）" % [int(p0.money), int(p1.money)])
+
+	# ④ 炸地（`_apply_coco`）：持护罩者的地皮不变焦土、归属与等级都不动；无护罩者照旧
+	var p2 := _mk_player(3, "丙")   # 无护罩
+	g.hp = [p0, p1, p2]
+	g.htiles = _fresh_tiles()
+	g.htiles[a].owner = 1
+	g.htiles[a].level = 1
+	g.htiles[b].owner = 2
+	g.htiles[b].level = 2
+	g.htiles[c].owner = 3
+	g.htiles[c].level = 2
+	# 每家名下**恰好一块**地 ⇒ 每人被炸的那块是确定的（`_apply_coco` 自己随机挑一块）
+	g._apply_coco(p0)
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == 2 and not bool(g.htiles[b].get("soil", false)),
+		"持园中叶：自家地皮不被炸成焦土（仍归乙、无焦土）")
+	_check(int(g.htiles[b].get("level", -1)) == 2, "持园中叶：炸地连装修等级都没动（仍 Lv2）")
+	_check(int(g.htiles[c].get("owner", GameData.NO_PEER)) == GameData.NO_OWNER \
+			and bool(g.htiles[c].get("soil", false)),
+		"反向对照：无护罩的丙照旧被炸成焦土 + 无主")
+
+	# ⑤ 反向对照：互换 / 夺钱**都不挡**（这两条改动前后都该绿）
+	g.hp = [p0, p1]
+	g.htiles = _fresh_tiles()
+	g.htiles[a].owner = 1
+	g.htiles[b].owner = 2
+	p1.money = 1000
+	await g._apply_card(p0, {"t": "换宿舍楼", "seize_tile": "swap", "_target": 2})
+	_check(int(g.htiles[b].get("owner", GameData.NO_PEER)) == 1 \
+			and int(g.htiles[a].get("owner", GameData.NO_PEER)) == 2,
+		"反向对照：互换（swap）照旧换得动持护罩者的地（甲得 b / 乙得 a）")
+	await g._apply_card(p0, {"t": "顺走外卖", "steal_from": 400, "_target": 2})
+	_check(int(p1.money) == 600,
+		"反向对照：金钱类照旧夺得到持护罩者的钱（乙 -400，实得 %d）" % int(p1.money))
+
+	# ⑥ 反向对照：互换类**道具**（转专业，`then == "swap_both"`）照旧列得出持护罩者
+	g.htiles[a].owner = 1
+	g.htiles[b].owner = 2
+	g._broadcast_state()
+	g.my_peer = 1
+	g._tgt_stage = ""
+	_arm_use(g, p0, "转专业", 8)
+	g._begin_peer_target(0, false, true, false)
+	_check(g._tgt_stage == "peer", "反向对照：互换类道具（转专业）照旧列得出持护罩者")
 	g._cancel_target()
 	g._tgt_stage = ""
 	g.hp = []
