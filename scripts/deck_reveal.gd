@@ -41,6 +41,16 @@ const CARD_TIME := OUT + FLIP + HOLD
 const CHOICE_BTN := Vector2(168.0, 42.0)
 ## 小抄置底那两枚（「塞到底 / 算了」）的单枚尺寸。
 const BURY_BTN := Vector2(140.0, 42.0)
+## 文字卡卡面那两枚徽章的基准尺寸（**不是**相位常量：改它不影响任何时长，`hud_test` 的
+## `CARD_TIME` 断言照绿）。`ItemCard` 那两枚是 `size.y * 0.15` = 72px，在 320×480 这档相当抢眼；
+## 文字卡只有一枚文字标题、放两枚 72px 会盖掉版面 ⇒ 取 36（见 doc/development/plans/卡面美化.md
+## §二 A.2）。
+const BADGE_SIZE := 36.0
+## 卡面那层 `layer` 被 `card` 的 stylebox 内缩掉的**内容边距**（`UIKit.card_stylebox` 走
+## `_sbt` 的默认值：左右 12 / 上下 8 —— 实测 `layer.position` 就是 `(12, 8)`）。
+## 徽章挂在 `layer` 上，而落点要按**卡片**的边算 ⇒ 得先把这层减掉（见 `_add_card_badges`）。
+## ⚠ 改动卡面 stylebox 的 content_margin 时这里要跟着改（`chance_test._test_card_face` 钉着）。
+const CARD_CONTENT_MARGIN := Vector2(12.0, 8.0)
 
 ## 摆拍用：强制让「确定」按钮出镜（`--shot` 的 card / itemreveal 分支置真，`_close()` 复位）。
 var dev_force_confirm := false
@@ -407,20 +417,26 @@ func _make_card_art(family: String) -> TextureRect:
 	tr.modulate = GameData.CARD_FAMILIES[family]["tint"]
 	return tr
 
-## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面（卡类名 + 卡文）。
-## 形参 `family` 本批**只用来说明来源**（卡型徽章 / 光晕在 T2 才接）——本批正面与改前逐像素相同。
+## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面。
+## **家族认框、卡型认章**（2026-10-10 卡面美化）：外框 / 标题 / 分隔线 / 光晕吃**家族色**，
+## 卡型色退到右上那枚徽章（色 + 图标 + 中文三通道 —— 比"只看框色猜"准，
+## `jail` 的紫框与畸变卡的紫框那"两个几乎一样的紫"也就不再需要靠颜色去分）。
 func _card_face_front(family: String, kind: String, deck: String, text: String) -> Control:
-	var style: Array = UIKit.card_palette(kind)
+	var fam: Dictionary = GameData.CARD_FAMILIES[family]
+	var edge: Color = fam["edge"]
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(style[1], 16, style[0], 2, 12))
+	# 圆角 16 → 18；描边 = 家族色 2px；光晕 = 家族色 0.14（原先这两处都吃卡型 accent）
+	card.add_theme_stylebox_override("panel", UIKit.card_stylebox(
+		fam["bg"], 18, edge, 2, 12, Color(edge.r, edge.g, edge.b, 0.14)))
 	var layer := Control.new()
 	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(layer)
 	layer.add_child(_make_card_art(family))
+	# 深色 plate 的 1px 边框也跟家族
 	var plate := UIKit.panel_container(Color(0.045, 0.05, 0.078, 0.88), 12,
-		Color(style[0].r, style[0].g, style[0].b, 0.5), 1, 0)
+		Color(edge.r, edge.g, edge.b, 0.5), 1, 0)
 	plate.set_anchors_preset(Control.PRESET_FULL_RECT)
 	plate.offset_left = 34.0
 	plate.offset_right = -34.0
@@ -428,7 +444,11 @@ func _card_face_front(family: String, kind: String, deck: String, text: String) 
 	plate.offset_bottom = -34.0
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(plate)
-	var m := UIKit.margins(16, 16, 14, 14)
+	# 上留白 14 → 20：标题改贴顶之后，这 20px 就是它与卡上缘之间那口气。
+	# 左右 16 **别改小**：`layer` 被卡的 stylebox 内缩了 `CARD_CONTENT_MARGIN` ⇒ plate 实宽 272、
+	# 内宽 216，**正好**等于标题 / 正文的锁宽；再小一格，标题的 min 宽就把 plate 撑得更宽、
+	# 连 plate 一起顶出卡外。
+	var m := UIKit.margins(16, 16, 20, 14)
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	plate.add_child(m)
 	var v := VBoxContainer.new()
@@ -436,9 +456,13 @@ func _card_face_front(family: String, kind: String, deck: String, text: String) 
 	#（根 / card / plate / m / layer / rule 都已经是 IGNORE，别只漏这一层）。
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_theme_constant_override("separation", 8)
-	v.alignment = BoxContainer.ALIGNMENT_CENTER   # 标题 + 分隔线 + 正文**整块纵向居中**（不再标题贴顶、正文撑满下方）
+	# 2026-10-10：原先「标题 + 分隔线 + 正文**整块纵向居中**」⇒ 标题落点随正文长短浮动。
+	# 实拍里那块文字只占卡面中间约 1/3、上下各空 ~230 / ~290 px（"大卡面、小内容"最扎眼）——
+	# 改成**标题贴顶 + 上留白**是收掉这个观感最便宜的一刀（见 卡面美化.md §1.2(3) / §二 A.3）。
+	v.alignment = BoxContainer.ALIGNMENT_BEGIN
 	m.add_child(v)
-	var title := UIKit.label(deck, 30, style[0])
+	var title := UIKit.bold_label(deck, 30, edge)
+	title.name = "card_title"
 	# §十：标题按卡面内宽**锁宽换行 + 居中**。不锁的话 Label 的 min 宽 = 整串文字宽
 	#（畸变标题「🌀 畸变 · xx」较长时会超出牌面内宽）⇒ 文字块被顶得向右偏、看着不在卡牌居中。
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -446,19 +470,79 @@ func _card_face_front(family: String, kind: String, deck: String, text: String) 
 	title.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)
 	title.size_flags_horizontal = Control.SIZE_FILL
 	v.add_child(title)
-	var rule := ColorRect.new()
-	rule.color = Color(style[0].r, style[0].g, style[0].b, 0.35)
-	rule.custom_minimum_size = Vector2(0, 1)
-	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 分隔线：1px 实心 ColorRect → **2px 两端渐隐**（`grad_rect` 的线性渐变，不落素材）。
+	# ⚠ `grad_rect` 的 `from` / `to` 默认是**纵向**（`(0.5,0) → (0.5,1)`）—— 这条只有 2px 高，
+	# 用默认值等于整条一个色、两端根本渐隐不了。**必须显式给横向端点**（判据也读真画出来的
+	# `fill_from` / `fill_to`，见 tests/chance_test.gd 的 `_test_card_face`）。
+	var rule := UIKit.grad_rect(
+		[Color(edge.r, edge.g, edge.b, 0.0), Color(edge.r, edge.g, edge.b, 0.55),
+			Color(edge.r, edge.g, edge.b, 0.0)], [0.0, 0.5, 1.0], false,
+		Vector2(0.0, 0.5), Vector2(1.0, 0.5))
+	rule.name = "card_rule"
+	rule.set_anchors_preset(Control.PRESET_TOP_LEFT)   # `grad_rect` 自带 FULL_RECT 锚点，进 VBox 前先归位
+	rule.custom_minimum_size = Vector2(0, 2)
+	rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(rule)
 	var body := UIKit.label(text, 18, UIKit.TEXT)
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(CARD_SIZE.x - 104, 0)   # 锁换行宽度（内宽 − 4）
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	body.size_flags_vertical = Control.SIZE_SHRINK_CENTER   # 不撑满：让整块（标题+正文）在面板里居中
+	# 标题贴顶之后，正文吃下**剩下**的高度、在那一块里垂直居中（长短文案各居各的，
+	# 标题落点从此不动 —— 畸变那种长标题也就不会把标题顶下去）
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(body)
+	# 两枚徽章：**加在 `layer` 上，不是加在 `card` 上**（`PanelContainer` 会把直接子节点拉满整卡）
+	_add_card_badges(layer, fam, kind)
 	return card
+
+
+## 卡面那两枚**骑在卡边外**的徽章（与 `ItemCard` 同一套语言）。**只给文字卡** ——
+## 道具卡面不叠：它已经有"品质色外框 + ⚡消耗 / 被动 + 一次性 / ⏳计数"两套，再叠必打架
+##（见 卡面美化.md §3.2；`hud_test` 也钉着"道具卡面前面恰好 1 张 `ItemCard`"）。
+##
+## ⚠ 只许加在 `layer`（普通 `Control`）上：`card` 是 `PanelContainer`，会把**每一个**直接子节点
+## 拉满整卡 ⇒ 徽章的 `position` 当场被抹掉（两枚糊在卡正中）。`layer` 排在 `plate` 之后
+## ⇒ 徽章画在正文之上。
+func _add_card_badges(layer: Control, fam: Dictionary, kind: String) -> void:
+	var bs := BADGE_SIZE
+	var edge: Color = fam["edge"]
+	# 落点按**卡片**的边算，而徽章挂在 `layer` 上 ⇒ 先把 `layer` 被内缩的那层抬回去。
+	# 不减这一层（brief 原值直接摆）就等于把"卡的坐标"当成了"layer 的坐标"：左上那枚只探出
+	# 卡外 3px、右上那枚却探出 43px —— 一左一右明显不对称（实测量过，见 CARD_CONTENT_MARGIN）。
+	var org := -CARD_CONTENT_MARGIN
+	# 左上 = **家族徽章**（圆，家族色，只有图标）
+	var fb := UIKit.badge_round(bs, Color(0.15, 0.17, 0.26), edge)
+	fb.name = "card_badge_family"
+	fb.position = org + Vector2(-bs * 0.42, -bs * 0.42)   # 同 `ItemCard._badge` 的落点：约六成在卡内
+	layer.add_child(fb)
+	var fl := UIKit.label(String(fam["glyph"]), int(bs * 0.42), edge)
+	fl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	fl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fb.add_child(fl)
+	# 右上 = **卡型徽章**（色 + 图标 + 中文三通道）。36px 的**圆**塞不下「🚨 查寝」（4 个字形
+	# ≈ 39px）⇒ 用**胶囊**（圆角 = 半高，视觉上仍是同一枚圆角徽章，与 `ItemCard._pill` 同族），
+	# `bs` 只约束它的高。这一处与设计稿 §二 A.2 的"圆徽章"略有出入，理由就在上一行。
+	var kin: Dictionary = GameData.CARD_KINDS.get(kind, {})
+	if kin.is_empty():
+		# `kind` 不在 `card_kind()` 的五类里（今天只有畸变公告那一路、kind 恒为 "aberr"）——
+		# 它**没有"卡型"这一维**，家族徽章已经说明是畸变族 ⇒ 不画右徽章。
+		#（设计稿 §3.2 给畸变写的那枚 🚨 是把查寝那行抄了过来，照画会在畸变卡上写"查寝"。）
+		return
+	var kc: Color = kin["color"]
+	var kw := bs * 2.05
+	var kb := UIKit.badge_pill(Vector2(kw, bs), Color(0.15, 0.17, 0.26), kc)
+	kb.name = "card_badge_kind"
+	kb.position = org + Vector2(CARD_SIZE.x - kw * 0.58, -bs * 0.42)
+	layer.add_child(kb)
+	var kl := UIKit.label("%s %s" % [kin["glyph"], kin["label"]], int(bs * 0.36), kc)
+	kl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	kl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	kl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	kl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	kb.add_child(kl)
 
 ## 卡背：整张铺 CC0 的 Atlas 牌卡背图案 + **家族色**的底色 / 描边 / 光晕。
 ## ⚠ **卡背没有那块深色 `plate`**（它整张就是满铺格纹）—— 与卡面本来就不同，别"顺手统一"。

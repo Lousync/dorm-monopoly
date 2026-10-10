@@ -439,6 +439,25 @@ static func pill(text: String, fg: Color, size := 12) -> PanelContainer:
 	m.add_child(label(text, size, fg.lightened(0.28)))
 	return p
 
+## 圆形徽章（**从 `ItemCard._badge` 纯搬移**，外观零变化）：圆 + 描边 + 投影。
+## 「骑在卡边外」是**使用者给的落点**决定的（如 `(-bs * 0.42, -bs * 0.42)`，约六成落在卡内），
+## 本函数不管落点 —— 文字卡与 `ItemCard` 各自在自己那边摆。
+## ⚠ 名字带 `badge` 是为了与上面那个 `pill(text, fg, size)`（**文字胶囊 chip**）分开 —— 两者不是一回事。
+static func badge_round(side: float, bg: Color, border: Color) -> Panel:
+	var b := Panel.new()
+	b.size = Vector2(side, side)
+	b.add_theme_stylebox_override("panel", stylebox(bg, int(side * 0.5), border, 2, 2))
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return b
+
+## 胶囊徽章（文字标用，如「一次性」「🚨 查寝」）：圆角矩形而非圆。同上，纯搬移、不管落点。
+static func badge_pill(sz: Vector2, bg: Color, border: Color) -> Panel:
+	var b := Panel.new()
+	b.size = sz
+	b.add_theme_stylebox_override("panel", stylebox(bg, int(sz.y * 0.5), border, 2, 2))
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return b
+
 ## 排名奖牌：1 金 / 2 银 / 3 铜 / 其余石板灰
 static func rank_badge(rank: int, side := 26.0) -> Panel:
 	var palettes := [

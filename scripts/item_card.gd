@@ -211,17 +211,10 @@ static func _delta_color(dir: int, base: Color) -> Color:
 		return Color(0.5, 0.92, 0.55)
 	return base
 
+## 圆形 / 胶囊徽章：**语言住在 `UIKit`**（文字卡要借同一套，免得各写第二份）。
+## 2026-10-10 卡面美化时**纯搬移**（外观零变化）—— 落点仍写在本文件的调用点里，所以"看哪去"没变。
 static func _badge(side: float, bg: Color, border: Color) -> Panel:
-	var b := Panel.new()
-	b.size = Vector2(side, side)
-	b.add_theme_stylebox_override("panel", UIKit.stylebox(bg, int(side * 0.5), border, 2, 2))
-	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return b
+	return UIKit.badge_round(side, bg, border)
 
-## 胶囊徽章（文字标用，如「一次性」）：圆角矩形而非圆。
 static func _pill(sz: Vector2, bg: Color, border: Color) -> Panel:
-	var b := Panel.new()
-	b.size = sz
-	b.add_theme_stylebox_override("panel", UIKit.stylebox(bg, int(sz.y * 0.5), border, 2, 2))
-	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return b
+	return UIKit.badge_pill(sz, bg, border)

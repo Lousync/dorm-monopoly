@@ -105,6 +105,7 @@ func _run() -> void:
 	_test_card_kind_order_is_frozen()
 	_test_deck_key_is_gone()
 	_test_card_style(g)
+	_test_card_face(g)
 	_test_candidates(g)
 	_test_enter_exit(g)
 	_test_spectator(g)
@@ -1665,5 +1666,181 @@ func _test_card_style(g) -> void:
 	_check(dr._fam_edge == GameData.CARD_FAMILIES["item"]["edge"], "带 item_id ⇒ family=item")
 	dr.show_card("🌀 畸变 · 测试", "aberr", "测试：畸变族")
 	_check(dr._fam_edge == GameData.CARD_FAMILIES["aberr"]["edge"], "kind=aberr ⇒ family=aberr")
+	dr.request_close()
+	dr.tick(dr.BACK + 0.05)
+
+# ================= 卡面美化（Task 2，2026-10-10） =================
+#
+# 「家族认框、卡型认章」：文字卡的**外框 / 标题 / 分隔线 / 光晕**吃**家族**色，**卡型**色退到右上
+# 那枚徽章上（色 + 图标 + 中文三通道）。这一节钉三件事：① 两枚徽章在不在、落点在不在**卡边外**；
+# ② 家族色吃没吃外框（逐像素比一张按家族表现生成的样式）、卡型色是不是**只**落在徽章上；
+# ③ 畸变卡（`kind` 恒为 aberr、不在 `card_kind()` 五类里）只画家族徽章；道具卡面一枚都不叠。
+# 「好不好看」钉不住，靠摆拍图人工比对（`shots/kpa_*` 对基准 `C:\tmp\kpb\`）。
+# ⚠ 本文件一律**运行期 `load`**（见上「约束 7」）：静态点 `UIKit.` 会在 `--script` 注册 autoload
+#   之前把 `ui_kit.gd` 拽进同一编译单元 ⇒ `Identifier not found: Fx` ⇒ 整段跑不起来。
+
+## 递归收一棵子树里所有 Label 的文本（卡面 / 弹层的**文案断言**用；本文件原先没有）。
+func _labels_under(n: Node) -> Array:
+	var out: Array = []
+	if n is Label:
+		out.append(String((n as Label).text))
+	for c in n.get_children():
+		out.append_array(_labels_under(c))
+	return out
+
+
+## 从**实例的脚本**里取一个常量（仍是从实例读，不点类名 —— 见上面「约束 7」）。
+## ⚠ 直接写 `dr.XXX` 在常量缺席时会报 SCRIPT ERROR 把**整段当场打断**：`fails` 一个都不涨、
+## 汇总假绿成 ALL PASS（本文件开头那条"存在性闸"讲的就是这个）。常量不在属性表里，
+## `Object.get()` 也问不到 ⇒ 只能走 `get_script_constant_map()`；取不到就回退到调用方给的期望值，
+## 让后面的断言照跑、自己红出来。
+func _const_of(obj: Object, nm: String, fallback: Variant) -> Variant:
+	var s = obj.get_script()
+	if s == null or not (s is GDScript):
+		return fallback
+	return (s as GDScript).get_script_constant_map().get(nm, fallback)
+
+
+## 卡面美化（2026-10-10）：文字卡的**骨架**（家族认框 / 卡型认章 / 分隔线渐隐）。
+## ⚠ `DeckReveal` 的常量**从实例上读**（`dr.CARD_SIZE` 直接读、两个**新**常量走 `_const_of` 问
+## 实例的脚本），**别写类名**（静态点类名同 `UIKit.` 一坑，见上「约束 7」）。
+func _test_card_face(g) -> void:
+	print("== 卡面美化：文字卡的骨架（家族徽章 / 卡型徽章 / 家族认框）==")
+	var UK = load("res://scripts/ui_kit.gd")   # 见上：不许静态写 `UIKit.`
+	var dr = g.deck_reveal
+	if dr == null:
+		return   # 存在性闸已经报过红了
+	# 这两个常量是本批新加的，缺席时整段会在 `dr.XXX` 处 SCRIPT ERROR 中断（见 `_const_of`）。
+	var badge_size: float = float(_const_of(dr, "BADGE_SIZE", -1.0))
+	var cm: Variant = _const_of(dr, "CARD_CONTENT_MARGIN", Vector2(-1.0, -1.0))
+	_check(badge_size > 0.0 and cm is Vector2 and cm != Vector2(-1.0, -1.0),
+		"两个常量在位：BADGE_SIZE（实得 %s）/ CARD_CONTENT_MARGIN（实得 %s）" % [str(badge_size), str(cm)])
+	if not (badge_size > 0.0):
+		badge_size = 36.0
+	if not (cm is Vector2) or cm == Vector2(-1.0, -1.0):
+		cm = Vector2(12.0, 8.0)
+	# ---- ① 机会卡 + 查寝型：两枚徽章都在，右上那枚写着「🚨 查寝」 ----
+	# 样本特意挑 `jail`：它的**卡型色是紫**、与家族色（金）不同色 ⇒ 下面"外框吃家族色 / 卡型色只
+	# 落在徽章上"那几条才有分辨力（换成 `good` 那型两边恰好都是绿，吃错了也照绿）。
+	dr.show_card("机会", "jail", "测试：卡面骨架")
+	var fam: Dictionary = GameData.CARD_FAMILIES["chance"]
+	var edge: Color = fam["edge"]
+	var kc: Color = GameData.CARD_KINDS["jail"]["color"]
+	var title = dr._front.find_child("card_title", true, false)
+	_check(title != null and (title as Label).has_theme_font_override("font"),
+		"标题是**粗体**（走 `UIKit.bold_label`，挂 font override）")
+	var rule = dr._front.find_child("card_rule", true, false)
+	_check(rule is TextureRect,
+		"分隔线是 `grad_rect` 出的 TextureRect（**两端渐隐**；改前是 1px 实心 ColorRect）")
+	var fb = dr._front.find_child("card_badge_family", true, false)
+	var kb = dr._front.find_child("card_badge_kind", true, false)
+	_check(fb != null and (fb as Control).position.x < 0.0 and (fb as Control).position.y < 0.0,
+		"左上家族徽章**骑在卡边外**（改前文字卡一枚徽章都没有）")
+	_check(kb != null and (kb as Control).position.x > dr.CARD_SIZE.x * 0.6,
+		"右上卡型徽章骑在卡边外")
+	_check(kb != null and _labels_under(kb).has("🚨 查寝"),
+		"卡型徽章给「图标 + 中文」两通道（实得 %s）"
+			% str(_labels_under(kb) if kb != null else []))
+	_check(fb != null and _labels_under(fb).has("🎲"), "家族徽章给家族图标 🎲")
+	# 徽章得是**小徽章**（`BADGE_SIZE`），别照抄 `ItemCard` 那枚 `size.y * 0.15` = 72px。
+	_check(fb != null and is_equal_approx((fb as Control).size.y, badge_size),
+		"家族徽章的高 = `BADGE_SIZE`（不是 `ItemCard` 那枚 72px）")
+	_check(kb != null and (kb as Control).size.y < dr.CARD_SIZE.y * 0.2,
+		"卡型徽章同样是小尺寸（高 %d < 卡高 1/5）"
+			% int((kb as Control).size.y if kb != null else -1))
+	# ---- ② 家族认框 / 卡型认章（改前：外框 / 标题 / 分隔线全吃**卡型**色） ----
+	# 外框那一比是**逐像素**的：拿"按家族表参数现生成的一张"与卡面实际挂的那张比数据 ——
+	# 底色 / 圆角 / 描边色 / 描边宽 / 投影 / 光晕 只要有一项吃的是卡型色，这条当场红。
+	var sb = dr._front.get_theme_stylebox("panel")
+	var fam_sb: StyleBoxTexture = UK.card_stylebox(fam["bg"], 18, edge, 2, 12,
+		Color(edge.r, edge.g, edge.b, 0.14))
+	var kind_sb: StyleBoxTexture = UK.card_stylebox(UK.card_palette("jail")[1], 18, kc, 2, 12,
+		Color(kc.r, kc.g, kc.b, 0.14))
+	if sb is StyleBoxTexture and (sb as StyleBoxTexture).texture != null:
+		var got: PackedByteArray = (sb as StyleBoxTexture).texture.get_image().get_data()
+		_check(got == fam_sb.texture.get_image().get_data(),
+			"外框 底色/圆角/描边/投影/光晕 = **家族色那一版**（逐像素相等）")
+		_check(got != kind_sb.texture.get_image().get_data(),
+			"且**不是**卡型色那一版（查寝型卡型色是紫 —— 改前外框就吃它）")
+		# 徽章挂在**被内缩了的** `layer` 上（`card` 是 `PanelContainer`，会按自己 stylebox 的
+		# content_margin 把直接子节点收紧）⇒ 徽章的"卡内坐标" = `position + CARD_CONTENT_MARGIN`。
+		# 这一层的值必须与那张 stylebox 真报出来的一致，否则落点会**悄悄**漂（brief 原值直接
+		# 摆在 `layer` 坐标里就是这么漂的：左上那枚只探出卡外 3px）。
+		_check(Vector2((sb as StyleBox).get_content_margin(SIDE_LEFT),
+				(sb as StyleBox).get_content_margin(SIDE_TOP)) == cm,
+			"卡面 stylebox 的 content_margin = `CARD_CONTENT_MARGIN`（徽章落点减的就是它；两者要同步）")
+	else:
+		_check(false, "卡面外框是 `card_stylebox` 出的 StyleBoxTexture（拿不到就无从比色）")
+	# 两枚徽章**各约四成骑在卡边外**（与 `ItemCard._badge` 的落点同一条）：探出个位数的像素
+	# 就等于没骑出去（只从 `layer` 的负坐标看是看不出来的 —— 那层本身就被内缩了 12 / 8）。
+	if fb != null:
+		var frel: Vector2 = (fb as Control).position + cm
+		_check(frel.x <= -(fb as Control).size.x * 0.35
+				and frel.y <= -(fb as Control).size.y * 0.35,
+			"左上家族徽章约四成骑在卡边外（卡内坐标 %s）" % str(frel))
+	if kb != null:
+		var krel: Vector2 = (kb as Control).position + cm
+		_check(krel.x + (kb as Control).size.x >= dr.CARD_SIZE.x + (kb as Control).size.x * 0.35,
+			"右上卡型徽章约四成骑在卡边外（卡内坐标 %s，卡宽 %d）" % [str(krel), int(dr.CARD_SIZE.x)])
+	_check(title != null and (title as Label).get_theme_color("font_color") == edge,
+		"标题色 = 家族色（不是卡型色）")
+	# 分隔线：中段 = 家族色、两端 alpha 0；且渐变必须是**横向**的 —— `grad_rect` 默认
+	# `from(0.5,0) → to(0.5,1)` 是**纵向**，用在 2px 横线上等于没渐变（两端渐隐看不出来）。
+	if rule is TextureRect and (rule as TextureRect).texture is GradientTexture2D:
+		var gt := (rule as TextureRect).texture as GradientTexture2D
+		var dy := absf(gt.fill_to.y - gt.fill_from.y)
+		var dx := absf(gt.fill_to.x - gt.fill_from.x)
+		_check(dy < 0.01 and dx > 0.5,
+			"分隔线的渐变是**横向**的（实得 from %s → to %s；纵向的等于没渐变）"
+				% [str(gt.fill_from), str(gt.fill_to)])
+		var cols := gt.gradient.colors
+		_check(cols.size() == 3 and cols[0].a == 0.0 and cols[2].a == 0.0
+				and Color(cols[1].r, cols[1].g, cols[1].b) == Color(edge.r, edge.g, edge.b),
+			"分隔线中段 = 家族色、两端透明（两端渐隐，实得 %d 个色标）" % cols.size())
+	else:
+		_check(false, "分隔线挂着 `GradientTexture2D`（拿不到就无从判方向）")
+	# 卡型色**只**落在徽章上：两枚徽章的描边色 / 文字色分别是家族色与卡型色。
+	var fbsb = fb.get_theme_stylebox("panel") if fb != null else null
+	var kbsb = kb.get_theme_stylebox("panel") if kb != null else null
+	_check(fbsb is StyleBoxFlat and (fbsb as StyleBoxFlat).border_color == edge,
+		"家族徽章的描边 = 家族色")
+	_check(kbsb is StyleBoxFlat and (kbsb as StyleBoxFlat).border_color == kc,
+		"卡型徽章的描边 = 卡型色（查寝那枚是紫）")
+	var klab: Label = null
+	if kb != null:
+		for c in (kb as Control).get_children():
+			if c is Label:
+				klab = c
+	_check(klab != null and klab.get_theme_color("font_color") == kc,
+		"卡型徽章的文字色 = 卡型色（色 + 图标 + 中文三通道）")
+	# 五型的徽章「图标 + 中文 + 色」逐型对表（`GameData.CARD_KINDS` 是唯一来源）：
+	# 摆拍只挑一两型看眼，这一条把五型**都对一遍**（文案与色不靠截图去数）；
+	# 顺带钉"家族认框"在**每一型**上都成立 —— 五型的标题都还是家族色、都不随卡型走。
+	for k in ["good", "bad", "move", "jail", "info"]:
+		dr.show_card("机会", k, "测试：卡面骨架")
+		var ki: Dictionary = GameData.CARD_KINDS[k]
+		var kb2 = dr._front.find_child("card_badge_kind", true, false)
+		var fb2 = dr._front.find_child("card_badge_family", true, false)
+		var ti2 = dr._front.find_child("card_title", true, false)
+		_check(kb2 != null and _labels_under(kb2).has("%s %s" % [ki["glyph"], ki["label"]]),
+			"%s 型：徽章文案 = 「%s %s」（实得 %s）"
+				% [k, ki["glyph"], ki["label"], str(_labels_under(kb2) if kb2 != null else [])])
+		var ks2 = kb2.get_theme_stylebox("panel") if kb2 != null else null
+		_check(ks2 is StyleBoxFlat and (ks2 as StyleBoxFlat).border_color == ki["color"],
+			"%s 型：徽章描边 = 该型的色 %s" % [k, str(ki["color"])])
+		_check(fb2 != null and _labels_under(fb2).has("🎲"), "%s 型：左上仍是家族徽章 🎲" % k)
+		_check(ti2 != null and (ti2 as Label).get_theme_color("font_color") == edge,
+			"%s 型：标题仍是**家族**色（这一型没把卡型色漏回框上）" % k)
+	# ---- ③ 畸变卡：**没有"卡型"这一维** ⇒ 只画家族徽章 ----
+	# `kind` 恒为 "aberr"、不在 `card_kind()` 的五类里 —— 照抄查寝那枚就会在畸变卡上写「查寝」。
+	dr.show_card("🌀 畸变 · 测试", "aberr", "测试：畸变族")
+	_check(dr._front.find_child("card_badge_family", true, false) != null
+			and dr._front.find_child("card_badge_kind", true, false) == null,
+		"畸变卡只画家族徽章不画卡型徽章")
+	# ---- ④ 道具卡面：**不叠**卡面徽章（它自己那两套照旧；`hud_test` 另钉"恰好 1 张 ItemCard"） ----
+	dr.show_card("道具卡", "good", "测试：道具族", "招财猫")
+	_check(dr._front.find_child("card_badge_kind", true, false) == null
+			and dr._front.find_child("card_badge_family", true, false) == null,
+		"道具卡面不叠家族 / 卡型徽章（它自己那两套照旧）")
 	dr.request_close()
 	dr.tick(dr.BACK + 0.05)
