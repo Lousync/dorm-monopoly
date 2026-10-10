@@ -1648,6 +1648,8 @@ func _test_card_style(g) -> void:
 	# 色以**演出**为准：good / info 与 UIKit 那两个常量同值（表在 GameData、不许引 UIKit ⇒ 靠这条钉住）
 	_check(GameData.CARD_KINDS["good"]["color"] == UK.GOOD, "收益色 = UIKit.GOOD")
 	_check(GameData.CARD_KINDS["info"]["color"] == UK.ACCENT, "其他色 = UIKit.ACCENT（原先靠兜底）")
+	_check(GameData.CARD_FAMILIES["chance"]["edge"] == UK.ACCENT,
+		"机会族的描边 = `UIKit.ACCENT`（同值各写一份，靠这条钉住；GameData 引不了 UIKit）")
 	# 家族键取值：`_deck_back_tex` / `_make_card_art` 的形参语义已由"标题"改成"家族键"
 	var dr = g.deck_reveal
 	if dr == null:
@@ -1755,7 +1757,7 @@ func _test_card_face(g) -> void:
 	var sb = dr._front.get_theme_stylebox("panel")
 	var fam_sb: StyleBoxTexture = UK.card_stylebox(fam["bg"], 18, edge, 2, 12,
 		Color(edge.r, edge.g, edge.b, 0.14))
-	var kind_sb: StyleBoxTexture = UK.card_stylebox(UK.card_palette("jail")[1], 18, kc, 2, 12,
+	var kind_sb: StyleBoxTexture = UK.card_stylebox(kc, 18, kc, 2, 12,
 		Color(kc.r, kc.g, kc.b, 0.14))
 	if sb is StyleBoxTexture and (sb as StyleBoxTexture).texture != null:
 		var got: PackedByteArray = (sb as StyleBoxTexture).texture.get_image().get_data()

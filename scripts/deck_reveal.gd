@@ -72,8 +72,10 @@ var _built_labels: Array = []    # `_choice_btns` 是按哪一份标签建的（
 ## 小抄置底询问（2026-10-10 M1）：「要把牌堆顶这张塞到底部吗？」那块面板（含两枚按钮）。
 ## 与抽卡演出**互不相干** —— 小抄没有卡面（它只往私密战报写一行），所以这一块不能挂在 `_showing` 上。
 var _bury_box: PanelContainer
-## 当前这张卡的**家族色**（`show_card` 派生 family 后立刻写上）。T4 的呼吸偏色 / 地面光读它；
-## 默认白 = 不偏色，免得测试在没演过卡时读到脏值。
+## 当前这张卡的**家族色**（`show_card` 派生 family 后立刻写上；默认白 = 没演过卡时的干净值）。
+## 生产侧**无人读它** —— 外框 / 标题 / 分隔线 / 光晕各自当场从 `CARD_FAMILIES` 取 `fam["edge"]`；
+## 唯一的读者是 `tests/chance_test.gd` 的 `_test_card_style()`：拿它当**可观察量**钉住那三行
+## 家族键派生（`deck`→chance / `item_id`→item / `kind=aberr`→aberr），不看像素。
 var _fam_edge := Color(1, 1, 1)
 
 func _init() -> void:
