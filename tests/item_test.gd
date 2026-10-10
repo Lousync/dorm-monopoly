@@ -32,6 +32,15 @@ func _arg_count(g, nm: String) -> int:
 			return (md.get("args", []) as Array).size()
 	return -1
 
+## 有**默认值**的形参个数（`default_args` = 尾部那几个带默认值的）。查不到方法回 -1。
+## 专门用来钉「fail-open 默认值」：某一参带默认值 = 漏传时不报错、静默按默认值跑 ——
+## 若那个默认值会让一道闸门**放宽**（而不是收紧），就是本仓最忌的"无声降级"。
+func _default_arg_count(g, nm: String) -> int:
+	for md in g.get_method_list():
+		if String(md.get("name", "")) == nm:
+			return (md.get("default_args", []) as Array).size()
+	return -1
+
 ## 战报里从 `from` 起找 `needle` 的下标（-1 = 没有）—— 只看这一段**新增**的战报，
 ## 免得撞上前面用例的同名行（口径同 `chance_test.gd` 的同名小助手）。
 func _log_at(g, needle: String, from: int) -> int:
@@ -986,6 +995,13 @@ func _test_shield_cards(g) -> void:
 	# ⇒ 汇总会假绿。先把它钉成一条红断言（这就是本文件 `_test_iface` 那条的理由）。
 	var argc := _arg_count(g, "_card_target_candidates")
 	_check(argc >= 3, "_card_target_candidates 收下了 card（`seize_tile` 的 take / swap 必须分开判）")
+	# fail-open 收口：`card` **没有默认值** ⇒ 漏传在运行期当场报错，不会静默按 `{}` 跑
+	#（`{}` 取不出 `seize_tile:"take"` ⇒ 护罩整段被跳过 = 悄悄放宽）。同理 `_await_card_target`
+	# 的 `card` 也收成必填（它只留 `title` 一个带默认值的形参）。这两条**改前必红**。
+	_check(_default_arg_count(g, "_card_target_candidates") == 0,
+		"_card_target_candidates 无带默认值的形参（card 必填，漏传即报错）")
+	_check(_default_arg_count(g, "_await_card_target") == 1,
+		"_await_card_target 只有 title 带默认值（card 必填）")
 
 	var a := _prop_idx(0)
 	var b := _prop_idx(1)
@@ -1083,6 +1099,64 @@ func _test_shield_cards(g) -> void:
 	_check(g._tgt_stage == "peer", "反向对照：互换类道具（转专业）照旧列得出持护罩者")
 	g._cancel_target()
 	g._tgt_stage = ""
+	g.hp = []
+
+	# ⑦ 反向对照（**没有扩过头**那三面）：自建 / 自己行为的后果 / 金钱。
+	# 这三条护罩**故意不管**，钉住它们是防止后来的人"顺手"把护罩扩成"地皮不可变"。
+	# 自建：持罩者用「顶楼加盖」照旧 +2 级（护罩护的是"别人动我的"，不是"我不能动我的"）
+	g.hp = [p0, p1]
+	g.htiles = _fresh_tiles()
+	g.htiles[a].owner = 1
+	g.htiles[a].level = 1
+	_arm_use(g, p0, "顶楼加盖", 6)
+	g._use_item(1, 0, a)
+	_check(int(g.htiles[a].get("level", -1)) == 3,
+		"反向对照：自建不受护罩影响（持罩者用「顶楼加盖」照旧 Lv1→Lv3，实得 Lv%d）" % int(g.htiles[a].get("level", -1)))
+	# 自己行为的后果：破产清算 / 出局 —— 持罩者破产，名下地皮照旧收归无主 + 等级清零
+	g.htiles = _fresh_tiles()
+	g.htiles[a].owner = 1
+	g.htiles[a].level = 2
+	p0.items = [{"id": "园中叶", "cd": 0}]
+	p0.money = 0
+	p1.money = 999999
+	var prev_liq := bool(g._settings.liq_on)
+	g._settings.liq_on = false   # 关掉「变卖保底」，直接落破产清算那条（否则会挂起等一个操作窗口）
+	await g._pay(p0, 5000, p1)   # 付不出 ⇒ 破产
+	g._settings.liq_on = prev_liq
+	_check(not bool(p0.get("alive", true)), "反向对照：持罩者也会破产（护罩不是免死金牌）")
+	_check(int(g.htiles[a].get("owner", GameData.NO_PEER)) == GameData.NO_OWNER \
+			and int(g.htiles[a].get("level", -1)) == 0,
+		"反向对照：破产清算照旧收走持罩者的地皮（无主 + 等级清零 —— 自己的结局，不是外力）")
+	p0.items = []
+	# 金钱：持罩者的**钱**照旧被夺（护罩只护地皮，不护钱包）
+	g.htiles = _fresh_tiles()
+	g.htiles[a].owner = 1
+	g.htiles[b].owner = 2
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	p1.money = 1000
+	await g._apply_card(p0, {"t": "顺走外卖", "steal_from": 400, "_target": 2})
+	_check(int(p1.money) == 600, "反向对照：金钱类照旧夺得到钱（乙 -400，实得 %d）" % int(p1.money))
+	# 黑市抵账（本轮审计里**唯一有争议**的一处）：为付清自己欠下的店账而**自选**交出几块地，
+	# 与「变卖保底」同形 ⇒ **不挡**。若哪天判定要挡，这条用例会**红**，正是它该做的事。
+	g.htiles = _fresh_tiles()
+	g.htiles[a].owner = 2
+	g.htiles[a].level = 2
+	g._black_peer = 2
+	g._black_pay_mode = "exit"
+	g._black_pay_need = 1
+	g._black_pay_got = 0
+	g._black_pay_slot = -1
+	g._black_pay(2, a)
+	_check(int(g.htiles[a].get("owner", GameData.NO_PEER)) == GameData.NO_OWNER \
+			and int(g.htiles[a].get("level", -1)) == 0,
+		"反向对照：黑市交地抵账照旧（自选交出、与变卖保底同形 ⇒ 不挡，实得 %d / Lv%d）" % [
+			int(g.htiles[a].get("owner", GameData.NO_PEER)), int(g.htiles[a].get("level", -1))])
+	g._black_peer = 0          # 0 = 无（不是 NO_PEER —— 这个字段的哨兵就是 0，见声明处）
+	g._black_pay_mode = ""
+	g._black_pay_need = 0
+	g._black_pay_got = 0
+	g._black_pay_slot = -1
+	p1.items = []
 	g.hp = []
 
 ## 掷点修正链（`game._apply_roll_mods`）：**单独**用「作弊器」/「天命在握」也该生效。

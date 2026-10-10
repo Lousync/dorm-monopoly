@@ -223,6 +223,34 @@ func _run() -> void:
 		g._ab_apply_instant(p1, "拆迁")
 	_check(int(g.htiles[t_a].owner) == 1, "拆迁：持皂地主的街道不被拆")
 	p1.items = []
+	# 「园中叶」地产护罩（2026-10-10 补完）：拆平 = **单方面**把地皮变无主 + 等级清零
+	# ⇒ 与香皂**并列**的另一道闸，判定写在香皂之前（不吃护腕的盾、不写"香皂挡下了"）。
+	# 改前：护罩不判 ⇒ 甲那块地被拆平（owner 变 NO_OWNER / level 归零）⇒ 下面头一条红。
+	g.htiles = _fresh_tiles()
+	g.htiles[t_a] = {"owner": 1, "level": 3}
+	g.htiles[t_b] = {"owner": 2, "level": 1}
+	p1.items = [{"id": "园中叶", "cd": 0}]
+	var b_broken := false
+	for r in range(30):
+		g._ab_apply_instant(p1, "拆迁")
+		if int(g.htiles[t_b].owner) == GameData.NO_OWNER:
+			b_broken = true
+	_check(int(g.htiles[t_a].owner) == 1 and int(g.htiles[t_a].level) == 3,
+		"拆迁：持「园中叶」者名下的街道不被拆平（归属与等级都不动，实得 %d / Lv%d）" % [
+			int(g.htiles[t_a].owner), int(g.htiles[t_a].level)])
+	_check(b_broken, "反向对照：护罩只保住持罩者那一块，别人的街道照拆（没有扩过头）")
+	# 两道闸**并列而非嵌套**：持罩时**不吃护腕的盾**（判定写在 `_immune_debuff` 之前）。
+	# 改前：这里走的是香皂 / 护腕那道闸 ⇒ 第一轮就把盾吃掉（shield 1→0）⇒ 下面这条红。
+	g.htiles = _fresh_tiles()
+	g.htiles[t_a] = {"owner": 1, "level": 2}
+	p1.items = [{"id": "园中叶", "cd": 0}, {"id": "护腕", "cd": 0}]
+	p1.shield = 1
+	for r in range(15):
+		g._ab_apply_instant(p1, "拆迁")
+	_check(int(p1.get("shield", 0)) == 1 and g._has_item(p1, "护腕"),
+		"拆迁：护罩挡下时不消耗护腕的盾（两道闸并列、不嵌套，实得 shield=%d）" % int(p1.get("shield", 0)))
+	p1.items = []
+	p1.shield = 0
 
 	print("== 诚信考试 / 调休 ==")
 	g._ab_apply_persistent_start(p1, "诚信考试")
@@ -307,6 +335,34 @@ func _run() -> void:
 	g.htiles = _fresh_tiles()
 	g._ab_apply_instant(dl, "斗地主")
 	_check(true, "斗地主：全场无地时空过（不崩）")
+	# 「园中叶」地产护罩（2026-10-10 补完）：地主那一手是**单方面失去地皮** ⇒ 持罩者不作地主。
+	# 改前：护罩不判 ⇒ 地主照旧是甲（地皮等级和 4 最大）⇒ 他的地过户给末位 ⇒ 下面头两条红。
+	g.htiles = _fresh_tiles()
+	g.htiles[pa] = {"owner": 1, "level": 3}
+	g.htiles[pb] = {"owner": 1, "level": 1}
+	g.htiles[pc] = {"owner": 3, "level": 1}
+	dl.money = 10000
+	mid.money = 5000
+	poor.money = 1000
+	dl.items = [{"id": "园中叶", "cd": 0}]
+	g._ab_apply_instant(dl, "斗地主")
+	_check(int(g.htiles[pa].owner) == 1 and int(g.htiles[pb].owner) == 1,
+		"斗地主：持「园中叶」者不被抽作地主（名下地皮一块都不动，实得 %d / %d）" % [
+			int(g.htiles[pa].owner), int(g.htiles[pb].owner)])
+	_check(int(g.htiles[pc].owner) == 2, "斗地主：跳过持罩者后，改由次位当地主（丙→末位）")
+	# 兜底（已裁）：跳过后**无人可当地主** ⇒ 这条畸变本轮**落空** —— 不换人去抽、
+	# 也**不**回头去动无罩者（那等于拿护罩去伤害一个本来不相干的人）。改前：甲照旧当地主。
+	g.htiles = _fresh_tiles()
+	g.htiles[pa] = {"owner": 1, "level": 3}   # 只有持罩者名下有地
+	g._ab_apply_instant(dl, "斗地主")
+	_check(int(g.htiles[pa].owner) == 1, "斗地主：可当地主的人都持罩 ⇒ 本轮落空（地皮不动、不换人抽）")
+	dl.items = []
+	# 反向对照：不持罩 ⇒ 地主这一手照旧发生（护罩没扩成"整条畸变不发生"）
+	g.htiles = _fresh_tiles()
+	g.htiles[pa] = {"owner": 1, "level": 3}
+	g.htiles[pc] = {"owner": 3, "level": 1}
+	g._ab_apply_instant(dl, "斗地主")
+	_check(int(g.htiles[pa].owner) == 2, "反向对照：无护罩时地主照旧把地过户给末位（实得 %d）" % int(g.htiles[pa].owner))
 
 	print("== 改革开放 ==")
 	g.round_no = 30

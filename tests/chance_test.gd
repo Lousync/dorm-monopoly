@@ -142,6 +142,13 @@ func _has_prop(g, nm: String) -> bool:
 			return true
 	return false
 
+## 有**默认值**的形参个数（`default_args` = 尾部那几个带默认值的）。查不到方法回 -1。
+func _default_arg_count(g, nm: String) -> int:
+	for md in g.get_method_list():
+		if String(md.get("name", "")) == nm:
+			return (md.get("default_args", []) as Array).size()
+	return -1
+
 func _test_iface(g) -> void:
 	print("== 接口齐备 ==")
 	for nm in ["_tgt_card", "_card_target_peers", "_target_pick", "_card_target_ack",
@@ -152,16 +159,31 @@ func _test_iface(g) -> void:
 		_check(g.has_method(nm), "方法 %s 在位" % nm)
 	for nm in ["s_card_target", "c_card_target"]:
 		_check(g.has_method(nm), "RPC %s 在位" % nm)
+	# 「护罩那两参的 `card` 必填」这道闸**必须在这里也钉一次**：漏传时**只报错、不涨 `fails`**
+	# —— 本套件里那三处 `await` 会当场中断协程，而 `fails` 一条不动 ⇒ 汇总照样打
+	# 「ALL PASS」（改前实测：3 处 `SCRIPT ERROR: Cannot convert argument 3 from Dictionary
+	# to String`，汇总却是绿的）。判据与 `item_test._test_shield_cards` 同源。
+	_check(_default_arg_count(g, "_card_target_candidates") == 0,
+		"_card_target_candidates 无带默认值的形参（card 必填，漏传即报错）")
+	_check(_default_arg_count(g, "_await_card_target") == 1,
+		"_await_card_target 只有 title 带默认值（card 必填）")
 
+## 本节只钉**按字段过滤**这一层（`seize_tile` / `force_buy_tile` 只列名下有地的人），
+## 与护罩无关：这里的 `_table` 没有持「园中叶」的人。
+##
+## 三处 `card` 都是**实参**（该参数没有默认值了，见 `_card_target_candidates` 的注释）
+## —— 从前这里省略它，于是这两条"夺地类"候选**永远走不到护罩那一段**（`{}` 的
+## `seize_tile` 取不出 `"take"` ⇒ `_card_tile_move_harmful` 恒假）：
+## 判据在跑，但钉的是护罩**永不生效**的那条路。护罩本身另见 `item_test._test_shield_cards`。
 func _test_candidates(g) -> void:
 	print("== 可选目标：按字段过滤 ==")
 	_table(g)
 	var p1: Dictionary = g.hp[0]
-	var all: Array = g._card_target_candidates(p1, "steal_from")
+	var all: Array = g._card_target_candidates(p1, "steal_from", {})
 	_check(all == [2, 3], "普通字段列所有其他**存活**玩家（排除自己与出局者，实得 %s）" % str(all))
-	var seize: Array = g._card_target_candidates(p1, "seize_tile")
+	var seize: Array = g._card_target_candidates(p1, "seize_tile", {"seize_tile": "take"})
 	_check(seize == [2], "seize_tile 只列名下有地的人（实得 %s）" % str(seize))
-	var buy: Array = g._card_target_candidates(p1, "force_buy_tile")
+	var buy: Array = g._card_target_candidates(p1, "force_buy_tile", {"force_buy_tile": 50})
 	_check(buy == [2], "force_buy_tile 同上（实得 %s）" % str(buy))
 	# 自己名下有地也照样不列自己（排除自己在前，与"有没有地"无关）
 	_check(not all.has(1) and not seize.has(1), "自己永远不是候选")
@@ -260,14 +282,14 @@ func _test_cancel_log(g) -> void:
 	_target_table(g)
 	g.running = false     # 窗口一次都不进 ⇒ 等价于"没作答"（取消 / 超时同一条落点）
 	var log0 := _log_len(g)
-	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from", "顺走外卖")
+	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from", {}, "顺走外卖")
 	_check(got.is_empty(), "没作答 ⇒ 返回空字典（目标部分作废）")
 	_check(_log_at(g, "目标部分作废", log0) >= 0,
 		"战报写了一句「目标部分作废」（原先这条路一个字都没有）")
 	# "无人可选"那条自己那句照旧（别被上面那句顶掉）
 	_setup(g, [_mk_player(1, "甲")], _fresh_tiles())
 	log0 = _log_len(g)
-	await g._await_card_target(g.hp[0], "steal_from", "顺走外卖")
+	await g._await_card_target(g.hp[0], "steal_from", {}, "顺走外卖")
 	_check(_log_at(g, "没有可指定的目标", log0) >= 0, "无人可选那句照旧")
 
 ## 倒计时归属（本波补的洞）：`_op_window_owner` 原先不认卡选目标，会**回退到当前行动者**。
@@ -326,7 +348,7 @@ func _test_no_candidates(g) -> void:
 	print("== 无人可选 ==")
 	_setup(g, [_mk_player(1, "甲")], _fresh_tiles())
 	var t0 := Time.get_ticks_msec()
-	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from", {})
 	var ms := Time.get_ticks_msec() - t0
 	_check(got.is_empty(), "无人可选 ⇒ 返回空字典（目标部分作废）")
 	_check(ms < 300, "且**立刻**返回、不挂起（实耗 %d ms）" % ms)
@@ -334,7 +356,7 @@ func _test_no_candidates(g) -> void:
 	# 托管也一样：0 候选时不该先等那 0.6s 再自动选
 	g.hp[0].bot = true
 	t0 = Time.get_ticks_msec()
-	got = await g._await_card_target(g.hp[0], "steal_from")
+	got = await g._await_card_target(g.hp[0], "steal_from", {})
 	_check(got.is_empty() and Time.get_ticks_msec() - t0 < 300, "托管且无人可选时同样立刻返回")
 
 func _test_managed(g) -> void:
@@ -347,7 +369,7 @@ func _test_managed(g) -> void:
 	t[_prop_idx(2)].owner = 3
 	_setup(g, [_mk_player(1, "机器人甲", 1000, true),
 		_mk_player(2, "乙", 1000), _mk_player(3, "丙", 1800)], t)
-	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from", {})
 	var pick := int(got.get("peer", -1))
 	_check(pick == 3, "钱类字段取**现金最多**的（丙 1800 > 乙 1000，实得 %d）" % pick)
 	_check(g._tgt_card == "" and g._tgt_stage == "" and g._tgt_slot == -1, "自动选完收尾清干净")
@@ -356,14 +378,14 @@ func _test_managed(g) -> void:
 	_check(g._awaiting_card_target == 0, "归属位复位")
 	# 换一个字段、同一份局面 ⇒ 换个人：夺地 / 强买取**地最多**的（乙 2 块 > 丙 1 块）。
 	# 这条同时钉住"候选名单按字段过滤"（只有名下有地的人进名单）。
-	var got2: Dictionary = await g._await_card_target(g.hp[0], "seize_tile")
+	var got2: Dictionary = await g._await_card_target(g.hp[0], "seize_tile", {"seize_tile": "take"})
 	_check(int(got2.get("peer", -1)) == 2,
 		"夺地 / 强买取**地最多**的（乙 2 块，实得 %d）" % int(got2.get("peer", -1)))
 	# 并列时取 **peer 最小者**（确定性：同一份局面每次跑出的战报都一样，用例也钉得住）。
 	# 别用随机 —— 那会让机器人夺钱夺到穷人、夺地夺到无地者，且每次跑的结果都不同。
 	_setup(g, [_mk_player(1, "机器人甲", 1000, true),
 		_mk_player(2, "乙", 900), _mk_player(3, "丙", 900)], _fresh_tiles())
-	var got3: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	var got3: Dictionary = await g._await_card_target(g.hp[0], "steal_from", {})
 	_check(int(got3.get("peer", -1)) == 2,
 		"现金并列 ⇒ 取 peer 最小者（实得 %d）" % int(got3.get("peer", -1)))
 	# **超时那条路保持原样**（设计稿 §3.4「超时走现有兜底」= 这个目标部分作废，**不**套 bot 那套策略）：
@@ -371,7 +393,7 @@ func _test_managed(g) -> void:
 	# `_test_choices_managed` 末条），等价于"没等到作答"。真人玩家（非托管）才走这条。
 	_setup(g, [_mk_player(1, "甲", 1000), _mk_player(2, "乙", 900), _mk_player(3, "丙", 900)],
 		_fresh_tiles())
-	var got4: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	var got4: Dictionary = await g._await_card_target(g.hp[0], "steal_from", {})
 	_check(got4.is_empty(), "没作答（超时 / 窗口没开）⇒ 目标部分作废、不自动挑人")
 	_check(g._awaiting_card_target == 0 and g._target_pick == GameData.NO_PEER, "收尾干净（哨兵与归属位都复位）")
 
@@ -400,7 +422,7 @@ func _test_at_mode(g) -> void:
 	var saw: Array = []
 	_watch_card_window(g, saw, stop)   # 不 await：旁路逐帧盯窗口
 	var t0 := Time.get_ticks_msec()
-	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from")
+	var got: Dictionary = await g._await_card_target(g.hp[0], "steal_from", {})
 	var ms_target := Time.get_ticks_msec() - t0
 	stop.append(1)   # 停掉旁路（免得它活到后面几条用例里去）
 	_check(int(got.get("peer", -1)) == 2,

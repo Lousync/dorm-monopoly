@@ -1862,6 +1862,12 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 					break
 				var si: int = all_props[randi_range(0, all_props.size() - 1)]
 				var owner := _player_by_peer(int(htiles[si].owner))
+				# 「园中叶」地产护罩：拆平 = **单方面**把地皮变无主 + 等级清零 ⇒ 与香皂**并列**的
+				# 另一道闸。判定写在 `_immune_debuff` **之前**（护罩是地产层的标记，与 debuff 免疫
+				# 并列而非嵌套 ⇒ 持罩时**不消耗护腕的盾**，也**不写**「香皂挡下了」那句）。
+				if not owner.is_empty() and _has_item(owner, "园中叶"):
+					_log("%s 的【园中叶】保住了【%s】" % [owner.name, String(GameData.TILES[si].name)], "#8fb7f2")
+					continue   # 该抽作废、不补抽（与香皂同款）
 				if not owner.is_empty() and _immune_debuff(owner):
 					_log("%s 的【空想者的香皂】保住了【%s】" % [owner.name, String(GameData.TILES[si].name)], "#8fb7f2")
 					continue   # 该抽作废、不补抽（补抽规则待实现复核）
@@ -1871,12 +1877,19 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 		"斗地主":
 			# 缩差：房产最多的「地主」把一块投入最少的地皮无偿过户给身家末位（保留等级）。
 			# tag=中性：双方一 debuff 一 buff 相抵，不吃香皂。地主无地 / 本身即末位 ⇒ 空过。
+			# 「园中叶」地产护罩：地主这一手是**单方面失去地皮** ⇒ 持罩者不作地主（跳过）；
+			# 跳过后若**没有可当地主的人**，这条畸变这轮**落空** —— 不去"换个人抽"（那样就成了
+			# 拿护罩去伤害一个本来不相干的人）。末位受让是 buff，不受护罩影响、不必判。
 			var alive: Array = hp.filter(func(o: Dictionary) -> bool: return bool(o.alive))
 			var landlord: Dictionary = {}
 			var best_lv := -1
+			var shielded := false   # 有"本来够格当地主"的人被护罩拦下（只为下面那句战报）
 			for o in alive:
 				var props: Array = _own_props(int(o.peer))
 				if props.is_empty():
+					continue
+				if _has_item(o, "园中叶"):
+					shielded = true
 					continue
 				var lv := 0
 				for pi in props:
@@ -1885,7 +1898,12 @@ func _ab_apply_instant(p: Dictionary, id: String) -> void:
 					best_lv = lv
 					landlord = o
 			if landlord.is_empty():
-				_log("【斗地主】全场无人持有地皮，无事发生", "#8a90a5")
+				# `shielded` 为真 ⇒ 有地的人都持罩（无地的人本来也当不了地主）—— 别把这两种
+				# 情形写成同一句"全场无人持有地皮"（战报不许说谎）。
+				if shielded:
+					_log("【斗地主】有地的人都持【园中叶】护罩，本轮缩差落空", "#8fb7f2")
+				else:
+					_log("【斗地主】全场无人持有地皮，无事发生", "#8a90a5")
 			else:
 				var target: Dictionary = alive[0]
 				for o in alive:
@@ -2335,7 +2353,7 @@ func _card_target_for(p: Dictionary, card: Dictionary, field: String) -> Diction
 	if peer == GameData.NO_PEER:
 		# `card` 一并下传：候选名单要靠它把 `seize_tile` 的 take / swap 分开（见
 		# `_card_target_candidates` 的注释——护罩只挡"单方面夺走"那一半）
-		var picked: Dictionary = await _await_card_target(p, field, String(card.t), card)
+		var picked: Dictionary = await _await_card_target(p, field, card, String(card.t))
 		peer = int(picked.get("peer", GameData.NO_PEER))
 	var tgt := _player_by_peer(peer)
 	if tgt.is_empty() or int(tgt.peer) == int(p.peer) or not bool(tgt.alive):
@@ -7141,8 +7159,10 @@ func c_card_target(target: int) -> void:
 ## 走**玩家侧**那套 `_tgt_stage` 状态机（与道具「跑腿券」同一个交互），只是判别位换成 `_tgt_card`。
 ## 超时走既有操作限位（同 `_await_card_confirm` 的 `"card"` 挡位 ⇒ 倒计时挂在抽卡者的条上）。
 ##
+## `card` = 这张卡本身（**必填**，喂给 `_card_target_candidates` 判护罩，见那处的注释）；不给它
+## 设默认值是**故意的**：缺省 = 护罩**静默失效**（fail-open），宁可漏传时当场报错。
 ## `title` = 这张卡的卡面文案（只给"取消了"那句战报用，见下面的收尾；直接调本函数的用例可以不给）。
-func _await_card_target(p: Dictionary, field: String, title := "", card := {}) -> Dictionary:
+func _await_card_target(p: Dictionary, field: String, card: Dictionary, title := "") -> Dictionary:
 	var cands := _card_target_candidates(p, field, card)
 	if cands.is_empty():
 		_log("没有可指定的目标，这张卡的目标部分作废", "#8a90a5")
@@ -7213,7 +7233,7 @@ func _card_target_bot_pick(cands: Array, field: String) -> int:
 ##（夺地 / 强买没有地皮可下手）；其余字段列所有其他存活玩家。
 ## 读房主侧的 `hp` / `htiles`（房主权威：目标合不合法只有房主说了算）。
 ##
-## `card` = 这张卡本身（**只有 `seize_tile` 用得上**）：`seize_tile` 一分为二 —— `"take"` 是
+## `card` = 这张卡本身（**必填，没有默认值**）：`seize_tile` 一分为二 —— `"take"` 是
 ## **单方面夺走**地皮、`"swap"` 是互换 ⇒ 光看 `field` 分不出这两者。判据直接借
 ## `_card_tile_move_harmful(card, field)`（它就是为香皂的免疫写的、已把 take / swap 分开），
 ## **不另创一套**。
@@ -7222,7 +7242,7 @@ func _card_target_bot_pick(cands: Array, field: String) -> int:
 ## 理由（选目标是玩家可见的界面，护罩生效必须在**列表**上体现，不能让玩家点下去才发现静默失败）。
 ## **只挡"单方面夺走"那两条**：位置类（`pull_target` / `push_back`）与互换（`seize_tile:"swap"`）
 ## **不受影响** —— 护罩不是「地皮归属不可变」的兜底，反制面（换地 / 夺钱 / 道具层）仍在。
-func _card_target_candidates(p: Dictionary, field: String, card := {}) -> Array:
+func _card_target_candidates(p: Dictionary, field: String, card: Dictionary) -> Array:
 	var need_props := field == "seize_tile" or field == "force_buy_tile"
 	var seize_harmful: bool = need_props and _card_tile_move_harmful(card, field)
 	var out: Array = []
