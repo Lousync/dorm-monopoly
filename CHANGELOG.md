@@ -26,6 +26,11 @@
   `item_card` / `table_hud` / `table_props` / `game.gd` 里的品质色与品质名。
   机会卡的 `CARD_KINDS` 与 `card_kind()` **暂留 `GameData`**（随事件卡重做一并处理）。
   图鉴页生成结果 **零 diff**。
+- **道具改为逐件定价**（2026-10-10）：删除按品质统一价的 `ItemData.QUALITY_PRICES` 与 `price(quality)`，
+  改为**每件道具自带 `price` 字段**（`ItemData.item_price(id)` 直接读它）。初始值按改造前档价播种
+  （白 600 / 蓝 1600 / 紫 3200 / 金 8000；`二青会酒寒暑` 2600）⇒ **平衡零变化**，可逐件手调。
+  黑市 bot 比价由「档价现金排序」改为按 `BLACK_COST`（金优先）；规则面板「品质与售价」改为
+  「售价（逐件）」；图鉴页售价文案改为「单件定价」。`item_test` 加「68 件都有正 `price`」闸。
 
 ## [0.15.0] — 2026-10-10
 

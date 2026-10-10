@@ -247,7 +247,7 @@ func _entries_items(doc: Dictionary) -> Array:
 		var rows: Array = []
 		if not implemented:
 			rows.append({"k": "状态", "v": "**未实装**（不进货架池，效果待批次解锁）"})
-		rows.append({"k": "售价", "v": _item_price_text(id, q)})
+		rows.append({"k": "售价", "v": _item_price_text(id)})
 		if d.has("target"):
 			var t := String(d.target)
 			rows.append({"k": "选目标", "v": TARGET_LABEL.get(t, t) + THEN_LABEL.get(String(d.get("then", "")), "")})
@@ -292,10 +292,8 @@ func _entries_items(doc: Dictionary) -> Array:
 	return out
 
 
-func _item_price_text(id: String, q: String) -> String:
-	if ItemData.def(id).has("price"):
-		return "¥%d（单件覆盖，不随%s档整体定价）" % [ItemData.item_price(id), q]
-	return "¥%d（%s档定价）" % [ItemData.item_price(id), q]
+func _item_price_text(id: String) -> String:
+	return "¥%d（单件定价）" % ItemData.item_price(id)
 
 
 ## 并上 `道具图鉴.md` 的 prose（效果 / 免疫 / 联动 …）

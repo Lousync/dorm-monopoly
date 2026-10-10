@@ -1263,10 +1263,9 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 	_broadcast_state()
 	return picked
 
-## bot 挑卡策略（简单可预期）：**按 `item_price`（含单件 `price` 覆盖）**取最贵。
-## 2026-10-10 修：原先读 `ItemData.price(quality)`（只看档价），与 UI（`_refresh_shop_ui`）
-## 及购买链路（`_shop_buy`）**不同源** —— 二青会酒寒暑（单件覆盖）在 bot 眼里一直只值
-## 它那一档的档价。契约是「单件 `price` 覆盖优先」，任何覆盖都该被 bot 看见。
+## bot 挑卡策略（简单可预期）：**按 `item_price`（逐件 `price`）**取最贵。
+## 2026-10-10：`item_price` = 每件自己的 `price` 字段（旧的档价表已删），
+## 与 UI（`_refresh_shop_ui`）及购买链路（`_shop_buy`）**同源**。
 func _discover_bot_pick(ids: Array) -> String:
 	var best := ""
 	var best_p := -1
@@ -6731,15 +6730,10 @@ func _bot_blackshop(p: Dictionary) -> void:
 		var cost := int(ItemData.BLACK_COST.get(String(ItemData.def(id).quality), 1))
 		if props.size() - cost < 1:
 			continue
-		# 黑市比价**按档价**（`QUALITY_PRICES`）而非 `item_price`：
-		# ① 这里一切用**地皮**计价，单件现金覆盖（二青会酒寒暑）在黑市不适用；
-		# ② 货又只有紫 / 金两档 ⇒ 按档价排就是「金优先」。
-		# ③ 若改读 `item_price`：那是**现金**价，与「收几块地皮」不同量纲 ⇒ 排出来的是另一套序，
-		#    仍不是真正的「取最值」。（原先举「单件覆盖与金档价同价 ⇒ 并列退化」一例，批 2 T8
-		#    把二青会由 ¥8000 压到 ¥2600 后那条已不成立。）
-		#    真正该排的是 `item_price / BLACK_COST[quality]`（每块地皮买到多少价值）—— 那是**批 2 的活**。
-		# 判过是对的（2026-10-10 道具重构），别再当 bug 改成 `item_price`。
-		var val := int(ItemData.QUALITY_PRICES.get(String(ItemData.def(id).quality), 0))
+		# 黑市比价按**地皮价档位**（`BLACK_COST`：金 3 > 紫 1）—— 黑市只出紫 / 金两档，
+		# 按它排等价「金优先」。2026-10-10（道具改单件现金定价、删 `QUALITY_PRICES`）后
+		# 不能再按档价现金排序；黑市一切以**地皮**计价，用 `BLACK_COST` 才是同量纲的分档。
+		var val := int(ItemData.BLACK_COST.get(String(ItemData.def(id).quality), 0))
 		if val > best_val:
 			best_val = val
 			best_slot = i
