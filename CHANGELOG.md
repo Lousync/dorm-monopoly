@@ -5,6 +5,18 @@
 
 面向开发者的工程文档与仓库约定见 `AGENTS.md`；当前进度与待办见 `doc/development/开发台账.md`。
 
+## [未发布]
+
+### 新增
+
+- **卡牌统一元数据模型 P1：`CardDB` 注册表**（`feature/0.16.0`，2026-10-10）：把**道具 / 科技 / 畸变**
+  三张异构数据表的元数据归一为统一的 `CardMeta` 形状（`id` / `family` / `title` / `desc` / `category` /
+  `icon` / `tags` / `implemented` / `raw`），提供跨族查询（`def` / `all` / `find` / `has` / `ids`）
+  与一致性自检（`validate`）。**只做加法**：原三张表与各自 `def()` 仍是唯一真相，不动任何现有消费路径。
+  配套单测 `tests/card_db_test.gd`（纯数据、不加载对局场景）。事件族本批**未接入** ——
+  现有事件卡设计将在模型统一后删除重做，届时再补 `CardDB.FAMILY_EVENT`（已登记
+  `doc/development/未完成项-交接.md`）。
+
 ## [0.15.0] — 2026-10-10
 
 ### 新增
