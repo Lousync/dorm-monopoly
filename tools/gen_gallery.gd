@@ -61,8 +61,6 @@ const TYPE_LABEL := {"consumable": "一次性", "active": "主动", "passive": "
 const TARGET_LABEL := {"player": "选一名玩家", "tile": "选地图上一格", "own_tile": "选自己名下的一块地皮"}
 const THEN_LABEL := {"own_prop": "；再点他名下的一块地皮", "swap_both": "；双方各选一块互换"}
 
-const TAG_LABEL := {"debuff": "负面", "buff": "正面", "中性": "中性"}
-const TAG_COLOR := {"debuff": "#f08b7a", "buff": "#7ddc9b", "中性": "#9fb3c0"}
 const TIER_GLYPH := {"白银": "🥈", "黄金": "🥇", "钻石": "💎"}
 
 ## 畸变里那几个数值是 `AberrationData` 的 static 占位量（待数值专场回填）——
@@ -260,8 +258,8 @@ func _entries_items(doc: Dictionary) -> Array:
 				and String(de.face) != String(d.get("desc", "")):
 			rows.append({"k": "⚠ 文档", "v": "道具图鉴.md 的「卡面文案」写着 `%s`，与游戏卡面（代码 `desc`）不一致"
 				% String(de.face)})
-		var chips: Array = [{"t": "%s · %s" % [q, ItemData.QUALITY_NAMES.get(q, q)],
-			"color": _hex(ItemData.QUALITY_COLORS.get(q, Color.WHITE))}]
+		var chips: Array = [{"t": "%s · %s" % [q, CardDB.category_label("item", q)],
+			"color": _hex(CardDB.category_color("item", q))}]
 		chips.append({"t": TYPE_LABEL.get(String(d.get("type", "")), String(d.get("type", "")))})
 		if String(d.get("type", "")) != "passive":
 			chips.append({"t": "%d⚡" % int(d.get("cost", 0))})
@@ -277,7 +275,7 @@ func _entries_items(doc: Dictionary) -> Array:
 			"subtitle": "",     # 品质 / 类型 / 能量 / 唯一 / 冷却 chips 已经说全了，别再用一句话复述一遍
 			"icon": ICON_PREFIX + String(d.get("icon", "")) + ".png",
 			"glyph": "🃏",
-			"accent": _hex(ItemData.QUALITY_COLORS.get(q, Color.WHITE)),
+			"accent": _hex(CardDB.category_color("item", q)),
 			"chips": chips,
 			"facets": {
 				"品质": q,
@@ -324,7 +322,7 @@ func _entries_techs() -> Array:
 	var out: Array = []
 	for tier in TechData.TIERS:
 		for name in TechData.pool(tier):     # 只出 implemented（弃案留空的编号不在池里）
-			var col := _hex(TechData.tier_color(tier))
+			var col := _hex(CardDB.category_color("tech", tier))
 			out.append({
 				"title": String(name),
 				"subtitle": "整局生效的强化",   # 档位由上面那枚彩色 chip 说，副标题别重复它
@@ -363,13 +361,15 @@ func _entries_aberrations() -> Array:
 			"title": String(id),
 			"subtitle": "",     # 类型 / 触发两枚 chip 已经说全了
 			"glyph": "🌪️",
-			"accent": TAG_COLOR.get(tag, "#9fb3c0"),
+			"accent": _hex(CardDB.category_color(CardDB.FAMILY_ABERRATION, tag)),
 			"chips": [
 				{"t": String(d.get("type", ""))},
 				{"t": String(d.get("trigger", ""))},
-				{"t": TAG_LABEL.get(tag, tag), "color": TAG_COLOR.get(tag, "")},
+				{"t": CardDB.category_label(CardDB.FAMILY_ABERRATION, tag),
+					"color": _hex(CardDB.category_color(CardDB.FAMILY_ABERRATION, tag))},
 			],
-			"facets": {"类型": String(d.get("type", "")), "触发": String(d.get("trigger", "")), "标签": TAG_LABEL.get(tag, tag)},
+			"facets": {"类型": String(d.get("type", "")), "触发": String(d.get("trigger", "")),
+				"标签": CardDB.category_label(CardDB.FAMILY_ABERRATION, tag)},
 			"body": String(d.get("desc", "")),
 			"rows": rows,
 			"dim": not implemented,
@@ -550,7 +550,7 @@ func _facet_order(sec: String, key: String) -> Array:
 			match key:
 				"类型": return ["持续", "非持续"]
 				"触发": return ["随机", "条件"]
-				"标签": return [TAG_LABEL["debuff"], TAG_LABEL["buff"], TAG_LABEL["中性"]]
+				"标签": return [CardDB.TAG_LABELS["debuff"], CardDB.TAG_LABELS["buff"], CardDB.TAG_LABELS["中性"]]
 	return []
 
 

@@ -1562,7 +1562,7 @@ func _test_kind_and_dist(g) -> void:
 # 那一版把「机会」这个字面量拆开：它原先**既是卡背配色键、又是卡类名 / 演出标题**
 #（`_deck_back_tex` 拿 `deck == "机会"` 当配色键）⇒ 三类卡（机会 / 道具 / 畸变）根本没法各自配色。
 # 改法是显式派生**家族键**（`item_id != "" → item`；`kind == "aberr" → aberr`；否则 `chance`），
-# `deck` 从此只担"标题"一个角色。展示映射收进 `GameData.CARD_FAMILIES` / `CARD_KINDS` 两张表。
+# `deck` 从此只担"标题"一个角色。展示映射收进 `CardDB.FAMILY_STYLES` / `CARD_KINDS` 两张表。
 #
 # 本节的钉子分两类：
 #   ① **源码钉子**（不需要对局实例）：判定顺序是契约、以及"拿标题当键"是否真的绝迹；
@@ -1645,7 +1645,7 @@ func _test_deck_key_is_gone() -> void:
 			and _body_of(src, "func show_card(").find("deck == \"机会\"") >= 0,
 		"对 deck 的相等比较只有 show_card 里那一条派生守卫（实得 %d 处；改前 2 处）" % src.count("deck =="))
 
-## 卡面美化（2026-10-10）：展示映射的单一来源 = `GameData.CARD_FAMILIES` + `GameData.CARD_KINDS`。
+## 卡面美化（2026-10-10）：展示映射的单一来源 = `CardDB.FAMILY_STYLES` + `GameData.CARD_KINDS`。
 ## 这里钉三件事：① 家族表三族齐全、字段齐；② 卡型表**恰好覆盖** `card_kind()` 会吐出来的所有值
 ## （漏一个 ⇒ 那个卡型掉进兜底、徽章色当场错）；③ `DeckReveal` 真的按**家族键**取值，
 ## 不再是"拿标题字符串比"。③ 这条是本批的核心：`_deck_back_tex("chance")` 改前返回**蓝**背
@@ -1657,8 +1657,8 @@ func _test_card_style(g) -> void:
 	var UK = load("res://scripts/ui_kit.gd")   # 见约束 7：不许静态写 `UIKit.`
 	for f in ["bg", "edge", "tex", "tint", "glyph"]:
 		for famkey in ["chance", "item", "aberr"]:
-			_check(GameData.CARD_FAMILIES.has(famkey)
-					and (GameData.CARD_FAMILIES[famkey] as Dictionary).has(f),
+			_check(CardDB.FAMILY_STYLES.has(famkey)
+					and (CardDB.FAMILY_STYLES[famkey] as Dictionary).has(f),
 				"家族表 %s 有字段 %s" % [famkey, f])
 	# 卡型表恰好覆盖 card_kind() 的五类：拿 50 张真卡跑一遍，一个都不许漏
 	var kinds := {}
@@ -1670,27 +1670,27 @@ func _test_card_style(g) -> void:
 	# 色以**演出**为准：good / info 与 UIKit 那两个常量同值（表在 GameData、不许引 UIKit ⇒ 靠这条钉住）
 	_check(GameData.CARD_KINDS["good"]["color"] == UK.GOOD, "收益色 = UIKit.GOOD")
 	_check(GameData.CARD_KINDS["info"]["color"] == UK.ACCENT, "其他色 = UIKit.ACCENT（原先靠兜底）")
-	_check(GameData.CARD_FAMILIES["chance"]["edge"] == UK.ACCENT,
+	_check(CardDB.FAMILY_STYLES["chance"]["edge"] == UK.ACCENT,
 		"机会族的描边 = `UIKit.ACCENT`（同值各写一份，靠这条钉住；GameData 引不了 UIKit）")
 	# 家族键取值：`_deck_back_tex` / `_make_card_art` 的形参语义已由"标题"改成"家族键"
 	var dr = g.deck_reveal
 	if dr == null:
 		return   # 存在性闸已经报过红了（同 `_test_at_client_auto` 的写法）
-	_check(dr._deck_back_tex("chance") == UK.tex(String(GameData.CARD_FAMILIES["chance"]["tex"])),
+	_check(dr._deck_back_tex("chance") == UK.tex(String(CardDB.FAMILY_STYLES["chance"]["tex"])),
 		"`_deck_back_tex(\"chance\")` = 绿背（改前这里拿标题比、返回的是蓝背）")
-	_check(dr._deck_back_tex("item") == UK.tex(String(GameData.CARD_FAMILIES["item"]["tex"])),
+	_check(dr._deck_back_tex("item") == UK.tex(String(CardDB.FAMILY_STYLES["item"]["tex"])),
 		"`_deck_back_tex(\"item\")` = 蓝背")
-	_check(dr._deck_back_tex("aberr") == UK.tex(String(GameData.CARD_FAMILIES["aberr"]["tex"])),
+	_check(dr._deck_back_tex("aberr") == UK.tex(String(CardDB.FAMILY_STYLES["aberr"]["tex"])),
 		"`_deck_back_tex(\"aberr\")` = 蓝背（复用那张，靠底色 / 描边偏紫）")
-	_check(dr._make_card_art("aberr").modulate == GameData.CARD_FAMILIES["aberr"]["tint"],
+	_check(dr._make_card_art("aberr").modulate == CardDB.FAMILY_STYLES["aberr"]["tint"],
 		"底纹色调按家族给（畸变那档 = 家族表里的 tint）")
 	# 三行派生：用 `_fam_edge` 这个可观察量钉住（不看像素）
 	dr.show_card("机会", "good", "测试：机会族")
-	_check(dr._fam_edge == GameData.CARD_FAMILIES["chance"]["edge"], "deck=「机会」⇒ family=chance")
+	_check(dr._fam_edge == CardDB.FAMILY_STYLES["chance"]["edge"], "deck=「机会」⇒ family=chance")
 	dr.show_card("失物招领", "good", "测试：道具族", "招财猫")
-	_check(dr._fam_edge == GameData.CARD_FAMILIES["item"]["edge"], "带 item_id ⇒ family=item")
+	_check(dr._fam_edge == CardDB.FAMILY_STYLES["item"]["edge"], "带 item_id ⇒ family=item")
 	dr.show_card("🌀 畸变 · 测试", "aberr", "测试：畸变族")
-	_check(dr._fam_edge == GameData.CARD_FAMILIES["aberr"]["edge"], "kind=aberr ⇒ family=aberr")
+	_check(dr._fam_edge == CardDB.FAMILY_STYLES["aberr"]["edge"], "kind=aberr ⇒ family=aberr")
 	dr.request_close()
 	dr.tick(dr.BACK + 0.05)
 
@@ -1748,7 +1748,7 @@ func _test_card_face(g) -> void:
 	# 样本特意挑 `jail`：它的**卡型色是紫**、与家族色（金）不同色 ⇒ 下面"外框吃家族色 / 卡型色只
 	# 落在徽章上"那几条才有分辨力（换成 `good` 那型两边恰好都是绿，吃错了也照绿）。
 	dr.show_card("机会", "jail", "测试：卡面骨架")
-	var fam: Dictionary = GameData.CARD_FAMILIES["chance"]
+	var fam: Dictionary = CardDB.FAMILY_STYLES["chance"]
 	var edge: Color = fam["edge"]
 	var kc: Color = GameData.CARD_KINDS["jail"]["color"]
 	var title = dr._front.find_child("card_title", true, false)

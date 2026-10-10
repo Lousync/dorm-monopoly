@@ -17,6 +17,14 @@
   现有事件卡设计将在模型统一后删除重做，届时再补 `CardDB.FAMILY_EVENT`（已登记
   `doc/development/未完成项-交接.md`）。
 
+### 变更
+
+- **卡面展示收进 `CardDB`（卡牌统一元数据模型 P2）**：`GameData.CARD_FAMILIES` 的家族三色迁为
+  `CardDB.FAMILY_STYLES`，并新增统一访问器 `family_style` / `family_styles` / `category_color` /
+  `category_label` / `icon`（道具取品质 / 科技取档位 / 畸变取 tag；畸变 tag 的展示名与配色也从
+  `tools/gen_gallery.gd` 迁入）。`DeckReveal` 与图鉴生成器改读 `CardDB`。机会卡的 `CARD_KINDS` 与
+  `card_kind()` **暂留 `GameData`**（随事件卡重做一并处理）。图鉴页生成结果 **零 diff**。
+
 ## [0.15.0] — 2026-10-10
 
 ### 新增

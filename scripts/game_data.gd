@@ -260,50 +260,16 @@ static func card_kind(card: Dictionary) -> String:
 
 ## ---- 抽卡演的**展示映射**（2026-10-10 卡面美化）------------------------------------------------
 ##
-## 本块是**展示映射的单一来源**：抽卡演出（`DeckReveal` 的家族框 / 卡型徽章）与
-## 图鉴页（`tools/gen_gallery.gd`）都读这里。**判定不在这里** —— `card_kind()` 的
-## 判定顺序是契约（见该函数注释），本块只回答"长什么样"。
+## **家族三色（卡背 / 外框 / 光晕 / 家族徽章）已于 2026-10-10 迁到
+## `scripts/card_db.gd` 的 `CardDB.FAMILY_STYLES`**（卡牌统一元数据模型 P2），与 `DeckReveal` 同源。
+## 本处**只剩机会卡型展示 `CARD_KINDS`**（判定仍归 `card_kind()` 的契约顺序）。
 ##
-## 为什么住 `GameData`：① 它已经是 `card_kind()` 的家，`LEVEL_COLORS` / `LEVEL_NAMES` 也有
+## 为什么卡型展示住 `GameData`：① 它已经是 `card_kind()` 的家，`LEVEL_COLORS` / `LEVEL_NAMES` 也有
 ## "展示色住数据类"的先例；② **`ui_kit.gd` 里有 `Fx.play` 这类 autoload 引用，`--script` 模式
-## （图鉴生成器）不能 import 它** —— 同下面 `CASINO_STAKE` 那条注释踩过的坑；③ 新建
-## `class_name`（备选的 `CardStyle`）要先跑一次 `--import` 才会被 `--script` 认到（本仓已踩过）。
-## ⚠ 因此本块**不许引 `UIKit.*`**：`good` 的绿与 `UIKit.GOOD`、`info` 的金与 `UIKit.ACCENT`
+## （图鉴生成器）不能 import 它** —— 同下面 `CASINO_STAKE` 那条注释踩过的坑。
+## ⚠ 本块**不许引 `UIKit.*`**：`good` 的绿与 `UIKit.GOOD`、`info` 的金与 `UIKit.ACCENT`
 ## 是同值但**各写一份**，靠 `tests/chance_test.gd` 的 `_test_card_style()` 钉住"两处同值"。
 ## ⚠ 若 `const` 嵌套字典在这里编不过（老版本 GDScript 有先例），改用 `static var`（同 `MAX_ROUNDS`）。
-
-## 家族三色（卡背 / 正面外框 / 标题 / 光晕 / 家族徽章）。
-## 键 = **家族键**，只由 `DeckReveal.show_card()` 显式派生（那是全仓唯一出现"机会"这个值的比较处）——
-## 2026-10-10 之前是拿标题字符串 `deck == "机会"` 当配色键，一个值担两种角色（见 doc/game-design/设计决策留痕.md §二十九）。
-##	bg    卡背底色；edge 描边 + 光晕 + 标题；tex 牌背 SVG；tint 底纹色调；glyph 家族徽章图标
-## ⚠ `item` 族的 `glyph` 是**预留**：今天**没有任何绘制路径会读它** —— 家族徽章只在
-## `DeckReveal._add_card_badges()` 里画，而它只被文字卡的 `_card_face_front()` 调；道具族正面
-## 是共用件 `ItemCard`、家族身份只由卡背承担。保留它是为让三族**表结构同形**（`chance_test` 也钉着"三族字段齐"）。
-const CARD_FAMILIES := {
-	"chance": {
-		"bg": Color(0.075, 0.068, 0.045),
-		"edge": Color(0.961, 0.702, 0.259),
-		"tex": "res://assets/cards/atlas_back_green_darkred.svg",
-		"tint": Color(1.0, 0.86, 0.55, 0.30),
-		"glyph": "🎲",
-	},
-	"item": {
-		"bg": Color(0.045, 0.062, 0.092),
-		"edge": Color(0.42, 0.70, 0.95),
-		"tex": "res://assets/cards/atlas_back_blue_brown.svg",
-		"tint": Color(0.78, 0.72, 1.0, 0.30),
-		"glyph": "📦",   # 预留：无绘制路径读它（道具族不画家族徽章），仅保持三族表结构同形
-	},
-	"aberr": {
-		"bg": Color(0.070, 0.048, 0.105),
-		"edge": Color(0.79, 0.65, 1.0),
-		# 复用蓝那张：三色里只有机会、道具各有一张现成 SVG，**不新增素材**（AGENTS.md §四 的
-		# "能用程序化手段画出来的就别加素材"）。畸变的紫靠底色 + 描边 + 光晕 + 底纹色调做出来。
-		"tex": "res://assets/cards/atlas_back_blue_brown.svg",
-		"tint": Color(0.82, 0.70, 1.0, 0.34),
-		"glyph": "🌀",
-	},
-}
 
 ## 卡型展示（`card_kind()` 的五个返回值 → 徽章图标 / 中文 / 色）。
 ## **色以「演出 / 卡面」那套为准**（2026-10-10 裁决）：玩家真看到的是卡面，图鉴页是参考手册。

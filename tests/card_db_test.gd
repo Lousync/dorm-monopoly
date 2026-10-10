@@ -52,6 +52,9 @@ func _initialize() -> void:
 	for p in problems:
 		printerr("    ! ", p)
 
+	_test_family_styles()
+	_test_category_accessors()
+
 	if fails == 0:
 		print("CARDDB TEST: ALL PASS")
 		quit(0)
@@ -92,3 +95,40 @@ func _validate_aberrations() -> void:
 		if String(meta.desc) == "":
 			bad.append("%s 缺 desc" % meta.id)
 	_check(bad.is_empty(), "畸变 category ∈ ABERR_TAGS 且 desc 非空（异常：%s）" % str(bad))
+
+func _test_family_styles() -> void:
+	# 家族样式（2026-10-10 从 GameData.CARD_FAMILIES 迁入）：三族表结构同形
+	var fields := ["bg", "edge", "tex", "tint", "glyph"]
+	for famkey in ["chance", "item", "aberr"]:
+		var ok := CardDB.FAMILY_STYLES.has(famkey)
+		_check(ok, "FAMILY_STYLES 含家族 %s" % famkey)
+		if ok:
+			for f in fields:
+				_check((CardDB.FAMILY_STYLES[famkey] as Dictionary).has(f),
+					"家族 %s 有字段 %s" % [famkey, f])
+	_check(CardDB.family_style("chance") == CardDB.FAMILY_STYLES["chance"], "family_style 取到家族样式")
+	_check(CardDB.family_style("不存在").is_empty(), "family_style 未命中返回空")
+	_check(CardDB.family_styles().size() == 3, "family_styles 恰三族")
+
+func _test_category_accessors() -> void:
+	# 分级配色 / 展示名：道具取品质、科技取档位、畸变取 tag
+	_check(CardDB.category_color(CardDB.FAMILY_ITEM, "金") == ItemData.QUALITY_COLORS["金"],
+		"道具分级色 = ItemData.QUALITY_COLORS")
+	_check(CardDB.category_label(CardDB.FAMILY_ITEM, "金") == String(ItemData.QUALITY_NAMES["金"]),
+		"道具分级名 = ItemData.QUALITY_NAMES")
+	_check(CardDB.category_color(CardDB.FAMILY_TECH, TechData.TIER_GOLD) \
+		== TechData.tier_color(TechData.TIER_GOLD), "科技分级色 = TechData.tier_color")
+	_check(CardDB.category_color(CardDB.FAMILY_ABERRATION, "debuff") == CardDB.TAG_COLORS["debuff"],
+		"畸变分级色 = CardDB.TAG_COLORS")
+	_check(CardDB.category_label(CardDB.FAMILY_ABERRATION, "debuff") == "负面",
+		"畸变分级名 = TAG_LABELS 中文")
+	# 图标统一入口
+	if not item_ids_cache().is_empty():
+		var iid := String(item_ids_cache()[0])
+		_check(CardDB.icon(CardDB.FAMILY_ITEM, iid) == String(ItemData.ITEMS[iid].get("icon", "")),
+			"icon 与源表一致")
+		_check(CardDB.icon(CardDB.FAMILY_ABERRATION, String(AberrationData.ABERRATIONS.keys()[0])) \
+			== String(CardDB.FAMILY_STYLES["aberr"]["glyph"]), "畸变 icon = 家族 glyph")
+
+func item_ids_cache() -> Array:
+	return ItemData.ITEMS.keys()

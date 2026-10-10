@@ -153,7 +153,7 @@ func show_card(deck: String, kind: String, text: String, item_id := "") -> void:
 	# 口径同步写在 `doc/development/联机协议.md` 的 `s_card` 行（T6）。
 	assert(family != "chance" or deck == "机会",
 		"DeckReveal: 未登记的文字卡标题「%s」—— 家族键派生要补一行（见 doc/development/联机协议.md 的 `s_card` 行）" % deck)
-	var fam: Dictionary = GameData.CARD_FAMILIES[family]
+	var fam: Dictionary = CardDB.FAMILY_STYLES[family]
 	_fam_edge = fam["edge"]
 	var card := Control.new()
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -406,7 +406,7 @@ func _ease_out_back(t: float) -> float:
 ## 牌背图案按**家族键**取（家族表是唯一来源）。2026-10-10 之前这里是拿标题字符串比较当配色键
 ##（`deck` 是「机会」就用绿背），与"标题"这个角色撞在一起。
 func _deck_back_tex(family: String) -> Texture2D:
-	return UIKit.tex(String(GameData.CARD_FAMILIES[family]["tex"]))
+	return UIKit.tex(String(CardDB.FAMILY_STYLES[family]["tex"]))
 
 ## 铺满整张牌的卡背图案（压成低透明度线纹）；色调按家族
 func _make_card_art(family: String) -> TextureRect:
@@ -416,7 +416,7 @@ func _make_card_art(family: String) -> TextureRect:
 	tr.stretch_mode = TextureRect.STRETCH_SCALE
 	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tr.modulate = GameData.CARD_FAMILIES[family]["tint"]
+	tr.modulate = CardDB.FAMILY_STYLES[family]["tint"]
 	return tr
 
 ## 卡面（正面）：同一张牌的图案 + 中央一块文字牌面。
@@ -424,7 +424,7 @@ func _make_card_art(family: String) -> TextureRect:
 ## 卡型色退到右上那枚徽章（色 + 图标 + 中文三通道 —— 比"只看框色猜"准，
 ## `jail` 的紫框与畸变卡的紫框那"两个几乎一样的紫"也就不再需要靠颜色去分）。
 func _card_face_front(family: String, kind: String, deck: String, text: String) -> Control:
-	var fam: Dictionary = GameData.CARD_FAMILIES[family]
+	var fam: Dictionary = CardDB.FAMILY_STYLES[family]
 	var edge: Color = fam["edge"]
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -549,7 +549,7 @@ func _add_card_badges(layer: Control, fam: Dictionary, kind: String) -> void:
 ## 卡背：整张铺 CC0 的 Atlas 牌卡背图案 + **家族色**的底色 / 描边 / 光晕。
 ## ⚠ **卡背没有那块深色 `plate`**（它整张就是满铺格纹）—— 与卡面本来就不同，别"顺手统一"。
 func _card_face_back(family: String) -> Control:
-	var fam: Dictionary = GameData.CARD_FAMILIES[family]
+	var fam: Dictionary = CardDB.FAMILY_STYLES[family]
 	var edge: Color = fam["edge"]
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_FULL_RECT)
