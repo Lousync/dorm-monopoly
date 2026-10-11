@@ -352,10 +352,6 @@ var hud_layer: Control
 ## 载体从画布搬到屏幕层的原因与 z 档见那里；内容 / 数据源（`board._peers_info`）与显隐由
 ## `_on_table_hover` / `_set_token_hover` / `_place_token_tip` 负责，`_process` 每帧重摆一次。
 var token_tip: Control
-## 对局仪表盘（顶部指挥带 + 右侧玩家纵览，2026-10-09）：`TableHud.build_play_ui` 建的屏幕层
-## 管理器（`scripts/dashboard.gd`，Node；两块控件挂在 `hud_layer` 上），自行 `_process` 逐帧刷新。
-## 数据全读已同步的 `st` / `_op_*`。
-var dashboard: Dashboard
 var _tip_name: Label                # 条里那行昵称（颜色 = 该玩家的棋子色）
 var _tip_sub: Label                 # 第二行「身家 … · 第 N 名（· 已出局）」
 ## 当前悬停到谁（哨兵是 `GameData.NO_PEER`，**不是 -1** —— 机器人 peer 从 -1 起编号）。
@@ -633,8 +629,6 @@ func _lab_hide_hud() -> void:
 	for c in [opt_btn, log_panel, log_toggle, log_toast]:
 		if c != null and is_instance_valid(c):
 			c.visible = false
-	if dashboard != null and is_instance_valid(dashboard):
-		dashboard.hide_all()
 
 ## 重建一局沙盒（同步版，不跑回合循环）
 func lab_reset() -> void:
@@ -1520,6 +1514,12 @@ func _advance_turn() -> void:
 	if alive > 0 and _turns_taken >= alive:
 		_turns_taken = 0
 		round_no += 1
+		# 每 10 轮报一次（2026-10-11 用户定）：**回合数的实时播报已经取消** —— 原先报在屏幕顶
+		# 那条顶栏上、后来搬到桌垫状态牌上，两者都已删除（改为"轮到谁"由桌上铭牌边框闪光表示）。
+		# ⇒ 玩家对"打到第几轮 / 离 30 轮结算还差多少"的唯一提示就是这一条，别顺手删了。
+		if round_no % 10 == 0:
+			var lim := int(_settings.max_rounds)
+			_log("进入第 %d 轮%s" % [round_no, "（本局共 %d 轮）" % lim if lim > 0 else ""], "#f0c064")
 
 func _alive_count() -> int:
 	var n := 0
@@ -4770,6 +4770,10 @@ func _refresh_placards(standing: Array, mine_peer: int) -> void:
 		rows.append({"peer": int(e.peer), "slot": slot, "color": int(e.color),
 			"name": String(e.name), "rank": int(e.rank), "alive": bool(e.alive)})
 	table3d.table_props.set_placards(rows)
+	# 当前行动者 → 那块铭牌的内框脉冲发光（2026-10-11）。**与 `hot`（选目标可被选中）
+	# 是两条独立通道**，见 `table_props.set_placard_active` 那段。回合数的实时播报已取消，
+	# "现在轮到谁"在桌面上就靠这一处 + 玻璃棋子底下那圈光环。
+	table3d.table_props.set_placard_active(int(st.get("turn", GameData.NO_PEER)))
 	# ⚠ **池子可能刚被重建**（人换了 / 断线重连 ⇒ `set_placards` 收了旧牌、建了新牌，
 	# 新牌的倒计时默认是收着的）。而 `_placard_timer_sig` 那道早退只按"值有没有变"——
 	# **不限时**的窗口里值恒为 `[owner, 0, false]` ⇒ 重建之后它不会再推一次 ⇒

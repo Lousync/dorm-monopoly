@@ -451,37 +451,6 @@ func _build_interior() -> void:
 	var deco := TableDecor.new()
 	inlay.add_child(deco)
 
-	# 标题牌：压在嵌板上沿之内，金边 + 金色细分隔线
-	var p := Panel.new()
-	p.position = Vector2(c.x - 380, BOARD_OFFSET.y + pad + 18.0)
-	p.size = Vector2(760, 96)
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.055, 0.095, 0.082, 0.72), 20,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.30), 1, 6))
-	_world.add_child(p)
-
-	var title := UIKit.title_label("宿舍大富翁", 42, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.42), 0)
-	title.position = Vector2(0, 6)
-	title.size = Vector2(760, 54)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(title)
-
-	var rule := ColorRect.new()
-	rule.color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.22)
-	rule.position = Vector2(300, 60)
-	rule.size = Vector2(160, 1)
-	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(rule)
-
-	var sub := UIKit.label("%d × %d 环线 · %d 格 · 10 大产业" % [GameData.BOARD_COLS, GameData.BOARD_ROWS, GameData.TILES.size()],
-		16, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.8))
-	sub.position = Vector2(0, 64)
-	sub.size = Vector2(760, 26)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(sub)
-
 	_build_wheel(c)
 
 ## 中央转盘：点数来源，掷点时镜头对准它

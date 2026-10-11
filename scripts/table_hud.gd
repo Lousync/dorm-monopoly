@@ -109,40 +109,32 @@ static func build_play_ui(g: Node) -> void:
 	ttv.add_child(g._tip_sub)
 
 
-	# ---- 对局仪表盘（顶部指挥带 + 右侧玩家纵览）----
-	# 融合落位（2026-10-09 用户拍板「重新设计原型让这些控件融合」）：横条铺满顶部、
-	# 与左上「暂停」/右上「战报·规则」同一条带上，中间放仪表盘内容、左右各留空位让按钮
-	# "坐进"横条两端（按钮本身位置一字未动）。畸变横幅与战报气泡挪到横条下方（见下）。
-	# 数据全读已同步的 st / _op_*，客户端也准；由 Dashboard._process 逐帧自刷。
-	g.dashboard = Dashboard.new()
-	g.dashboard.name = "Dashboard"
-	hud.add_child(g.dashboard)
-	g.dashboard.g = g
-	g.dashboard.setup()
-
-	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条；
-	# **2026-10-09 起顶边从 52 下移到 128**：顶部 8..76 已是仪表盘横条，气泡不能再压上去。
+	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条。
+	# **2026-10-11 起顶边从 128 收回 52**：原先 8..76 是仪表盘横条、不能再压上去；横条搬走后
+	# 顶部只剩左右两角的按钮，气泡回到屏幕最上方（52 = 角按钮那一条 8..46 的下沿）。
+	# 落位史：52（无横条时代）→ 128（2026-10-09 横条上顶）→ **52（2026-10-11 横条搬到桌垫）**。
 	g.log_toast = VBoxContainer.new()
 	g.log_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	g.log_toast.offset_left = -390.0
 	g.log_toast.offset_right = 390.0
-	g.log_toast.offset_top = 128.0
-	g.log_toast.offset_bottom = 376.0
+	g.log_toast.offset_top = 52.0
+	g.log_toast.offset_bottom = 300.0
 	g.log_toast.add_theme_constant_override("separation", 4)
 	g.log_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.log_toast)
 
 	# 顶部**水平居中**的「畸变生效中」横幅（批次 12 D3 / 设计 §⑫：从右上角搬到中间）。
 	# **"中间"= 不再贴右上角**，不是屏幕正中 —— 真放正中会盖住棋盘中心与格详情卡。
-	# 落位（**2026-10-09 下移**）：`y ≈ 84..126`，**在仪表盘横条（8..76）之下、战报气泡
-	#（顶边 128）之上**。此前是 6..48（那时顶部没有横条）。
+	# 落位（**2026-10-11 收回 `y ≈ 8..50`**）：横幅是**居中**的、两侧角按钮各只占 ~100/250px，
+	# 一条 300 来像素的居中横幅撞不到它们（`hud_test` 有一条「不与三个角按钮重叠」的断言钉着）。
+	# 落位史：6..48（无横条时代）→ 84..126（2026-10-09 给横条让位）→ **8..50（2026-10-11 横条搬走）**。
 	# 走 `CenterContainer` 才能"贴内容宽度 + 居中"：`PanelContainer` 自己按锚点铺满，
 	# 直接给 `CENTER_TOP` 会得到一条固定宽度的长条（文案短时两侧一大片空、还压住更多屏幕）。
 	# 显隐仍由 `game._refresh_ab_ui` 只管 `ab_label.visible`（外层容器留着不吃鼠标、不画东西）。
 	g.ab_wrap = CenterContainer.new()
 	g.ab_wrap.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	g.ab_wrap.offset_top = 84.0
-	g.ab_wrap.offset_bottom = 126.0
+	g.ab_wrap.offset_top = 8.0
+	g.ab_wrap.offset_bottom = 50.0
 	g.ab_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.ab_wrap)
 	g.ab_label = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.88), 10, Color(0, 0, 0, 0), 0, 5)

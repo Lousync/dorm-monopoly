@@ -19,7 +19,10 @@ const GAME_GD := "res://scripts/game.gd"
 ## 会被新功能淹没」。所以这里卡死一个阈值：**要往里加代码，就得先搬点东西出去**。
 ## 搬完把小一号的数字填回来（棘轮只能往下走）。确实需要放宽时，请连同理由一起改，
 ## 并同步 AGENTS.md §四。
-const GAME_GD_LINE_BUDGET := 8222
+## 2026-10-11 下调 8222 → 8221：删掉 `dashboard.gd` 那一整套（`var dashboard` 与
+## `_lab_hide_hud` 里收它的两行）腾出了 6 行，本轮又往 `_advance_turn` 里加了「每 10 轮报一次」
+## 的 3 行，净 −1。**棘轮只降不升**：搬走的又长回来是它要防的那件事。
+const GAME_GD_LINE_BUDGET := 8221
 
 func _line_count(p: String) -> int:
 	var f := FileAccess.open(p, FileAccess.READ)

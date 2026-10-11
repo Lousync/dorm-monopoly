@@ -1525,14 +1525,15 @@ func _apply_ring_size() -> void:
 ## 光环的逐帧：① 跟着棋子走（只取 xz —— 走子时棋子会抬 y，而环是**贴在桌垫上**的，不该跟着飞）；
 ## ② 呼吸（亮度）。没人在行动 / 环收着时直接早退，不白跑。
 func _process(delta: float) -> void:
-	if _ring == null or not _ring.visible:
-		return
-	if _tokens.get(_ring_peer) == null:      # 见 `_apply_ring_pose` 那段：别每帧造空字典
-		return
-	_apply_ring_pose()
-	_ring_phase = fposmod(_ring_phase + delta, RING_PULSE_TIME)
-	var k := 0.5 - 0.5 * cos(TAU * _ring_phase / RING_PULSE_TIME)
-	_ring_mat.emission_energy_multiplier = lerpf(RING_GLOW_LO, RING_GLOW_HI, k)
+	# 行动光环：没环 / 环收着 / 棋子不在时不推（`_apply_ring_pose` 那段：别每帧造空字典）
+	if _ring != null and _ring.visible and _tokens.get(_ring_peer) != null:
+		_apply_ring_pose()
+		_ring_phase = fposmod(_ring_phase + delta, RING_PULSE_TIME)
+		var k := 0.5 - 0.5 * cos(TAU * _ring_phase / RING_PULSE_TIME)
+		_ring_mat.emission_energy_multiplier = lerpf(RING_GLOW_LO, RING_GLOW_HI, k)
+	# 行动者铭牌的内框呼吸（2026-10-11）。**不能挂在上面那个 `return` 之后**：
+	# 光环与铭牌是两条独立的通道，光环收着不代表没有行动者。
+	_tick_placard_flash(delta)
 
 # ---------------- 装修房子（批次 11 Task 2） ----------------
 #
@@ -1927,13 +1928,32 @@ const PLACARD_BORDER_RIM := 0.022
 const PLACARD_HOT := Color(1.0, 0.86, 0.35)
 ## 棋子色小片的边长（世界单位）。
 const PLACARD_CHIP := 0.075
+
+# ---- 2026-10-11 改版：玩家色内框 + 质感三层 + 行动者边框闪光 ----
+#
+## 牌面**内框**（`Rim`）比牌身每边大出多少（世界单位）。这一圈就是**该玩家的小人色** ——
+## 与色片、名次字同色，于是"这牌是谁的"一眼可辨（原先只有左下角一枚小片有色）。
+const PLACARD_RIM := 0.013
+## 轮到该玩家时，内框自发光**脉冲**的区间。
+## **下限也高于 `PLACARD_EMIT`** —— 这样"亮着"这件事在**任何相位**都成立，
+## 不必等某一帧才看得出来（`placard_test` 就是同步读一眼，不推时间）。
+const PLACARD_FLASH_LO := 0.55
+const PLACARD_FLASH_HI := 1.80
+## 一次呼吸的周期（秒）。与行动光环 `RING_PULSE_TIME` 同量级但**错开**：同频会同相，
+## 桌面上两处一起明灭反而像闪灯故障。
+const PLACARD_FLASH_TIME := 1.35
+## 牌身正面那块**内嵌板**比牌身小多少（宽, 高，世界单位）——"嵌进去一块"的凹陷感靠它。
+const PLACARD_INSET := Vector2(0.10, 0.085)
+## 顶边那条**高光线**的厚度（世界单位）。≈ 1 屏幕像素：3D 默认档牌面才 58px 宽，
+## 再粗就不像"受光的一条边"、像刷了一道白漆。
+const PLACARD_LIGHT_H := 0.007
 ## 昵称 / 名次的**世界字高**（不是字号 —— `Label3D` 的 `pixel_size × font_size` 才是世界字高）。
 ##
 ## 取值口径：3D 默认档 ≈ 72.8 屏幕像素/世界 ⇒ 昵称 0.135 世界 ≈ **9.8 屏幕像素**、
 ## 名次 0.105 ≈ 7.6 像素。读得出（`Label3D` 是矢量渲染，没有烘图那种模糊），
 ## 而**名字再大就放不下了**：4 个字 × 0.135 = 0.54 世界，牌面只有 0.80、还要让给色片与名次。
 const PLACARD_NAME_H := 0.135
-const PLACARD_RANK_H := 0.105
+const PLACARD_RANK_H := 0.085
 ## 昵称可用的最大宽度（世界单位）——超了就按字数自动缩（见 `_fill_placard`）。
 const PLACARD_NAME_ROOM := 0.42
 const PLACARD_FONT_SIZE := 64
@@ -1950,8 +1970,14 @@ var _placards_root: Node3D
 var _placards := {}
 var _placard_body_mesh: BoxMesh
 var _placard_border_mesh: BoxMesh
+var _placard_rim_mesh: BoxMesh
+var _placard_inset_mesh: PlaneMesh
+var _placard_light_mesh: PlaneMesh
 var _placard_chip_mesh: PlaneMesh
 var _placard_bar_mesh: PlaneMesh
+## 行动者边框闪光的相位 / 有没有一块牌正亮着（全灭时把能量还原一次，之后不再逐帧写）
+var _placard_flash_phase := 0.0
+var _placard_flash_on := false
 
 ## 按 `rows`（每项 `{peer, slot, color, name, rank, alive}`）摆立牌。
 ##
@@ -1995,6 +2021,15 @@ func set_placards(rows: Array) -> void:
 		_placards.erase(peer)
 
 ## 造一块立牌（**只建节点**；文字 / 颜色 / 落点在 `_fill_placard` 里刷）。
+##
+## **牌面构成（2026-10-11 改版，从后往前 = 从远到近）**：
+##   `Border` 外框（深色细线）→ `Rim` **内框（该玩家的小人色，轮到其行动时脉冲发光）**
+##   → `Body` 牌身（有厚度）→ `Inset` 内嵌板（比牌身略亮 ⇒ 凹陷感）→ `TopLight` 顶部高光线
+##   → `Chip` 色片 / `Rank` 名次 / `Name` 昵称 / `Track`+`Bar` 倒计时。
+##
+## **两层框的 z 是有讲究的**（都压在牌身之后，靠"谁的正面更靠前"排出一圈倒角）：
+## 外框正脸 −0.003 < 内框正脸 +0.005 < 牌身正脸 +0.015 ⇒ 正面看过去是
+## "深色一道、玩家色一道、再凹进牌身"，而不是两块叠在一起的死平面。
 func _make_placard(peer: int) -> Dictionary:
 	if _placard_body_mesh == null:
 		_placard_body_mesh = BoxMesh.new()
@@ -2003,6 +2038,18 @@ func _make_placard(peer: int) -> Dictionary:
 		_placard_border_mesh = BoxMesh.new()
 		_placard_border_mesh.size = Vector3(PLACARD_W + PLACARD_BORDER_RIM * 2.0,
 			PLACARD_H + PLACARD_BORDER_RIM * 2.0, PLACARD_T * 0.6)
+	if _placard_rim_mesh == null:
+		_placard_rim_mesh = BoxMesh.new()
+		_placard_rim_mesh.size = Vector3(PLACARD_W + PLACARD_RIM * 2.0,
+			PLACARD_H + PLACARD_RIM * 2.0, PLACARD_T * 0.7)
+	if _placard_inset_mesh == null:
+		_placard_inset_mesh = PlaneMesh.new()
+		_placard_inset_mesh.size = Vector2(PLACARD_W - PLACARD_INSET.x, PLACARD_H - PLACARD_INSET.y)
+		_placard_inset_mesh.orientation = PlaneMesh.FACE_Z
+	if _placard_light_mesh == null:
+		_placard_light_mesh = PlaneMesh.new()
+		_placard_light_mesh.size = Vector2(PLACARD_W - PLACARD_INSET.x, PLACARD_LIGHT_H)
+		_placard_light_mesh.orientation = PlaneMesh.FACE_Z
 	if _placard_chip_mesh == null:
 		_placard_chip_mesh = PlaneMesh.new()
 		_placard_chip_mesh.size = Vector2(PLACARD_CHIP, PLACARD_CHIP)
@@ -2015,7 +2062,7 @@ func _make_placard(peer: int) -> Dictionary:
 	root.name = "Placard%d" % peer
 	root.set_meta("peer", peer)
 	_placards_root.add_child(root)
-	# 牌边（压在牌身之后：局部 −Z 在 billboard 之后就是"背离镜头"那一侧）
+	# 外框（压在牌身之后：局部 −Z 在 billboard 之后就是"背离镜头"那一侧）
 	var border := MeshInstance3D.new()
 	border.name = "Border"
 	border.mesh = _placard_border_mesh
@@ -2024,19 +2071,62 @@ func _make_placard(peer: int) -> Dictionary:
 	bdmat.emission_enabled = true
 	bdmat.emission = PLACARD_BORDER
 	bdmat.emission_energy_multiplier = PLACARD_EMIT
+	bdmat.roughness = 0.45
+	bdmat.metallic = 0.30            # 金属细边：吊灯下有一点方向性的反光
 	border.material_override = bdmat
 	border.position = Vector3(0.0, 0.0, -0.012)
 	root.add_child(border)
+	# 内框：**该玩家的小人色**（颜色在 `_fill_placard` 里刷；轮到其行动时由
+	# `_tick_placard_flash` 把自发光推成脉冲）
+	var rim := MeshInstance3D.new()
+	rim.name = "Rim"
+	rim.mesh = _placard_rim_mesh
+	var rmat := StandardMaterial3D.new()
+	rmat.emission_enabled = true
+	rmat.emission_energy_multiplier = PLACARD_EMIT
+	rmat.roughness = 0.42
+	rmat.metallic = 0.25
+	rim.material_override = rmat
+	rim.position = Vector3(0.0, 0.0, -0.005)
+	root.add_child(rim)
 	# 牌身
 	var body := MeshInstance3D.new()
 	body.name = "Body"
 	body.mesh = _placard_body_mesh
 	var bodymat := StandardMaterial3D.new()
-	bodymat.roughness = 0.78
+	# 粗糙度从 0.78 降下来 + 一点金属度（2026-10-11"要更有质感"）：纯哑光看光位、像一块贴纸，
+	# 降下来之后近光侧亮、远光侧暗，牌子的厚度才立得住。
+	bodymat.roughness = 0.50
+	bodymat.metallic = 0.12
 	bodymat.emission_enabled = true
 	bodymat.emission_energy_multiplier = PLACARD_EMIT
 	body.material_override = bodymat
 	root.add_child(body)
+	# 内嵌板：比牌身略亮的一块面（颜色在 `_fill_placard` 里跟着牌身走）
+	var inset := MeshInstance3D.new()
+	inset.name = "Inset"
+	inset.mesh = _placard_inset_mesh
+	var imat := StandardMaterial3D.new()
+	imat.roughness = 0.42
+	imat.metallic = 0.10
+	imat.emission_enabled = true
+	imat.emission_energy_multiplier = PLACARD_EMIT
+	inset.material_override = imat
+	inset.position = Vector3(0.0, 0.0, PLACARD_T * 0.5 + 0.001)
+	root.add_child(inset)
+	# 顶部高光线：模拟"上沿受光"的一道边
+	var toplight := MeshInstance3D.new()
+	toplight.name = "TopLight"
+	toplight.mesh = _placard_light_mesh
+	var lmat := StandardMaterial3D.new()
+	lmat.albedo_color = Color(0.52, 0.57, 0.68)
+	lmat.emission_enabled = true
+	lmat.emission = Color(0.52, 0.57, 0.68)
+	lmat.emission_energy_multiplier = 0.30
+	toplight.material_override = lmat
+	toplight.position = Vector3(0.0, PLACARD_H * 0.5 - PLACARD_INSET.y * 0.5 + 0.004,
+		PLACARD_T * 0.5 + 0.002)
+	root.add_child(toplight)
 	# 棋子色小片（左侧）
 	var chip := MeshInstance3D.new()
 	chip.name = "Chip"
@@ -2045,22 +2135,28 @@ func _make_placard(peer: int) -> Dictionary:
 	cmat.emission_enabled = true
 	cmat.emission_energy_multiplier = 0.45
 	chip.material_override = cmat
-	chip.position = Vector3(-PLACARD_W * 0.5 + 0.075, 0.032, 0.020)
+	chip.position = Vector3(-PLACARD_W * 0.5 + 0.062, 0.032, 0.020)
 	root.add_child(chip)
 	# 名次（小片右边）
+	#
+	# **加粗（2026-10-11）**：`Label3D` 自己没有字重，得把 `font` 换成一支粗体 `SystemFont`
+	#（`UIKit.font_bold()`，与屏幕层那些粗体标签同一支）。宽度那套"按字数自动缩"是**按 em 估**的
+	#（CJK 步进 ≈ 1 em，与字体家族无关）⇒ 换字体不会把那个模型弄坏。
 	var rank_l := Label3D.new()
 	rank_l.name = "Rank"
+	rank_l.font = UIKit.font_bold()
 	rank_l.font_size = PLACARD_FONT_SIZE
 	rank_l.pixel_size = PLACARD_RANK_H / float(PLACARD_FONT_SIZE)
 	rank_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rank_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	rank_l.outline_size = 6
 	rank_l.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
-	rank_l.position = Vector3(-PLACARD_W * 0.5 + 0.165, 0.032, 0.020)
+	rank_l.position = Vector3(-PLACARD_W * 0.5 + 0.2075, 0.032, 0.020)
 	root.add_child(rank_l)
 	# 昵称
 	var name_l := Label3D.new()
 	name_l.name = "Name"
+	name_l.font = UIKit.font_bold()
 	name_l.font_size = PLACARD_FONT_SIZE
 	name_l.pixel_size = PLACARD_NAME_H / float(PLACARD_FONT_SIZE)
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2068,16 +2164,19 @@ func _make_placard(peer: int) -> Dictionary:
 	name_l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	name_l.outline_size = 8
 	name_l.outline_modulate = Color(0.02, 0.02, 0.03, 0.95)
-	name_l.position = Vector3(0.10, 0.032, 0.020)
+	name_l.position = Vector3(0.13, 0.032, 0.020)
 	root.add_child(name_l)
-	# 倒计时：底轨 + 进度条（只在行动者那块上露）
+	# 倒计时：底轨 + 进度条（只在**该玩家的操作有窗口**时露，判据见 `set_placard_timer`）
 	var track := MeshInstance3D.new()
 	track.name = "Track"
 	track.mesh = _placard_bar_mesh
 	var tmat := StandardMaterial3D.new()
-	tmat.albedo_color = Color(0.16, 0.18, 0.22)
+	# 底轨**要比内嵌板暗**：2026-10-11 加了内嵌板（`base.lightened(0.10)` ≈ 0.19）之后，
+	# 原先那个 0.16 的底轨跟它几乎同亮度 ⇒ 进度条没走完的那一段"空槽"看不出来，
+	# 整条读着就是一根金棒浮在牌上。压到 0.10 才分得出槽与进度。
+	tmat.albedo_color = Color(0.10, 0.11, 0.14)
 	tmat.emission_enabled = true
-	tmat.emission = Color(0.16, 0.18, 0.22)
+	tmat.emission = Color(0.10, 0.11, 0.14)
 	tmat.emission_energy_multiplier = PLACARD_EMIT
 	track.material_override = tmat
 	track.position = Vector3(0.0, -PLACARD_H * 0.5 + 0.052, 0.020)
@@ -2096,19 +2195,36 @@ func _make_placard(peer: int) -> Dictionary:
 	bar.visible = false
 	root.add_child(bar)
 	return {"root": root, "body": body, "body_mat": bodymat, "border": border,
+		"border_mat": bdmat, "rim": rim, "rim_mat": rmat,
+		"inset": inset, "inset_mat": imat, "toplight": toplight, "toplight_mat": lmat,
 		"chip": chip, "chip_mat": cmat, "rank": rank_l, "name": name_l,
 		"track": track, "bar": bar, "bar_mat": barmat,
-		"slot": 2, "hot": false, "alive": true, "color": 0, "rank_n": 0, "name_text": ""}
+		"slot": 2, "hot": false, "active": false, "alive": true, "color": 0,
+		"rank_n": 0, "name_text": ""}
 
 ## 把一块立牌的文字 / 颜色 / 落点刷一遍（幂等，每次广播都走）。
+##
+## **玩家色（2026-10-11）现在由三处一起承担**：棋子色小片 + **内框 `Rim`** + **名次字**。
+## 原先只有左下角那一枚小片有色，牌子整体是灰蓝一片，"哪块牌是谁的"要靠读名字 ——
+## 现在整圈框就是那个色，扫一眼就知道。
 func _fill_placard(pl: Dictionary) -> void:
 	var tint: Color = GameData.PLAYER_COLORS[
 		clampi(int(pl.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
 	var alive: bool = bool(pl.get("alive", true))
-	# 棋子色小片（牌面上唯一的"身份色"，与棋盘棋子同源）
+	# **身份色不随出局压暗**：色片那条是既有契约（"小片色 == `p.color`"，出局也照旧），
+	# 内框与名次字与它同源、一并不压。出局这件事由**牌身压暗 + 昵称后缀「（破产）」**两处表达
+	#（都是既有契约）；再把身份色也压暗，就变成"读不出这块牌是谁的"了。
+	var idc := tint
 	var cmat: StandardMaterial3D = pl["chip_mat"]
-	cmat.albedo_color = tint
-	cmat.emission = tint
+	cmat.albedo_color = idc
+	cmat.emission = idc
+	# 内框：身份环。**静息发光量由 `hot` 决定**（亮着的那一块起步就又亮又跳），
+	# 逐帧的脉冲由 `_tick_placard_flash` 推。
+	var rmat: StandardMaterial3D = pl["rim_mat"]
+	rmat.albedo_color = idc
+	rmat.emission = idc
+	rmat.emission_energy_multiplier = PLACARD_FLASH_LO if bool(pl.get("active", false)) else PLACARD_EMIT
+	(pl["rank"] as Label3D).modulate = idc
 	# 牌身：名册格那张卡片的深色底；出局的压暗
 	var base: Color = PLACARD_BODY
 	if not alive:
@@ -2116,9 +2232,13 @@ func _fill_placard(pl: Dictionary) -> void:
 	var bodymat: StandardMaterial3D = pl["body_mat"]
 	bodymat.albedo_color = base.lerp(PLACARD_HOT, 0.55) if bool(pl.get("hot", false)) else base
 	bodymat.emission = bodymat.albedo_color
-	# 名次
+	# 内嵌板：跟着牌身走、提亮一档（hot 时也跟着泛金，否则"嵌板"会从泛金的牌身上"掉"出来）
+	var imat: StandardMaterial3D = pl["inset_mat"]
+	imat.albedo_color = bodymat.albedo_color.lightened(0.10)
+	imat.emission = imat.albedo_color
+	# 名次：**`#N`**（2026-10-11 用户定：裸数字读不出"这是名次还是编号"）
 	var rk := int(pl.get("rank_n", 0))
-	(pl["rank"] as Label3D).text = "" if rk <= 0 else str(rk)
+	(pl["rank"] as Label3D).text = "" if rk <= 0 else "#%d" % rk
 	# 昵称（出局的带「（破产）」后缀 —— 与屏幕层 `_fill_peer_bar` 同一条既有契约）
 	var nm := String(pl.get("name_text", ""))
 	if not alive:
@@ -2208,6 +2328,52 @@ func set_placard_hot(peers: Array) -> void:
 			continue
 		pl["hot"] = hot
 		_fill_placard(pl)
+
+## **当前行动者**（2026-10-11 新增）：只有 `peer` 那一块的内框**脉冲发光**，其余静息。
+## `GameData.NO_PEER` ⇒ 三块全灭。
+##
+## **为什么另开一条通道、不复用 `hot`**：`hot` 是**"选目标态可被选中"**（`game._hl_peers`
+## 推的那份），语义完全不同 —— 一次选目标能让三块牌同时亮，而"轮到谁"永远只有一块。
+## 两件事挤同一个布尔位，就会出现"选目标时看不出轮到谁 / 轮到谁时误以为能点"。
+##
+## 光色就是**该玩家自己的小人色**（内框本来就是那个色，这里只是把它点亮）⇒
+## "这牌是谁的"与"现在轮到谁"在同一处读出来。
+func set_placard_active(peer: int) -> void:
+	for p in _placards:
+		var pl: Dictionary = _placards[p]
+		var on: bool = peer != GameData.NO_PEER and int(p) == peer
+		if on == bool(pl.get("active", false)):
+			continue
+		pl["active"] = on
+		_fill_placard(pl)
+
+## 行动者内框的**呼吸**（每帧推，照行动光环 `_ring` 那一套相位写法）。
+##
+## **全灭时只还原一次**（`_placard_flash_on` 那位）：平时这个函数在"没有行动者"的帧里
+## 一次材质都不碰 —— 牌是常驻节点，每帧重写一遍自发光纯属白烧。
+func _tick_placard_flash(delta: float) -> void:
+	var any_on := false
+	for p in _placards:
+		if bool(_placards[p].get("active", false)):
+			any_on = true
+			break
+	if not any_on:
+		if not _placard_flash_on:
+			return
+		_placard_flash_on = false
+		_placard_flash_phase = 0.0
+		for p in _placards:
+			(_placards[p]["rim_mat"] as StandardMaterial3D).emission_energy_multiplier = PLACARD_EMIT
+		return
+	_placard_flash_on = true
+	_placard_flash_phase = fposmod(_placard_flash_phase + delta, PLACARD_FLASH_TIME)
+	var k := 0.5 - 0.5 * cos(TAU * _placard_flash_phase / PLACARD_FLASH_TIME)
+	var e := lerpf(PLACARD_FLASH_LO, PLACARD_FLASH_HI, k)
+	for p in _placards:
+		var pl: Dictionary = _placards[p]
+		if not bool(pl.get("active", false)):
+			continue
+		(pl["rim_mat"] as StandardMaterial3D).emission_energy_multiplier = e
 
 ## 行动者倒计时：只有 `peer` 那一块露倒计时条，`frac ∈ [0,1]` 是剩余比例；
 ## `peer == NO_PEER` ⇒ 三块全收。**数据与屏幕层同一份**（`game._op_left / _op_total`），
