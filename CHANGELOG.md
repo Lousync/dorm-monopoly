@@ -5,6 +5,33 @@
 
 面向开发者的工程文档与仓库约定见 `AGENTS.md`；当前进度与待办见 `doc/development/开发台账.md`。
 
+## [0.16.0] — 2026-10-11
+
+### 新增
+
+- **卡牌统一元数据模型 P1：`CardDB` 注册表**（`feature/0.16.0`，2026-10-10）：把**道具 / 科技 / 畸变**
+  三张异构数据表的元数据归一为统一的 `CardMeta` 形状（`id` / `family` / `title` / `desc` / `category` /
+  `icon` / `tags` / `implemented` / `raw`），提供跨族查询（`def` / `all` / `find` / `has` / `ids`）
+  与一致性自检（`validate`）。**只做加法**：原三张表与各自 `def()` 仍是唯一真相，不动任何现有消费路径。
+  配套单测 `tests/card_db_test.gd`（纯数据、不加载对局场景）。事件族本批**未接入** ——
+  现有事件卡设计将在模型统一后删除重做，届时再补 `CardDB.FAMILY_EVENT`（已登记
+  `doc/development/未完成项-交接.md`）。
+
+### 变更
+
+- **卡面展示收进 `CardDB`（卡牌统一元数据模型 P2）**：`GameData.CARD_FAMILIES` 的家族三色迁为
+  `CardDB.FAMILY_STYLES`，并新增统一访问器 `family_style` / `family_styles` / `category_color` /
+  `category_label` / `icon`（道具取品质 / 科技取档位 / 畸变取 tag；畸变 tag 的展示名与配色也从
+  `tools/gen_gallery.gd` 迁入）。**消费方一律改读 `CardDB`**：`DeckReveal`、图鉴生成器、
+  `item_card` / `table_hud` / `table_props` / `game.gd` 里的品质色与品质名。
+  机会卡的 `CARD_KINDS` 与 `card_kind()` **暂留 `GameData`**（随事件卡重做一并处理）。
+  图鉴页生成结果 **零 diff**。
+- **道具改为逐件定价**（2026-10-10）：删除按品质统一价的 `ItemData.QUALITY_PRICES` 与 `price(quality)`，
+  改为**每件道具自带 `price` 字段**（`ItemData.item_price(id)` 直接读它）。初始值按改造前档价播种
+  （白 600 / 蓝 1600 / 紫 3200 / 金 8000；`二青会酒寒暑` 2600）⇒ **平衡零变化**，可逐件手调。
+  黑市 bot 比价由「档价现金排序」改为按 `BLACK_COST`（金优先）；规则面板「品质与售价」改为
+  「售价（逐件）」；图鉴页售价文案改为「单件定价」。`item_test` 加「68 件都有正 `price`」闸。
+
 ## [0.15.0] — 2026-10-10
 
 ### 新增

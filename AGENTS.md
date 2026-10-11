@@ -97,6 +97,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --version                                            # 先确认路径可用
 & $G --path .                                             # 运行（或双击 start.bat）
 & $G --headless --path . --script tests/load_all.gd       # 静态加载检查 + game.gd 体积棘轮（改完先跑）
+& $G --headless --path . --script tests/card_db_test.gd  # 卡牌统一元数据注册表单测（纯数据）
 & $G --headless --path . --script tests/rules_test.gd     # 规则单测
 & $G --headless --path . --script tests/item_test.gd      # 道具单测
 & $G --headless --path . --script tests/blackshop_test.gd # 黑市单测

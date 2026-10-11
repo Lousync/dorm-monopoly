@@ -220,12 +220,9 @@ static func _item() -> String:
 		"· 被动与金色道具%s（含货架在售），丢弃 / 破产回池" % _d("整局唯一"),
 		"· 一次性金货用后焚毁，不回池",
 		"",
-		_h("品质与售价（小卖部）"),
-		"· 白 %s · 蓝 %s · 紫 %s · 金 %s" % [
-			GameData.fmt_money(ItemData.QUALITY_PRICES["白"]),
-			GameData.fmt_money(ItemData.QUALITY_PRICES["蓝"]),
-			GameData.fmt_money(ItemData.QUALITY_PRICES["紫"]),
-			GameData.fmt_money(ItemData.QUALITY_PRICES["金"])],
+		_h("售价（小卖部）"),
+		"· 每件道具**各自定价**，不按品质统一价（价格见货架，逐件见 %s）"
+			% _d("doc/game-design/道具图鉴.md"),
 		"· %s" % _d("逐件道具的效果见 doc/game-design/道具图鉴.md"),
 		"",
 		_h("小卖部（地图 %d 家）" % _count_of("shop")),

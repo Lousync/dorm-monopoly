@@ -318,8 +318,13 @@ func _test_quality_tiers(_g) -> void:
 	_check(cnt["白"] > cnt["蓝"] and cnt["蓝"] > cnt["紫"] and cnt["紫"] > cnt["金"],
 		"白 > 蓝 > 紫 > 金（严格递减）")
 	for q in ItemData.QUALITIES:
-		_check(ItemData.QUALITY_PRICES.has(q) and ItemData.QUALITY_COLORS.has(q),
-			"%s 档在定价表与配色表里都有" % q)
+		_check(ItemData.QUALITY_COLORS.has(q), "%s 档在配色表里" % q)
+	# 2026-10-10：改为**逐件定价** —— 每件道具自带正的 `price` 字段（删掉了档价表）
+	var no_price: Array = []
+	for id in ItemData.ITEMS:
+		if int(ItemData.ITEMS[id].get("price", 0)) <= 0:
+			no_price.append(String(id))
+	_check(no_price.is_empty(), "68 件都带正的 `price` 字段（缺：%s）" % ", ".join(PackedStringArray(no_price)))
 
 ## 唯一性判据（2026-10-10 拍板）：**按效果判、不按品质档** —— 只留给「多件会破坏某件事」的件。
 ## 全仓 `unique: true` 的集合必须**恰好**是这 4 件（按 id 集合比，不是只断件数）：
@@ -399,30 +404,28 @@ func _test_icons(_g) -> void:
 func _test_price_state(g) -> void:
 	print("== 售价覆盖 / 货架冷却预览 ==")
 	_check(ItemData.item_price("二青会酒寒暑") == 2600, "二青会单件售价 = ¥2600")
-	_check(ItemData.item_price("招财猫") == ItemData.QUALITY_PRICES["白"], "普通件仍按品质定价")
+	_check(ItemData.item_price("招财猫") == 600, "招财猫单件价 = ¥600（白档播种值）")
 	var ss: Dictionary = ItemData.shop_state("拼车")
 	_check(int(ss.get("cd_preview", -1)) == 5, "货架：拼车显示冷却预览 5")
 	_check(ItemData.shop_state("刮刮乐").is_empty(), "货架：一次性件无冷却预览")
 	_check(ItemData.shop_state("招财猫").is_empty(), "货架：被动件无冷却预览")
 
 ## 定价与刷新曲线（2026-10-10 道具重构：全池等概率后件数占比就是出现率，
-## **价格是唯一剩下的稀有度门闸**）。档价与黑市地皮价一律从数据类读出断言（不抄第二份表）。
+## **价格是唯一剩下的稀有度门闸**）。2026-10-10 二次改造：**逐件定价**（每件自带 `price`），
+## 档价表 `QUALITY_PRICES` 已删除。
 ## Ruling BG：刷新曲线**驱动两次真刷新**看价格递增与真扣钱，而不是只读常量。
 func _test_pricing(g) -> void:
 	print("== 定价与刷新曲线 ==")
-	var tbl: Dictionary = ItemData.QUALITY_PRICES
-	_check(int(tbl["白"]) == 600, "白档价 600（不动）")
-	_check(int(tbl["蓝"]) == 1600, "蓝档价 1600")
-	_check(int(tbl["紫"]) == 3200, "紫档价 3200")
-	_check(int(tbl["金"]) == 8000, "金档价 8000（= 开局 ¥20000 的四成）")
-	# 档价必须是**升序且拉开量级**，否则「用价格当门闸」不成立
-	_check(int(tbl["白"]) < int(tbl["蓝"]) and int(tbl["蓝"]) < int(tbl["紫"])
-		and int(tbl["紫"]) < int(tbl["金"]), "四档价严格递增")
-	# 定价与 item_price 同源：无单件覆盖的件照新档价走（招财猫白 / 黑卡金）
-	_check(ItemData.item_price("招财猫") == int(tbl["白"])
-		and ItemData.item_price("黑卡") == int(tbl["金"]),
-		"无单件覆盖的件按新档价定价（招财猫 %d / 黑卡 %d）" % [
-			ItemData.item_price("招财猫"), ItemData.item_price("黑卡")])
+	# 逐件定价：每件都有正的 `price`；门闸仍在"价格"上（贵件买不起）。
+	var no_price: Array = []
+	for id in ItemData.ITEMS:
+		if int(ItemData.ITEMS[id].get("price", 0)) <= 0:
+			no_price.append(String(id))
+	_check(no_price.is_empty(), "68 件都带正的 `price`（缺：%s）" % ", ".join(PackedStringArray(no_price)))
+	# 代表值：白 / 金 / 单件特殊各一（价可逐件调，这几条钉的是当前播种值）
+	_check(ItemData.item_price("招财猫") == 600, "白档代表「招财猫」= ¥600")
+	_check(ItemData.item_price("黑卡") == 8000, "金档代表「黑卡」= ¥8000")
+	_check(ItemData.item_price("二青会酒寒暑") == 2600, "紫档「二青会酒寒暑」= ¥2600（兑换券，压在两档之间）")
 
 	# 黑市地皮价：紫 1 / 金 3（黑市只从紫/金抽，是金档的主要来源 ⇒ 用价格收口）
 	_check(int(ItemData.BLACK_COST["紫"]) == 1, "黑市紫的地皮价 1（不动）")
@@ -450,8 +453,8 @@ func _test_pricing(g) -> void:
 	var c0: int = g._refresh_price()
 	_check(c0 == int(ItemData.REFRESH_BASE),
 		"首次刷新价 = 起点 %d（实得 %d）" % [int(ItemData.REFRESH_BASE), c0])
-	_check(c0 > int(tbl["白"]),
-		"刷新起点高于白档价（%d > %d）：刷新 = 再赌一次有没有金，不能比买白货更便宜" % [c0, int(tbl["白"])])
+	_check(c0 > 600,
+		"刷新起点高于白档代表价（%d > 600）：刷新 = 再赌一次有没有金，不能比买白货更便宜" % c0)
 	g._shop_refresh(1)
 	_check(g.refresh_count == 1 and int(p.money) == 20000 - c0,
 		"第一次刷新照起点价扣钱并推高全场价（余 %d，期望 %d）" % [int(p.money), 20000 - c0])
@@ -466,21 +469,19 @@ func _test_pricing(g) -> void:
 	g._shop_peer = 0
 	g.refresh_count = 0
 
-## bot 定价读单件覆盖（2026-10-10 修）：`_discover_bot_pick` / `_bot_shop` 与 UI（`_refresh_shop_ui`）
-## 及购买链路（`_shop_buy`）**同源** —— 都该读 `ItemData.item_price(id)`（先看单件 `price` 覆盖）。
+## bot 定价读**逐件 `price`**（2026-10-10 二次改造）：`_discover_bot_pick` / `_bot_shop` 与 UI
+## （`_refresh_shop_ui`）及购买链路（`_shop_buy`）**同源** —— 都读 `ItemData.item_price(id)`。
 ## 黑市比价按 `BLACK_COST` 档位（地皮计价）**是对的**，不在本条内。
 ##
-## **区分力从哪来**：全仓唯一带单件覆盖的是 `二青会酒寒暑`（`price` 字段）。T8 起它是 **¥2600**，
-## **低于**同档紫货的档价 ¥3200 —— 方向与批 1（当时 ¥8000，高于档价）相反。
-## `_discover_bot_pick` 取**严格最大**（同价时取列表里靠前的那件）⇒ 单件覆盖**低于**档价时，
-## 必须把它**摆在前面**才分得出「旧实现按档价 ⇒ 取列表第一件」。两个方向各摆一次：
-## 无论覆盖值是高于还是低于档价，至少有一条能把「只看档价」的旧实现钉红，而正确实现两条都绿。
+## **区分力从哪来**：`二青会酒寒暑` ¥2600 **低于**「作弊器」¥3200（两件同为紫档）。
+## `_discover_bot_pick` 取**严格最大**（同价时取列表里靠前的那件）⇒ 两件价不同，
+## 两个方向各摆一次即可钉住"按真实价、不看档位名"。
 func _test_bot_pricing(g) -> void:
-	print("== bot 定价读单件覆盖 ==")
-	var ov := "二青会酒寒暑"   # 紫档 · 有单件覆盖
-	var other := "作弊器"      # 同为紫档 · 无单件覆盖 ⇒ item_price == 档价
+	print("== bot 定价读逐件 price ==")
+	var ov := "二青会酒寒暑"   # 紫档 · ¥2600
+	var other := "作弊器"      # 同为紫档 · ¥3200
 	_check(ItemData.item_price(ov) != ItemData.item_price(other),
-		"（前置）单件覆盖与同档紫货的档价不同（¥%d vs ¥%d）" % [
+		"（前置）两件紫货逐件价不同（¥%d vs ¥%d）" % [
 			ItemData.item_price(ov), ItemData.item_price(other)])
 
 	# 方向一（发现三选一）：两个方向各摆一次 —— 只按档价时两件同价、恒取列表第一件。
@@ -503,7 +504,7 @@ func _test_bot_pricing(g) -> void:
 	if tile < 0:
 		return
 	_check(ItemData.item_price(ov) < 3000 and 3000 < ItemData.item_price(other),
-		"（前置）¥3000 买得起单件覆盖件、买不起同档紫货（%d < 3000 < %d）" % [
+		"（前置）¥3000 买得起二青会、买不起作弊器（%d < 3000 < %d）" % [
 			ItemData.item_price(ov), ItemData.item_price(other)])
 	var p := _mk_player(1, "甲")
 	p.bot = true
@@ -514,7 +515,7 @@ func _test_bot_pricing(g) -> void:
 	g._shop_tile = tile
 	g._bot_shop(p, tile)
 	_check(p.items.size() == 1 and String(p.items[0].id) == ov,
-		"小卖部：bot 买下买得起的单件覆盖件、跳过按档价买不起的那件（实得 %s）" % str(p.items))
+		"小卖部：bot 买下买得起的那件、跳过买不起的（实得 %s）" % str(p.items))
 	_check(int(p.money) == 3000 - ItemData.item_price(ov),
 		"小卖部：按真实价 ¥%d 扣钱（余 %d，期望 %d）" % [
 			ItemData.item_price(ov), int(p.money), 3000 - ItemData.item_price(ov)])
