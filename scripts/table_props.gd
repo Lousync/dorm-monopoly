@@ -403,14 +403,28 @@ const HAND_DISCARD_COLOR := Color(0.86, 0.28, 0.26)
 #（渲染一帧后 Godot 自己把它改回 `UPDATE_DISABLED` ⇒ 平时零每帧开销）。
 #
 # **尺寸怎么定的**（三件事互相咬合，改一个就得重算另外两个）：
-#   ① 卡面用 **`ItemCard.SIZE_MEDIUM`（150×210，与商店货架字面同尺寸）**，卡面本身不做任何缩放；
-#   ② 四周留 `HAND_FACE_PAD` 的透明边 —— `ItemCard` 的两个角徽章（⚡消耗 / 被动 / 计数）是
-#      **半出卡外**画的（`_badge` 那两处 `position`），不留边就会被 SubViewport 裁掉半个圆；
+#   ① 卡面 = `HAND_FACE_CARD`，卡面本身不做任何缩放（视口就是**像素对像素**画它）；
+#   ② 四周留 `HAND_FACE_PAD` 的透明边 —— `ItemCard` 的角徽章是**半出卡外**画的
+#      （`ItemCard` 里那几处 `position`），不留边就会被 SubViewport 裁掉；
 #      留白在牌上落到**牌身色**上 ⇒ 顺带成了"卡外面那圈品质色边框"（选中提亮 / 待丢弃染红看的就是它）；
-#   ③ 视口尺寸（含留白）= **178×238**，所以牌身宽高比要跟它走：0.404 / 0.54 = 0.7481（见 `HAND_CARD_W`）。
-const HAND_FACE_CARD := Vector2(150.0, 210.0)   # 卡面渲染尺寸（= 商店 `ItemCard.SIZE_MEDIUM`）
-const HAND_FACE_PAD := 14.0                     # 四周透明留白（> 角徽章半出卡外的 13.2px）
-const HAND_FACE_VP := Vector2i(178, 238)        # 视口尺寸 = HAND_FACE_CARD + 2×HAND_FACE_PAD
+#   ③ 视口尺寸（含留白）= **178×238**，所以牌身宽高比要跟它走：0.4848 / 0.648 = 0.7481（见 `HAND_CARD_W`）。
+#
+# **2026-10-11 修（用户：「卡牌左上角和右上角的徽章显示不全」）——留白按最宽的角标重算。**
+# 原先是 **150×210 卡面 / 四周 14px 留白**，那个 14 只算到**圆角标**（`0.42×31.5 ≈ 13.2px`，
+# 注释里也这么写着）—— **漏了「一次性」胶囊**：它宽 `bs×2.1`、右端探出 `0.4×pw ≈ 26.5px`，
+# 14px 的留白**差了整整一倍**，右半截被 SubViewport 硬切（实拍已确认）。圆角标也只余 0.8px
+# 余量，再加 2px 投影其实已经压线。
+# ⇒ 把**卡面**缩到 `128×180`（`ItemCard` 的宽高比跟着 `size` 走，字号 / 圆角全是比例量），
+# 留白涨到 **(25, 29)**：最宽的那枚（「一次性」胶囊）探出 `0.84×bs + 2 ≈ 24.2px`，25 盖得住。
+# **视口 178×238 与 `HAND_CARD_W/D` 一字未动** —— 牌在屏上的大小与命中盒是布局钉死的
+#（`hud_test` 的"整排手牌在屏内 / 不与格子相交"两条守着），动的是**卡面在牌上的占幅**：
+# 卡面小一档、四周品质色边相应加宽。
+# ⚠ 留白与"最宽角标"的咬合由 `layout_test` 里那条**逐枚角标量探出量**的断言钉住，别再手算。
+const HAND_FACE_CARD := Vector2(128.0, 180.0)   # 卡面渲染尺寸
+## 四周透明留白（**按轴给**：卡面宽高比 128/180 ≠ 视口 178/238，两轴留白本来就不等）。
+## 必须 ≥ 最宽角标的探出量（含 2px 投影），否则就被视口切掉 —— 见上面那段。
+const HAND_FACE_PAD := Vector2(25.0, 29.0)
+const HAND_FACE_VP := Vector2i(178, 238)        # 视口尺寸（与牌身宽高比绑死，**别跟着卡面改**）
 ## 正面贴片相对牌身的占幅（四边等比内收一点，免得与牌顶面共面闪）。
 ## **等比**是关键：它不改变贴片的宽高比，卡面不会被拉扁。
 const HAND_FACE_INSET := 0.98
@@ -706,7 +720,7 @@ func _set_hand_face_card(i: int, id: String, state: Dictionary = {}) -> void:
 		(old as Node).queue_free()
 	var card := ItemCard.make(id, HAND_FACE_CARD, state)
 	vp.add_child(card)
-	card.position = Vector2(HAND_FACE_PAD, HAND_FACE_PAD)
+	card.position = HAND_FACE_PAD
 	card.size = HAND_FACE_CARD
 	_hand_face_cards[i] = card
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -1923,22 +1937,53 @@ const PLACARD_BODY := Color(0.085, 0.095, 0.138)
 const PLACARD_EMIT := 0.30
 ## 牌边一圈细线（比牌身大一点点、压在牌身之后）—— 照旧名册格那张卡片的 1px 描边。
 const PLACARD_BORDER := Color(0.30, 0.34, 0.43)
-const PLACARD_BORDER_RIM := 0.022
+const PLACARD_BORDER_RIM := 0.042
 ## **可被选中**（选目标态）时牌身染的金——与屏幕层那套 2px 金框**同一个金**。
 const PLACARD_HOT := Color(1.0, 0.86, 0.35)
-## 棋子色小片的边长（世界单位）。
-const PLACARD_CHIP := 0.075
+## 棋子**剪影**方片的边长（世界单位）。贴图是 512² 的方图，里面那个小人约 **0.5 宽 × 0.88 高**
+##（同 `_token_face_mesh` 那段实测）⇒ 实际露出来的剪影约 **0.078 × 0.136** —— 与昵称的世界字高
+##（`PLACARD_NAME_H` 0.135）齐平，比原来那枚 0.075 的方块略瘦高一点。
+const PLACARD_PIECE := 0.155
 
 # ---- 2026-10-11 改版：玩家色内框 + 质感三层 + 行动者边框闪光 ----
 #
-## 牌面**内框**（`Rim`）比牌身每边大出多少（世界单位）。这一圈就是**该玩家的小人色** ——
-## 与色片、名次字同色，于是"这牌是谁的"一眼可辨（原先只有左下角一枚小片有色）。
-const PLACARD_RIM := 0.013
-## 轮到该玩家时，内框自发光**脉冲**的区间。
-## **下限也高于 `PLACARD_EMIT`** —— 这样"亮着"这件事在**任何相位**都成立，
-## 不必等某一帧才看得出来（`placard_test` 就是同步读一眼，不推时间）。
-const PLACARD_FLASH_LO := 0.55
-const PLACARD_FLASH_HI := 1.80
+## 牌面**内框**（`Rim`）比牌身每边大出多少（世界单位）—— **就是"轮到谁"那圈光的宽度**。
+##
+## 与 `PLACARD_BORDER_RIM` 一起定死了整圈边框的厚度：外框 0.042 / 内框 0.027
+## ⇒ 露在外面的两条带是 **内框 0.027（会发光的那条）/ 外框 0.015（深色收边）**。
+## 2026-10-11 用户：「光边太细了，稍微加粗点」—— 原先内框只有 0.013（3D 默认档屏上约 1.5px），
+## 确实细得看不出是一圈光。**两个数必须一起加**：内框一旦大于外框，深色收边就被整个盖住了。
+const PLACARD_RIM := 0.027
+## 内框**静息时的颜色**（近中性灰，`max−min` 只有 0.04 —— **刻意不带色相**）。
+##
+## 2026-10-11 用户第二条：「铭牌边框不要有颜色，只有脉冲发光的时候才闪」。
+## 原先内框常亮着该玩家的小人色，结果是 —— ①四块牌各戴一圈彩边，桌面上很花；
+## ②更要命的是**闪不起来**：暗色 → 同色变亮，对比度太小，用户看不到"在闪"。
+## ⇒ 静息 = 中性灰、脉冲 = 金（`PLACARD_FLASH_COLOR`）。
+## **身份色改由棋子剪影单独承担**（见 `PLACARD_PIECE`），边框只负责"轮到谁"。
+##
+## **压暗到 0.26~0.31**（2026-10-11 用户：「光边太浅」）：原先那版 0.43~0.47 的中性灰**近乎发白**，
+## 一圈浅灰边挂在每块牌上 —— 既像没做完的高光，又把闪光的对比吃掉一大半。
+const PLACARD_RIM_IDLE := Color(0.26, 0.28, 0.31)
+## 轮到该玩家时，内框**脉冲**的区间（自发光量）。
+## **下限仍高于 `PLACARD_EMIT`（0.30）** —— "这块牌有人"在任何相位都成立，不必等某一帧才看出来。
+## 但"看得出在闪"**不能只靠这一维**：颜色也得跟着走（见 `PLACARD_FLASH_CURVE` 与
+## `_apply_placard_flash_pose`）。
+const PLACARD_FLASH_LO := 0.90
+const PLACARD_FLASH_HI := 2.30
+## 脉冲的**曲线指数**（> 1 ⇒ 谷底停留长、冲顶那一下短促）。
+##
+## **2026-10-11 修（用户：「轮到该玩家时铭牌没有闪，而是一直显示边框高亮色」）**：
+## 那版的毛病是脉冲**只推自发光量**，而内框 `albedo` 恒为亮金 ⇒ 任何相位下边框都已经是一圈
+## 亮金，只在"更亮一点"之间浮动，屏幕上读成"一直亮着"。⇒ 现在颜色**也从静息灰走到亮金**
+## （`_apply_placard_flash_pose`），灰 ↔ 金地来回走才成其为"闪"。
+## 指数抬到 1.6 是观感：纯正弦两头各停一样久，像"慢慢明灭"；抬起来之后谷底停得久、
+## 亮上去短促，才是"闪一下"。
+const PLACARD_FLASH_CURVE := 1.6
+## **脉冲发光用的金**（2026-10-11 用户：「闪光的颜色太浅了」）。
+## **不复用 `PLACARD_HOT`**：那个 (1.0, 0.86, 0.35) 是给牌身泛色用的**浅金**，拿它当发光色偏白，
+## 谷值那一档看着像一块米色塑料。发光色要的是"亮而浓" ⇒ 换成更饱和的深金。
+const PLACARD_FLASH_COLOR := Color(1.0, 0.70, 0.10)
 ## 一次呼吸的周期（秒）。与行动光环 `RING_PULSE_TIME` 同量级但**错开**：同频会同相，
 ## 桌面上两处一起明灭反而像闪灯故障。
 const PLACARD_FLASH_TIME := 1.35
@@ -1965,7 +2010,7 @@ const PLACARD_TRACK_H := 0.026
 const PLACARD_HIT_SLACK := Vector2(10.0, 10.0)
 
 var _placards_root: Node3D
-## 节点池：peer -> `{root, body, body_mat, border, chip, chip_mat, rank, name, track, bar, bar_mat,
+## 节点池：peer -> `{root, body, body_mat, border, piece, piece_mat, rank, name, track, bar, bar_mat,
 ## slot, hot, alive, color, rank_n, name_text}`。**只建一次**，刷新只改落点 / 文字 / 颜色。
 var _placards := {}
 var _placard_body_mesh: BoxMesh
@@ -1973,7 +2018,7 @@ var _placard_border_mesh: BoxMesh
 var _placard_rim_mesh: BoxMesh
 var _placard_inset_mesh: PlaneMesh
 var _placard_light_mesh: PlaneMesh
-var _placard_chip_mesh: PlaneMesh
+var _placard_piece_mesh: PlaneMesh
 var _placard_bar_mesh: PlaneMesh
 ## 行动者边框闪光的相位 / 有没有一块牌正亮着（全灭时把能量还原一次，之后不再逐帧写）
 var _placard_flash_phase := 0.0
@@ -2020,6 +2065,34 @@ func set_placards(rows: Array) -> void:
 			groot.queue_free()
 		_placards.erase(peer)
 
+## 棋子的贴图是**按颜色分四张**的（`pieceRed/Blue/Green/Yellow_05.png`），而
+## `StandardMaterial3D.albedo_color` 是**乘**到贴图上的 ⇒ 想染成"玩家色"会得到
+## 玩家色 × 贴图色（红玩家 × 蓝贴图 = 黑）。所以剪影这支只读贴图的 **alpha 当形状**，
+## 颜色**完全**由 `tint` 给 —— 这样贴图带不带色都无所谓，四张共用一支材质。
+##
+## `blend_mix`（不是 `ALPHA_SCISSOR`）：贴图边缘是抗锯齿的半透明像素，剪掉会出锯齿；
+## 这是一小片贴在牌面上的薄片，进透明队列没有排序问题。
+const PLACARD_SIL_SHADER := """
+shader_type spatial;
+render_mode blend_mix, cull_disabled;
+uniform sampler2D shape_tex : filter_linear_mipmap;
+uniform vec4 tint : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform float emit : hint_range(0.0, 4.0) = 0.45;
+void fragment() {
+	ALBEDO = tint.rgb;
+	EMISSION = tint.rgb * emit;
+	ALPHA = texture(shape_tex, UV).a;
+	ROUGHNESS = 0.7;
+}
+"""
+static var _placard_sil_shader: Shader
+static func _placard_silhouette_shader() -> Shader:
+	if _placard_sil_shader == null:
+		var sh := Shader.new()
+		sh.code = PLACARD_SIL_SHADER
+		_placard_sil_shader = sh
+	return _placard_sil_shader
+
 ## 造一块立牌（**只建节点**；文字 / 颜色 / 落点在 `_fill_placard` 里刷）。
 ##
 ## **牌面构成（2026-10-11 改版，从后往前 = 从远到近）**：
@@ -2050,10 +2123,10 @@ func _make_placard(peer: int) -> Dictionary:
 		_placard_light_mesh = PlaneMesh.new()
 		_placard_light_mesh.size = Vector2(PLACARD_W - PLACARD_INSET.x, PLACARD_LIGHT_H)
 		_placard_light_mesh.orientation = PlaneMesh.FACE_Z
-	if _placard_chip_mesh == null:
-		_placard_chip_mesh = PlaneMesh.new()
-		_placard_chip_mesh.size = Vector2(PLACARD_CHIP, PLACARD_CHIP)
-		_placard_chip_mesh.orientation = PlaneMesh.FACE_Z
+	if _placard_piece_mesh == null:
+		_placard_piece_mesh = PlaneMesh.new()
+		_placard_piece_mesh.size = Vector2(PLACARD_PIECE, PLACARD_PIECE)
+		_placard_piece_mesh.orientation = PlaneMesh.FACE_Z
 	if _placard_bar_mesh == null:
 		_placard_bar_mesh = PlaneMesh.new()
 		_placard_bar_mesh.size = Vector2(PLACARD_TRACK_W, PLACARD_TRACK_H)
@@ -2127,16 +2200,19 @@ func _make_placard(peer: int) -> Dictionary:
 	toplight.position = Vector3(0.0, PLACARD_H * 0.5 - PLACARD_INSET.y * 0.5 + 0.004,
 		PLACARD_T * 0.5 + 0.002)
 	root.add_child(toplight)
-	# 棋子色小片（左侧）
-	var chip := MeshInstance3D.new()
-	chip.name = "Chip"
-	chip.mesh = _placard_chip_mesh
-	var cmat := StandardMaterial3D.new()
-	cmat.emission_enabled = true
-	cmat.emission_energy_multiplier = 0.45
-	chip.material_override = cmat
-	chip.position = Vector3(-PLACARD_W * 0.5 + 0.062, 0.032, 0.020)
-	root.add_child(chip)
+	# 棋子**剪影**（左侧）：该玩家那枚棋子的小人形状，颜色 = 该玩家的小人色
+	#（2026-10-11 用户：色片改成棋子剪影）。贴图索引就是 `p.color` —— 与桌上那枚棋子**同款**
+	#（`game._refresh_tokens` 里 `"slot": int(p.get("color", 0))`，两者用的是同一个色号）。
+	var piece := MeshInstance3D.new()
+	piece.name = "Piece"
+	piece.mesh = _placard_piece_mesh
+	var smat := ShaderMaterial.new()
+	smat.shader = _placard_silhouette_shader()
+	smat.set_shader_parameter("shape_tex", null)
+	smat.set_shader_parameter("tint", Color.WHITE)
+	piece.material_override = smat
+	piece.position = Vector3(-PLACARD_W * 0.5 + 0.062, 0.030, 0.020)
+	root.add_child(piece)
 	# 名次（小片右边）
 	#
 	# **加粗（2026-10-11）**：`Label3D` 自己没有字重，得把 `font` 换成一支粗体 `SystemFont`
@@ -2197,7 +2273,7 @@ func _make_placard(peer: int) -> Dictionary:
 	return {"root": root, "body": body, "body_mat": bodymat, "border": border,
 		"border_mat": bdmat, "rim": rim, "rim_mat": rmat,
 		"inset": inset, "inset_mat": imat, "toplight": toplight, "toplight_mat": lmat,
-		"chip": chip, "chip_mat": cmat, "rank": rank_l, "name": name_l,
+		"piece": piece, "piece_mat": smat, "rank": rank_l, "name": name_l,
 		"track": track, "bar": bar, "bar_mat": barmat,
 		"slot": 2, "hot": false, "active": false, "alive": true, "color": 0,
 		"rank_n": 0, "name_text": ""}
@@ -2211,20 +2287,28 @@ func _fill_placard(pl: Dictionary) -> void:
 	var tint: Color = GameData.PLAYER_COLORS[
 		clampi(int(pl.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
 	var alive: bool = bool(pl.get("alive", true))
-	# **身份色不随出局压暗**：色片那条是既有契约（"小片色 == `p.color`"，出局也照旧），
-	# 内框与名次字与它同源、一并不压。出局这件事由**牌身压暗 + 昵称后缀「（破产）」**两处表达
+	# **身份色不随出局压暗**：剪影那条是既有契约（"色片色 == `p.color`"，出局也照旧），
+	# 名次字与它同源、一并不压。出局这件事由**牌身压暗 + 昵称后缀「（破产）」**两处表达
 	#（都是既有契约）；再把身份色也压暗，就变成"读不出这块牌是谁的"了。
-	var idc := tint
-	var cmat: StandardMaterial3D = pl["chip_mat"]
-	cmat.albedo_color = idc
-	cmat.emission = idc
-	# 内框：身份环。**静息发光量由 `hot` 决定**（亮着的那一块起步就又亮又跳），
-	# 逐帧的脉冲由 `_tick_placard_flash` 推。
+	# **剪影：该玩家那枚棋子的小人形**（贴图只借形状，颜色全由 tint 给）
+	var ci := clampi(int(pl.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)
+	var smat: ShaderMaterial = pl["piece_mat"]
+	smat.set_shader_parameter("shape_tex", UIKit.piece_tex(ci))
+	smat.set_shader_parameter("tint", tint)
+	# 内框：**不是身份色**（2026-10-11 用户：边框不要有颜色）—— 静息是中性灰，
+	# 轮到该玩家时才**变金 + 呼吸**（颜色与发光量一起走，见 `_apply_placard_flash_pose`）。
+	#
+	# ⚠ **这里也要写"当帧的脉冲姿态"，不能只写个金**：本函数在某些帧里会跑在 `_process`
+	# 之后（状态广播的时机不由 `_process` 决定）—— 只写金就会把那一帧的呼吸压平，
+	# 观感上正是"一直亮着、不闪"。两处共用同一个姿态函数，谁的次序都对。
 	var rmat: StandardMaterial3D = pl["rim_mat"]
-	rmat.albedo_color = idc
-	rmat.emission = idc
-	rmat.emission_energy_multiplier = PLACARD_FLASH_LO if bool(pl.get("active", false)) else PLACARD_EMIT
-	(pl["rank"] as Label3D).modulate = idc
+	if bool(pl.get("active", false)):
+		_apply_placard_flash_pose(rmat)
+	else:
+		rmat.albedo_color = PLACARD_RIM_IDLE
+		rmat.emission = PLACARD_RIM_IDLE
+		rmat.emission_energy_multiplier = PLACARD_EMIT
+	(pl["rank"] as Label3D).modulate = tint
 	# 牌身：名册格那张卡片的深色底；出局的压暗
 	var base: Color = PLACARD_BODY
 	if not alive:
@@ -2363,17 +2447,37 @@ func _tick_placard_flash(delta: float) -> void:
 		_placard_flash_on = false
 		_placard_flash_phase = 0.0
 		for p in _placards:
-			(_placards[p]["rim_mat"] as StandardMaterial3D).emission_energy_multiplier = PLACARD_EMIT
+			# 颜色也要还原（不只是发光量）：静息是中性灰，脉冲那一档是金 —— 只把能量收回去
+			# 会留下一圈**常亮的金边**，正是用户要去掉的那个东西。
+			var r0: StandardMaterial3D = _placards[p]["rim_mat"]
+			r0.albedo_color = PLACARD_RIM_IDLE
+			r0.emission = PLACARD_RIM_IDLE
+			r0.emission_energy_multiplier = PLACARD_EMIT
 		return
 	_placard_flash_on = true
 	_placard_flash_phase = fposmod(_placard_flash_phase + delta, PLACARD_FLASH_TIME)
-	var k := 0.5 - 0.5 * cos(TAU * _placard_flash_phase / PLACARD_FLASH_TIME)
-	var e := lerpf(PLACARD_FLASH_LO, PLACARD_FLASH_HI, k)
 	for p in _placards:
 		var pl: Dictionary = _placards[p]
 		if not bool(pl.get("active", false)):
 			continue
-		(pl["rim_mat"] as StandardMaterial3D).emission_energy_multiplier = e
+		_apply_placard_flash_pose(pl["rim_mat"])
+
+## 把**当帧的脉冲姿态**写进一份内框材质：**颜色与发光量一起**（谷 = 静息灰、峰 = 亮金）。
+##
+## **为什么颜色必须一起动**（2026-10-11 修）：只推 `emission_energy_multiplier` 时，`albedo`
+## 恒为亮金 ⇒ 任何相位下边框都已经是一圈亮金，只在"更亮一点"之间浮动；在屏幕上读成
+## "一直高亮着"，看不出在闪（用户实机反馈："铭牌没有闪，而是一直显示边框高亮色"）。
+## 谷值回到 `PLACARD_RIM_IDLE` 之后，边框是**灰 ↔ 金**地来回走，这才成其为"闪"。
+##
+## **单一来源**：`_fill_placard`（状态广播时）与本函数（逐帧）共用它 —— 两处的次序谁先谁后
+## 都自洽，不会有"某一帧被压平"。
+func _apply_placard_flash_pose(rmat: StandardMaterial3D) -> void:
+	var k := 0.5 - 0.5 * cos(TAU * _placard_flash_phase / PLACARD_FLASH_TIME)
+	var kk := pow(k, PLACARD_FLASH_CURVE)
+	var col := PLACARD_RIM_IDLE.lerp(PLACARD_FLASH_COLOR, kk)
+	rmat.albedo_color = col
+	rmat.emission = col
+	rmat.emission_energy_multiplier = lerpf(PLACARD_FLASH_LO, PLACARD_FLASH_HI, kk)
 
 ## 行动者倒计时：只有 `peer` 那一块露倒计时条，`frac ∈ [0,1]` 是剩余比例；
 ## `peer == NO_PEER` ⇒ 三块全收。**数据与屏幕层同一份**（`game._op_left / _op_total`），

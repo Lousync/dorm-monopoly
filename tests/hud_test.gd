@@ -220,9 +220,12 @@ func _run() -> void:
 	# **载体换过三次**：椅背名牌（一期）→ 头顶名牌（v0.8.0 三次改版）→ **桌面立牌**（四次改版；
 	# 用户「人物顶部铭牌去掉」+「将屏幕左上角的玩家信息块移到桌面上」）。守的那件事
 	# ——**色随 `p.color` 走、不随座位序号走**——**一次都没变**。今天它读的是
-	# **牌面上那枚棋子色小片**（`table_props._placards[peer].chip_mat.albedo_color`）——
+	# **牌面上那枚棋子剪影**（`table_props._placards[peer].piece_mat` 的着色器参数 `tint`）——
 	# 第四次复核把"烘好的那块牌面（`game.placard_chips`）"整体删了，牌面改成原生 3D 元素，
-	# 小片色是 `_fill_placard` 直接写进材质里的 ⇒ 读**真的贴上去的那个色**（比读色号更硬）。
+	# 颜色是 `_fill_placard` 直接写进材质里的 ⇒ 读**真的贴上去的那个色**（比读色号更硬）。
+	# **2026-10-11**：那枚**色片**改成了**棋子剪影** —— 贴图本按色号分四张（自带的颜色不能乘，
+	# 见 `table_props.PLACARD_SIL_SHADER`），所以材质是 `ShaderMaterial`、颜色在 `tint` 参数上，
+	# **不再是 `StandardMaterial3D.albedo_color`**（旧写法读 `chip_mat` 会当场报错并挂住整套）。
 	if room5 != null:
 		var in_room: Array = room5.seat_peers()
 		_check(in_room == seat_peers,
@@ -238,7 +241,7 @@ func _run() -> void:
 			var pl5: Dictionary = g._state_player(int(seat_peers[i]))
 			var want: Color = GameData.PLAYER_COLORS[
 				clampi(int(pl5.get("color", 0)), 0, GameData.PLAYER_COLORS.size() - 1)]
-			# ⚠ 小片的载体是 `Chip`（`PlaneMesh`），它的材质色由 `table_props._fill_placard`
+			# ⚠ 剪影的载体是 `Piece`（`PlaneMesh`），它的 `tint` 由 `table_props._fill_placard`
 			# 按 `clampi(color, 0, size-1)` 取 `GameData.PLAYER_COLORS` 写进去
 			# ⇒ 这里比的是那个 `Color` 本身，而期望色**与实现同一条钳位口径**（【终审 F5】）。
 			var got := Color(-1.0, -1.0, -1.0)
@@ -246,7 +249,7 @@ func _run() -> void:
 			var pl_d = placards.get(int(seat_peers[i]), {})
 			if not (pl_d as Dictionary).is_empty():
 				found = true
-				got = ((pl_d as Dictionary)["chip_mat"] as StandardMaterial3D).albedo_color
+				got = (pl_d as Dictionary)["piece_mat"].get_shader_parameter("tint")
 			got_colors.append(str(got))
 			n_chips += 1
 			if not found or not got.is_equal_approx(want):
@@ -2561,6 +2564,40 @@ func _run() -> void:
 	_check(g.target_hint_wrap.offset_top > base_top,
 		"有气泡时提示条比无气泡时更低（%.1f > %.1f）" % [g.target_hint_wrap.offset_top, base_top])
 	g._cancel_target()
+
+	# ---- ⑫：「发现」挑卡层**全员可见**（2026-10-11 用户）----
+	# 原先候选走 `rpc_id` 私发本人；改成广播之后**旁观者**也看到同一个窗口（同一批卡、压暗、
+	# 点不动），而"只有本人能选"由 `c_discover_pick` 的 `_awaiting_discover_peer` 校验兜着。
+	# 这里钉三件事：旁观态成形、本人态有「拿走」、**快照兜底的判据从"是不是等着我"改成
+	# "还有没有人在挑"**（后者正是本次改动要钉住的那条 —— 旧判据会把旁观者的层收掉）。
+	print("== ⑫ 「发现」挑卡层：全员可见（本人可点 / 旁观只看） ==")
+	# **别写死 peer 号**：本文件的 `my_peer` 前后被改过（读的是 `multiplayer.get_unique_id()` 的
+	# 初值 1，用例中途设成 2）⇒ 拿"某个不是我的号"当旁观者，两个方向都不假红。
+	var dv_other: int = 3 if int(g.my_peer) != 3 else 4
+	g._show_discover_offer(7701, ["招财猫", "黑卡"], dv_other)   # 别人在挑 ⇒ 我是旁观
+	_check(g._discover_layer != null and is_instance_valid(g._discover_layer),
+		"旁观者也看到挑卡层（原先只有本人收得到那份私发）")
+	_check(g._discover_chooser == dv_other,
+		"记下了这份候选的主人（实得 %s，期望 %d）" % [str(g._discover_chooser), dv_other])
+	_check(g._discover_offered.size() == 2,
+		"旁观者拿得到候选（候选现在是公开信息，实得 %d 件）" % g._discover_offered.size())
+	_check(g._discover_ok == null, "旁观态**没有「拿走」按钮**（点不了，索性不给）")
+	# 快照说"还有人在挑"（挑的不是我）⇒ 层必须留着。**旧判据在这里就会把它收掉。**
+	var dv_snap: Dictionary = _state(2, false)
+	dv_snap["await"] = "discover"
+	dv_snap["await_peer"] = dv_other
+	g.s_state(dv_snap)
+	await process_frame
+	_check(g._discover_layer != null and is_instance_valid(g._discover_layer),
+		"快照说「还有人在挑（不是我）」⇒ 旁观者的层留着（旧判据会误收）")
+	# 本人态：同一个入口，`chooser` = 我 ⇒ 多一枚「拿走」
+	g._show_discover_offer(7702, ["招财猫"], int(g.my_peer))
+	_check(g._discover_ok != null, "本人态有「拿走」按钮（与旁观态同一棵树，只差这一枚）")
+	# 挑完了（`await` 不再是 discover）⇒ 所有人一起收起
+	dv_snap["await"] = "roll"
+	g.s_state(dv_snap)
+	await process_frame
+	_check(g._discover_layer == null, "挑完了 ⇒ 层收起（本人 / 旁观同一条兜底）")
 
 	g.get_tree().paused = false
 	g.free()

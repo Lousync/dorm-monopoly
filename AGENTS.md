@@ -109,6 +109,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/tech_test.gd    # 科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
+& $G --headless --path . --script tests/codex_panel_test.gd # 图鉴面板回归（三族 / 搜索 / 互斥 / 落点）
 & $G --headless --path . --script tests/hud_test.gd      # HUD 回归（身家条/底栏/客户端视角）
 & $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
 & $G --headless --path . --script tests/layout_test.gd  # 3D 房间+桌面布局与取景（格宽/房间带/光照契约/家具/吊灯）

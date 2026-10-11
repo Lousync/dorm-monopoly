@@ -2087,6 +2087,35 @@ func _run() -> void:
 			_check(one_ok, "每槽视口里恰好一张 `ItemCard`（5 张牌 = 5 个视口，各烘一张）")
 			_check(id_ok, "视口里那张卡的 id 就是该槽的道具 id（招财猫 / 黑卡）")
 			_check(aspect_ok, "卡面没被拉扁：正面贴片宽高比 == 视口宽高比（%s 对 0.748）" % str(want_vp))
+			# ④ **角标不许被视口裁掉**（2026-10-11 用户：「卡牌左上角和右上角的徽章显示不全」）。
+			# `ItemCard` 的角标是**半出卡外**画的，探出多少全在 `item_card.gd` 的落点里；
+			# 留白必须盖得住**最宽的那一枚** —— 「一次性」胶囊比圆角标宽一倍多，旧留白 14px
+			# 只算到圆角标（注释里也这么写着），右半截被 SubViewport 硬切。
+			# 判据**逐枚量子节点的越界量**，不读常量、也不算第二遍公式（那样写成什么样都过）。
+			var over_bad: Array = []
+			var pad_v: Vector2 = face_consts["HAND_FACE_PAD"]
+			var worst := -INF
+			for probe_id in ["招财猫", "蛋蛋节"]:   # 蛋蛋节 = 一次性 ⇒ 右上那枚正是最宽的胶囊
+				var probe_card: Control = ICARD4.make(String(probe_id), want_face, {})
+				for probe_ch in probe_card.get_children():
+					if not (probe_ch is Control):
+						continue
+					var probe_c: Control = probe_ch
+					if probe_c.size.x <= 0.0 or probe_c.size.y <= 0.0:
+						continue
+					# 越界量（> 0 = 被视口切掉）：左 / 上两条是"离 −留白 还差多少"，
+					# 右 / 下两条是"超出 卡面 + 留白 多少"。
+					var probe_d: float = maxf(
+						maxf(-pad_v.x - probe_c.position.x, -pad_v.y - probe_c.position.y),
+						maxf(probe_c.position.x + probe_c.size.x - want_face.x - pad_v.x,
+							probe_c.position.y + probe_c.size.y - want_face.y - pad_v.y))
+					worst = maxf(worst, probe_d)
+					if probe_d > 0.0:
+						over_bad.append("%s 第 %d 枚探出 %.1fpx"
+							% [String(probe_id), probe_c.get_index(), probe_d])
+				probe_card.free()
+			_check(over_bad.is_empty(),
+				"角标都盖在留白里（最紧的一枚只余 %.1fpx；已越界的 %s）" % [-worst, str(over_bad)])
 			_check(slot_tex.size() == 2 and slot_tex[0] != slot_tex[1],
 				"两张牌贴的是**两张不同的纹理**（同一个视口的话会共用一张 —— 房子那 4 级同款坑）")
 			# 同一份画法：卡面节点的脚本就是商店那份 `item_card.gd`（不是另写一个"手牌专用卡"）

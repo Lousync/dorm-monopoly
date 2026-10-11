@@ -64,7 +64,6 @@ extends Control
 # 【弹窗与结算】 _show_game_over, _standings, _show_prompt, _arm_decision, _refresh_decision_area
 #     _pending_tile_for_me, _on_decision_yes, _on_decision_no, _close_prompt, _prompt_bar_arm
 #     _refresh_chat
-# 【道具卡图鉴（模板预览）】 _open_card_gallery, _card_section, _card_cell
 # 【道具系统：host 逻辑与 RPC（阶段一）】 _refresh_price, _has_item, _immune_debuff, _remove_item, _bag_cap
 #     _stamina_cap, _salary_amount, _pass_start, _check_xiaojinku, _buy_price, _rent_gain
 #     _rent_pay, _maybe_emergency, _item_cost, _consume_cost_pen, _move_and_resolve
@@ -93,13 +92,13 @@ extends Control
 #     _update_aim_arrow, _set_hand_preview
 # 【选项菜单 / 房主暂停 / 设置】 _build_menu_ui, _menu_show, _open_menu, _menu_resume, s_pause
 # 【HUD 入场】 _hud_intro
-# 【规则说明面板（右上角）】 _set_rules_open, _apply_audio, _save_audio_cfg, _corner_bar_screen_center
-#     _spawn_money_fly, _process, _refresh_net_indicator, _refresh_op_timer
-#     _refresh_corner_timer, _refresh_shop_timer, _dock_band, _clamp_dock_x
+# 【规则说明面板（右上角）】 _set_rules_open, _set_codex_open, _apply_audio, _save_audio_cfg
+#     _corner_bar_screen_center, _spawn_money_fly, _process, _refresh_net_indicator
+#     _refresh_op_timer, _refresh_corner_timer, _refresh_shop_timer, _dock_band, _clamp_dock_x
 #     _place_overlay_bar, _shop_ordinal, _refresh_shop_ui, _refresh_black_ui
 #     _rebuild_black_picker, _on_conn_lost, _on_exit, _wait, _await_turn_window
 #
-# 合计 30 个区块 / 350 个函数
+# 合计 29 个区块 / 348 个函数
 # <<<<<<<<<< 导航索引结束 <<<<<<<<<<
 
 signal roll_received
@@ -227,8 +226,8 @@ var liq_panel: PanelContainer
 var liq_status_l: Label
 var liq_rows: VBoxContainer
 var liq_watch: Label             # 旁观者横幅（非卖家可见）
-var card_gallery: Control
-var card_gallery_flag := false
+## 道具卡图鉴（模板预览）已搬到 `scripts/dev_tools.gd`（`card_gallery` / `open_card_gallery`）——
+## 那是纯开发脚手架，本函数所在的文件有体积棘轮（2026-10-11 搬移）。
 
 # ---------------- 黑市（host 状态，§8；仅由机会卡进入，地皮计价） ----------------
 var blackshop_enabled := true   # 开局设置开关（面板后续批次接；关闭后机会卡池过滤该事件）
@@ -298,6 +297,7 @@ var _discover_pick := {}        # {"token", "id"}：挑卡应答
 var _discover_wait_token := -1  # 当前等待挑卡的 token（-1 = 无）
 var _discover_offered: Array = []  # 当前给该玩家的候选（校验回包用）
 var _discover_layer: Control    # 挑卡弹层（临时全屏层，答完即毁；结构与科技选卡同款）
+var _discover_chooser := -1     # 候选的主人（**全员可见**后用来分"本人 / 旁观"两态）
 var _discover_cards: Array = []
 var _discover_picked: Array = [-1]
 var _discover_ok: Button
@@ -322,6 +322,14 @@ var rules_body: RichTextLabel
 var rules_tabs := {}             # 分页 key -> 按钮
 var rules_open := false
 var rules_tab := ""
+# ---- 图鉴（右上角，见 codex_panel.gd；2026-10-11 加）----
+var codex_btn: Button            # 「📖 图鉴」开关（与「规则说明」「战报」同一条 y，排在最左）
+var codex_panel: PanelContainer  # 图鉴面板（按钮下方展开，落点与规则面板逐字相同）
+var codex_tabs := {}             # 族键 -> 按钮
+var codex_search: LineEdit
+var codex_list: VBoxContainer    # 当前页的条目清单（切页 / 搜索时整个重刷）
+var codex_tab := ""
+var codex_open := false
 ## **「我」那条身家条**（屏幕左下角）。批次 5 起是"四条一起建"，**批次 12 D 起只剩这一条**：
 ## 他人的信息改由名册条承担，选目标高亮与行动者倒计时也跟着搬了过去 —— 但**判据一字未改**
 ##（`_hl_peers` / `_op_owner`）。
@@ -603,11 +611,11 @@ func _ready() -> void:
 		dev.fps_probe_run()
 	for a4 in OS.get_cmdline_user_args():
 		if a4 == "--card-gallery":
-			card_gallery_flag = true
-	if card_gallery_flag:
+			dev.card_gallery_flag = true
+	if dev.card_gallery_flag:
 		dev.enabled = true
 		dev.apply_mode()
-		_open_card_gallery()
+		dev.open_card_gallery()
 
 func _exit_tree() -> void:
 	if at_mode != "":
@@ -662,6 +670,8 @@ func _build_ui() -> void:
 	# 右上角「📖 规则说明」（批次 12 D2 起的落点）：一枚开关按钮 + 其下方展开的分页规则面板
 	#（文案见 RulesText）
 	RulesPanel.build(self)
+	# 右上角「📖 图鉴」：与「规则说明」同一簇（排在它左边），面板同样自按钮下方展开
+	CodexPanel.build(self)
 	# 玩家道具弹窗（批次 9）**排到最末**：GUI 拾取按**树序**（不看 z_index，见
 	# `table_hud.build_play_ui` 末尾那段说明），而规则说明的按钮 / 面板是 `build_play_ui`
 	# **之后**才挂的 —— 只在 `build_play_ui` 末尾 append 的话，它们仍会抢先拾取、点穿压暗底。
@@ -1229,13 +1239,14 @@ func _run_discover(p: Dictionary, src: String, guarantee := "") -> String:
 	_discover_wait_token = token
 	_discover_offered = ids.duplicate()
 	_awaiting_discover_peer = int(p.peer)
-	_log("%s 翻开失物招领箱，触发「发现」（只有本人看得到候选）" % p.name, "#f0c064")
+	_log("%s 翻开失物招领箱，触发「发现」（候选全员可见）" % p.name, "#f0c064")
 	_broadcast_state()
 	if not bool(p.bot):
-		if int(p.peer) == 1:
-			_show_discover_offer(token, ids)
-		else:
-			s_discover.rpc_id(int(p.peer), token, ids)
+		# **全员可见（2026-10-11 用户）**：候选与"谁在挑"一起**广播**（原先 `rpc_id` 私发本人）。
+		# `call_local` ⇒ 房主本机走同一条路（原来是"peer==1 就本地直调"那条分叉，已删）。
+		# **只有本人能点**这件事不变，由 `c_discover_pick` 的 `_awaiting_discover_peer` 校验兜着
+		#（UI 那侧只是不给他点的地方）。
+		s_discover.rpc(token, ids, int(p.peer))
 	var sec := GameSettings.turn_seconds(_settings.timeout_tier, "prompt")
 	var timed: bool = sec > 0.0
 	var deadline := Time.get_ticks_msec() + int(maxf(sec, 5.0) * 1000.0)
@@ -1270,10 +1281,12 @@ func _discover_bot_pick(ids: Array) -> String:
 			best = String(id)
 	return best
 
-## 私发挑卡弹层：房主本人本地调，客户端走 rpc_id；bot 不发
-@rpc("authority", "call_remote", "reliable")
-func s_discover(token: int, ids: Array) -> void:
-	_show_discover_offer(token, ids)
+## 挑卡弹层（**全员可见**，2026-10-11 用户）：**广播**给所有人（`call_local` ⇒ 房主也跑），
+## 第三参 `chooser` 说明"这份候选是谁的" —— 只有他能点。原先走 `rpc_id` 私发本人。
+## bot 不发（它当帧就答完，没有可看的窗口）。
+@rpc("authority", "call_local", "reliable")
+func s_discover(token: int, ids: Array, chooser: int) -> void:
+	_show_discover_offer(token, ids, chooser)
 
 @rpc("any_peer", "call_remote", "reliable")
 func c_discover_pick(token: int, id: String) -> void:
@@ -1298,9 +1311,18 @@ func _discover_answer(token: int, id: String) -> void:
 		c_discover_pick.rpc_id(1, int(token), String(id))
 	_close_discover()
 
-## 私密挑卡弹层：屏幕正中三张大卡，点选 + 「拿走」；倒计时与「决定」同挡位
-func _show_discover_offer(token: int, ids: Array) -> void:
+## 挑卡弹层：屏幕正中三张大卡；倒计时与「决定」同挡位。
+##
+## **全员可见（2026-10-11 用户）**：`chooser` 是这份候选的主人 —— 只有他能点选，
+## 其余人是**旁观态**（同一批卡、压暗、点不动，顶上写清"谁在挑"）。
+## `chooser < 0` = 旧语义"就是我自己"（测试与老调用点用）。
+##
+## 旁观态**不另起一套控件**：同一棵树，只把"能点的地方"摘掉 —— 两态各画一份必然会漂开
+##（"本人看的是 A、别人看的是 B" 正是最简单的分叉）。
+func _show_discover_offer(token: int, ids: Array, chooser := -1) -> void:
 	_close_discover()
+	var mine: bool = int(chooser) < 0 or int(chooser) == my_peer
+	_discover_chooser = my_peer if int(chooser) < 0 else int(chooser)
 	_discover_wait_token = token
 	_discover_offered = ids.duplicate()
 	_discover_layer = Control.new()
@@ -1326,10 +1348,14 @@ func _show_discover_offer(token: int, ids: Array) -> void:
 	# 标题**不带件数**：候选默认 3 件，持科技「眼尖手快」时 4 件（2026-10-10）——
 	# 写死数字要么对一半人成假话、要么得把件数一路传到文案层（多一处会漂的第二来源）。
 	# 件数只在 `术语表.md` 的「发现」词条里写清（那是给设计者查口径的地方）。
-	var title := UIKit.title_label("发现 · 候选", 24)
+	var owner_name := String(_state_player(_discover_chooser).get("name", "对手"))
+	var title := UIKit.title_label("发现 · 候选" if mine else "发现 · %s 的候选" % owner_name, 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var hint := UIKit.label("只有你能看到这几件——点选一张拿进背包；超时将随机选择", 13, UIKit.TEXT_DIM)
+	var hint := UIKit.label(
+		"点选一张拿进背包；超时将随机选择（候选对所有人可见）" if mine
+			else "%s 正在挑选 · 只有本人能选" % owner_name,
+		13, UIKit.TEXT_DIM)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(hint)
 	var row := HBoxContainer.new()
@@ -1337,34 +1363,41 @@ func _show_discover_offer(token: int, ids: Array) -> void:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_discover_cards = []
 	_discover_picked = [-1]
-	var ok := UIKit.button("拿　走", 17, "good")
-	ok.disabled = true
-	_discover_ok = ok
-	ok.custom_minimum_size = Vector2(190, 44)
-	ok.pressed.connect(func() -> void:
-		if _discover_picked[0] == -1:
-			return
-		_discover_answer(token, String(ids[_discover_picked[0]])))
+	var ok: Button = null
+	if mine:
+		ok = UIKit.button("拿　走", 17, "good")
+		ok.disabled = true
+		_discover_ok = ok
+		ok.custom_minimum_size = Vector2(190, 44)
+		ok.pressed.connect(func() -> void:
+			if _discover_picked[0] == -1:
+				return
+			_discover_answer(token, String(ids[_discover_picked[0]])))
 	for i in ids.size():
 		var id := String(ids[i])
 		var card_wrap := PanelContainer.new()
 		card_wrap.custom_minimum_size = ItemCard.SIZE_LARGE + Vector2(24, 24)
-		card_wrap.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var cm := UIKit.margins(12, 12, 12, 12)
 		card_wrap.add_child(cm)
 		var holder := CenterContainer.new()
 		cm.add_child(holder)
 		holder.add_child(ItemCard.make(id, ItemCard.SIZE_LARGE))
-		card_wrap.gui_input.connect(func(ev: InputEvent) -> void:
-			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.pressed:
-				_discover_pick_card(i)
-				Fx.play("click", -6.0, randf_range(0.95, 1.05)))
+		if mine:
+			card_wrap.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			card_wrap.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.pressed:
+					_discover_pick_card(i)
+					Fx.play("click", -6.0, randf_range(0.95, 1.05)))
+		else:
+			# 旁观态：**没有能点的地方**，卡片压暗一档（"这些不是给你的"）。
+			card_wrap.modulate = Color(0.66, 0.68, 0.76)
 		_discover_cards.append(card_wrap)
 		row.add_child(card_wrap)
-	var cc_ok := CenterContainer.new()
-	cc_ok.add_child(ok)
 	v.add_child(row)
-	v.add_child(cc_ok)
+	if ok != null:
+		var cc_ok := CenterContainer.new()
+		cc_ok.add_child(ok)
+		v.add_child(cc_ok)
 	# 倒计时条：与「回合操作限时」挡位同源（不限时则不倒计时、不自动关）
 	var tier_src := _settings.timeout_tier if multiplayer.is_server() \
 			else String(st.get("timeout_tier", GameSettings.TIER_CURRENT))
@@ -1411,6 +1444,7 @@ func _close_discover() -> void:
 	_discover_cards = []
 	_discover_picked = [-1]
 	_discover_ok = null
+	_discover_chooser = -1
 
 # ================= 房主：回合主干（推进 · 掷轮 · 行动 · 托管 · 自动对局） =================
 
@@ -3823,9 +3857,10 @@ func s_state(state: Dictionary) -> void:
 	# ⇒ 收起（答完自己会先收一遍；这条兜住超时 / 房主随机后还挂着的层）
 	if _tech_offer_layer != null and not bool(state.get("tech_open", false)):
 		_close_tech_offer()
-	# 「发现」挑卡层同款兜底（失物招领三选一）
-	if _discover_layer != null and not (String(state.get("await", "")) == "discover" \
-			and int(state.get("await_peer", -1)) == my_peer):
+	# 「发现」挑卡层兜底（失物招领三选一）。**判据 2026-10-11 变过**：候选改成**全员可见**之后，
+	# "等着的是不是我"不再是收起条件 —— 旁观者也要一直看到窗口收起为止 ⇒ 只看"还有没有人在挑"。
+	#（旧判据 `await_peer == my_peer` 会让旁观者的层在下一帧快照就被收掉。）
+	if _discover_layer != null and String(state.get("await", "")) != "discover":
 		_close_discover()
 	# 天命在握点数框兜底：等待已不在我身上（答完 / 超时）⇒ 收起（同 _close_prompt 的兜底口径）
 	if tianming_picker != null and tianming_picker.visible \
@@ -4985,6 +5020,8 @@ func _set_log_open(on: bool) -> void:
 		return
 	if on and rules_open:
 		_set_rules_open(false)
+	if on and codex_open:
+		_set_codex_open(false)
 	log_panel.visible = on
 	log_toggle.text = "战报 ▴" if on else "战报 ▾"
 
@@ -5047,9 +5084,10 @@ func _show_info_panel(idx: int) -> void:
 	info_body.text = body
 	info_sb.border_color = Color(accent.r, accent.g, accent.b, 0.7)
 	info_panel.add_theme_stylebox_override("panel", info_sb)
-	# 规则说明展开时占着右上角（批次 13 ① 起面板也在右上），格详情卡让位（见 _set_rules_open）
+	# 规则说明 / 图鉴展开时占着右上角（批次 13 ① 起面板也在右上），格详情卡让位
+	#（见 `_set_rules_open` / `_set_codex_open`）
 	_info_tile = idx
-	info_panel.visible = not rules_open
+	info_panel.visible = not (rules_open or codex_open)
 	# 面板尺寸随「决策区」一起变（有决策时更高），所以位置要**先填完内容再摆**：
 	# 这里 `_refresh_decision_area` 会改高度，紧接着 `_place_info_panel` 按新高度锚上去。
 	_refresh_decision_area()
@@ -5286,127 +5324,6 @@ func _refresh_chat() -> void:
 		# 聊天也要在屏幕上方弹一条：战报框默认收起，只写进记录里等于看不见
 		_push_log_toast("[color=#9db2d8]%s[/color]" % safe)
 	
-# ================= 道具卡图鉴（模板预览） =================
-
-func _open_card_gallery() -> void:
-	if card_gallery != null and is_instance_valid(card_gallery):
-		card_gallery.visible = true
-		return
-	card_gallery = Control.new()
-	card_gallery.set_anchors_preset(Control.PRESET_FULL_RECT)
-	card_gallery.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(card_gallery)
-	var dim := ColorRect.new()
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.03, 0.03, 0.07, 0.78)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_gallery.add_child(dim)
-	var cc := CenterContainer.new()
-	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	card_gallery.add_child(cc)
-	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
-		Color(0.45, 0.85, 0.55, 0.7), 1, 10)
-	panel.custom_minimum_size = Vector2(1160, 740)
-	cc.add_child(panel)
-	var m := UIKit.margins(16, 14, 12, 12)
-	panel.add_child(m)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
-	m.add_child(v)
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 8)
-	v.add_child(head)
-	head.add_child(UIKit.label("道具卡片模板 · §九 规格（品质框 / 左上⚡或被动 / 右上计数 / 道具图案 / 价格不上卡）",
-		14, UIKit.ACCENT))
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	head.add_child(sp)
-	var close_btn := UIKit.button("✕ 关闭", 13)
-	close_btn.pressed.connect(func() -> void: card_gallery.visible = false)
-	head.add_child(close_btn)
-	v.add_child(UIKit.label("小 = 道具栏 · 中 = 货架（价格随货架显示）· 大 = 发现三选一 / 使用展示 —— 图案 = assets/icons/item_*.png（Twemoji 烘焙，缺素材回退占位）",
-		11, UIKit.TEXT_DIM))
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	v.add_child(scroll)
-	var gv := VBoxContainer.new()
-	gv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	gv.add_theme_constant_override("separation", 12)
-	scroll.add_child(gv)
-
-	gv.add_child(_card_section("道具栏尺寸（小 · 96×132）", [
-		_card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
-		_card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
-		_card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡3"),
-		_card_cell("交换生", ItemCard.SIZE_SMALL, {}, "稀有 · ⚡3"),
-		_card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡5"),
-		_card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "传说 · ⚡4"),
-		_card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "传说 · 一次性"),
-	]))
-	gv.add_child(_card_section("货架尺寸（中 · 150×210）· 状态一览", [
-		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {}, "普通"),
-		_card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2, "cooling": true}, "冷却中 · 右上剩 2 回合·压暗"),
-		_card_cell("黑卡", ItemCard.SIZE_MEDIUM, {"count": 2}, "计数中 · 剩 2 次购买"),
-		_card_cell("空想者的香皂", ItemCard.SIZE_MEDIUM, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
-		_card_cell("蛋蛋节", ItemCard.SIZE_MEDIUM, {}, "一次性 · 用后焚毁"),
-		_card_cell("平均主义", ItemCard.SIZE_MEDIUM, {"dim": true}, "买不起 · 压暗"),
-		_card_cell("平均主义", ItemCard.SIZE_MEDIUM, {"selected": true}, "发现可选 · 金框高亮"),
-	]))
-	gv.add_child(_card_section("发现 / 使用展示尺寸（大 · 220×300）", [
-		_card_cell("蛋蛋节", ItemCard.SIZE_LARGE, {"selected": true}, "发现三选一（高亮）"),
-		_card_cell("黑卡", ItemCard.SIZE_LARGE, {}, "使用展示"),
-		_card_cell("亡牌飞行员coco", ItemCard.SIZE_LARGE, {}, "一次性 · 用后焚毁"),
-		_card_cell("空想者的香皂", ItemCard.SIZE_LARGE, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
-		_card_cell("园中叶", ItemCard.SIZE_LARGE, {}, "传说 · 被动"),
-	]))
-
-	# 品质补全（草案 51 件）：按品质分组动态陈列，图案逐件核对用
-	var first10 := ["平均主义", "作弊器", "交换生", "招财猫", "信托基金", "黑卡",
-		"空想者的香皂", "蛋蛋节", "亡牌飞行员coco", "园中叶"]
-	for q in ItemData.QUALITIES:
-		var q_ids: Array = []
-		for id2 in ItemData.ITEMS:
-			if not first10.has(id2) and String(ItemData.ITEMS[id2].get("quality", "")) == q:
-				q_ids.append(id2)
-		if q_ids.is_empty():
-			continue
-		var q_cells: Array = []
-		for id3 in q_ids:
-			q_cells.append(_card_cell(id3, ItemCard.SIZE_MEDIUM, {}, ""))
-		gv.add_child(_card_section("%s档 · 品质补全（%d 件）" % [CardDB.category_label(CardDB.FAMILY_ITEM, q), q_ids.size()], q_cells))
-
-func _card_section(title: String, cells: Array) -> Control:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	box.add_child(UIKit.label(title, 12, UIKit.TEXT_DIM))
-	var row := HFlowContainer.new()
-	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_theme_constant_override("h_separation", 14)
-	row.add_theme_constant_override("v_separation", 6)
-	box.add_child(row)
-	for c in cells:
-		row.add_child(c)
-	return box
-
-func _card_cell(id: String, size: Vector2, state: Dictionary, caption: String) -> Control:
-	var cell := VBoxContainer.new()
-	cell.add_theme_constant_override("separation", 3)
-	var holder := Control.new()
-	holder.custom_minimum_size = size + Vector2(14, 14)
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cell.add_child(holder)
-	var card := ItemCard.make(id, size, state)
-	card.position = Vector2(7, 7)
-	holder.add_child(card)
-	var cap := UIKit.label(caption, 10, UIKit.TEXT_DIM)
-	cap.custom_minimum_size = Vector2(size.x + 14, 0)
-	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	cell.add_child(cap)
-	return cell
-
 # ================= 道具系统：host 逻辑与 RPC（阶段一） =================
 
 func _refresh_price() -> int:
@@ -7691,9 +7608,11 @@ func _set_rules_open(on: bool) -> void:
 	rules_panel.visible = on
 	if on:
 		info_panel.visible = false
-		# ① 与战报栏互斥：两者占右上同一块地方，同时开会叠。
+		# ① 与战报栏、图鉴互斥：三者占右上同一块地方，同时开会叠。
 		if log_panel != null and log_panel.visible:
 			_set_log_open(false)
+		if codex_open:
+			_set_codex_open(false)
 		# 自右上角向下「长出来」：缩放支点在右上角（构建时已设，这里兜底重算）
 		rules_panel.pivot_offset = Vector2(rules_panel.size.x, 0.0)
 		rules_panel.modulate.a = 0.0
@@ -7707,6 +7626,33 @@ func _set_rules_open(on: bool) -> void:
 	else:
 		rules_panel.modulate.a = 1.0
 		rules_panel.scale = Vector2.ONE
+
+## 展开/收起图鉴（`codex_panel.gd`）。**与「规则说明」「战报」三方互斥** —— 三者占右上同一块
+## 地方（面板落点逐字相同）。互斥只调对方的"关"分支，不构成递归（同 `_set_rules_open` 那条）。
+## 格详情卡同样让位：它悬浮在被点格子上方，右上角那几格会与面板重叠。
+func _set_codex_open(on: bool) -> void:
+	if codex_open == on:
+		return
+	codex_open = on
+	codex_panel.visible = on
+	if on:
+		info_panel.visible = false
+		if rules_open:
+			_set_rules_open(false)
+		if log_panel != null and log_panel.visible:
+			_set_log_open(false)
+		# 自右上角向下「长出来」：缩放支点在右上角（构建时已设，这里兜底重算）
+		codex_panel.pivot_offset = Vector2(codex_panel.size.x, 0.0)
+		codex_panel.modulate.a = 0.0
+		codex_panel.scale = Vector2(0.96, 0.96)
+		var tw := create_tween().set_parallel(true)
+		tw.tween_property(codex_panel, "modulate:a", 1.0, 0.16)
+		tw.tween_property(codex_panel, "scale", Vector2.ONE, 0.2) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		Fx.play("pop", -8.0, 0.9)
+	else:
+		codex_panel.modulate.a = 1.0
+		codex_panel.scale = Vector2.ONE
 
 ## 音量落到总线（总线 0 = Master —— 全项目只有 `fx.gd` 那池音效，都挂在 Master 上）。
 ## **0 档 = 真静音**：拖到底直接走总线的 mute 标志（数字零）。原先另有一枚「静音」开关，

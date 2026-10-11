@@ -207,7 +207,7 @@ func build_panel() -> void:
 	dev_ts_l = UIKit.label("当前 1x", 11, UIKit.TEXT_DIM)
 	erow.add_child(dev_ts_l)
 	var gal_btn := UIKit.button("道具卡图鉴", 11)
-	gal_btn.pressed.connect(g._open_card_gallery)
+	gal_btn.pressed.connect(open_card_gallery)
 	dev_inject_box.add_child(gal_btn)
 	# 手动进黑市（黑市专场 ③）：不用等机会卡，让当前行动者直接进店调试（房主侧）
 	var black_btn := UIKit.button("进入黑市", 11)
@@ -948,3 +948,131 @@ func _dev_jump(kind: String) -> void:
 	g.board.focus_grid(idx, 2.3, true)   # 2.3 倍全景 ≈ 屏幕时代的 0.9
 	_log("[dev] %s 传送到「%s」（格 %d），触发落点结算" % [String(p.name), kind, idx], "#7fd88f")
 	await g._resolve_tile(p)
+
+# ---------------- 道具卡图鉴（模板预览）：2026-10-11 由 game.gd 原样搬来 ----------------
+#
+# 纯开发脚手架（F1 面板里那枚「道具卡图鉴」+ `--card-gallery`），**与对局状态机无关**。
+# **为什么搬这一趟**：往 game.gd 加「图鉴」按钮与面板要占行数，而 `load_all` 的体积棘轮
+# **只降不升** ⇒ 先把同样量的开发代码搬到它本来该在的地方（本文件开头的注释当年就是这么说的）。
+# 搬移中除"宿主成员加 `g.` 前缀 / 方法去下划线"外**一行未改**。
+var card_gallery: Control
+var card_gallery_flag := false
+
+func open_card_gallery() -> void:
+	if card_gallery != null and is_instance_valid(card_gallery):
+		card_gallery.visible = true
+		return
+	card_gallery = Control.new()
+	card_gallery.set_anchors_preset(Control.PRESET_FULL_RECT)
+	card_gallery.mouse_filter = Control.MOUSE_FILTER_STOP
+	g.add_child(card_gallery)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.03, 0.03, 0.07, 0.78)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_gallery.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	card_gallery.add_child(cc)
+	var panel := UIKit.panel_container(UIKit.PANEL_GLASS, 14,
+		Color(0.45, 0.85, 0.55, 0.7), 1, 10)
+	panel.custom_minimum_size = Vector2(1160, 740)
+	cc.add_child(panel)
+	var m := UIKit.margins(16, 14, 12, 12)
+	panel.add_child(m)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	m.add_child(v)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	v.add_child(head)
+	head.add_child(UIKit.label("道具卡片模板 · §九 规格（品质框 / 左上⚡或被动 / 右上计数 / 道具图案 / 价格不上卡）",
+		14, UIKit.ACCENT))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	var close_btn := UIKit.button("✕ 关闭", 13)
+	close_btn.pressed.connect(func() -> void: card_gallery.visible = false)
+	head.add_child(close_btn)
+	v.add_child(UIKit.label("小 = 道具栏 · 中 = 货架（价格随货架显示）· 大 = 发现三选一 / 使用展示 —— 图案 = assets/icons/item_*.png（Twemoji 烘焙，缺素材回退占位）",
+		11, UIKit.TEXT_DIM))
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var gv := VBoxContainer.new()
+	gv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gv.add_theme_constant_override("separation", 12)
+	scroll.add_child(gv)
+
+	gv.add_child(card_section("道具栏尺寸（小 · 96×132）", [
+		card_cell("招财猫", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
+		card_cell("信托基金", ItemCard.SIZE_SMALL, {}, "普通 · 被动"),
+		card_cell("作弊器", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡3"),
+		card_cell("交换生", ItemCard.SIZE_SMALL, {}, "稀有 · ⚡3"),
+		card_cell("平均主义", ItemCard.SIZE_SMALL, {}, "史诗 · ⚡5"),
+		card_cell("黑卡", ItemCard.SIZE_SMALL, {}, "传说 · ⚡4"),
+		card_cell("蛋蛋节", ItemCard.SIZE_SMALL, {}, "传说 · 一次性"),
+	]))
+	gv.add_child(card_section("货架尺寸（中 · 150×210）· 状态一览", [
+		card_cell("作弊器", ItemCard.SIZE_MEDIUM, {}, "普通"),
+		card_cell("作弊器", ItemCard.SIZE_MEDIUM, {"count": 2, "cooling": true}, "冷却中 · 右上剩 2 回合·压暗"),
+		card_cell("黑卡", ItemCard.SIZE_MEDIUM, {"count": 2}, "计数中 · 剩 2 次购买"),
+		card_cell("空想者的香皂", ItemCard.SIZE_MEDIUM, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
+		card_cell("蛋蛋节", ItemCard.SIZE_MEDIUM, {}, "一次性 · 用后焚毁"),
+		card_cell("平均主义", ItemCard.SIZE_MEDIUM, {"dim": true}, "买不起 · 压暗"),
+		card_cell("平均主义", ItemCard.SIZE_MEDIUM, {"selected": true}, "发现可选 · 金框高亮"),
+	]))
+	gv.add_child(card_section("发现 / 使用展示尺寸（大 · 220×300）", [
+		card_cell("蛋蛋节", ItemCard.SIZE_LARGE, {"selected": true}, "发现三选一（高亮）"),
+		card_cell("黑卡", ItemCard.SIZE_LARGE, {}, "使用展示"),
+		card_cell("亡牌飞行员coco", ItemCard.SIZE_LARGE, {}, "一次性 · 用后焚毁"),
+		card_cell("空想者的香皂", ItemCard.SIZE_LARGE, {"count": 7, "melt": true}, "融化中 · 剩 7 回合"),
+		card_cell("园中叶", ItemCard.SIZE_LARGE, {}, "传说 · 被动"),
+	]))
+
+	# 品质补全（草案 51 件）：按品质分组动态陈列，图案逐件核对用
+	var first10 := ["平均主义", "作弊器", "交换生", "招财猫", "信托基金", "黑卡",
+		"空想者的香皂", "蛋蛋节", "亡牌飞行员coco", "园中叶"]
+	for q in ItemData.QUALITIES:
+		var q_ids: Array = []
+		for id2 in ItemData.ITEMS:
+			if not first10.has(id2) and String(ItemData.ITEMS[id2].get("quality", "")) == q:
+				q_ids.append(id2)
+		if q_ids.is_empty():
+			continue
+		var q_cells: Array = []
+		for id3 in q_ids:
+			q_cells.append(card_cell(id3, ItemCard.SIZE_MEDIUM, {}, ""))
+		gv.add_child(card_section("%s档 · 品质补全（%d 件）" % [CardDB.category_label(CardDB.FAMILY_ITEM, q), q_ids.size()], q_cells))
+
+func card_section(title: String, cells: Array) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	box.add_child(UIKit.label(title, 12, UIKit.TEXT_DIM))
+	var row := HFlowContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("h_separation", 14)
+	row.add_theme_constant_override("v_separation", 6)
+	box.add_child(row)
+	for c in cells:
+		row.add_child(c)
+	return box
+
+func card_cell(id: String, size: Vector2, state: Dictionary, caption: String) -> Control:
+	var cell := VBoxContainer.new()
+	cell.add_theme_constant_override("separation", 3)
+	var holder := Control.new()
+	holder.custom_minimum_size = size + Vector2(14, 14)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.add_child(holder)
+	var card := ItemCard.make(id, size, state)
+	card.position = Vector2(7, 7)
+	holder.add_child(card)
+	var cap := UIKit.label(caption, 10, UIKit.TEXT_DIM)
+	cap.custom_minimum_size = Vector2(size.x + 14, 0)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cell.add_child(cap)
+	return cell
