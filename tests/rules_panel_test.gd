@@ -216,6 +216,34 @@ func _run() -> void:
 	await create_timer(0.1).timeout
 	_check(not g.rules_panel.visible and not g.log_panel.visible, "两边都收起（互斥后仍可各自关闭）")
 
+	print("== 展开着时重建（`RulesPanel.refresh`）：面板必须留在展开态 ==")
+	# 真实触发：`s_state` 里经济 / 胜负 / 限时那几项一变（客户端首份快照必然触发一次）就
+	# `RulesPanel.refresh(self)` —— 它把按钮与面板**整个重建**。
+	# **2026-10-11 修**：旧写法重建时 `rules_open` 还是 true，末尾那句"恢复展开态"被
+	# `_set_rules_open` 开头的 `if rules_open == on: return` 早退挡掉 ⇒ 新面板留成
+	# `visible = false` 而 `rules_open` 仍是 true（表现：展开着规则时来一次状态广播，
+	# 面板自己消失、再点一次按钮才有反应 —— 得像"点两下"）。
+	# 直接调 `refresh`（它就是被测的那个函数）而不去凑一份状态快照：那一段的判据全在
+	# `econ_sig` 的比较上，与本条要钉的东西无关。
+	var RP = load("res://scripts/rules_panel.gd")
+	g._set_rules_open(true)
+	await create_timer(0.1).timeout
+	_check(g.rules_panel.visible, "（前置）先展开规则面板")
+	RP.refresh(g)
+	await create_timer(0.2).timeout
+	_check(g.rules_open and g.rules_panel.visible,
+		"重建后面板**仍在展开态**（`rules_open`=%s / `visible`=%s）"
+			% [str(g.rules_open), str(g.rules_panel.visible)])
+	# 重建出来的是**新节点**：那枚开关还得真的接得上（一次点收起、再一次点展开）
+	_check(g.rules_btn != null and is_instance_valid(g.rules_btn), "按钮跟着重建、且有效")
+	if g.rules_btn != null and is_instance_valid(g.rules_btn):
+		g.rules_btn.pressed.emit()
+		_check(not g.rules_panel.visible and not g.rules_open,
+			"重建后的按钮仍是一次就收起的开关")
+		g.rules_btn.pressed.emit()
+		_check(g.rules_panel.visible and g.rules_open, "再点一次又展开")
+		g._set_rules_open(false)
+
 	g.free()
 	if fails == 0:
 		print("RULES PANEL TEST: ALL PASS")

@@ -24,6 +24,12 @@ static func refresh(g: Node) -> void:
 	if is_instance_valid(g.rules_panel):
 		g.rules_panel.queue_free()
 	var was_open: bool = bool(g.rules_open)
+	# **先把标志清掉再重建**（2026-10-11 修）：`_set_rules_open` 开头是
+	# `if rules_open == on: return` —— 不清的话下面那句"恢复展开态"会被**早退挡掉**，
+	# 于是新面板留成 `visible = false`（`build` 建的默认态）而 `rules_open` 仍是 true。
+	# 表现：**展开着规则时来一次状态广播**（客户端首份快照必然触发一次）⇒ 面板自己消失，
+	# 而再点一次按钮会被判成"要收起"⇒ 零变化 ⇒ 得像"点两下"才回得来。
+	g.rules_open = false
 	build(g)
 	if was_open:
 		g._set_rules_open(true)

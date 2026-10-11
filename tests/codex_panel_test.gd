@@ -162,17 +162,19 @@ func _run() -> void:
 
 	print("== 与「规则说明」「战报」互斥 ==")
 	_check(g._set_codex_open != null, "（前置）互斥入口在")
-	# ⚠ 判据读**标志位**、不读 `rules_panel.visible`：本套件的宿主对局在跑，一次状态广播会让
-	# `RulesPanel.refresh` 把规则面板**整个重建**（新面板 `visible=false`，而它那句"恢复展开态"
-	# 因为 `rules_open` 还是 true 被早退挡掉）⇒ 拿 `rules_panel.visible` 断言会**随机红**，
-	# 且红的是与本功能无关的既有毛病（见交付说明）。图鉴面板不重建，两边都读得。
+	# 判据两边都读：**标志位 + 面板可见性**。本套件的宿主对局在跑，一次状态广播会让
+	# `RulesPanel.refresh` 把规则面板整个重建 —— 那条重建路径 2026-10-11 修过（原先重建后
+	# 新面板留成隐藏、而 `rules_open` 仍是 true ⇒ 拿可见性断言会随机红），
+	# `rules_panel_test` 末尾有一条专门钉它。这里照旧读可见性，等于顺带再守一道。
 	g._set_rules_open(true)
 	await create_timer(0.1).timeout
-	_check(g.rules_open and not g.codex_open and not g.codex_panel.visible,
+	_check(g.rules_open and g.rules_panel.visible
+			and not g.codex_open and not g.codex_panel.visible,
 		"展开规则说明 → 图鉴自动收起")
 	g._set_codex_open(true)
 	await create_timer(0.1).timeout
-	_check(g.codex_open and g.codex_panel.visible and not g.rules_open,
+	_check(g.codex_open and g.codex_panel.visible
+			and not g.rules_open and not g.rules_panel.visible,
 		"展开图鉴 → 规则说明自动收起")
 	g._toggle_log()
 	await create_timer(0.1).timeout
