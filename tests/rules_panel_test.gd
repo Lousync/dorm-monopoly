@@ -106,11 +106,11 @@ func _run() -> void:
 		"全部页都不再说「名册条」（它已整体删除，文案跟着改：信息在桌面立牌上）")
 	_check(not all_text.contains("右上角名册条") and not all_text.contains("点右上角"),
 		"全部页都不再说「右上角名册条 / 点右上角」（批次 13 ② 那两处已搬走）")
-	# 反向契约：四角条只剩"我"那一条之后，"点屏幕四角的对手身家条"这句话就是**教错东西**
+	# 反向契约：四角条只剩"我"那一条之后，"点屏幕四角的对手总资产条"这句话就是**教错东西**
 	_check(not basic_page.contains("点屏幕四角的"),
-		"基础操作页不再教「点屏幕四角的对手身家条」（他人的四角条已删）")
+		"基础操作页不再教「点屏幕四角的对手总资产条」（他人的四角条已删）")
 	# **「立牌」这个反向契约已作废**（v0.8.0 四次复核）：批次 9 退场的是**老 2D 版那块座位卡式立牌**
-	#（带公开背包 / 身家），而今天桌面上**又有了立牌** —— 但那是**名册条的替身**（名次 + 棋子色 +
+	#（带公开背包 / 总资产），而今天桌面上**又有了立牌** —— 但那是**名册条的替身**（名次 + 棋子色 +
 	# 昵称 + 倒计时），与老那块不是同一样东西（`table_props` 里 `Standees` 仍是 null，
 	# 那条反向契约在 `hud_test` 里）。⇒ 这里改成钉**老那块的特征**：不能出现"公开背包"这类说法。
 	_check(not all_text.contains("公开背包") and not all_text.contains("座位卡"),
@@ -215,6 +215,34 @@ func _run() -> void:
 	g._set_rules_open(false)
 	await create_timer(0.1).timeout
 	_check(not g.rules_panel.visible and not g.log_panel.visible, "两边都收起（互斥后仍可各自关闭）")
+
+	print("== 展开着时重建（`RulesPanel.refresh`）：面板必须留在展开态 ==")
+	# 真实触发：`s_state` 里经济 / 胜负 / 限时那几项一变（客户端首份快照必然触发一次）就
+	# `RulesPanel.refresh(self)` —— 它把按钮与面板**整个重建**。
+	# **2026-10-11 修**：旧写法重建时 `rules_open` 还是 true，末尾那句"恢复展开态"被
+	# `_set_rules_open` 开头的 `if rules_open == on: return` 早退挡掉 ⇒ 新面板留成
+	# `visible = false` 而 `rules_open` 仍是 true（表现：展开着规则时来一次状态广播，
+	# 面板自己消失、再点一次按钮才有反应 —— 得像"点两下"）。
+	# 直接调 `refresh`（它就是被测的那个函数）而不去凑一份状态快照：那一段的判据全在
+	# `econ_sig` 的比较上，与本条要钉的东西无关。
+	var RP = load("res://scripts/rules_panel.gd")
+	g._set_rules_open(true)
+	await create_timer(0.1).timeout
+	_check(g.rules_panel.visible, "（前置）先展开规则面板")
+	RP.refresh(g)
+	await create_timer(0.2).timeout
+	_check(g.rules_open and g.rules_panel.visible,
+		"重建后面板**仍在展开态**（`rules_open`=%s / `visible`=%s）"
+			% [str(g.rules_open), str(g.rules_panel.visible)])
+	# 重建出来的是**新节点**：那枚开关还得真的接得上（一次点收起、再一次点展开）
+	_check(g.rules_btn != null and is_instance_valid(g.rules_btn), "按钮跟着重建、且有效")
+	if g.rules_btn != null and is_instance_valid(g.rules_btn):
+		g.rules_btn.pressed.emit()
+		_check(not g.rules_panel.visible and not g.rules_open,
+			"重建后的按钮仍是一次就收起的开关")
+		g.rules_btn.pressed.emit()
+		_check(g.rules_panel.visible and g.rules_open, "再点一次又展开")
+		g._set_rules_open(false)
 
 	g.free()
 	if fails == 0:

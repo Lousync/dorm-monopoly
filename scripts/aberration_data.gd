@@ -50,8 +50,30 @@ const ABERRATIONS := {
 	"斗地主": {"type": "非持续", "trigger": "随机", "tag": "中性", "dur": 0, "min_round": 30,
 		"desc": "房产最多的「地主」把自己一块投入最少的地皮无偿过户给末位（保留等级）。", "implemented": true},
 	"改革开放": {"type": "非持续", "trigger": "随机", "tag": "buff", "dur": 0, "min_round": 30,
-		"desc": "让后富的玩家先富：身家末位随机获得一件紫色道具。", "implemented": true},
+		"desc": "让后富的玩家先富：总资产末位随机获得一件紫色道具。", "implemented": true},
 }
 
 static func def(id: String) -> Dictionary:
 	return ABERRATIONS.get(id, {})
+
+## 畸变说明的**实时全文**：`desc` + 比例类畸变此刻生效的数值（读本文件的占位常量，不抄数）。
+## **唯一来源**（2026-10-12 从 `game._ab_announce_text` 里抽出来、下沉到这里）：触发大字卡 /
+## 战报 / 顶部横幅 / 悬停 tooltip 全读它 —— 横幅那行是「名称 + 全文 + 剩几回合」，正是同一份文字。
+static func desc_live(id: String) -> String:
+	var text := String(def(id).get("desc", ""))
+	match id:
+		"金融危机":
+			text += "（无房产者扣 %d%%、有房产者扣 %d%%）" % [
+				int(FIN_RATE_NC * 100), int(FIN_RATE_C * 100)]
+		"枪打出头鸟":
+			text += "（按现金的 %d%%）" % int(BIRD_RATE * 100)
+	return text
+
+## 畸变公告文案（唯一来源；`aberration_test` 钉住）：实时全文 + 持续型的
+## 「持续 N 回合，到期自动解除」。**所有畸变都没有手动解除** —— 持续型到期自动消失
+##（用户 2026-10-06 定口径），所以这句话要写出来。
+static func announce_text(id: String, left := -1) -> String:
+	var text := desc_live(id)
+	if String(def(id).get("type", "")) == "持续" and left > 0:
+		text += "\n持续 %d 回合，到期自动解除。" % left
+	return text

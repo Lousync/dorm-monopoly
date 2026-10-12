@@ -628,7 +628,7 @@ func _run() -> void:
 	var boosted: int = 10000 + int(round(float(int(GameData.TILES[prop_a].price)
 		+ 2 * GameData.upgrade_cost(prop_a)) * 1.3))
 	_check(g._net_worth_final(pjz) == boosted and boosted > plain, "金字招牌：到轮结算地皮 ×1.3")
-	_check(g._net_worth(pjz) == plain, "金字招牌：对局中实时身家不放大")
+	_check(g._net_worth(pjz) == plain, "金字招牌：对局中实时总资产不放大")
 
 	print("== 广置家业 ==")
 	var pgz := _mk_player(1, "广置")

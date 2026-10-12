@@ -6,7 +6,8 @@ extends SceneTree
 ##
 ## 为什么必须**生成**而不是手写：本仓 CHANGELOG 自己记着——game.gd 曾从 3439 行
 ## 拆到 ~2400 行，如今又长回 8000+ 行。手写的索引必然烂，且尺寸闸门会不断把代码外迁、
-## 索引只会烂得更快。所以和 `doc/game-design/图鉴.html` 一个路子：生成产物 + 闸门校验。
+## 索引只会烂得更快。所以走「生成产物 + 闸门校验」的路子（另一处同类是这索引自己；
+## 原先还有一张 `doc/game-design/图鉴.html`，2026-10-12 已删除）。
 ##
 ## 用法：
 ##   godot --headless --path . --script tools/gen_game_index.gd             # 写入

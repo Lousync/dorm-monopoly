@@ -39,6 +39,9 @@ func _test_object() -> void:
 	_check(s.start_cash == GameData.START_MONEY, "起始资金默认 = START_MONEY")
 	_check(s.start_salary == GameData.SALARY, "起点补贴默认 = SALARY")
 	_check(s.liq_on, "破产变卖保底默认开（例外一：「默认 ≠ 现状」）")
+	# 例外三（2026-10-12 用户定）：操作限时默认**不限时**（不再等于「各环节原值」那一档）
+	_check(s.timeout_tier == GameSettings.TIER_NONE,
+		"操作限时默认 = 不限时（例外三：「默认 ≠ 现状」，实得 %s）" % s.timeout_tier)
 	_check(s.max_rounds == 30 and s.win_mode == "rounds" and s.win_cash == 50000,
 		"回合上限 30 / 胜利条件总资产排名 / 目标现金 5 万 默认")
 	_check(s.shop_on and s.black_on and s.casino_on, "小卖部 / 黑市 / 赌场默认开")
@@ -226,8 +229,8 @@ func _test_broadcast() -> void:
 	if g == null:
 		return
 	g._broadcast_state()
-	_check(String(g.st.get("timeout_tier", "")) == GameSettings.TIER_CURRENT,
-		"开局快照带 timeout_tier = 现状")
+	_check(String(g.st.get("timeout_tier", "")) == GameSettings.TIER_NONE,
+		"开局快照带 timeout_tier = 不限时（本项默认）")
 	g._settings.timeout_tier = "30"
 	g._broadcast_state()
 	_check(String(g.st.get("timeout_tier", "")) == "30", "房主改挡后快照同步为 30")
@@ -236,7 +239,7 @@ func _test_broadcast() -> void:
 	var lobby := root.get_node_or_null("Net")
 	_check(lobby != null, "测试环境能取到 autoload Net")
 	_check(g._settings != lobby.game_settings, "房主用配置副本，非 autoload 同一对象")
-	_check(lobby.game_settings.timeout_tier == GameSettings.TIER_CURRENT, "对局内改挡不回写大厅")
+	_check(lobby.game_settings.timeout_tier == GameSettings.TIER_NONE, "对局内改挡不回写大厅")
 	# s_state 的同步分支：快照里的挡位变化要落进本地 _settings（房主 call_local 与客户端同一段代码）
 	g.s_state({"phase": "playing", "round": 1, "max_rounds": 30, "turn": 1,
 		"players": [], "tiles": [], "timeout_tier": "60"})
@@ -264,28 +267,48 @@ func _test_in_game_tier() -> void:
 	_check(g.tier_readonly.text.begins_with("30 秒"), "只读行文案跟随挡位（前缀由小节标题承担）")
 	g._set_timeout_tier("bogus")
 	_check(g._settings.timeout_tier == "30", "非法挡位被拒（回落靠 GameSettings）")
+	# 自动回归把「不限时」钳回「系统默认」（2026-10-12，见 `game._autotest_clamp_tier`）。
+	# **这条不是洁癖**：不钳的话 `--autotest=host` 里那个"真人房主"永远等不到托管 ——
+	# CI 的联机回归与所有 `--shot=` 摆拍都会卡在那儿打不完。两个方向都钉。
+	g._settings.timeout_tier = GameSettings.TIER_NONE
+	g.at_mode = ""
+	g._autotest_clamp_tier()
+	_check(g._settings.timeout_tier == GameSettings.TIER_NONE, "非自动回归：不限时原样保留")
+	g.at_mode = "host"
+	g._autotest_clamp_tier()
+	_check(g._settings.timeout_tier == GameSettings.TIER_CURRENT,
+		"自动回归：不限时被钳回「系统默认」（实得 %s）" % g._settings.timeout_tier)
+	g._settings.timeout_tier = "60"
+	g._autotest_clamp_tier()
+	_check(g._settings.timeout_tier == "60", "自动回归**只钳这一档**：60 秒照旧")
+	g.at_mode = ""
 	g.queue_free()
 
 func _test_mapping() -> void:
 	var cur := GameSettings.TIER_CURRENT
-	# 现状档 = 各环节原常量（默认行为与今天完全一致）
-	_check(GameSettings.turn_seconds(cur, "roll") == GameData.ROLL_TIMEOUT, "现状·掷轮 = ROLL_TIMEOUT")
-	_check(GameSettings.turn_seconds(cur, "prompt") == GameData.PROMPT_TIMEOUT, "现状·决策 = PROMPT_TIMEOUT")
-	_check(GameSettings.turn_seconds(cur, "item") == ItemData.ITEM_TIMEOUT, "现状·道具 = ITEM_TIMEOUT")
-	_check(GameSettings.turn_seconds(cur, "shop") == ItemData.SHOP_TIMEOUT, "现状·逛店 = SHOP_TIMEOUT")
-	_check(GameSettings.turn_seconds(cur, "black") == ItemData.BLACK_TIMEOUT, "现状·黑市 = BLACK_TIMEOUT")
+	# 「系统默认」档 = 各环节原常量（**名字 2026-10-12 由「现状」改来**，含义与取值都没动）
+	_check(GameSettings.turn_seconds(cur, "roll") == GameData.ROLL_TIMEOUT, "系统默认·掷轮 = ROLL_TIMEOUT")
+	_check(GameSettings.turn_seconds(cur, "prompt") == GameData.PROMPT_TIMEOUT, "系统默认·决策 = PROMPT_TIMEOUT")
+	_check(GameSettings.turn_seconds(cur, "item") == ItemData.ITEM_TIMEOUT, "系统默认·道具 = ITEM_TIMEOUT")
+	_check(GameSettings.turn_seconds(cur, "shop") == ItemData.SHOP_TIMEOUT, "系统默认·逛店 = SHOP_TIMEOUT")
+	_check(GameSettings.turn_seconds(cur, "black") == ItemData.BLACK_TIMEOUT, "系统默认·黑市 = BLACK_TIMEOUT")
 	# 固定档：每个环节各自取该秒数
 	for kind in ["roll", "prompt", "item", "shop", "black"]:
 		_check(GameSettings.turn_seconds("15", kind) == 15.0, "15 秒档·%s" % kind)
 		_check(GameSettings.turn_seconds("30", kind) == 30.0, "30 秒档·%s" % kind)
 		_check(GameSettings.turn_seconds("60", kind) == 60.0, "60 秒档·%s" % kind)
 		_check(GameSettings.turn_seconds(GameSettings.TIER_NONE, kind) == 0.0, "不限时档·%s" % kind)
-	# 未知挡位回落现状
-	_check(GameSettings.turn_seconds("bogus", "roll") == GameData.ROLL_TIMEOUT, "未知挡位回落现状")
+	# 未知挡位回落「系统默认」
+	_check(GameSettings.turn_seconds("bogus", "roll") == GameData.ROLL_TIMEOUT, "未知挡位回落系统默认")
 	# 挡位清单与标签齐备（UI 依赖）
-	_check(GameSettings.TIERS.size() == 5 and GameSettings.TIERS[0] == cur, "挡位清单 5 项、首位是现状")
+	_check(GameSettings.TIERS.size() == 5 and GameSettings.TIERS[0] == cur, "挡位清单 5 项、首位是系统默认")
 	for t in GameSettings.TIERS:
 		_check(GameSettings.TIER_LABELS.has(t), "挡位 %s 有中文标签" % t)
+	_check(String(GameSettings.TIER_LABELS[GameSettings.TIER_CURRENT]) == "系统默认",
+		"那一档的标签就叫「系统默认」（用户 2026-10-12 要求；实得「%s」）"
+			% String(GameSettings.TIER_LABELS[GameSettings.TIER_CURRENT]))
+	_check(GameSettings.TIER_CURRENT_HINT.contains("系统默认"),
+		"悬停说明里也跟着改名（不再写「现状」）")
 
 ## 主菜单保存昵称/端口不得抹掉其他配置段：曾因新建空 ConfigFile 直接覆盖保存，
 ## 每开一局就把 [dev]（开发者模式/道具试验场入口）和 [audio]（音量/静音）整段抹掉，

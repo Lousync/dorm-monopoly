@@ -9,12 +9,15 @@ var fails := 0
 func _initialize() -> void:
 	print("== CardDB 统一元数据 ==")
 
-	# 族清单：事件族本批未接入
-	_check(CardDB.families() == [CardDB.FAMILY_ITEM, CardDB.FAMILY_TECH, CardDB.FAMILY_ABERRATION],
-		"families() 恰为 道具/科技/畸变（事件族未接入）")
-	_check(not CardDB.has(CardDB.FAMILY_EVENT, ""), "事件族未接入（FAMILY_EVENT 无条目）")
+	# 族清单：**四族，机会卡打头**（2026-10-12 接入；顺序即对局内图鉴的分页序）
+	_check(CardDB.families() == [CardDB.FAMILY_EVENT, CardDB.FAMILY_ITEM,
+			CardDB.FAMILY_TECH, CardDB.FAMILY_ABERRATION],
+		"families() 恰为 机会卡/道具/科技/畸变")
+	_check(not CardDB.has(CardDB.FAMILY_EVENT, ""), "空 id 不算命中")
 
 	# 数量与源表一致
+	_check(CardDB.all(CardDB.FAMILY_EVENT).size() == GameData.EVENTS.size(),
+		"机会卡条目数 = GameData.EVENTS（%d）" % GameData.EVENTS.size())
 	_check(CardDB.all(CardDB.FAMILY_ITEM).size() == ItemData.ITEMS.size(),
 		"道具条目数 = ItemData.ITEMS（%d）" % ItemData.ITEMS.size())
 	_check(CardDB.all(CardDB.FAMILY_TECH).size() == TechData.TECHS.size(),
@@ -23,6 +26,7 @@ func _initialize() -> void:
 		"畸变条目数 = AberrationData.ABERRATIONS（%d）" % AberrationData.ABERRATIONS.size())
 
 	# 逐族：归一化字段完整、category 合法
+	_validate_events()
 	_validate_items()
 	_validate_techs()
 	_validate_aberrations()
@@ -68,6 +72,57 @@ func _check(cond: bool, what: String) -> void:
 	else:
 		fails += 1
 		printerr("  FAIL - ", what)
+
+## 机会卡（2026-10-12 接入）：category 必须是**卡型**（`GameData.card_kind` 的五个取值），
+## desc 由效果行拼出来、`rows` 非空且每行都有 k/v —— 这三条一起保证「图鉴上那张卡读得出来」。
+func _validate_events() -> void:
+	var bad: Array = []
+	var kinds: Array = []
+	for meta in CardDB.all(CardDB.FAMILY_EVENT):
+		if not GameData.CARD_KINDS.has(String(meta.category)):
+			bad.append("%s=%s" % [meta.id, meta.category])
+		if String(meta.desc) == "":
+			bad.append("%s 缺 desc" % meta.id)
+		var rows: Array = meta.get("rows", [])
+		if rows.is_empty():
+			bad.append("%s 无 rows" % meta.id)
+		for r in rows:
+			if String((r as Dictionary).get("k", "")) == "" or String((r as Dictionary).get("v", "")) == "":
+				bad.append("%s 有空行" % meta.id)
+		if not kinds.has(String(meta.category)):
+			kinds.append(String(meta.category))
+	_check(bad.is_empty(), "机会卡 category ∈ CARD_KINDS 且 desc/rows 齐（异常：%s）" % str(bad))
+	# 五个卡型都要有人用 —— 只覆盖两三个的话，图鉴的卡型配色等于没验过
+	_check(kinds.size() >= 4, "机会卡覆盖 ≥4 种卡型（实得 %d：%s）" % [kinds.size(), str(kinds)])
+	# 卡名当 id：跨族与族内都不许重名（`CardDB.find` 按族序取首个命中，重名会静默取错）
+	var seen := {}
+	var dup: Array = []
+	for fam in CardDB.FAMILIES:
+		for id in CardDB.ids(fam):
+			var key := String(id)
+			if seen.has(key):
+				dup.append(key)
+			seen[key] = fam
+	_check(dup.is_empty(), "四族卡名全局唯一（重复：%s）" % str(dup))
+	# 香皂那一行是**免疫口径**、不是效果 ⇒ 按字段推出的结论要自洽。
+	# **按字段找卡、不写死卡名**：机会卡的"标题"是「卡名——风味文案」一整句
+	#（`t` 就是玩家在大字卡上看到的那行字），写死进测试会跟着文案改动一起烂。
+	var to_each_id := ""
+	var pure_id := ""
+	for id in CardDB.ids(CardDB.FAMILY_EVENT):
+		var raw: Dictionary = CardDB.def(CardDB.FAMILY_EVENT, String(id)).raw
+		if to_each_id == "" and raw.has("to_each"):
+			to_each_id = String(id)
+		if pure_id == "" and raw.has("money") and int(raw.money) > 0 and not raw.has("choices"):
+			pure_id = String(id)
+	_check(to_each_id != "" and CardDB.event_soap(to_each_id).contains("你持皂则整条免疫"),
+		"请客类卡：抽卡者持皂整条免疫（口径照 机会卡.md §四）")
+	_check(pure_id != "" and CardDB.event_soap(pure_id).contains("不受影响"),
+		"纯收益卡：香皂不受影响")
+	var rows: Array = CardDB.event_rows(pure_id)
+	_check(rows.size() >= 2 and String((rows[rows.size() - 1] as Dictionary).k) == "香皂",
+		"效果行末尾恒有「香皂」一行")
+	_check(String(rows[0].k) == "金额", "效果行按结算顺序排（金额打头，机会卡.md §三）")
 
 func _validate_items() -> void:
 	var bad: Array = []
@@ -122,6 +177,14 @@ func _test_category_accessors() -> void:
 		"畸变分级色 = CardDB.TAG_COLORS")
 	_check(CardDB.category_label(CardDB.FAMILY_ABERRATION, "debuff") == "负面",
 		"畸变分级名 = TAG_LABELS 中文")
+	# 机会卡的分级 = **卡型**，色与名都从 `GameData.CARD_KINDS` 取（演出大字卡读同一张表）
+	_check(CardDB.category_color(CardDB.FAMILY_EVENT, "bad") == GameData.CARD_KINDS["bad"].color,
+		"机会卡分级色 = GameData.CARD_KINDS")
+	_check(CardDB.category_label(CardDB.FAMILY_EVENT, "bad") == String(GameData.CARD_KINDS["bad"].label),
+		"机会卡分级名 = CARD_KINDS 的 label")
+	_check(CardDB.category_color(CardDB.FAMILY_EVENT, "不存在") == Color.WHITE
+			and CardDB.category_label(CardDB.FAMILY_EVENT, "不存在") == "不存在",
+		"未知卡型不炸（色给白、名回原样）")
 	# 图标统一入口
 	if not item_ids_cache().is_empty():
 		var iid := String(item_ids_cache()[0])

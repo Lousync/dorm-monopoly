@@ -54,7 +54,7 @@ var _set_wincash_edit: LineEdit          # 目标现金金额
 # 条件显隐的两块（用户 2026-10-09）：整行 / 整块跟着主选项走，由 `_sync_conditional_rows()` 统一刷
 var _set_wincash_row: HBoxContainer       # 目标现金：仅 win = 目标现金 时显示
 var _set_tech_tier_box: VBoxContainer     # 科技等级：仅科技开关打开时显示
-var _set_tier := GameSettings.TIER_CURRENT
+var _set_tier := GameSettings.TIER_NONE   # 与 `GameSettings.timeout_tier` 的默认一致
 var _set_tech := true    # 科技开关（发车前配置；对局内不可改。默认开 = `GameSettings` 那份默认）
 var _set_tech_tier := GameSettings.TECH_TIER_RANDOM   # 科技等级：random = 系统随机选一档；其余 = 指定
 var _set_liq := true
@@ -318,7 +318,7 @@ func _i_am_ready() -> bool:
 ## 房主「游戏设置」弹窗：经济 / 节奏 / 胜利条件 / 各系统开关（开局设置.md 定稿项 + 开关先行项）
 ##
 ## **版式（2026-10-09 用户 3 条 + 布局优化）**：
-##   * 去掉顶上那句「默认值 = 现状常量…」提示（用户要求）；
+##   * 去掉顶上那句「默认值 = 现状常量…」提示（用户要求；2026-10-12 起措辞为「系统默认」）；
 ##   * 每一节套一个 `UIKit.SectionBox` —— 带边框，**小标题骑在上边框正中**（legend 式）；
 ##   * on/off 的行从「关 / 开」两枚 chip 换成 `UIKit.Switch` **开关组件**；
 ##   * 原先的「特殊机制」一节拆成**「科技」+「畸变」两节**（两套系统挤在一节里读不清）。

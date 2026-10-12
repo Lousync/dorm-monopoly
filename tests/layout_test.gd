@@ -1819,7 +1819,7 @@ func _run() -> void:
 		# `_seg_under_pointer` 的语义**一字未改**：中奖格仍按"盘面顶格"算，3D 箭头只是把它画出来。
 		_check(t3.table_props.wheel_hit(wheel_px), "（对照）转盘命中判定不受指针改动影响")
 
-	# ---- 批次 7：筹码堆与体力件整体退场（读数归四角身家条 / 批次 9 的道具弹窗） ----
+	# ---- 批次 7：筹码堆与体力件整体退场（读数归四角总资产条 / 批次 9 的道具弹窗） ----
 	# 反向契约：谁把这两条子系统加回来，这几条先红。
 	print("== 筹码堆与体力件：接口与节点都已退场（不留空壳） ==")
 	var tp3 = t3.table_props
@@ -1866,8 +1866,12 @@ func _run() -> void:
 			for i in 7:
 				many4.append({"id": "共享单车", "cd": 0})
 			tp4.set_hand(many4)
-			_check(tp4.hand_count() == 5 and vis4.call(hr) == 5,
-				"7 件道具 → 最多摆 5 张（实得 %d 张）" % tp4.hand_count())
+			# **2026-10-12 改**：封顶从 5 提到 **7**（= `game._bag_cap` 的上限，带「置物架」的档）。
+			# 原先那条钉的是"最多摆 5 张" —— 那正是用户报的「桌面上无法显示超过 5 张牌」，
+			# 而且不只是看不见：`hand_hit` 只遍历 `_hand_n` ⇒ 第 6、7 件**点不到**（用不了也丢不掉）。
+			# 判据从"封顶"翻成"**七件都摆出来**"（摆不下 / 又封回去，这条先红）。
+			_check(tp4.hand_count() == 7 and vis4.call(hr) == 7,
+				"7 件道具 → 七张都摆出来（实得 %d 张）" % tp4.hand_count())
 			tp4.set_hand([])
 			_check(tp4.hand_count() == 0 and vis4.call(hr) == 0, "清空 → 一张都不露")
 			# **整排手牌必须完整在屏内**（批次 12 A2b 补）。此前这条只在 `_apply_camera` 那段
@@ -2087,6 +2091,35 @@ func _run() -> void:
 			_check(one_ok, "每槽视口里恰好一张 `ItemCard`（5 张牌 = 5 个视口，各烘一张）")
 			_check(id_ok, "视口里那张卡的 id 就是该槽的道具 id（招财猫 / 黑卡）")
 			_check(aspect_ok, "卡面没被拉扁：正面贴片宽高比 == 视口宽高比（%s 对 0.748）" % str(want_vp))
+			# ④ **角标不许被视口裁掉**（2026-10-11 用户：「卡牌左上角和右上角的徽章显示不全」）。
+			# `ItemCard` 的角标是**半出卡外**画的，探出多少全在 `item_card.gd` 的落点里；
+			# 留白必须盖得住**最宽的那一枚** —— 「一次性」胶囊比圆角标宽一倍多，旧留白 14px
+			# 只算到圆角标（注释里也这么写着），右半截被 SubViewport 硬切。
+			# 判据**逐枚量子节点的越界量**，不读常量、也不算第二遍公式（那样写成什么样都过）。
+			var over_bad: Array = []
+			var pad_v: Vector2 = face_consts["HAND_FACE_PAD"]
+			var worst := -INF
+			for probe_id in ["招财猫", "蛋蛋节"]:   # 蛋蛋节 = 一次性 ⇒ 右上那枚正是最宽的胶囊
+				var probe_card: Control = ICARD4.make(String(probe_id), want_face, {})
+				for probe_ch in probe_card.get_children():
+					if not (probe_ch is Control):
+						continue
+					var probe_c: Control = probe_ch
+					if probe_c.size.x <= 0.0 or probe_c.size.y <= 0.0:
+						continue
+					# 越界量（> 0 = 被视口切掉）：左 / 上两条是"离 −留白 还差多少"，
+					# 右 / 下两条是"超出 卡面 + 留白 多少"。
+					var probe_d: float = maxf(
+						maxf(-pad_v.x - probe_c.position.x, -pad_v.y - probe_c.position.y),
+						maxf(probe_c.position.x + probe_c.size.x - want_face.x - pad_v.x,
+							probe_c.position.y + probe_c.size.y - want_face.y - pad_v.y))
+					worst = maxf(worst, probe_d)
+					if probe_d > 0.0:
+						over_bad.append("%s 第 %d 枚探出 %.1fpx"
+							% [String(probe_id), probe_c.get_index(), probe_d])
+				probe_card.free()
+			_check(over_bad.is_empty(),
+				"角标都盖在留白里（最紧的一枚只余 %.1fpx；已越界的 %s）" % [-worst, str(over_bad)])
 			_check(slot_tex.size() == 2 and slot_tex[0] != slot_tex[1],
 				"两张牌贴的是**两张不同的纹理**（同一个视口的话会共用一张 —— 房子那 4 级同款坑）")
 			# 同一份画法：卡面节点的脚本就是商店那份 `item_card.gd`（不是另写一个"手牌专用卡"）
@@ -2867,7 +2900,7 @@ func _run() -> void:
 
 	# ---- 批次 5 Task 2：座位栏退场，改钉"窗口覆盖了什么"（原第 ③ 条「立牌贴桌沿」随批次 9 删）----
 	# T4b/T4c/T-a 那三条（"四条座位栏都在画布内 / 窗口内 / 屏幕内"）随座位栏一起删了：
-	# 它们守的是"指向性道具点得到人"，而那个入口随批次 9 挪到**屏幕层的四角身家条**
+	# 它们守的是"指向性道具点得到人"，而那个入口随批次 9 挪到**屏幕层的四角总资产条**
 	#（Task 2 起可点、Task 3 接上选目标高亮；hud_test 里那两条断言守着）。这里只剩两条：
 	#   ① 反向契约：座位卡那一套真的没了、也没有留下四条空栏；
 	#   ② 窗口必须覆盖**棋盘**（可见且可点到）——批次 2 的 T4c 就是踩了这个坑

@@ -21,9 +21,13 @@ extends SceneTree
 ##
 ## 覆盖（编号与 `hud_test` 里那段"搬去哪了"的索引一一对应）：
 ##   ① 三个人各一块立牌、**没有「我」那块**（`slot 0` 不摆）；
-##   ② **棋子色小片随 `p.color` 走**、**不随座位序号**（喂进来的座位序里"色号"与"座位号"处处不等）；
+##   ② **身份色随 `p.color` 走**、**不随座位序号**（喂进来的座位序里"色号"与"座位号"处处不等）。
+##      **2026-10-11 用户第二条起身份色只剩两处**：**棋子剪影 `Piece`**（连**形状**一起跟着
+##      `p.color` 换 —— 棋子贴图是按色号分的四张）+ **名次字**；**内框静息必须是中性灰**
+##      （"边框不要有颜色"），另有一条判据量它的三通道极差；
 ##   ③ 昵称文本 == 喂进去的 name（出局的挂「（破产）」后缀 —— `_fill_placard` 的既有契约）；
-##      名次 == 喂进去的 rank；
+##      名次写「**#N**」（2026-10-11 用户定，裸数字读不出是名次还是编号）；两处文字**加粗**
+##     （`Label3D` 没字重，靠换粗体 `SystemFont`）；另量内框夹在牌身与外框之间（双层倒角的前提）；
 ##   ④ **落点在自己那一侧**：侧向（右 x>0 / 对面 z<0 / 左 x<0）；**"压不压地块"用射线足迹**
 ##     （八角投影，全在地块环之外）；**"在不在桌内"量的是"落桌点"**（牌心折回画布像素，落在
 ##      木桌外沿之内）—— 牌面宽 0.80 与木纹带（≈0.92）同量级，外沿那排角会略微探出桌沿，
@@ -33,6 +37,10 @@ extends SceneTree
 ##      写法**的判据：牌面法线 · 指向相机的方向（对照"完全不转"那一档）；
 ##   ⑥ 金边：`set_placard_hot([p])` ⇒ **只有那一块牌身朝金偏**（比另一块更接近金即可）；
 ##      换人跟着换；空数组全灭；
+##   ⑥b **当前行动者**（2026-10-11 新增）：`set_placard_active(p)` ⇒ **只有那一块的内框变金 + 脉冲**
+##      （其余中性灰、停在静息量）；走完一圈量**脉冲包络 = [FLASH_LO, FLASH_HI]**；换人跟着换、
+##      `NO_PEER` 全灭并**连颜色一起还原**（只收发光量会留下一圈常亮金边）。**与 ⑥ 的 `hot`
+##      是两条独立通道**（一个是"轮到谁"、永远只有一块；一个是"可被选中"、能同时亮三块）；
 ##   ⑦ 行动者倒计时：只有行动者那一块露 `Track` / `Bar`、`Bar.scale.x` 跟着剩余比例；
 ##      `NO_PEER` 全收。既走 game 那条真入口（`_op_*` → `_refresh_corner_timer`），
 ##      也直接量 `set_placard_timer` 本身；
@@ -61,6 +69,10 @@ func _check(cond: bool, what: String) -> void:
 		fails += 1
 		printerr("  FAIL - ", what)
 
+## 两个颜色的欧氏距离（`Color` 自己没有 `length()`，借 `Vector3` 量）。
+func _cdist(a: Color, b: Color) -> float:
+	return Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length()
+
 func _fresh_tiles() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
@@ -68,7 +80,7 @@ func _fresh_tiles() -> Array:
 	return out
 
 ## 一份 4 人状态（与 `hud_test._state` 同形）：甲（名下有"一号楼"）/ 乙（**我**）/ 丙 / 丁（已出局）。
-## 身家 = 现金 + 地产 ⇒ 乙 20000 > 甲 12000+一号楼 > 丙 8000 > 丁 100。
+## 总资产 = 现金 + 地产 ⇒ 乙 20000 > 甲 12000+一号楼 > 丙 8000 > 丁 100。
 ## **色号 = peer − 1**，而座位序（`_seat_peers()`，自己打头）= [2,3,4,1] ⇒ 三家分到的座号是
 ## 丙 1（右）/ 丁 2（对面）/ 甲 3（左）⇒ **色号与座位号处处不等**（② 靠这一条才有杀伤力）。
 func _state(turn_peer: int) -> Dictionary:
@@ -218,10 +230,20 @@ func _run() -> void:
 	var tp = t3.table_props
 	# 立牌的几何常量从**脚本常量表**取（不写死数字、也不假定它长什么样）
 	var tp_consts: Dictionary = load("res://scripts/table_props.gd").get_script_constant_map()
+	# UIKit 一律**运行时 load**（同本文件头部说明）：静态写 `UIKit.X` 会把 ui_kit.gd 拽进
+	# `--script` 入口的静态依赖链，而它引用了 autoload `Fx` ⇒ 整链编译失败。
+	var UK = load("res://scripts/ui_kit.gd")
 	var P_W: float = float(tp_consts.get("PLACARD_W", 0.0))
 	var P_H: float = float(tp_consts.get("PLACARD_H", 0.0))
 	var P_T: float = float(tp_consts.get("PLACARD_T", 0.0))
 	var P_HOT: Color = tp_consts.get("PLACARD_HOT", Color.WHITE)
+	var P_EMIT: float = float(tp_consts.get("PLACARD_EMIT", 0.0))
+	var P_FLO: float = float(tp_consts.get("PLACARD_FLASH_LO", 0.0))
+	var P_FHI: float = float(tp_consts.get("PLACARD_FLASH_HI", 0.0))
+	var P_FTIME: float = float(tp_consts.get("PLACARD_FLASH_TIME", 0.0))
+	var P_RIM: float = float(tp_consts.get("PLACARD_RIM", 0.0))
+	var P_FCOL: Color = tp_consts.get("PLACARD_FLASH_COLOR", Color.WHITE)
+	var P_IDLE: Color = tp_consts.get("PLACARD_RIM_IDLE", Color.WHITE)
 	_check(P_W > 0.0 and P_H > 0.0 and P_T > 0.0,
 		"立牌几何常量在（`PLACARD_W`=%.3f / `PLACARD_H`=%.3f / `PLACARD_T`=%.3f）"
 			% [P_W, P_H, P_T])
@@ -234,7 +256,7 @@ func _run() -> void:
 	shown.sort()
 	_check(shown == [1, 3, 4], "三块立牌 = 其余三人（实得 %s）" % str(shown))
 	_check(not tp._placards.has(2),
-		"**没有「我」那块** —— 自己的信息在左下角那条身家条上（`slot 0` = 近侧，相机就在那儿）")
+		"**没有「我」那块** —— 自己的信息在左下角那条总资产条上（`slot 0` = 近侧，相机就在那儿）")
 	_check(tp._placards_root != null and tp._placards_root.get_child_count() == 3,
 		"`Placards` 父节点下就是这三块（实得 %d）"
 			% (0 if tp._placards_root == null else tp._placards_root.get_child_count()))
@@ -245,44 +267,82 @@ func _run() -> void:
 		"落位按 `game._seat_peers()` 反查：丙 slot1(右) / 丁 slot2(对面) / 甲 slot3(左)（实得 %s）" % str(slots))
 	# 节点池的键与节点名：牌面是**原生 3D 元素**拼的（第四次复核），这六件缺一不可 ——
 	# 缺了它牌面上就少一样东西，而"少一样"在颜色 / 文字那几条断言里可能看不出来。
+	# **2026-10-11 改版**再加六件：`Rim`（内框，**静息中性灰、轮到谁才变金脉冲**）/
+	# `Inset`（内嵌板）/ `TopLight`（顶部高光线）与它们各自的材质，外加 `border_mat`
+	#（外框材质，原先没存）。**`Chip` 已改名 `Piece`** —— 它不再是色片，是**棋子剪影**。
 	var keys_ok := true
 	var nodes_ok := true
 	for p in shown:
 		var pl: Dictionary = _pl(tp, int(p))
-		for k in ["root", "body", "body_mat", "border", "chip", "chip_mat", "rank", "name",
-				"track", "bar", "bar_mat"]:
+		for k in ["root", "body", "body_mat", "border", "border_mat", "rim", "rim_mat",
+				"inset", "inset_mat", "toplight", "toplight_mat",
+				"piece", "piece_mat", "rank", "name", "track", "bar", "bar_mat"]:
 			if not pl.has(k):
 				keys_ok = false
 		var r: Node3D = pl.get("root")
-		for nn in ["Body", "Border", "Chip", "Rank", "Name", "Track", "Bar"]:
+		for nn in ["Body", "Border", "Rim", "Inset", "TopLight", "Piece", "Rank", "Name",
+				"Track", "Bar"]:
 			if r == null or r.get_node_or_null(nn) == null:
 				nodes_ok = false
-	_check(keys_ok, "每块牌的节点池键齐全（root/body/body_mat/border/chip/chip_mat/rank/name/track/bar/bar_mat）")
-	_check(nodes_ok, "每块牌的子节点名齐全（Body/Border/Chip/Rank/Name/Track/Bar）")
+	_check(keys_ok, "每块牌的节点池键齐全（含 rim/inset/toplight 与各自材质、border_mat）")
+	_check(nodes_ok, "每块牌的子节点名齐全（Body/Border/Rim/Inset/TopLight/Piece/Rank/Name/Track/Bar）")
+	# 两层框的**内外关系**：内框（中性灰）比外框（深色）小一圈，且都大于牌身 —— 否则"双层倒角"
+	# 退化成一块盖子（内框比外框还大就把深色那层整个盖住了）。
+	var rim_bad: Array = []
+	for p in shown:
+		var plr: Dictionary = _pl(tp, int(p))
+		var rim_sz := ((plr["rim"] as MeshInstance3D).mesh as BoxMesh).size
+		var bd_sz := ((plr["border"] as MeshInstance3D).mesh as BoxMesh).size
+		if not (rim_sz.x > P_W and rim_sz.x < bd_sz.x and rim_sz.y > P_H and rim_sz.y < bd_sz.y):
+			rim_bad.append(int(p))
+	_check(rim_bad.is_empty() and P_RIM > 0.0,
+		"内框夹在牌身与外框之间（牌身 %s < 内框 < 外框；不符的 %s）" % [str(P_W), str(rim_bad)])
 
-	print("== ② 棋子色小片随各家的 `p.color` 走，**不随座位序号** ==")
+	print("== ② 身份色（棋子剪影 + 名次字）随 `p.color` 走、**不随座位序号**；边框**不带色** ==")
+	# **2026-10-11 用户第二条**：「铭牌边框不要有颜色，只有脉冲发光的时候才闪」，同时
+	# 「色片改成棋子剪影」。⇒ 身份色只剩**两处**：**棋子剪影**（只取贴图的 alpha 当形状、
+	# 颜色全由 tint 给）与**名次字**；**边框（`Rim`）静息必须是中性灰**。
 	var col_bad: Array = []
+	var frame_bad: Array = []
 	var col_log := ""
+	var frame_log := ""
 	for p in shown:
 		var pl2: Dictionary = _pl(tp, int(p))
 		var want_i := int(g._state_player(int(p)).get("color", 0))
 		var want_c: Color = GameData.PLAYER_COLORS[
 			clampi(want_i, 0, GameData.PLAYER_COLORS.size() - 1)]
-		# 小片是**牌面上那一枚**（`Chip`，`PlaneMesh` 贴棋子色）—— 读它**真的贴上去的材质色**，
-		# 比读哪个色号更硬（色号对了、材质贴错也照样红）。
-		var got_c: Color = (pl2["chip_mat"] as StandardMaterial3D).albedo_color
+		# 剪影：材质是 `ShaderMaterial`，颜色在 `tint` 参数上（**不是** `albedo_color` ——
+		# 贴图按颜色分了四张，染色只能走 shader，见 `table_props.PLACARD_SIL_SHADER`）。
+		var smat := pl2["piece_mat"] as ShaderMaterial
+		var got_piece: Color = smat.get_shader_parameter("tint")
+		var got_tex: Texture2D = smat.get_shader_parameter("shape_tex")
+		var got_rank: Color = (pl2["rank"] as Label3D).modulate
 		var by_slot_c: Color = GameData.PLAYER_COLORS[
 			int(pl2.get("slot", 0)) % GameData.PLAYER_COLORS.size()]
-		if not got_c.is_equal_approx(want_c) or by_slot_c.is_equal_approx(want_c):
+		# 剪影的**形状**也要跟 `p.color` 走（棋子贴图就是按色号分的四张）
+		var want_tex: Texture2D = UK.piece_tex(want_i)
+		var ok_here: bool = got_piece.is_equal_approx(want_c) \
+			and got_rank.is_equal_approx(want_c) and got_tex == want_tex
+		if not ok_here or by_slot_c.is_equal_approx(want_c):
 			col_bad.append(int(p))
-		col_log += "peer%d(色%d/座%d) chip=%s（期望 %s；按座号会是 %s） | " % [
-			int(p), want_i, int(pl2.get("slot", 0)), str(got_c), str(want_c), str(by_slot_c)]
+		col_log += "peer%d(色%d/座%d) 剪影=%s 名次=%s（期望 %s；按座号会是 %s） | " % [
+			int(p), want_i, int(pl2.get("slot", 0)), str(got_piece), str(got_rank),
+			str(want_c), str(by_slot_c)]
+		# 边框**静息不带色**：中性的判据 = 三通道极差很小（**别写死那个灰值** —— 换个灰就不该红）。
+		var rc: Color = (pl2["rim_mat"] as StandardMaterial3D).albedo_color
+		var spread: float = maxf(rc.r, maxf(rc.g, rc.b)) - minf(rc.r, minf(rc.g, rc.b))
+		frame_log += "peer%d rim=%s 极差=%.3f | " % [int(p), str(rc), spread]
+		if spread > 0.06 or rc.is_equal_approx(want_c):
+			frame_bad.append(int(p))
 	print("  [实测] %s" % col_log)
+	print("  [实测] %s" % frame_log)
 	_check(col_bad.is_empty(),
-		"**小片色 = `p.color`**（不是按座位序号取色；不符的 %s）" % str(col_bad))
+		"**剪影（含形状）与名次字都 = `p.color`**（不是按座位序号取色；不符的 %s）" % str(col_bad))
+	_check(frame_bad.is_empty(),
+		"**内框静息是中性的、不带任何玩家色**（三通道极差 ≤ 0.06；不符的 %s）" % str(frame_bad))
 
 	print("== ③ 昵称文本 == name（出局的带「（破产）」）/ 名次 == rank ==")
-	# 期望名次在测试里**自己算一遍**（身家 = 现金 + 名下地皮地价，与 `game._state_worth` 同一公式），
+	# 期望名次在测试里**自己算一遍**（总资产 = 现金 + 名下地皮地价，与 `game._state_worth` 同一公式），
 	# 不写死数字（地价表一调就假红）。
 	var worth := {}
 	for p in [1, 2, 3, 4]:
@@ -306,15 +366,29 @@ func _run() -> void:
 		var want_rank: int = order.find(int(p)) + 1
 		var got_name := String((pl3["name"] as Label3D).text)
 		var got_rank_s := String((pl3["rank"] as Label3D).text)
-		var got_rank: int = int(got_rank_s) if got_rank_s != "" else -1
+		# **2026-10-11：名次带 `#` 前缀**（用户定：裸数字读不出"这是名次还是编号"）。
+		# 断言里**必须把前缀剥掉**再比 —— 只比字面的话，`#` 掉了、或者写成 `No.3` 都照样绿。
+		var got_rank: int = int(got_rank_s.trim_prefix("#")) if got_rank_s.begins_with("#") else -1
 		if got_name != want_name:
 			name_bad.append(int(p))
 		if got_rank != want_rank:
 			rank_bad.append(int(p))
-		print("  [实测] peer%d 昵称「%s」(期望「%s」) / 名次「%s」(期望 %d，身家 %d)"
+		print("  [实测] peer%d 昵称「%s」(期望「%s」) / 名次「%s」(期望 #%d，总资产 %d)"
 			% [int(p), got_name, want_name, got_rank_s, want_rank, int(worth[int(p)])])
 	_check(name_bad.is_empty(), "昵称文本 == 喂进去的 name（不符的 %s）" % str(name_bad))
-	_check(rank_bad.is_empty(), "名次 == 喂进去的 rank（身家倒序；不符的 %s）" % str(rank_bad))
+	_check(rank_bad.is_empty(), "名次写「#N」且 N == 喂进去的 rank（总资产倒序；不符的 %s）" % str(rank_bad))
+	# 文字**加粗**：`Label3D` 自己没有字重，靠换上粗体 `SystemFont`（与屏幕层同一支）。
+	# 判据取"是 `SystemFont` 且字重 ≥ 700"，而不是"和 `UIKit.font_bold()` 是同一个对象"——
+	# 后者会把实现写死（哪天换成别的粗体源就不该红）。
+	var bold_bad: Array = []
+	for p in shown:
+		for which in ["name", "rank"]:
+			var f: Font = (_pl(tp, int(p))[which] as Label3D).font
+			var sf := f as SystemFont
+			if sf == null or int(sf.get("font_weight")) < 700:
+				bold_bad.append("peer%d.%s" % [int(p), which])
+	_check(bold_bad.is_empty(), "昵称与名次都换上了粗体（`SystemFont` 字重 ≥ 700；不是的 %s）"
+		% str(bold_bad))
 	# 牌面高与文字高的关系：昵称的世界字高**不超过牌面高的三分之一**（否则字会溢出牌面）——
 	# 与 `PLACARD_NAME_H` 那段"每一个字号都是按要读得出来倒推的"同一条口径。
 	var size_ok := true
@@ -500,6 +574,89 @@ func _run() -> void:
 	_check(back_ok,
 		"传空数组 ⇒ **三块全灭**、各自回到普通牌身色（实得 %s）" % back_log)
 
+	print("== ⑥b 当前行动者：**内框脉冲发光**（`set_placard_active`，与 `hot` 是两条独立通道）==")
+	# **2026-10-11 新增**：轮到谁，谁的铭牌内框就一明一暗地呼吸（光色 = 该玩家小人色）。
+	# 这条与上面 ⑥ 的 `hot`（**选目标态可被选中**）必须**互不干扰**：一次选目标能让三块牌
+	# 同时 gold，而"轮到谁"永远只有一块。判据分两层：①静息量就分得开；②逐帧真的在变。
+	tp.set_placard_hot([])
+	tp.set_placard_active(3)
+	var act_on: float = (_pl(tp, 3)["rim_mat"] as StandardMaterial3D).emission_energy_multiplier
+	var act_off: Array = []
+	var off_log := ""
+	for p in [1, 4]:
+		var e: float = (_pl(tp, int(p))["rim_mat"] as StandardMaterial3D).emission_energy_multiplier
+		off_log += "peer%d %.3f | " % [int(p), e]
+		if absf(e - P_EMIT) > 0.001:
+			act_off.append(int(p))
+	print("  [实测] 行动者（peer3）内框静息发光 %.3f（其余 %s；PLACARD_EMIT %.3f）"
+		% [act_on, off_log, P_EMIT])
+	# **下限也高于静息量**（PLACARD_FLASH_LO > PLACARD_EMIT）⇒ 任意相位都亮着，
+	# 不必等某一帧才看得出来。
+	_check(act_on > P_EMIT + 0.001 and P_FLO > P_EMIT,
+		"只有行动者那一块的内框**一亮起来就比静息亮**（实得 %.3f > %.3f；FLASH_LO %.3f）"
+			% [act_on, P_EMIT, P_FLO])
+	_check(act_off.is_empty(), "其余两块内框**停在静息量**、不跟着亮（不符的 %s）" % str(act_off))
+	# **颜色也要跟着走**（2026-10-11 用户：「边框不要有颜色，只有脉冲发光的时候才闪」；
+	# 同日后半句：「铭牌没有闪，而是一直显示边框高亮色」）。判据是**一整圈里颜色真的从静息灰
+	# 走到亮金** —— 这正是"闪"这件事本身。
+	# ⚠ **别写成"某一帧是不是金"**：那是把一条**随时间变化的性质**钉在单个采样点上，
+	# 相位一变（构建次序 / 谁先跑）就随机红绿 —— 而它恰恰漏掉用户报的那个毛病
+	#（旧版颜色恒为金，任何单帧都"是金的"，于是恒绿）。
+	var idle_rim: Color = (_pl(tp, 1)["rim_mat"] as StandardMaterial3D).albedo_color
+	_check(not idle_rim.is_equal_approx(P_FCOL),
+		"没轮到的那块内框**不是金的**（实得 %s）" % str(idle_rim))
+	# 走完**一整圈**，同时量两件事：①发光量的上下包络；②颜色离"静息灰 / 亮金"两端的最近距离。
+	# **只断言"变了"是不够的** —— 发一串随机数（或随机色）也满足"变了"；要的是两端各自到位。
+	var lo_seen := INF
+	var hi_seen := -INF
+	var c_at_idle := P_FCOL
+	var c_at_flash := P_IDLE
+	var d_idle := INF
+	var d_flash := INF
+	for _i in 40:
+		tp._process(P_FTIME / 40.0)
+		var rm := _pl(tp, 3)["rim_mat"] as StandardMaterial3D
+		lo_seen = minf(lo_seen, rm.emission_energy_multiplier)
+		hi_seen = maxf(hi_seen, rm.emission_energy_multiplier)
+		var dd_idle := _cdist(rm.albedo_color, P_IDLE)
+		var dd_flash := _cdist(rm.albedo_color, P_FCOL)
+		if dd_idle < d_idle:
+			d_idle = dd_idle
+			c_at_idle = rm.albedo_color
+		if dd_flash < d_flash:
+			d_flash = dd_flash
+			c_at_flash = rm.albedo_color
+	_check(P_FTIME > 0.0 and absf(hi_seen - P_FHI) < 0.02 and absf(lo_seen - P_FLO) < 0.02,
+		"脉冲包络就是 [FLASH_LO, FLASH_HI]（实测 %.3f..%.3f；期望 %.3f..%.3f）"
+			% [lo_seen, hi_seen, P_FLO, P_FHI])
+	print("  [实测] 内框颜色走得最远的两个端点：静息端 %s（距静息 %.3f）/ 亮金端 %s（距亮金 %.3f）"
+		% [str(c_at_idle), d_idle, str(c_at_flash), d_flash])
+	_check(d_idle < 0.06,
+		"脉冲谷值：内框颜色**回到静息灰**（最近的一帧 %s，距 %s 有 %.3f）"
+			% [str(c_at_idle), str(P_IDLE), d_idle])
+	_check(d_flash < 0.06,
+		"脉冲峰值：内框颜色**走到亮金**（最近的一帧 %s，距 %s 有 %.3f）"
+			% [str(c_at_flash), str(P_FCOL), d_flash])
+	# 换人跟着换；空 ⇒ 全灭并**回到静息量**（不能停在半亮上）。
+	tp.set_placard_active(1)
+	_check(bool(_pl(tp, 1).get("active", false)) and not bool(_pl(tp, 3).get("active", false)),
+		"换行动者 ⇒ 亮的那一块跟着换")
+	tp.set_placard_active(GameData.NO_PEER)
+	tp._process(0.016)          # 灭掉之后那一次要把量还原（全灭帧只还原一次）
+	var rest_bad: Array = []
+	for p in [1, 3, 4]:
+		var e2: float = (_pl(tp, int(p))["rim_mat"] as StandardMaterial3D).emission_energy_multiplier
+		if absf(e2 - P_EMIT) > 0.001:
+			rest_bad.append(int(p))
+	_check(rest_bad.is_empty(), "`NO_PEER` ⇒ 三块内框全回到静息量（没还原的 %s）" % str(rest_bad))
+	# 全灭之后**连颜色一起还原**：只收发光量会留下一圈常亮金边 —— 正是用户要去掉的东西。
+	var gold_left: Array = []
+	for p in [1, 3, 4]:
+		var c2: Color = (_pl(tp, int(p))["rim_mat"] as StandardMaterial3D).albedo_color
+		if c2.is_equal_approx(P_FCOL):
+			gold_left.append(int(p))
+	_check(gold_left.is_empty(), "全灭后**没有留下一圈常亮金边**（残留 %s）" % str(gold_left))
+
 	print("== ⑦ 行动者倒计时：推进 `_op_*` 再 `_refresh_corner_timer()` ==")
 	g._op_kind = "roll"
 	g._op_owner = 3
@@ -518,9 +675,9 @@ func _run() -> void:
 		if (oc["track"] as MeshInstance3D).visible or (oc["bar"] as MeshInstance3D).visible:
 			others_on += 1
 	_check(others_on == 0, "其余两块**不显示倒计时**（只出现在行动者那一块上；越界 %d 块）" % others_on)
-	# 我那条身家条（屏幕层）此刻不该显示 —— 倒计时只落在一处
+	# 我那条总资产条（屏幕层）此刻不该显示 —— 倒计时只落在一处
 	_check(not (g.corner_bars[0].timer_kind as Label).visible,
-		"窗口归属不是我 ⇒ 屏幕层那条身家条的倒计时内容收起（同一条判据、两处载体）")
+		"窗口归属不是我 ⇒ 屏幕层那条总资产条的倒计时内容收起（同一条判据、两处载体）")
 	# 直接量 `set_placard_timer` 本身：`frac` 是唯一输入，条长应当严格跟着它走。
 	tp.set_placard_timer(3, 0.5, true)
 	_check(absf((pl3t["bar"] as MeshInstance3D).scale.x - 0.5) < 0.001,

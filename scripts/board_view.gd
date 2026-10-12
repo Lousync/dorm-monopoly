@@ -15,7 +15,7 @@ class_name BoardView
 
 signal tile_clicked(idx: int)
 ## **已无发射方（批次 5 Task 2 起）**：座位卡整体退场后，画布里不再有"点玩家"的落点 ——
-## 「点玩家选目标」批次 9 起由**屏幕层的身家条 / 名册行**承担（落点史：屏幕四角条（批次 9）
+## 「点玩家选目标」批次 9 起由**屏幕层的总资产条 / 名册行**承担（落点史：屏幕四角条（批次 9）
 ## → 名册条右上（批次 12 D）→ **名册条左上角「暂停」旁**（批次 13 ②）；
 ## `game._on_corner_bar_clicked`
 ## 直调 `game._on_seat_clicked(peer)`）。信号与连接一律保留（同下面两条的先例）：
@@ -451,37 +451,6 @@ func _build_interior() -> void:
 	var deco := TableDecor.new()
 	inlay.add_child(deco)
 
-	# 标题牌：压在嵌板上沿之内，金边 + 金色细分隔线
-	var p := Panel.new()
-	p.position = Vector2(c.x - 380, BOARD_OFFSET.y + pad + 18.0)
-	p.size = Vector2(760, 96)
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_theme_stylebox_override("panel", UIKit.card_stylebox(Color(0.055, 0.095, 0.082, 0.72), 20,
-		Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.30), 1, 6))
-	_world.add_child(p)
-
-	var title := UIKit.title_label("宿舍大富翁", 42, Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.42), 0)
-	title.position = Vector2(0, 6)
-	title.size = Vector2(760, 54)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(title)
-
-	var rule := ColorRect.new()
-	rule.color = Color(UIKit.ACCENT.r, UIKit.ACCENT.g, UIKit.ACCENT.b, 0.22)
-	rule.position = Vector2(300, 60)
-	rule.size = Vector2(160, 1)
-	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(rule)
-
-	var sub := UIKit.label("%d × %d 环线 · %d 格 · 10 大产业" % [GameData.BOARD_COLS, GameData.BOARD_ROWS, GameData.TILES.size()],
-		16, Color(UIKit.TEXT_DIM.r, UIKit.TEXT_DIM.g, UIKit.TEXT_DIM.b, 0.8))
-	sub.position = Vector2(0, 64)
-	sub.size = Vector2(760, 26)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(sub)
-
 	_build_wheel(c)
 
 ## 中央转盘：点数来源，掷点时镜头对准它
@@ -730,7 +699,7 @@ func _gui_input(ev: InputEvent) -> void:
 			elif _dragging:
 				if mb.button_index == MOUSE_BUTTON_LEFT and not _panning:
 					# 座位卡已拆（批次 5 Task 2）：画布里只剩棋盘，左键单击 = 点格子。
-					# 「点玩家选目标」从批次 9 起走**屏幕层的身家条 / 名册行**（落点史：屏幕四角条（批次 9）
+					# 「点玩家选目标」从批次 9 起走**屏幕层的总资产条 / 名册行**（落点史：屏幕四角条（批次 9）
 					# → 名册条右上（批次 12 D）→ **名册条左上角「暂停」旁**（批次 13 ②）；
 				# `game._on_corner_bar_clicked`），
 					# 桌面这条链上早已没有"点玩家"的落点。
@@ -773,7 +742,7 @@ func set_hover(idx: int) -> void:
 		_animate_tile(idx, true)
 
 	# 座位卡（四条操作栏 + 内容件 + 倒计时簇 + 道具牌位）已随批次 5 Task 2 **整体退场**：
-	# 名字 / 身家 / 操作倒计时改由**屏幕层的身家条 + 名册条**承担（公开背包批次 9 起另有
+	# 名字 / 总资产 / 操作倒计时改由**屏幕层的总资产条 + 名册条**承担（公开背包批次 9 起另有
 	# 玩家道具弹窗、选目标批次 12 D 起改点名册条、**批次 13 ② 起名册条在左上角「暂停」旁**；
 	# 中间那层桌上 3D 立牌也随批次 9 退场）。
 	# 画布里从此只剩棋盘（牌垫阶段按钮也已在批次 7 退场、两摞牌堆已随 2026-10-09 退场：画布里再无按钮、无牌堆）。
@@ -863,7 +832,7 @@ func pending_tile() -> int:
 
 ## 「哪些玩家此刻可被选中」的高亮：**画布里没有落点了**（座位卡与桌上立牌都已退场）。
 ## **保留接口不删**（`game._begin_peer_target` 仍在调）。
-## 这条反馈本身**不在画布里**：批次 9 起由**屏幕层的身家条 / 名册行**承担
+## 这条反馈本身**不在画布里**：批次 9 起由**屏幕层的总资产条 / 名册行**承担
 ##（批次 13 ② 起名册格在左上角「暂停」旁；`game._refresh_corner_highlight` ——
 ## 可选中的那条描金边 + 提亮），
 ## 与屏幕层那句文字提示（`game._show_target_hint`）一起构成完整的"能点谁"。
@@ -927,7 +896,7 @@ func render(state: Dictionary) -> void:
 		color_of[int(p.peer)] = GameData.PLAYER_COLORS[int(p.color)]
 	_owner_color_map = color_of
 
-	# 悬停棋子时要浮出「昵称 / 身家 / 排名」——身家与排名在这里一次算好
+	# 悬停棋子时要浮出「昵称 / 总资产 / 排名」——总资产与排名在这里一次算好
 	var pinfo := {}
 	var worths := []
 	for p in players:

@@ -7,6 +7,79 @@ extends RefCounted
 ## 原代码里存在「先用后建」的引用（回调里用 vol_slider，而它几十行之后才创建），
 ## 那正是靠成员变量的晚绑定才成立的；换成局部变量会被 lambda 按值捕获成 null。
 
+## 畸变横幅一行文字的最大像素宽（超过就换行，不再往两边长）。
+## 上限是**量出来的**：横幅居中，右邻最近的控件是「规则说明」按钮（左沿 1030）⇒ 居中条要
+## 不压到它，宽 ≤ 2×(1030−640) = **780**；取 740 留 20 一格呼吸（左邻「暂停」+「📖 图鉴」
+## 到 196，比这松得多）。`hud_test` 有一条「横幅不与角按钮重叠」的断言钉着这个上限。
+const AB_BANNER_MAX_W := 740.0
+## 网络质量指示（**仅客户端**）的落位 —— 上一格是「📖 图鉴」按钮
+##（`codex_panel.PAUSE_RIGHT + BTN_GAP .. + BTN_W` = 100..196，见 `_build_button` 那段）。
+## 抽成常量是为了**能测**：无头脚手架的 `multiplayer` 是默认接口、`is_server()` 恒真
+## ⇒ 那个控件在测试里根本不会被建出来，只能靠"落位契约"这条断言钉住它不压到按钮。
+const NET_IND_LEFT := 204.0
+const NET_IND_RIGHT := 372.0
+
+## 刷「畸变生效中」横幅（2026-10-12 从 `game._refresh_ab_ui` 搬来，控件在本文件搭的）。
+##
+## **一条畸变一行**：`🌀 名称：全文说明（剩 N 回合）`，全文走 `AberrationData.desc_live`
+##（触发大字卡 / 战报读的是同一份文字）。改这条的动因（用户）：「游戏界面中间的畸变显示：
+## 加上畸变的内容」—— 原先只写「🌀 畸变生效中：诚信考试·剩2回合」，正文只在悬停 tooltip 里；
+## 而横幅本来就是给**没盯着战报的人**看的，看不出是什么畸变等于没有。
+##
+## 文字宽度**当场量**再钳到 `AB_BANNER_MAX_W`：本标签的换行是开着的，而自动换行的 Label 在
+## 宽度未知时算出的最小高度**是爆炸的**（`info_body` 那段踩过同一个坑）⇒ 宽度永远不留 0。
+## 高度不在这里算 —— 交给 `fit_ab_banner`（帧末量，见那里的注释）。
+static func refresh_ab(g: Node) -> void:
+	if g.ab_label == null or g.ab_label_l == null:
+		return
+	var act: Array = g.st.get("aberrations", [])
+	if act.is_empty():
+		g.ab_label.visible = false
+		fit_ab_banner.call_deferred(g)
+		return
+	var lines := PackedStringArray()
+	var tips := PackedStringArray()
+	for a in act:
+		var aid := String(a.id)
+		var left := int(a.left)
+		lines.append("🌀 %s：%s（剩 %d 回合）" % [aid, AberrationData.desc_live(aid), left])
+		# 悬停即查（畸变可读性）：公告全文（含「持续 N 回合，到期自动解除」）
+		tips.append("%s：%s" % [aid, AberrationData.announce_text(aid, left)])
+	g.ab_label_l.text = "\n".join(lines)
+	var fnt: Font = g.ab_label_l.get_theme_font("font")
+	var fsz: int = g.ab_label_l.get_theme_font_size("font_size")
+	var w := 0.0
+	for ln in lines:
+		w = maxf(w, fnt.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
+	# +6 的余量：换行按可用宽度算，正好卡在量出来的宽度上会因取整提前折一行。
+	g.ab_label_l.custom_minimum_size = Vector2(minf(w + 6.0, AB_BANNER_MAX_W), 0)
+	g.ab_label.tooltip_text = "\n".join(tips)
+	g.ab_label.visible = true
+	fit_ab_banner.call_deferred(g)
+
+## 把横幅的**实际高度**写回容器，并把「战报气泡」顺位推到它下面。
+##
+## **为什么延到帧末**（`refresh_ab` 用 `call_deferred` 调它）：`Label` 的最小尺寸是
+## `update_minimum_size()` 推到帧末才算的（它自己也是 `call_deferred`，先注册先跑）⇒ 当场读
+## `get_combined_minimum_size()` 拿到的是**上一条文案**的高度，横幅刚出现 / 刚变长的那一帧会把
+## 气泡压在它身上。延后一拍读到的才是当帧算好的值。
+## 没有畸变时 `h` 回到 42 ⇒ 横幅容器 8..50、气泡 52（与 2026-10-11 起的落位一字不差）。
+##
+## ⚠ **形参故意不写类型**（`g` 而不是 `g: Node`）：这一拍是**延迟**跑的，那时这一局可能已经
+## 结束、`game` 节点被 `queue_free` 掉了 —— 类型化形参会在**进函数之前**先做一次转换检查，
+## 对已释放的对象直接抛 `Cannot convert argument 1 from Object to Object`（`settings_test` 实测
+## 刷了一屏这个错）。不写类型 ⇒ 进来第一句用 `is_instance_valid` 自己判，安静收场。
+static func fit_ab_banner(g) -> void:
+	if not is_instance_valid(g):
+		return
+	if g.ab_wrap == null or g.log_toast == null:
+		return
+	var h := 42.0
+	if g.ab_label != null and is_instance_valid(g.ab_label) and g.ab_label.visible:
+		h = maxf(42.0, g.ab_label.get_combined_minimum_size().y)
+	g.ab_wrap.offset_bottom = g.ab_wrap.offset_top + h
+	g.log_toast.offset_top = g.ab_wrap.offset_bottom + 2.0
+
 ## 造一条战报弹出条（屏幕上方居中）。淡入淡出与回收由 game.gd:_push_log_toast 负责。
 ## 行文本已是 BBCode 安全串（game.gd:_log 把 `[` 转义成 `［`），可直接外包一层 [center]。
 static func make_log_toast(line: String) -> Control:
@@ -42,7 +115,7 @@ static func build_play_ui(g: Node) -> void:
 	g.board = g.table3d.board
 	g.board.tile_clicked.connect(g._on_tile_clicked)
 	# `seat_clicked` 自批次 5 Task 2 起**没有发射方**了（座位卡退场；"点玩家"批次 9 起由屏幕层
-	# 四角身家条直调 `_on_seat_clicked`）。连接保留：它接的是玩法入口，接口不动（同
+	# 四角总资产条直调 `_on_seat_clicked`）。连接保留：它接的是玩法入口，接口不动（同
 	# board_view 里 item_slot_clicked 那条先例）。
 	g.board.seat_clicked.connect(g._on_seat_clicked)
 
@@ -73,18 +146,18 @@ static func build_play_ui(g: Node) -> void:
 	hud.add_child(g.hand_preview)
 
 	# ---- 悬停棋子的信息条（批次 11 Task 3）----
-	# 悬停到桌面上一枚棋子时浮出「昵称 / 身家 / 名次 / 已出局」。**内容与判据一字未改**：
+	# 悬停到桌面上一枚棋子时浮出「昵称 / 总资产 / 名次 / 已出局」。**内容与判据一字未改**：
 	# 原先它是画布里的一个 PanelContainer（`board_view._token_tip`，批次 11 Task 1 随棋子一起删了），
 	# 载体从**画布**搬到**屏幕层**的原因就是用户报的那句「角度不对」——画布上的 Control 随桌垫
 	# 一起倾斜、被透视缩小（3D 端读着是歪的）；屏幕层 Control 天然面向镜头。
 	# 数据源仍是 `board._peers_info`（`game._on_table_hover` 里读，**单一来源**，不另取 standing）。
 	#
 	# **z_index = 30 —— 写之前核对过屏幕层现有的 z**（批次 8/9 的 R5 教训）：
-	#   屏幕 HUD 带（≤40）：四角身家条 / 动作按钮 / 战报开关与战报栏 / 格详情卡 / 黑市条 **全是 0**
+	#   屏幕 HUD 带（≤40）：四角总资产条 / 动作按钮 / 战报开关与战报栏 / 格详情卡 / 黑市条 **全是 0**
 	#      （相对 hud，hud 自身 0），抽卡大字卡 `DeckReveal` **40**；
 	#   模态带：玩家道具弹窗 45 / 结算 50 / 弹问 60 / 小卖部与赌场 70 / 菜单与暂停遮罩 80；
 	#   特效：飞钞 90 / 飘字 90~95。
-	#   取 30 ⇒ 压在那一整片 **0** 之上（设计 §5.4 的「不该被四角身家条与动作按钮盖住」），
+	#   取 30 ⇒ 压在那一整片 **0** 之上（设计 §5.4 的「不该被四角总资产条与动作按钮盖住」），
 	#   又低于抽卡大字卡与所有模态（演出与模态该压住悬停提示）。**别改回 0**：同为 0 时谁在上
 	#   由树序决定（`z_as_relative` 默认为真），建节点的顺序一变就会漂 —— 批次 8 的教训。
 	# 鼠标透明（`IGNORE`）：它只是个提示，不参与拾取 —— 四角条 / 动作按钮的点击一律穿透过去。
@@ -109,40 +182,39 @@ static func build_play_ui(g: Node) -> void:
 	ttv.add_child(g._tip_sub)
 
 
-	# ---- 对局仪表盘（顶部指挥带 + 右侧玩家纵览）----
-	# 融合落位（2026-10-09 用户拍板「重新设计原型让这些控件融合」）：横条铺满顶部、
-	# 与左上「暂停」/右上「战报·规则」同一条带上，中间放仪表盘内容、左右各留空位让按钮
-	# "坐进"横条两端（按钮本身位置一字未动）。畸变横幅与战报气泡挪到横条下方（见下）。
-	# 数据全读已同步的 st / _op_*，客户端也准；由 Dashboard._process 逐帧自刷。
-	g.dashboard = Dashboard.new()
-	g.dashboard.name = "Dashboard"
-	hud.add_child(g.dashboard)
-	g.dashboard.g = g
-	g.dashboard.setup()
-
-	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条；
-	# **2026-10-09 起顶边从 52 下移到 128**：顶部 8..76 已是仪表盘横条，气泡不能再压上去。
+	# 顶部居中：战报消息弹出条容器。战报框默认收起，消息改在这里飘一条。
+	# **2026-10-11 起顶边从 128 收回 52**：原先 8..76 是仪表盘横条、不能再压上去；横条搬走后
+	# 顶部只剩左右两角的按钮，气泡回到屏幕最上方（52 = 角按钮那一条 8..46 的下沿）。
+	# 落位史：52（无横条时代）→ 128（2026-10-09 横条上顶）→ **52（2026-10-11 横条搬到桌垫）**。
+	# **2026-10-12 起 52 是"没有畸变时"的值**：畸变横幅带正文后会变高，`game._fit_ab_banner`
+	# 把本容器的 `offset_top` 推到横幅下面（横幅 8..50 ⇒ 这里 52，与旧值一字不差）。
 	g.log_toast = VBoxContainer.new()
 	g.log_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	g.log_toast.offset_left = -390.0
 	g.log_toast.offset_right = 390.0
-	g.log_toast.offset_top = 128.0
-	g.log_toast.offset_bottom = 376.0
+	g.log_toast.offset_top = 52.0
+	g.log_toast.offset_bottom = 300.0
 	g.log_toast.add_theme_constant_override("separation", 4)
 	g.log_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.log_toast)
 
 	# 顶部**水平居中**的「畸变生效中」横幅（批次 12 D3 / 设计 §⑫：从右上角搬到中间）。
 	# **"中间"= 不再贴右上角**，不是屏幕正中 —— 真放正中会盖住棋盘中心与格详情卡。
-	# 落位（**2026-10-09 下移**）：`y ≈ 84..126`，**在仪表盘横条（8..76）之下、战报气泡
-	#（顶边 128）之上**。此前是 6..48（那时顶部没有横条）。
+	# 落位（**2026-10-11 收回 `y ≈ 8..50`**）：横幅是**居中**的、两侧角按钮各只占 ~100/250px，
+	# 一条 300 来像素的居中横幅撞不到它们（`hud_test` 有一条「不与三个角按钮重叠」的断言钉着）。
+	# 落位史：6..48（无横条时代）→ 84..126（2026-10-09 给横条让位）→ **8..50（2026-10-11 横条搬走）**。
 	# 走 `CenterContainer` 才能"贴内容宽度 + 居中"：`PanelContainer` 自己按锚点铺满，
 	# 直接给 `CENTER_TOP` 会得到一条固定宽度的长条（文案短时两侧一大片空、还压住更多屏幕）。
 	# 显隐仍由 `game._refresh_ab_ui` 只管 `ab_label.visible`（外层容器留着不吃鼠标、不画东西）。
+	#
+	# **2026-10-12：横幅开始带畸变正文，高度不再固定**（用户：「畸变显示加上畸变的内容」）：
+	# 一条畸变一行（名称 + 全文 + 剩几回合），容器高度由 `game._fit_ab_banner` 按实测内容写回，
+	# 并把下面的**战报气泡**顺位推下去（气泡的 `offset_top` 也由它写）。`offset_bottom` 这里给的
+	# 50 = **没有畸变时的原值**（`offset_top + 42`），有畸变时那两处会改它。
 	g.ab_wrap = CenterContainer.new()
 	g.ab_wrap.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	g.ab_wrap.offset_top = 84.0
-	g.ab_wrap.offset_bottom = 126.0
+	g.ab_wrap.offset_top = 8.0
+	g.ab_wrap.offset_bottom = 50.0
 	g.ab_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(g.ab_wrap)
 	g.ab_label = UIKit.panel_container(Color(0.055, 0.065, 0.098, 0.88), 10, Color(0, 0, 0, 0), 0, 5)
@@ -152,6 +224,10 @@ static func build_play_ui(g: Node) -> void:
 	ab_lm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.ab_label.add_child(ab_lm)
 	g.ab_label_l = UIKit.label("", 14, Color("#f0c064"))
+	# **换行开着、但宽度由 `game._refresh_ab_ui` 逐次写死**（量了再钳到 `AB_BANNER_MAX_W`）：
+	# 自动换行的 Label 在宽度未知时算出的最小高度是**爆炸**的（info_body 那段踩过同一个坑），
+	# 所以宽度永远不许留 0。
+	g.ab_label_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ab_lm.add_child(g.ab_label_l)
 	g.ab_wrap.add_child(g.ab_label)
 
@@ -442,6 +518,9 @@ static func build_play_ui(g: Node) -> void:
 	g.add_child(g.opt_btn)
 
 	# 暂停按钮旁：网络质量指示（**仅非房主**；fix/0.14.1）。数值/信号由 game._refresh_net_indicator 逐帧填。
+	# **落位**：2026-10-12 起从 100..268 右移到 **204..372** —— 「📖 图鉴」按钮搬到了左上角
+	# 「暂停」右边（`codex_panel.PAUSE_RIGHT + BTN_GAP .. + BTN_W` = 100..196），这一枚是**下一格**。
+	# 图鉴按钮的 x 因此不随"房主 / 客户端"漂移，只有本指示要不要显示不同。
 	g.net_ind = null
 	g.net_ind_pips = []
 	g.net_ind_text = null
@@ -449,9 +528,9 @@ static func build_play_ui(g: Node) -> void:
 		g.net_ind = UIKit.panel_container(UIKit.PANEL_GLASS, 8,
 			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 0)
 		g.net_ind.set_anchors_preset(Control.PRESET_TOP_LEFT)
-		g.net_ind.offset_left = 100
+		g.net_ind.offset_left = NET_IND_LEFT
 		g.net_ind.offset_top = 10
-		g.net_ind.offset_right = 268
+		g.net_ind.offset_right = NET_IND_RIGHT
 		g.net_ind.offset_bottom = 38
 		g.net_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		g.net_ind.tooltip_text = "到房主的往返延迟与信号质量"
@@ -596,12 +675,12 @@ static func build_play_ui(g: Node) -> void:
 	lv.add_theme_constant_override("separation", 8)
 	lm.add_child(lv)
 
-	# ---- 「我」那条身家条（屏幕左下角；批次 5 Task 3 建四条，批次 12 D 只留这一条）----
+	# ---- 「我」那条总资产条（屏幕左下角；批次 5 Task 3 建四条，批次 12 D 只留这一条）----
 	# **为什么只有一条**（⑩）：他人的信息改由下面的**名册条**承担（批次 13 ② 起在左上角「暂停」旁）
 	# —— 四角条是"四个人各占一
-	# 个角"，要横着比身家得来回看四个角；顶部一条横着排，一眼看完。而"我自己"的那些读数
-	#（身家 / 现金 / 能量）就在手边、要常驻，留在左下角最顺眼。
-	# 它取代的是更早的右侧名册栏（名次 + 名字 + 身家），代价（已在设计里接受）：名册栏那行
+	# 个角"，要横着比总资产得来回看四个角；顶部一条横着排，一眼看完。而"我自己"的那些读数
+	#（总资产 / 现金 / 能量）就在手边、要常驻，留在左下角最顺眼。
+	# 它取代的是更早的右侧名册栏（名次 + 名字 + 总资产），代价（已在设计里接受）：名册栏那行
 	# "地产 ×n · 道具 n / 现金"一起消失 —— 地产数仍在棋盘上看得见（格子归属色条 + 格详情卡），
 	# 公开背包改由**玩家道具弹窗**承担（批次 9；原先是桌上立牌那排品质色小卡）。
 	#
@@ -620,9 +699,9 @@ static func build_play_ui(g: Node) -> void:
 	# 右下角动作按钮（批次 7）：轮到我掷轮 → 「转动转盘」；掷完进道具阶段 → 「结束回合」。
 	# 其余时候整枚隐藏（含"我掷完、正在移动与落地结算"那段 —— 那段没有可做的操作，
 	# 显示一枚禁用的「转动转盘」会让玩家以为还能再掷，见 批次7-设计 §5.2）。
-	# 落位（批次 12 D2 起）：**贴右下角**（右 20 / 下 20）。它原先悬在"右下角那条四角身家条之上"
-	#（-224..-172 那段留白就是为了避开 x∈[-207,-12] / y∈[-160,-56] 的身家条）；⑩ 把那条删了，
-	# 于是把它挪到更贴角的位置 —— 与"删掉的右下身家条腾出的地方"对齐（设计 §⑩6）。
+	# 落位（批次 12 D2 起）：**贴右下角**（右 20 / 下 20）。它原先悬在"右下角那条四角总资产条之上"
+	#（-224..-172 那段留白就是为了避开 x∈[-207,-12] / y∈[-160,-56] 的总资产条）；⑩ 把那条删了，
+	# 于是把它挪到更贴角的位置 —— 与"删掉的右下总资产条腾出的地方"对齐（设计 §⑩6）。
 	# 下方仍不压东西：贴底的黑市条按屏宽居中（约 x 460..820），离这里很远。
 	g.action_btn = UIKit.button("转动转盘", 18, "primary")
 	g.action_btn.custom_minimum_size = Vector2(200, 52)
@@ -678,7 +757,7 @@ static func build_play_ui(g: Node) -> void:
 	)
 	chat_row.add_child(send_btn)
 
-	# ---- 玩家道具弹窗（批次 9）：点四角身家条打开（卡牌 / 能量 / 身家现金）----
+	# ---- 玩家道具弹窗（批次 9）：点四角总资产条打开（卡牌 / 能量 / 总资产现金）----
 	# **挂在 `game` 上、并在本函数最末 append**（终审 fix wave 裁定 R5）。原因不显然，写清楚：
 	#
 	# Godot 4 的 **GUI 拾取按树序**（子节点倒序），**不看 `z_index`** —— `z_index` 只管绘制。
@@ -698,7 +777,7 @@ static func build_play_ui(g: Node) -> void:
 	g.add_child(g.player_popup)
 
 ## 四角条的尺寸（屏幕像素）。**写死并显式设成 `custom_minimum_size`**：面板的高度是内容撑出来的
-## （名字 + 身家 + 现金 + 倒计时行 + 内外边距），只给 `offset_*` 的话 Godot 会按最小尺寸把它撑大
+## （名字 + 总资产 + 现金 + 倒计时行 + 内外边距），只给 `offset_*` 的话 Godot 会按最小尺寸把它撑大
 ## —— 底边那两条会朝**下**长进「规则说明」按钮里（实测 63 > 48，压住 5 像素）。
 ## 写死 + 按它算偏移，两边永远一致。**改条内容（行数 / 字号）必须重取这个数**：
 ## 取法 = 建完四条之后读一次 `root.get_combined_minimum_size()`（`tests/hud_test.gd` 里有一条
@@ -719,11 +798,11 @@ const CORNER_BAR_SIZE := Vector2(195.0, 126.0)
 ## 出现时会把自己撑高，四条就不再一样高（`tests/hud_test.gd` 有"倒计时出现后那一条没变高"的断言）。
 const CORNER_TIMER_ROW_H := 19
 
-## **「我」那条身家条**的落位：屏幕左下角（`preset` + 到屏幕边的距离 `mx` / `my`）。
+## **「我」那条总资产条**的落位：屏幕左下角（`preset` + 到屏幕边的距离 `mx` / `my`）。
 ##
 ## **批次 12 D 起只有这一条**（⑩）：他人的三条四角条（左上 / 右上 / 右下）已删，他们改由
 ## **名册条**承担（`ROSTER_ROW_SIZE` 那一段）。为什么不保留四角条：
-## "别人现在什么身家"是**要横着比**的信息，四个角散在屏幕边上反而要来回看；一条横着排一眼看完。
+## "别人现在什么总资产"是**要横着比**的信息，四个角散在屏幕边上反而要来回看；一条横着排一眼看完。
 ##
 ## 落位仍与桌位一一对应的时代（批次 5）不同了 —— 现在只剩"自己"这一位（桌位 = 底），
 ## `game._seat_peers()[0]` 就是它。位置**对着出图定的**，两条硬约束：
@@ -739,12 +818,12 @@ const MY_BAR_SLOT := {"preset": Control.PRESET_BOTTOM_LEFT, "mx": 12.0, "my": 20
 ## `ROSTER_CARD_PAD`）与 `make_chip()` / `slim_card_pad()` **已随名册条整体删除**
 ##（v0.8.0 第四次复核：信息搬上桌，牌面由 `table_props` **原生**画，不再烘贴图 —— 见那里）。
 
-## 「我」那条身家条上「能量」行的高度（屏幕像素）。行**常驻占位**，内容恒有（读数 + 小格），
+## 「我」那条总资产条上「能量」行的高度（屏幕像素）。行**常驻占位**，内容恒有（读数 + 小格），
 ## 所以它不是"按需显隐"那一类 —— 写死是为了让 `CORNER_BAR_SIZE` 有一个可核算的加数。
 const ENERGY_ROW_H := 19.0
 
-## 一条四角身家条：棋子色小片 + 名次徽章 + 「名字 / 身家 / 现金」三行 + 一条**操作倒计时行**。
-## 建一次就不动结构，之后只由 `game._refresh_corner_bars`（名字 / 身家 / 现金 / 徽章 / 描边）
+## 一条四角总资产条：棋子色小片 + 名次徽章 + 「名字 / 总资产 / 现金」三行 + 一条**操作倒计时行**。
+## 建一次就不动结构，之后只由 `game._refresh_corner_bars`（名字 / 总资产 / 现金 / 徽章 / 描边）
 ## 与 `game._refresh_corner_timer`（倒计时行）改文字与显隐。
 ##
 ## **批次 9 起这条可点**（`mouse_filter = STOP`）：点它 = 开该玩家的**道具弹窗**
@@ -753,8 +832,8 @@ const ENERGY_ROW_H := 19.0
 ## 吃了点击的**影响面已核对**：它只占屏幕四个角，下面没有棋盘可点内容（3D 全景与 2D 端两张
 ## 出图都确认了棋盘主体远在条内侧；三个角按钮不重叠由 `tests/hud_test.gd` 的断言钉住）。
 ##
-## **现金那一行（B）**：身家 = 现金 + 地产，只报身家时玩家在买卖 / 付租那一刻看不到自己有多少
-## 现金（座位卡与右栏名册栏都已退场，桌上的筹码堆 / 体力件也在批次 7 退场）⇒ 身家做大字、现金做第二行小字，
+## **现金那一行（B）**：总资产 = 现金 + 地产，只报总资产时玩家在买卖 / 付租那一刻看不到自己有多少
+## 现金（座位卡与右栏名册栏都已退场，桌上的筹码堆 / 体力件也在批次 7 退场）⇒ 总资产做大字、现金做第二行小字，
 ## 四条都显示，口径与名册栏时代一致。
 ## **倒计时那一行（A）**：环节名 + 细进度条 + 剩余秒数，**只在当前行动者那一条上**出现
 ##（其余三条的内容藏起来）。行**常驻占位**（只切内容）—— 否则行动者换人时那一条会一开一合。
@@ -831,11 +910,11 @@ static func _make_corner_bar(g: Node, parent: Control, slot: Dictionary) -> Dict
 	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_l.custom_minimum_size = Vector2(84, 0)
 	col.add_child(name_l)
-	# 身家 = 大字（名次的依据）
+	# 总资产 = 大字（名次的依据）
 	var worth_l := UIKit.label("", 17, UIKit.ACCENT)
 	worth_l.custom_minimum_size = Vector2(84, 0)
 	col.add_child(worth_l)
-	# 现金 = 第二行小字（B）：身家是「现金 + 地产」，买卖 / 付租要看的是这一行
+	# 现金 = 第二行小字（B）：总资产是「现金 + 地产」，买卖 / 付租要看的是这一行
 	var money_l := UIKit.label("", 11, UIKit.TEXT_DIM)
 	money_l.custom_minimum_size = Vector2(84, 0)
 	col.add_child(money_l)
@@ -1210,7 +1289,7 @@ static func build_menu_ui(g: Node) -> void:
 	)
 	tv2.add_child(tv_skip)
 
-	# 指向性道具目标提示条（顶部居中）：**点屏幕四角的身家条 / 点格子**选目标（玩家卡随批次 5
+	# 指向性道具目标提示条（顶部居中）：**点屏幕四角的总资产条 / 点格子**选目标（玩家卡随批次 5
 	# 的座位卡、桌上立牌随批次 9 一起退场了，选人的落点在屏幕层四角条上）；
 	# 取消 = 点此「取消」或 Esc / 右键单击（拖拽平移不触发）
 	g.target_hint = Control.new()
