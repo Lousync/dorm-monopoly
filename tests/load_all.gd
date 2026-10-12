@@ -22,7 +22,10 @@ const GAME_GD := "res://scripts/game.gd"
 ## 2026-10-11 下调 8222 → 8221：删掉 `dashboard.gd` 那一整套（`var dashboard` 与
 ## `_lab_hide_hud` 里收它的两行）腾出了 6 行，本轮又往 `_advance_turn` 里加了「每 10 轮报一次」
 ## 的 3 行，净 −1。**棘轮只降不升**：搬走的又长回来是它要防的那件事。
-const GAME_GD_LINE_BUDGET := 8221
+## **2026-10-12 下调 8221 → 8165**：畸变公告文案下沉进 `AberrationData`（`desc_live` /
+## `announce_text`）、横幅刷新搬进 `TableHud.refresh_ab` / `fit_ab_banner` —— 一共搬走约 70 行，
+## 本轮新增的（那两处调用点）已经算在这个数里。搬完就按实测值卡死。
+const GAME_GD_LINE_BUDGET := 8165
 
 func _line_count(p: String) -> int:
 	var f := FileAccess.open(p, FileAccess.READ)

@@ -40,11 +40,15 @@
 | `科技.md` | 科技机制（三档 · 发车前 / 将来可中局获得）+ 图鉴 |
 | `畸变.md` | 全场畸变机制 + 图鉴 + 候选草案 |
 | `设计决策留痕.md` | 讨论过程、拍板理由、当时的备选方案与日期（**不是当前事实**） |
-| `图鉴.html` | **生成产物，勿手改**（唯一的非 `.md` 活文件）：事件卡 / 道具 / 科技 / 畸变 的检索页。由 `tools/gen_gallery.gd` 从数据表 + `道具图鉴.md` 生成，浏览器直接打开 |
+
+> **图鉴 = 对局里那一个**（`scripts/codex_panel.gd`，左上角「📖 图鉴」）：机会卡 / 道具 / 科技 / 畸变
+> 四页，数据直读 `CardDB`（`scripts/card_db.gd`）。**文档侧不再有第二份** —— 原先那张生成产物
+> `doc/game-design/图鉴.html`（`tools/gen_gallery.gd` 产出）已于 2026-10-12 随"图鉴改为游戏内唯一入口"
+> 删除；它那半"逐件道具 prose 与代码对账"的职责留给 `tools/check_item_docs.gd`（CI 有闸，见 §三/§五）。
 
 **原型文件**收在 `doc/game-design/prototype/` 子目录（`.html`/`.drawio`）——**该子目录只放定稿存档、
 不随实现更新**，与 `game-design/` 顶层的活文档 `.md` 分开放。
-（顶层另有一份 `图鉴.html`，是**生成产物**、不是手写原型，别混进 `prototype/`，也别手改它。）`布局原型-玩家区与选项菜单.html`、
+`布局原型-玩家区与选项菜单.html`、
 `布局原型-四人围桌.drawio`、`对局状态机.drawio`（对局状态机的放大重排版）是**定稿存档**——原型记录的是当时谈定的交互，
 **可能与现状不一致**（例如原型里的「☰ 选项」按钮后来已改名「⏸ 暂停」）。
 要写代码请以 `game-design/*` 与现有实现为准，不要把原型当成活的规范逐条对照。
@@ -109,7 +113,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/tech_test.gd    # 科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
-& $G --headless --path . --script tests/codex_panel_test.gd # 图鉴弹窗回归（三族 / 搜索 / 互斥 / 居中模态 / 角标）
+& $G --headless --path . --script tests/codex_panel_test.gd # 图鉴弹窗回归（四族 / 搜索 / 互斥 / 居中模态 / 角标）
 & $G --headless --path . --script tests/hud_test.gd      # HUD 回归（总资产条/底栏/客户端视角）
 & $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
 & $G --headless --path . --script tests/layout_test.gd  # 3D 房间+桌面布局与取景（格宽/房间带/光照契约/家具/吊灯）
@@ -117,7 +121,7 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/lab_case_test.gd # 道具试验场用例（保存/回放逐项还原）
 & $G --headless --path . --script tests/settings_test.gd    # 开局设置单测（操作限时挡位）
 & $G --headless --path . --script tests/settings_ui_test.gd # 大厅游戏设置弹窗回归
-& $G --headless --path . --script tools/gen_gallery.gd  # 图鉴页生成（改了数据表 / 道具图鉴.md 后**必须重跑**）
+& $G --headless --path . --script tools/check_item_docs.gd # 道具图鉴.md ↔ item_data.gd 对账（改了任一者后**必须重跑**）
 & $G --headless --path . --script tools/gen_game_index.gd # game.gd 导航索引生成（改了它的区块横幅后**必须重跑**）
 & $G --headless --path . -- --autotest=host --rounds=5    # 联机回归（另开 client）
 ```
@@ -136,8 +140,9 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   `table` 时会调 `focus_grid(27, 2.0)` 想拉近到 27 号格、并弹格详情卡 —— **但 `cam_locked`
   默认锁着，`focus_grid` 直接 no-op**（摆拍默认锁镜头那条的副作用，见下 `freecam`）⇒ 不带
   `table` 的图**实际也是全景**，只是多一张格详情卡；真要看近景**必须配 `freecam`**；
-  `rules` → 展开规则说明；`codex` → **打开图鉴**（2026-10-12 起是屏幕中央的大尺寸模态；
-  文件名再带 `codextech` / `codexaber` 可切到科技 / 畸变页，如 `xx_codex_table_plain.png`）；`pause` → 打开暂停菜单（文件名再带 `setpanel` ⇒ 顺手切到「设置」那一片，
+  `rules` → 展开规则说明；`codex` → **打开图鉴**（2026-10-12 起是屏幕中央的大尺寸模态，
+  **默认停在机会卡页**；文件名再带 `codexitem` / `codextech` / `codexaber` 可切到道具 / 科技 /
+  畸变页 —— 拍道具页要带 `codexitem`，如 `xx_codexitem_table_plain.png`）；`pause` → 打开暂停菜单（文件名再带 `setpanel` ⇒ 顺手切到「设置」那一片，
   用来核对**对局内设置面板**的分节边框盒 / 开关组件 / 与大厅弹窗的一致性，如
   `xx_pause_setpanel_table_plain.png`）；`card` → 跳过赌局；
   `deckout` → **抽卡「抽出」瞬间**：在 **0.06s / 0.16s 各补一张**（常规三帧的第一帧落在翻面之后，
@@ -271,12 +276,13 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 
 - 机制/数值改动 → 同步 `doc/game-design/*`；协议/架构改动 → 同步 `doc/development/*`。
 - **逐件道具的唯一来源是 `doc/game-design/道具图鉴.md`**；`道具系统.md` 只讲机制与进度，不重复逐件表。
-- **动了任何一张玩法数据表**（`game_data.gd` 的 `EVENTS` / `item_data.gd` 的 `ITEMS` /
-  `tech_data.gd` 的 `TECHS` / `aberration_data.gd` 的 `ABERRATIONS`）**或 `道具图鉴.md`**，
-  都要重跑 `tools/gen_gallery.gd` 重新生成 `doc/game-design/图鉴.html` 并一并提交 ——
-  CI 有一道「重新生成后 `git diff --exit-code`」的闸，过期即红（见 §三）。
-  这页是给团队当参考查的，**悄悄过时比没有更糟**（有人会拿它当准）。
-  生成器自己会打印「代码有文档没写 / 文档有代码没写 / 卡面文案不一致」三类缺项，别忽略它。
+- **玩法数据表**（`game_data.gd` 的 `EVENTS` / `item_data.gd` 的 `ITEMS` / `tech_data.gd` 的
+  `TECHS` / `aberration_data.gd` 的 `ABERRATIONS`）**不再需要重跑任何生成器**：对局内图鉴
+  （`scripts/codex_panel.gd`）直读 `CardDB` ⇒ 数据一动，游戏里那一页跟着动，不存在「产物过期」
+  （2026-10-12 之前那张 `doc/game-design/图鉴.html` 已删，见 §二）。
+  但**改了 `道具图鉴.md` 或 `item_data.gd` 的 `desc`** 要跑 `tools/check_item_docs.gd`：
+  它查「代码有文档没写 / 文档有代码没写 / 卡面文案不一致」三类缺项，CI 有一道闸盯着它（见 §三）。
+  **逐件 prose 与代码漂开只有它查得出来**，别当成可选项。
 - 新想法（未排期）→ 登记到 `doc/development/未完成项-交接.md`（**「还剩什么」的唯一权威**，见 §七）；
   讨论过程、拍板理由与备选方案写进 `doc/game-design/设计决策留痕.md`。
   批次推进过程中的记录留在 `doc/development/开发台账.md`——它**只记「做到哪了」，不再收待办**。

@@ -26,7 +26,7 @@ extends Control
 #     _run_game, _rounds_exhausted, _advance_turn, _alive_count, _note_roll_hot
 #     _apply_roll_mods, _play_turn, _arm_roll_timeout, _bot_roll_later
 # 【房主：畸变】 _aberration_window, _ab_tick, _ab_end_active, _ab_candidates, _ab_random_pool
-#     _ab_cond_met, _ab_pick, _ab_enqueue, _ab_trigger, _ab_announce_text, _ab_apply_instant
+#     _ab_cond_met, _ab_pick, _ab_enqueue, _ab_trigger, _ab_apply_instant
 #     _ab_apply_persistent_start, _ab_has, _ab_rent_mult, _ab_move_cut
 # 【房主：结算】 _resolve_tile, _new_event_deck, _draw_chance_card, _peek_event, _roll_chance_kind
 #     _resolve_buy, _resolve_upgrade, _resolve_rent, _apply_card
@@ -46,8 +46,8 @@ extends Control
 # 【房主：掉线重连认领（协议 §六，规格见 doc/development/联机协议.md）】 reclaim_seat, _rekey_transient
 #     _resend_reclaim_ui
 # 【房主：广播】 _set_timeout_tier, _refresh_tier_ui, _set_ab_freq, _set_ab_dur, _set_ab_cond
-#     _refresh_ab_settings_ui, _refresh_ab_ui, s_op_timer, _op_timer_send, _op_window_owner
-#     _refresh_liq_ui, _broadcast_state, _log, s_aberr
+#     _refresh_ab_settings_ui, s_op_timer, _op_timer_send, _op_window_owner, _refresh_liq_ui
+#     _broadcast_state, _log, s_aberr
 # 【全员：接收 RPC】 s_state, _autotest_client_finish, _autotest_tier_ok, s_roll, _flair_roll, s_move
 #     s_card, s_log, _push_log_toast, s_prompt, c_card_ok, s_card_close, _on_bury_picked
 #     _on_card_confirm, _await_card_confirm, s_card_choices, c_choice, _on_card_choice
@@ -98,7 +98,7 @@ extends Control
 #     _place_overlay_bar, _shop_ordinal, _refresh_shop_ui, _refresh_black_ui
 #     _rebuild_black_picker, _on_conn_lost, _on_exit, _wait, _await_turn_window
 #
-# 合计 29 个区块 / 349 个函数
+# 合计 29 个区块 / 347 个函数
 # <<<<<<<<<< 导航索引结束 <<<<<<<<<<
 
 signal roll_received
@@ -1959,7 +1959,7 @@ func _ab_trigger(p: Dictionary, id: String) -> void:
 		left = int(d.get("dur", 0))
 		if left <= 0:
 			left = maxi(1, int(_settings.ab_dur))
-	var text := _ab_announce_text(id, left)
+	var text := AberrationData.announce_text(id, left)
 	_log("【畸变】%s —— %s" % [id, text], "#f0c064")
 	# 触发大字卡（畸变可读性，台账 §六 #28）：屏幕层演出 3.2 秒自动收（不用任何人点确定，
 	# 定时器 fire-and-forget，不阻塞回合流；重复触发时后一张盖前一张，close 幂等）
@@ -1973,22 +1973,9 @@ func _ab_trigger(p: Dictionary, id: String) -> void:
 		s_aberr.rpc(id, "start", 0)
 		await _ab_apply_instant(p, id)
 
-## 畸变公告文案（唯一来源；触发大字卡 / 战报 / 横幅悬停共用，aberration_test 钉住）：
-## desc 全文 + 比例类畸变的实时数值 + 持续型的「剩 N 回合，到期自动解除」。
-## 所有畸变都**没有手动解除**——持续型到期自动消失（用户 2026-10-06 定口径）。
-static func _ab_announce_text(id: String, left := -1) -> String:
-	var d: Dictionary = AberrationData.def(id)
-	var text := String(d.get("desc", ""))
-	match id:
-		"金融危机":
-			text += "（无房产者扣 %d%%、有房产者扣 %d%%）" % [
-				int(AberrationData.FIN_RATE_NC * 100), int(AberrationData.FIN_RATE_C * 100)]
-		"枪打出头鸟":
-			text += "（按现金的 %d%%）" % int(AberrationData.BIRD_RATE * 100)
-	if String(d.get("type", "")) == "持续" and left > 0:
-		text += "
-持续 %d 回合，到期自动解除。" % left
-	return text
+## 畸变说明的**实时全文** + 公告文案：2026-10-12 下沉进 `AberrationData`（见那里的
+## `desc_live` / `announce_text`）—— 顶部横幅要的是同一份文字，而那是**纯数据格式化**，
+## 住在 game.gd 只会让两边各写一份（也正好给 `game.gd` 的体积棘轮让出几行）。
 
 ## 非持续型：触发瞬间结算（debuff 逐玩家独立被香皂/护盾免疫）
 func _ab_apply_instant(p: Dictionary, id: String) -> void:
@@ -3630,26 +3617,10 @@ func _refresh_ab_settings_ui() -> void:
 	UIKit.chip_select(ab_dur_row, str(_settings.ab_dur))
 	ab_cond_sw.set_on(_settings.ab_cond, false)
 
-## 「生效中」小标签：读快照的 aberrations 字段（s_state 两端同路径触发）。
-## 界面美术重构后这里升级为正式横幅 + 座位卡角标（当前从简）。
-func _refresh_ab_ui() -> void:
-	if ab_label == null or ab_label_l == null:
-		return
-	var act: Array = st.get("aberrations", [])
-	if act.is_empty():
-		ab_label.visible = false
-		return
-	var parts := PackedStringArray()
-	var tips := PackedStringArray()
-	for a in act:
-		parts.append("%s·剩%d回合" % [String(a.id), int(a.left)])
-		# 悬停即查（畸变可读性）：全文说明 + 剩余回合；所有畸变到期自动解除、无手动解除
-		tips.append("%s：%s（剩 %d 回合，到期自动解除）" % [
-			String(a.id), AberrationData.def(String(a.id)).get("desc", ""), int(a.left)])
-	ab_label_l.text = "🌀 畸变生效中：%s" % "、".join(parts)
-	ab_label.tooltip_text = "
-".join(tips)
-	ab_label.visible = true
+## （「生效中」横幅的刷新已随控件一起搬进 `table_hud.gd`：`TableHud.refresh_ab` /
+## `fit_ab_banner`，2026-10-12 —— 横幅是 `table_hud` 亲手搭的，它的排版（尤其是
+## 「一条畸变一行 + 随内容长高」那套）跟控件住一起，比跟状态机住一起合适。
+## 调用点仍在本文件：`_broadcast_state` 末尾那一句。）
 
 ## 操作窗口剩余时间（全员可见）走这条专用 RPC，而不进 _broadcast_state：
 ## 它按秒高频变化，进全量状态会让所有端每秒白渲染一整帧棋盘。
@@ -3910,7 +3881,7 @@ func s_state(state: Dictionary) -> void:
 		_settings.ab_dur = int(state.get("ab_dur", 2))
 		_settings.ab_cond = bool(state.get("ab_cond", true))
 		_refresh_ab_settings_ui()
-	_refresh_ab_ui()
+	TableHud.refresh_ab(self)
 	_refresh_liq_ui()
 	# 经济 / 胜负设置（开局设置.md）：客户端从快照同步进本地副本（房主本来就是自己那份）。
 	# 规则文案跟着这些值走 —— 变了就按新值重建规则面板（客户端首份快照必然触发一次）。

@@ -64,6 +64,42 @@ func _popup_labels(popup: Node) -> Array:
 		out.append(String((n as Label).text))
 	return out
 
+## 背包网格里**装着卡的那一格**（`VBoxContainer`，第 0 个孩子是 `ItemCard`）。
+## 用来钉"卡下面还剩几行"：卡面自己的角标 / 名称条都住在卡**里面**，不算这一格的行。
+func _first_item_slot(popup: Node) -> Node:
+	if popup == null:
+		return null
+	for c in popup._body.find_children("*", "VBoxContainer", true, false):
+		var ch := (c as Node).get_child_count()
+		if ch >= 1 and (c as Node).get_child(0).get_script() != null \
+				and String(((c as Node).get_child(0).get_script() as GDScript).resource_path) \
+					.ends_with("item_card.gd"):
+			return c
+	return null
+
+## 背包网格（`BagFlow`）里每个槽的**可见矩形**：有卡的那格取 `ItemCard` 自己那块，
+## 空槽取占位 `Panel` 那块。返回 `[{kind, rect, size}]`。
+## **量的是看得见的那块**（`size` / `get_global_rect()`），不读 `custom_minimum_size` ——
+## 病灶正是"写的最小尺寸对、被布局拉开后画出来不对"，读声明值永远看不出这类问题。
+func _popup_slot_rects(popup: Node) -> Array:
+	var out: Array = []
+	if popup == null:
+		return out
+	var flow: Node = popup._body.find_child("BagFlow", true, false)
+	if flow == null:
+		return out
+	for ch in (flow as Node).get_children():
+		var c := ch as Control
+		if c == null:
+			continue
+		if c is VBoxContainer and c.get_child_count() > 0:
+			var card := c.get_child(0) as Control
+			if card != null:
+				out.append({"kind": "卡", "rect": card.get_global_rect(), "size": card.size})
+		elif c is Panel:
+			out.append({"kind": "空槽", "rect": c.get_global_rect(), "size": c.size})
+	return out
+
 func _fresh_tiles() -> Array:
 	var out := []
 	for i in GameData.TILES.size():
@@ -173,17 +209,26 @@ func _run() -> void:
 	# `_log`（定档 / 三人超时 / 发牌 / 发车）会挤进 `log_toast`，把「战报：默认收起 + 消息在
 	# 屏幕上方弹出」那段按**末条内容**做的断言顶掉 —— 本文件是布局回归，不测科技。
 	g._settings.tech_on = false
-	# 名册为空时，房主 `_host_setup` 开局 1.5 秒后那次自动 `_broadcast_state()` 会读 `hp[turn_i]`
-	# 越界（`SCRIPT ERROR: Out of bounds`，本批之前就有）。先种一份最小名册让那次广播成立。
-	# `lab_mode` 只是让它的 `phase` 落在 "playing"（不跑回合循环的沙盒 = 道具试验场同一档），
-	# 免得那一下被 `s_state` 当成对局结束、给 g 挂上结算层；`turn_i = 0`（peer 2 那份在 index 1，
-	# 但后面几段会把 hp 换成 1 家的名册 —— 恒取 0 号位对两种规模都成立）。
-	g.hp = _host_roster()
+	# **名册先不种**（2026-10-12 修一条既有偶发红）：`_host_setup` 在 `await _wait(1.5)` 之后会看
+	# `hp` —— **空就直接 return**（那句注释写着"名册为空 ⇒ 不推进对局"），既不发那次
+	# `_broadcast_state()`、也不进 `_run_game()`。原先这里开局就把名册种上，于是 1.5 秒后**房主
+	# 自己广播一次** `turn = hp[0].peer = 1`、还真的开跑回合循环 ⇒ 用例喂的 `st`（`my_peer = 2`）
+	# 被顶掉，动作按钮跟着熄灭 —— 实测「右下角动作按钮仍在（掷轮入口）」约 1/3 概率红，
+	# **HEAD 原版同样会红**（用 `git stash` 实测过，与当次改动无关）。跑得快就绿、机器一忙就红。
+	# 现在改成：等那 1.5 秒窗口**过去**再种名册，那次广播就不可能发生了。
+	# `lab_mode` 只是让 `phase` 落在 "playing"（不跑回合循环的沙盒 = 道具试验场同一档），
+	# 免得后来的状态被 `s_state` 当成对局结束、给 g 挂上结算层。
+	g.hp = []
 	g.turn_i = 0
 	g.lab_mode = true
 	for i in 4:
 		await process_frame
 	await create_timer(0.4).timeout
+	# 再用一个 1.5 秒的余量把那道窗口熬过去（实机 1.5s；给 1.8 免得时钟抖动卡在边界上）
+	await create_timer(1.8).timeout
+	# 现在才种名册：**只**供下面「点手中牌」那段走真房主路径（`_use_item` 读 `hp`，不读 `st`）。
+	g.hp = _host_roster()
+	g.turn_i = 0
 
 	print("== 「我」的总资产条（左下角，`corner_bars` 就剩这一条）==")
 	# ⑩ 改结构：他人的**四角**总资产条全删，只剩「我」这一条（左下角）。
@@ -472,11 +517,22 @@ func _run() -> void:
 	await process_frame
 	_check(not g.log_panel.visible, "再点一次收起")
 	# ⑫：畸变横幅从右上角搬到**顶部水平居中**（"中间" = 不再贴角，不是屏幕正中）
+	# **id 必须是表里真有的**（2026-10-12 修：原先是 "断网"，`AberrationData` 里根本没这条 ——
+	# 横幅只显示 id 时看不出来，带上正文之后那种陈旧 id 会当场露馅，见下面「带正文」那条）。
 	var s_ab: Dictionary = _state(2, false)
-	s_ab["aberrations"] = [{"id": "断网", "left": 3}]
+	s_ab["aberrations"] = [{"id": "停电", "left": 3}]
 	g.s_state(s_ab)
 	await process_frame
+	await process_frame        # 高度由 `TableHud.fit_ab_banner` **帧末**写回，量之前多让一帧
 	_check(g.ab_label.visible, "有畸变时横幅显示")
+	# **2026-10-12：横幅要带畸变正文**（用户：「畸变显示加上畸变的内容」）—— 原先只有
+	# 「🌀 畸变生效中：诚信考试·剩2回合」，正文只在悬停 tooltip 里。
+	var ab_text := String(g.ab_label_l.text)
+	var ab_desc := AberrationData.desc_live("停电")
+	_check(ab_desc != "" and ab_text.contains(ab_desc),
+		"横幅写出畸变正文（应含「%s」，实得「%s」）" % [ab_desc, ab_text])
+	_check(ab_text.contains("停电") and ab_text.contains("剩 3 回合"),
+		"横幅同时给出名称与剩余回合（实得「%s」）" % ab_text)
 	var abr: Rect2 = (g.ab_label as Control).get_global_rect()
 	_check(absf(abr.get_center().x - g.size.x * 0.5) <= 4.0,
 		"横幅**水平居中**（中心 x %.1f / 屏心 %.1f）" % [abr.get_center().x, g.size.x * 0.5])
@@ -489,14 +545,34 @@ func _run() -> void:
 	# **名册条那两问随载体一起删**（`roster_strip` 不是成员了）：立牌可见的那一块是 3D 节点、
 	# 顶部横幅是屏幕层控件 —— 两者不同层，不存在"重叠"这件事可言。
 	var ab_hit := 0
-	for other in [g.log_toggle, g.opt_btn, g.rules_btn]:
+	for other in [g.log_toggle, g.opt_btn, g.rules_btn, g.codex_btn]:
 		if (other as Control).visible and abr.intersects((other as Control).get_global_rect()):
 			ab_hit += 1
-	_check(ab_hit == 0, "横幅不与三个角按钮重叠（重叠 %d 处）" % ab_hit)
+	_check(ab_hit == 0, "横幅不与四枚角按钮重叠（重叠 %d 处）" % ab_hit)
+	# **长正文换行 ⇒ 横幅变高、战报气泡顺位让开**（同一次广播里两条一起算的）
+	var tall_h: float = abr.size.y
+	var tall_top: float = float(g.log_toast.offset_top)
+	s_ab["aberrations"] = [{"id": "斗地主", "left": 3}, {"id": "房价崩盘", "left": 2}]
+	g.s_state(s_ab)
+	await process_frame
+	await process_frame
+	var abr2: Rect2 = (g.ab_label as Control).get_global_rect()
+	_check(tall_h > 0.0 and abr2.size.y > tall_h + 1.0,
+		"两条畸变（各占一行）比一条更高（%.0f → %.0f）" % [tall_h, abr2.size.y])
+	_check(g.log_toast.offset_top > tall_top + 1.0,
+		"横幅长高后战报气泡往下让（气泡顶 %.0f → %.0f）" % [tall_top, g.log_toast.offset_top])
+	# 上限取自 `table_hud`（**运行时 load**，见本文件上面那段：静态写类名会把 `Net` 拽进编译链）
+	var ab_max_w: float = float(TH.AB_BANNER_MAX_W)
+	_check(abr2.end.y <= g.log_toast.offset_top + 0.5 and abr2.size.x <= ab_max_w,
+		"长正文被钳在 %.0f px 内换行、不压气泡（实得 %.0f 宽 / 底 %.1f / 气泡顶 %.0f）"
+			% [ab_max_w, abr2.size.x, abr2.end.y, g.log_toast.offset_top])
 	s_ab["aberrations"] = []
 	g.s_state(s_ab)
 	await process_frame
+	await process_frame
 	_check(not g.ab_label.visible, "没有畸变时横幅收起")
+	_check(is_equal_approx(g.log_toast.offset_top, 52.0),
+		"横幅收起后战报气泡回到 52（实得 %.1f）" % g.log_toast.offset_top)
 
 	print("== 桌垫上不再有仪表盘（2026-10-11 整块删除）==")
 	# **落位史**：屏幕层顶栏（8..76，2026-10-09）→ 桌垫状态牌（2026-10-11 上午）→ **整块删除**
@@ -555,7 +631,10 @@ func _run() -> void:
 	#（坞里的 roll_btn / use_phase_btn 早就 visible=false，牌垫上那两枚也已在批次 7 退场）。
 	_check(g.action_btn != null and g.action_btn.visible \
 			and String(g.action_btn.text) == "转动转盘",
-		"右下角动作按钮仍在（掷轮入口，实得「%s」）"
+		"右下角动作按钮仍在（掷轮入口，实得「%s」，visible=%s；此刻 st phase=%s await=%s await_peer=%s turn=%s，my_peer=%s）"
+			% [String(g.action_btn.text), str(g.action_btn.visible), String(g.st.get("phase", "")),
+				String(g.st.get("await", "")), str(g.st.get("await_peer", -1)),
+				str(g.st.get("turn", -1)), str(g.my_peer)]
 			% ("无" if g.action_btn == null else String(g.action_btn.text)))
 	# 陷阱：`_process` 原有一句 `if mat_bar == null: return` 的**提前返回**。只删构建、不删守卫的话，
 	# `_process` 后半段（小卖部 / 黑市 / 操作倒计时 / 开发者面板）会**静默**不再执行。
@@ -1232,6 +1311,47 @@ func _run() -> void:
 		"点作弊器 → 弹点数框、记下槽位 3（实得槽位 %d）" % g.cheat_slot)
 	g._close_cheat_picker()
 
+	print("== 7 件道具：桌上也要全摆出来、且每张都点得中（2026-10-12 用户：「桌面上无法显示超过 5 张牌」） ==")
+	# 这不只是"看不见"：`hand_hit` 只遍历 `_hand_n`（= `TableProps.HAND_MAX`）⇒ 第 6、7 件在桌上
+	# **点不到 = 既用不了也丢不掉**，「置物架」多出来的两格是**废格**。
+	# 判据：① 七张都摆出来（封顶 5 的话这条当场红）；② **逐张**拿牌盒中心点一次，命中的必须是它自己
+	# ——相邻命中盒本就叠着（`HAND_STEP_PX` 138 < 卡宽投影），张数多了以后"离相机最近的那张赢"
+	# 这条 tie-break 更吃紧，所以这条必须逐张量、不能只看总数。
+	var hand7: Array = [{"id": "兼职中介", "cd": 0}, {"id": "跑腿券", "cd": 0},
+		{"id": "快递直达", "cd": 0}, {"id": "作弊器", "cd": 0}, {"id": "共享单车", "cd": 0},
+		{"id": "雨伞", "cd": 0}, {"id": "饭卡", "cd": 0}]
+	var s_h7: Dictionary = _state(2, false)
+	s_h7.await = "item"
+	s_h7.await_peer = 2
+	for p in s_h7.players:
+		if int(p.peer) == 2:
+			p.items = hand7.duplicate(true)
+	g.s_state(s_h7)
+	await process_frame
+	await process_frame
+	g._process(0.0)
+	_check(tph.hand_count() == 7,
+		"七件道具摆成七张手牌（实得 %d；封顶 5 的话这里先红）" % tph.hand_count())
+	if tph.hand_count() == 7:
+		var hit_bad: Array = []
+		var h7_off: Array = []
+		var x0 := INF
+		var x1 := -INF
+		for k in 7:
+			var rk: Rect2 = tph.hand_rect(k)
+			x0 = minf(x0, rk.position.x)
+			x1 = maxf(x1, rk.end.x)
+			var sp = tph.hand_screen_pos(k)
+			if sp != null and ((sp as Vector2).x < 0.0 or (sp as Vector2).x > g.size.x):
+				h7_off.append("第 %d 张 x=%.0f" % [k, (sp as Vector2).x])
+			if tph.hand_hit(rk.get_center()) != k:
+				hit_bad.append("第 %d 张 → 命中 %d" % [k, tph.hand_hit(rk.get_center())])
+		_check(hit_bad.is_empty(), "七张牌各自点得中自己（异常：%s）" % str(hit_bad))
+		_check(h7_off.is_empty(), "七张牌的中心都在屏内（异常：%s）" % str(h7_off))
+		# 整排是**加宽**、不是把间距压小（压小会让相邻命中盒叠得更多，tie-break 兜不住）
+		_check((x1 - x0) > 950.0,
+			"整排按张数加宽、间距不变（七张画布宽 %.0f > 五张的 812）" % (x1 - x0))
+
 	print("== 近排格子不再被手牌压住（批次 5 Task 3：整排下移到木纹留白）==")
 	# 批次 3 那条老问题（R38/R40）是「牌盒上沿咬住近排格子，只在格子顶部留下十几画布像素的
 	# 可点缝；选中那张一抬起来，外侧两张的缝直接归零」。Task 3 把整排**放大 1.5 倍并下移到
@@ -1814,6 +1934,66 @@ func _run() -> void:
 	_check(g.player_popup._panel.custom_minimum_size.x <= 1280.0,
 		"留白没把面板顶出画布（实得宽 %.0f ≤ 1280）" % g.player_popup._panel.custom_minimum_size.x)
 
+	print("== 空槽与卡同尺寸、同落点（2026-10-12 用户：「空槽的尺寸要与卡牌的尺寸一致」） ==")
+	# 病灶：空槽是 `Panel` 自己撑出来的可见盒子，而 `FlowContainer` 用 `fit_child_in_rect` 摆孩子、
+	# **带 `SIZE_FILL` 就把它拉到整行高**（那一行的高由"卡 + 名字"撑出来）⇒ 空槽画得**比卡更高**
+	#（实拍：卡 300、空槽三百二十几，"空槽"两字还落到卡面之下）。修法是空槽不吃 FILL。
+	var slot_rects := _popup_slot_rects(g.player_popup)
+	_check(slot_rects.size() >= 2, "（前置）量到 %d 个槽位" % slot_rects.size())
+	var size_bad: Array = []
+	var card_tops: Array = []
+	for sr in slot_rects:
+		if not (sr.size as Vector2).is_equal_approx(g.player_popup.ITEM_CARD_SIZE):
+			size_bad.append("%s %s" % [String(sr.kind), str(sr.size)])
+		if String(sr.kind) == "卡":
+			card_tops.append((sr.rect as Rect2).position.y)
+	_check(size_bad.is_empty(), "每个槽的**可见尺寸**都是卡尺寸 %s（异常：%s）"
+		% [str(g.player_popup.ITEM_CARD_SIZE), str(size_bad)])
+	var y_bad: Array = []
+	for sr in slot_rects:
+		if String(sr.kind) != "空槽":
+			continue
+		var matched := false
+		for ty in card_tops:
+			if absf(float(ty) - (sr.rect as Rect2).position.y) < 0.5:
+				matched = true
+		if not matched:
+			y_bad.append("%.1f" % (sr.rect as Rect2).position.y)
+	_check(y_bad.is_empty() and not card_tops.is_empty(),
+		"空槽与同一行的卡**顶边对齐**（不齐的 y：%s；卡顶 %s）" % [str(y_bad), str(card_tops)])
+
+	print("== 7 格背包：滚轮能滚（2026-10-12 用户实拍：「槽位变成 7 个，但无法用鼠标滚轮滑动」） ==")
+	# 病根：`BagScroll` 原先 `mouse_filter = MOUSE_FILTER_IGNORE` —— **不参与拾取的控件收不到
+	# `_gui_input`**，滚轮于是穿过去落到面板（STOP）上被吃掉 ⇒ 内容明明超出容器、滚轮却毫无反应。
+	#
+	# ⚠ **别为了这条往跑着的对局里推滚轮事件**（2026-10-12 试过：`push_input` 会把这套用例
+	# 拖住不返回，实测超过 5 分钟 —— 那一下还会打到 3D 桌面 / 其它屏幕层控件上去）。
+	# 所以这里钉的是**两个可观察的前提**，而不是"模拟一次滚轮"：
+	#   ① 内容确实超出容器（⇒ 它本来就该能滚）；
+	#   ② 控件**参与鼠标拾取**（`STOP`）。Godot 的 `ScrollContainer` 自己在 `_gui_input` 里滚，
+	#      而 `MOUSE_FILTER_IGNORE` 的控件**根本不参与拾取** ⇒ 滚轮会穿过去落到面板（STOP）上被吃掉。
+	#      ② 就是病根本身：改回 `IGNORE` 这条当场红。
+	# 滚轮在真机上的手感由用户实拍确认（改前"槽位 7 个、滚轮毫无反应"）。
+	var s_7: Dictionary = _state(3, false)
+	for p in s_7.players:
+		if int(p.peer) == 1:
+			p.items = [{"id": "置物架", "cd": 0}, {"id": "招财猫", "cd": 0}]
+	g.s_state(s_7)
+	await process_frame
+	await process_frame
+	g._on_corner_bar_clicked(1)
+	await process_frame
+	await process_frame
+	var sc7 := g.player_popup._body.find_child("BagScroll", true, false) as ScrollContainer
+	_check(sc7 != null, "（前置）7 格弹窗里有 `BagScroll`")
+	if sc7 != null:
+		var content_h: float = (sc7.get_child(0) as Control).get_combined_minimum_size().y
+		_check(content_h > sc7.size.y + 1.0,
+			"7 格的内容确实超出容器（内容 %.0f > 容器 %.0f ⇒ 本来就该能滚）"
+				% [content_h, sc7.size.y])
+		_check(sc7.mouse_filter == Control.MOUSE_FILTER_STOP,
+			"`BagScroll` 参与鼠标拾取 = %d（STOP；IGNORE(%d) 的话滚轮进不到它这里）"
+				% [sc7.mouse_filter, Control.MOUSE_FILTER_IGNORE])
 	g.player_popup.close()
 	_check(not g.player_popup.is_open(), "关闭后收起")
 	# 反向：不存在的玩家不该开（人少了 / 自己不在名册时不崩）
@@ -1858,11 +2038,10 @@ func _run() -> void:
 	_check(not g.player_popup.is_open(), "Esc（真 _unhandled_input 链路）→ 弹窗关闭")
 
 	print("== 弹窗内容：（被动）标签（终审 fix wave）==")
-	# 「完成标准」把"被动标记"列为弹窗内容之一，但此前没有断言钉它。招财猫 `type: passive`
-	# ⇒ 它那一行后缀里应有「（被动）」。读**行内 Label 的 text**（最强可观察量），不读内部标志。
-	# **批次 12 B2 改结构**：一行一件的"小图标 + 名字"换成**一整张 `ItemCard`**
-	#（+ 卡下面的名字 / 标签），所以这里改成遍历**整棵弹窗控件树**找 Label
-	#（不再假设"HBoxContainer 行"这种内部结构 —— 那个假设正是被本条目改掉的东西）。
+	# **2026-10-12 反向契约**（用户：「卡牌名称下的效果文本（如"被动"）去掉」）：那行后缀没有了。
+	# 判据**不是**"整棵树里找不到『被动』" —— 卡面**左上那枚圆标本就印着「被动」**
+	#（`ItemCard.make` 按 `type == "passive"` 印），那枚必须留着。要钉的是**卡下面那一行**：
+	# 有卡的那一格应当是「卡 + 名字」两个直接子节点，多一行就是回潮。
 	var s_pas: Dictionary = _state(3, false)
 	for p in s_pas.players:
 		if int(p.peer) == 1:
@@ -1873,12 +2052,24 @@ func _run() -> void:
 	g._on_corner_bar_clicked(1)
 	await process_frame
 	_check(g.player_popup.item_count == 1, "弹窗里 1 件（招财猫，实得 %d）" % g.player_popup.item_count)
+	var slot := _first_item_slot(g.player_popup)
+	_check(slot != null, "（前置）找得到有卡的那一格")
+	if slot != null:
+		var kids := slot.get_child_count()
+		var extra_labels: Array = []
+		for i in range(1, kids):        # 第 0 个是卡本身
+			var ch := slot.get_child(i)
+			if ch is Label:
+				extra_labels.append(String((ch as Label).text))
+		_check(kids == 2 and extra_labels == [String((slot.get_child(1) as Label).text)]
+				and not String((slot.get_child(1) as Label).text).contains("（"),
+			"卡下面**只有名字**一行、没有效果文本（子节点 %d 个：%s）" % [kids, str(extra_labels)])
 	var row_texts := _popup_labels(g.player_popup)
 	var has_passive := false
 	for t in row_texts:
-		if String(t).contains("（被动）"):
+		if String(t).contains("（被动）") or String(t).contains("（冷却"):
 			has_passive = true
-	_check(has_passive, "弹窗里那张卡下面含「（被动）」（招财猫是 passive；实得 %s）" % str(row_texts))
+	_check(not has_passive, "整棵弹窗里都没有「（被动）」「（冷却 N）」那种后缀（实得 %s）" % str(row_texts))
 	g.player_popup.close()
 
 	print("== 弹窗：显示「已选科技」（§六）==")

@@ -106,7 +106,7 @@ func _run() -> void:
 	_test_deck_key_is_gone()
 	_test_card_style(g)
 	_test_card_face(g)
-	_test_gallery_kind_colors()
+	_test_codex_kind_colors()
 	_test_candidates(g)
 	_test_enter_exit(g)
 	_test_spectator(g)
@@ -1484,7 +1484,7 @@ func _test_deck_order(g) -> void:
 # ================= 卡型配色 + 三类卡分布（Task 14，批 2 收尾） =================
 #
 # 卡型（`GameData.card_kind`）决定**卡面配色**：抽卡演出（`s_card.rpc(..., kind, ...)`）与
-# 图鉴页读的是同一份，所以这里是「15 个新字段都认得」的钉子 —— 漏认的字段会掉进兜底的 info，
+# 对局内图鉴（`CardDB.event_rows`）读的是同一份，所以这里是「15 个新字段都认得」的钉子 —— 漏认的字段会掉进兜底的 info，
 # 卡面配色当场错（口径见 机会卡.md §三）。
 #
 # 分布这块是本批补上的：批 1 立三类抽卡时，85/10/5 一直**没有测试钉住**（批 1 审查时明确
@@ -1871,73 +1871,35 @@ func _test_card_face(g) -> void:
 	dr.tick(dr.BACK + 0.05)
 
 
-## 卡面美化（2026-10-10）：**图鉴页的卡型色与卡面同源**。原先它自己手写五个 hex、与演出**五路全不等**
-##（`jail` 卡面紫 / 页面琥珀，`info` 卡面金 / 页面灰蓝）。生成器改读 `GameData.CARD_KINDS` 之后，
-## 页面里必须出现**表里的新值**、且**不再出现那三个旧值**。
-## 与 CI 的「重新生成后 git diff --exit-code」是一对：这条管"改没改对"，
-## CI 那条管"提交进去的是不是最新产物"。
+## 卡面美化（2026-10-10）：**机会卡的那套卡型色只有一份来源** —— `GameData.CARD_KINDS`
+##（演出大字卡读它）。原先图鉴页自己手写五个 hex、与演出**五路全不等**（`jail` 卡面紫 / 页面琥珀、
+## `info` 卡面金 / 页面灰蓝）。
 ##
-## ⚠ 与计划原稿的两处偏差（2026-10-10 实跑后改，见 task-5-report.md）：原稿那两条查的是
-## **整页**里"不再有旧 jail 色 `#f0c064` / 旧 info 色 `#9fb3c0`"，但这两个 hex 在页面里
-## **另有正当来源、与卡型表无关**：
-##   `#f0c064` = 模板 CSS 的 `--gold`（`gallery_template.html`，本批不许动）；
-##   `#9fb3c0` = `TAG_COLOR["中性"]`（畸变节的"中性"标签色，与卡型无关）。
-## ⇒ 那两条在不动这两处时**永假**（实测：改完生成器后仍 2 FAILURES）。改为查生成器
-## **真正喂的那一段**：内嵌 JSON 的 `cards` 分节 —— 卡型色在页面里唯一的落点。
-func _test_gallery_kind_colors() -> void:
-	print("== 卡面美化：图鉴页的卡型色与卡面同源 ==")
-	var html := FileAccess.get_file_as_string("res://doc/game-design/图鉴.html")
-	_check(not html.is_empty(), "图鉴页读得到（改动后跑过 tools/gen_gallery.gd）")
-	if html.is_empty():
-		return
-	var news: Array = []
-	for k in ["good", "bad", "move", "jail", "info"]:
-		var hex := "#" + (GameData.CARD_KINDS[k]["color"] as Color).to_html(false)
-		news.append(hex)
-		_check(html.find(hex) >= 0, "图鉴页有 %s 的新色 %s" % [k, hex])
-	var cards := _gallery_cards(html)
-	_check(not cards.is_empty(), "内嵌 JSON 里读得到 `cards` 分节（%d 条）" % cards.size())
-	if cards.is_empty():
-		return
-	# 卡型色在页面上的**两个落点**：卡片的 `accent`（左侧色条）与「卡型」chip 的字色。
-	# 两者都必须**只**取自 `CARD_KINDS` —— 只要生成器还在手写 hex，这里就会漏出旧值。
-	var accents := {}
-	var chips := {}
-	for e in cards:
-		accents[String((e as Dictionary).get("accent", ""))] = true
-		for ch in ((e as Dictionary).get("chips", []) as Array):
-			if (ch as Dictionary).has("color"):
-				chips[String((ch as Dictionary)["color"])] = true
-	_check(_all_in(accents.keys(), news),
-		"机会卡的 `accent` 全取自 `CARD_KINDS`（实得 %s）" % str(accents.keys()))
-	_check(_all_in(chips.keys(), news),
-		"卡型 chip 的字色全取自 `CARD_KINDS`（实得 %s）" % str(chips.keys()))
-	_check(accents.keys().size() == 5,
-		"五个卡型色在这 50 张卡上**都用到了**（实得 %d 个）" % accents.keys().size())
-	for oldhex in ["#f0c064", "#9fb3c0"]:
-		_check(not (accents.has(oldhex) or chips.has(oldhex)),
-			"旧值 %s（卡面美化前的 jail / info 色）没留在机会卡上" % oldhex)
-	_check(html.find("#a885f2") >= 0 and html.find("#f5b342") >= 0,
-		"jail 变紫、info 变金（与卡面一致）")
-
-
-## 抠出图鉴页内嵌的那份 JSON（`<script id="gallery-data" type="application/json">`），
-## 返回 `cards` 分节的条目数组；拿不到就返回空（调用方各自报红）。
-func _gallery_cards(html: String) -> Array:
-	var a := html.find("id=\"gallery-data\"")
-	if a < 0:
-		return []
-	var b := html.find("</script>", a)
-	var gt := html.find(">", a)
-	if b < 0 or gt < 0 or gt > b:
-		return []
-	var parsed: Variant = JSON.parse_string(html.substr(gt + 1, b - gt - 1))
-	if not (parsed is Dictionary):
-		return []
-	for s in ((parsed as Dictionary).get("sections", []) as Array):
-		if String((s as Dictionary).get("id", "")) == "cards":
-			return (s as Dictionary).get("entries", [])
-	return []
+## **2026-10-12 改**：那张网页（`doc/game-design/图鉴.html`）连同生成器一起删了，本用例改钉
+## **对局内图鉴**那条路径（`CardDB.category_color(FAMILY_EVENT, 卡型)` → 图鉴里的小片）——
+## 同一条不变量，换了个落点：**卡型色必须现算自 `CARD_KINDS`，不许在代码里另立第二份 hex**。
+## 后半段那条"源码里不许出现这几个 hex"就是这个意思：色一旦被手抄进 `card_db.gd` /
+## `codex_panel.gd`，演出与图鉴迟早又会分叉（这正是本条用例存在的理由）。
+func _test_codex_kind_colors() -> void:
+	print("== 卡面美化：机会卡的卡型色只来自 CARD_KINDS ==")
+	var kinds := ["good", "bad", "move", "jail", "info"]
+	var hexes: Array = []
+	for k in kinds:
+		hexes.append("#" + (GameData.CARD_KINDS[k]["color"] as Color).to_html(false))
+		_check(CardDB.category_color(CardDB.FAMILY_EVENT, k).to_html(false) == String(hexes[-1]).substr(1),
+			"CardDB 取 %s 的卡型色 = CARD_KINDS 里的 %s" % [k, hexes[-1]])
+		_check(CardDB.category_label(CardDB.FAMILY_EVENT, k) == String(GameData.CARD_KINDS[k]["label"]),
+			"CardDB 取 %s 的卡型名 = CARD_KINDS 里的「%s」" % [k, String(GameData.CARD_KINDS[k]["label"])])
+	# 五个卡型在这 50 张卡上都要真的用上：只覆盖两三个的话，"配色统一"等于没验过
+	var used := {}
+	for id in CardDB.ids(CardDB.FAMILY_EVENT):
+		used[String(CardDB.def(CardDB.FAMILY_EVENT, String(id)).category)] = true
+	_check(used.size() == 5, "五个卡型在机会卡里都用到了（实得 %s）" % str(used.keys()))
+	# **画出来的那一端**（图鉴里那枚卡型小片的字色）由 `codex_panel_test` 钉着 ——
+	# 它要真建出图鉴来量；这里只钉数据端。
+	# 注：曾经还查过"这两份源码里不许出现这几个 hex"，那是**拿源码当判据的钝器**：
+	# `card_db.gd` 的 `TAG_COLORS` 注释里正当地写着 `#9fb3c0`（畸变「中性」色的原值，
+	# 与本表无关 —— 与 2026-10-10 那次"整页查 hex"踩的是同一个坑），当场假红。
 
 
 ## 一个字符串集合是否整体落在白名单里（`Dictionary.keys()` 给的 Array）。

@@ -1,16 +1,18 @@
 class_name CodexPanel
 extends RefCounted
-## 对局内的「📖 图鉴」：右上角一枚**开关按钮**（与「规则说明」「战报」同一条 y）+ 它打开的
+## 对局内的「📖 图鉴」：**左上角**一枚**开关按钮**（「暂停」旁）+ 它打开的
 ## **屏幕中央大尺寸模态弹窗**。
 ##
-## **落点史**：2026-10-11 初版是"按钮下方展开的小面板"（430×472，落点与规则面板逐字相同）；
-## **2026-10-12 用户改成"屏幕中央的大尺寸弹窗"** —— 图鉴是**摊开来看**的东西（道具页要摆一排
-## 真卡），挤在右上角一角既看不全、又和「规则说明」「战报」抢同一块地方。
+## **落点史**：2026-10-11 初版是"按钮下方展开的小面板"（430×472，落点与规则面板逐字相同）、
+## 按钮在右上角；**2026-10-12 用户改成"屏幕中央的大尺寸弹窗"** —— 图鉴是**摊开来看**的东西
+## （道具页要摆一排真卡），挤在右上角一角既看不全、又和「规则说明」「战报」抢同一块地方；
+## **同日再改：入口按钮从右上角搬到左上角「暂停」旁**（右侧那条 y 上已经挤了三枚）。
 ##
-## **内容 = `CardDB` 已归一化的三族**（道具 / 科技 / 畸变），与
-## `doc/game-design/图鉴.html` **同源** —— 那张网页由 `tools/gen_gallery.gd` 从同一批数据表
-## 生成，是**给团队查的**；这一份是**对局里给玩家查的**。事件族暂不纳入（`CardDB.FAMILIES`
-## 的现状，与网页一致）。
+## **内容 = `CardDB` 已归一化的四族**（机会卡 / 道具 / 科技 / 畸变），**页签顺序照
+## `CardDB.FAMILIES`**（单一来源，别在这儿另抄一份）。2026-10-12 起它是**唯一的图鉴入口**：
+## 原先还有一张给团队查的网页 `doc/game-design/图鉴.html`（由 `tools/gen_gallery.gd` 生成），
+## 同日随本改动删除 —— 那套「逐字段摊开机会卡」的口径搬进了 `CardDB`（`event_rows` /
+## `event_soap`），所以这页与 `机会卡.md` §三 / §四 仍然同源，只是不再有第二个落点。
 ##
 ## 与 `RulesPanel` 同约定：控件直接写回宿主（game.gd）的同名成员，而不是返回局部变量。
 ##
@@ -37,18 +39,20 @@ const SCREEN_PAD_Y := 128.0
 ## 面板内边距（`UIKit.margins` 的水平那对）—— 算"内容可用宽度"时要从面板宽里减掉。
 const PANEL_PAD := 18.0
 const BTN_W := 96.0
-## 本按钮排在「规则说明」按钮**左边 12px**（那枚占 `RULES_LEFT..-118`，见 `rules_panel.gd`）。
-const RULES_LEFT := -250.0
+## 左上角落点：按钮排在「暂停」**右边 8px**（那枚占 12..92，见 `table_hud`）。
+const PAUSE_RIGHT := 92.0
+const BTN_GAP := 8.0
 
 ## 一族一页（族键直接用 `CardDB` 的族名，`CardDB.ids(family)` 就是条目清单）。
-const TABS := ["item", "tech", "aberration"]
-const TAB_TITLES := {"item": "道具", "tech": "科技", "aberration": "畸变"}
+## **顺序引 `CardDB.FAMILIES`**（分页顺序 = 卡族表的展示序，只有一份）。
+const TABS: Array = CardDB.FAMILIES
+const TAB_TITLES := {"event": "机会卡", "item": "道具", "tech": "科技", "aberration": "畸变"}
 
 ## 清单四周的留白（**左 / 上 / 右 / 下**）—— **量出来的**：`ItemCard.badge_overhang` 就是
 ## "角标最多探出卡面多少"。与背包弹窗同一个坑：`ScrollContainer` 会把子节点裁在可视矩形内，
 ## 而真卡的角标是**半出卡外**画的 ⇒ 不留白就切掉第一行 / 第一列的角标（2026-10-12 一并修）。
 static func grid_pad() -> Vector4:
-	return ItemCard.badge_overhang(ItemCard.SIZE_SMALL)
+	return ItemCard.badge_overhang(ItemCard.SIZE_LARGE)
 
 ## 清单可用宽度（= 面板宽 − 面板内边距 − 网格留白）：科技 / 畸变页的长描述按它换行。
 ## 读**声明出来的** `custom_minimum_size`，不读 `size` —— 首帧布局还没跑，`size` 会是 0。
@@ -59,21 +63,26 @@ static func content_w(g: Node) -> float:
 static func build(g: Node) -> void:
 	_build_button(g)
 	_build_modal(g)
-	select_tab(g, "item")
+	# 默认停在**第一页**（= `CardDB.FAMILIES` 的首族）：与被删的那张网页同序，机会卡打头。
+	select_tab(g, String(TABS[0]))
 
-## 收起态：**右上角**一枚按钮（与「规则说明」「战报」同一条 y）。
+## 收起态：**左上角**一枚按钮，紧跟在「暂停」右边、**与它同一条 y**（2026-10-12 从右上角搬来）。
 ##
 ## 图标用**文字符号**而不是 `UIKit.with_icon`：`assets/icons/ui_*.png` 里没有"书 / 图鉴"
-## 这一枚，而复用「战报」的 `report` 会让紧挨着的两枚按钮**同一张图**（那两枚就在隔壁）。
+## 这一枚，而复用「战报」的 `report` 会让紧挨着的两枚按钮**同一张图**（在右上角时那两枚就在隔壁）。
 ## 文字符号是本仓已有的先例（暂停菜单里的「⚙ 设置」），且不新增素材（AGENTS §四）。
+##
+## ⚠ 客户端的**网络指示**住在「暂停」右边一格（`table_hud` 里 100..268）—— 本按钮占了
+## 100..196，那一枚跟着右移到 204..372（`table_hud` 同处注释）。**按钮的 x 不随身份漂移**：
+## 房主与客户端的图鉴按钮落在同一处，只有网络指示要不要显示不同。
 static func _build_button(g: Node) -> void:
 	g.codex_btn = UIKit.button("📖 图鉴", 13)
-	g.codex_btn.tooltip_text = "查看道具 / 科技 / 畸变图鉴（再点一次收起）"
-	g.codex_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	g.codex_btn.offset_left = RULES_LEFT - 12.0 - BTN_W
-	g.codex_btn.offset_right = RULES_LEFT - 12.0
-	g.codex_btn.offset_top = 12
-	g.codex_btn.offset_bottom = 40
+	g.codex_btn.tooltip_text = "查看机会卡 / 道具 / 科技 / 畸变图鉴（再点一次收起）"
+	g.codex_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	g.codex_btn.offset_left = PAUSE_RIGHT + BTN_GAP
+	g.codex_btn.offset_right = PAUSE_RIGHT + BTN_GAP + BTN_W
+	g.codex_btn.offset_top = 10
+	g.codex_btn.offset_bottom = 38
 	g.codex_btn.pressed.connect(func() -> void: g._set_codex_open(not g.codex_open))
 	g.add_child(g.codex_btn)
 
@@ -135,7 +144,7 @@ static func _build_modal(g: Node) -> void:
 	close_btn.tooltip_text = "关闭（Esc，或点弹窗外面）"
 	close_btn.pressed.connect(func() -> void: g._set_codex_open(false))
 	head.add_child(close_btn)
-	v.add_child(UIKit.label("道具 / 科技 / 畸变 · 与 doc/game-design/图鉴.html 同源", 11, UIKit.TEXT_DIM))
+	v.add_child(UIKit.label("机会卡 / 道具 / 科技 / 畸变 · 直读游戏数据表，没有第二份副本", 11, UIKit.TEXT_DIM))
 
 	# 分页标签（HFlowContainer：窗口再窄也只是折行，不溢出）
 	var flow := HFlowContainer.new()
@@ -205,7 +214,12 @@ static func refresh(g: Node) -> void:
 		q = String(g.codex_search.text).strip_edges().to_lower()
 	var n := 0
 	if fam == CardDB.FAMILY_ITEM:
-		# 道具：摆真卡（`ItemCard.SIZE_SMALL`，与道具栏同尺寸）——"长什么样"本身就是图鉴的一半。
+		# 道具：摆真卡（`ItemCard.SIZE_LARGE`）——"长什么样"本身就是图鉴的一半。
+		# **2026-10-12 从小档换大档**（用户：「卡牌尺寸大一点，保证能看清」）：小档 96×132 的卡面正文
+		# 只有 **7px**（`ItemCard` 的字号 = `size.y × 0.042`，7 是它的下限），大档 300 ⇒ **12px**、
+		# 名称 21px。最长的一条 desc 是 32 字，大档的描述框 81px 装得下 5 行 ⇒ **不会截断**。
+		# **一行 3 张**：每格占 285 = 卡 220 + **角标探出的那圈 65**（见 `_item_cell`），
+		# 内容区约 1019 宽 ⇒ 3×285 + 2×10 = 875 放得下、4 张（1169）放不下。
 		# **不声明网格宽度**（与背包弹窗不同）：这里是"有多少摆多少"的陈列页，列数随面板宽度自动排，
 		# 只有"最后那一列的角标别被裁"要靠 `CodexPad` 的右侧留白兜住。
 		var row := HFlowContainer.new()
@@ -241,27 +255,42 @@ static func _clear(n: Node) -> void:
 		c.queue_free()
 
 ## 道具格：真卡 + 名称（品质已印在卡面底条上，这里不重复写一遍）
+##
+## **每格自己把角标探出的那圈留出来**（`holder` = 卡 + 左右上下的 `badge_overhang`，卡摆在
+## 偏置处）：角标是半出卡外画的，而这里是"一格挨着一格"的网格 —— 不留就会让右边那张的
+## 「一次性」胶囊**压到左边那格的卡面**上。`CodexPad` 那圈留白管的是**网格四周**（别被
+## `ScrollContainer` 裁掉），两者各管一头、都要有。
 static func _item_cell(id: String) -> Control:
+	var ov := ItemCard.badge_overhang(ItemCard.SIZE_LARGE)
 	var cell := VBoxContainer.new()
 	cell.add_theme_constant_override("separation", 3)
 	var holder := Control.new()
-	holder.custom_minimum_size = ItemCard.SIZE_SMALL + Vector2(8, 8)
+	holder.custom_minimum_size = ItemCard.SIZE_LARGE + Vector2(ov.x + ov.z, ov.y + ov.w)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cell.add_child(holder)
-	var card := ItemCard.make(id, ItemCard.SIZE_SMALL)
-	card.position = Vector2(4, 4)
+	var card := ItemCard.make(id, ItemCard.SIZE_LARGE)
+	card.position = Vector2(ov.x, ov.y)
 	holder.add_child(card)
 	var col: Color = CardDB.category_color(CardDB.FAMILY_ITEM,
 		String(CardDB.def(CardDB.FAMILY_ITEM, id).get("category", "")))
-	var cap := UIKit.label(id, 11, col)
-	cap.custom_minimum_size = Vector2(ItemCard.SIZE_SMALL.x + 8.0, 0)
+	var cap := UIKit.label(id, 13, col)
+	# 名字对**卡**居中，不是对"卡 + 两侧角标留白"那一格居中：那一格左右留白不等
+	#（左 21 / 右 44），直接铺满会让名字整体偏左约 11px。用一圈 margin 把名字的范围收成卡宽。
+	cap.custom_minimum_size = Vector2(ItemCard.SIZE_LARGE.x, 0)
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	cell.add_child(cap)
+	var capm := UIKit.margins(int(ceilf(ov.x)), 0, int(ceilf(ov.z)), 0)
+	capm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	capm.add_child(cap)
+	cell.add_child(capm)
 	return cell
 
-## 文字条目（科技 / 畸变）：分级色小片 + 名称 + 描述。畸变的字形当图标（`CardDB` 的 `icon`）。
+## 文字条目（机会卡 / 科技 / 畸变）：分级色小片 + 名称 + 正文。畸变的字形当图标（`CardDB` 的 `icon`）。
 ## `cw` = 清单可用宽度（长描述按它换行 —— 弹窗尺寸变了它才跟着变，别写死）。
+##
+## **两副身子**：`meta.rows` 非空（**机会卡**，见 `CardDB.event_rows`）⇒ 逐行摊开
+##「键：值」——它没有一段 prose 可写，效果就是那几行字段；其余族 ⇒ 一段 `desc`。
+## 二选一、**不并列**：机会卡的 `desc` 是那几行的单行拼版，两样都画就重复了。
 static func _text_row(fam: String, id: String, cw: float) -> Control:
 	var meta := CardDB.def(fam, id)
 	var cat := String(meta.get("category", ""))
@@ -290,8 +319,21 @@ static func _text_row(fam: String, id: String, cw: float) -> Control:
 		# 未实装要写出来：图鉴里有、对局里摸不到，不标就是个"看着像 bug"的东西
 		head.add_child(UIKit.label("（未实装）", 11, UIKit.TEXT_DIM))
 	box.add_child(head)
-	var d := UIKit.label(String(meta.get("desc", "")), 12, UIKit.TEXT_DIM)
-	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	d.custom_minimum_size = Vector2(maxf(cw, 200.0), 0)
-	box.add_child(d)
+	var rows: Array = meta.get("rows", [])
+	if rows.is_empty():
+		var d := UIKit.label(String(meta.get("desc", "")), 12, UIKit.TEXT_DIM)
+		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		d.custom_minimum_size = Vector2(maxf(cw, 200.0), 0)
+		box.add_child(d)
+	else:
+		for r in rows:
+			var row := r as Dictionary
+			# 「香皂」那一行说的是**免疫口径**（这份卡吃不吃香皂），与效果行不同源 ⇒ 换个色，
+			# 免得被当成"又一条效果"。
+			var is_soap := String(row.get("k", "")) == "香皂"
+			var rl := UIKit.label("%s：%s" % [String(row.get("k", "")), String(row.get("v", ""))],
+				12, UIKit.TEXT if is_soap else UIKit.TEXT_DIM)
+			rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			rl.custom_minimum_size = Vector2(maxf(cw, 200.0), 0)
+			box.add_child(rl)
 	return box

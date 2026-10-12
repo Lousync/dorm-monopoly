@@ -539,9 +539,12 @@ func take_shot(path: String) -> void:
 		# 摆拍（2026-10-12）：打开**图鉴**（改成屏幕中央的大尺寸模态之后要出图核对落点 / 尺寸 /
 		# 压暗底 / 道具页的角标）。走**真入口** `_set_codex_open`（与点那枚「📖 图鉴」同一条路）。
 		# 用法：`--shot-game=1 --shot=shots/xx_codex_table_plain.png`（文件名别带 `tilt` / `view2d`）。
-		# 想看图鉴的**某一页**：文件名再带 `codextech` / `codexaber`（默认停在道具页）。
+		# 想看图鉴的**某一页**：文件名再带 `codexitem` / `codextech` / `codexaber`
+		#（**默认停在机会卡页** —— 2026-10-12 加入机会卡族之后它是第一页）。
 		g._set_codex_open(true)
-		if path.contains("codextech"):
+		if path.contains("codexitem"):
+			CodexPanel.select_tab(g, "item")
+		elif path.contains("codextech"):
 			CodexPanel.select_tab(g, "tech")
 		elif path.contains("codexaber"):
 			CodexPanel.select_tab(g, "aberration")
@@ -555,9 +558,12 @@ func take_shot(path: String) -> void:
 	if path.contains("abshow") and g.multiplayer.is_server():
 		# 摆拍（批次 12 D）：让**畸变横幅**亮起来（批次 12 D3 起它在顶部**水平居中**、y≈6..48）。
 		# 走真路：写房主的 `_ab_active` 再 `_broadcast_state()` —— 横幅的显隐读的就是快照的
-		# `aberrations` 字段（`_refresh_ab_ui`），与真实触发同一条链，不直调那个刷新函数。
+		# `aberrations` 字段（`TableHud.refresh_ab`），与真实触发同一条链，不直调那个刷新函数。
 		# 用法：`--autotest=host --rounds=6 --shot=shots/xx_abshow_table_plain.png`
-		g._ab_active = [{"id": "断网", "left": 3}]
+		# **2026-10-12 起横幅带正文**（用户：「畸变显示加上畸变的内容」）⇒ 这张图顺便核正文与换行。
+		# ⚠ id 必须是 `AberrationData` 里真有的（原先是"断网"——表里没这条，只显示 id 时看不出，
+		# 带上正文就会画出一行"🌀 断网：（剩 3 回合）"）。
+		g._ab_active = [{"id": "斗地主", "left": 3}, {"id": "停电", "left": 2}]
 		g._broadcast_state()
 		await get_tree().create_timer(0.25).timeout
 	if path.contains("tech") and not path.contains("techroll") and g.multiplayer.is_server():
@@ -718,7 +724,12 @@ func take_shot(path: String) -> void:
 				var held_opp: Array = []
 				for it in (opp.get("items", []) as Array):
 					held_opp.append(String((it as Dictionary).get("id", "")))
-				for hid_v in ["招财猫", "蛋蛋节", "黑卡"]:
+				# 文件名带 `bag7` ⇒ 先塞一件「置物架」（背包上限 5 → **7**），用来核对
+				# **两行槽位 / 第二行的空槽 / 滚动条**那一档（2026-10-12 用户报的就是它）。
+				var want_ids := ["招财猫", "蛋蛋节", "黑卡"]
+				if path.contains("bag7"):
+					want_ids.push_front("置物架")
+				for hid_v in want_ids:
 					if String(hid_v) != "" and not held_opp.has(String(hid_v)) \
 							and (opp.get("items", []) as Array).size() < g._bag_cap(opp):
 						g._grant_item(opp, String(hid_v))

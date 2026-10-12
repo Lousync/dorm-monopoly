@@ -7,6 +7,79 @@ extends RefCounted
 ## 原代码里存在「先用后建」的引用（回调里用 vol_slider，而它几十行之后才创建），
 ## 那正是靠成员变量的晚绑定才成立的；换成局部变量会被 lambda 按值捕获成 null。
 
+## 畸变横幅一行文字的最大像素宽（超过就换行，不再往两边长）。
+## 上限是**量出来的**：横幅居中，右邻最近的控件是「规则说明」按钮（左沿 1030）⇒ 居中条要
+## 不压到它，宽 ≤ 2×(1030−640) = **780**；取 740 留 20 一格呼吸（左邻「暂停」+「📖 图鉴」
+## 到 196，比这松得多）。`hud_test` 有一条「横幅不与角按钮重叠」的断言钉着这个上限。
+const AB_BANNER_MAX_W := 740.0
+## 网络质量指示（**仅客户端**）的落位 —— 上一格是「📖 图鉴」按钮
+##（`codex_panel.PAUSE_RIGHT + BTN_GAP .. + BTN_W` = 100..196，见 `_build_button` 那段）。
+## 抽成常量是为了**能测**：无头脚手架的 `multiplayer` 是默认接口、`is_server()` 恒真
+## ⇒ 那个控件在测试里根本不会被建出来，只能靠"落位契约"这条断言钉住它不压到按钮。
+const NET_IND_LEFT := 204.0
+const NET_IND_RIGHT := 372.0
+
+## 刷「畸变生效中」横幅（2026-10-12 从 `game._refresh_ab_ui` 搬来，控件在本文件搭的）。
+##
+## **一条畸变一行**：`🌀 名称：全文说明（剩 N 回合）`，全文走 `AberrationData.desc_live`
+##（触发大字卡 / 战报读的是同一份文字）。改这条的动因（用户）：「游戏界面中间的畸变显示：
+## 加上畸变的内容」—— 原先只写「🌀 畸变生效中：诚信考试·剩2回合」，正文只在悬停 tooltip 里；
+## 而横幅本来就是给**没盯着战报的人**看的，看不出是什么畸变等于没有。
+##
+## 文字宽度**当场量**再钳到 `AB_BANNER_MAX_W`：本标签的换行是开着的，而自动换行的 Label 在
+## 宽度未知时算出的最小高度**是爆炸的**（`info_body` 那段踩过同一个坑）⇒ 宽度永远不留 0。
+## 高度不在这里算 —— 交给 `fit_ab_banner`（帧末量，见那里的注释）。
+static func refresh_ab(g: Node) -> void:
+	if g.ab_label == null or g.ab_label_l == null:
+		return
+	var act: Array = g.st.get("aberrations", [])
+	if act.is_empty():
+		g.ab_label.visible = false
+		fit_ab_banner.call_deferred(g)
+		return
+	var lines := PackedStringArray()
+	var tips := PackedStringArray()
+	for a in act:
+		var aid := String(a.id)
+		var left := int(a.left)
+		lines.append("🌀 %s：%s（剩 %d 回合）" % [aid, AberrationData.desc_live(aid), left])
+		# 悬停即查（畸变可读性）：公告全文（含「持续 N 回合，到期自动解除」）
+		tips.append("%s：%s" % [aid, AberrationData.announce_text(aid, left)])
+	g.ab_label_l.text = "\n".join(lines)
+	var fnt: Font = g.ab_label_l.get_theme_font("font")
+	var fsz: int = g.ab_label_l.get_theme_font_size("font_size")
+	var w := 0.0
+	for ln in lines:
+		w = maxf(w, fnt.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
+	# +6 的余量：换行按可用宽度算，正好卡在量出来的宽度上会因取整提前折一行。
+	g.ab_label_l.custom_minimum_size = Vector2(minf(w + 6.0, AB_BANNER_MAX_W), 0)
+	g.ab_label.tooltip_text = "\n".join(tips)
+	g.ab_label.visible = true
+	fit_ab_banner.call_deferred(g)
+
+## 把横幅的**实际高度**写回容器，并把「战报气泡」顺位推到它下面。
+##
+## **为什么延到帧末**（`refresh_ab` 用 `call_deferred` 调它）：`Label` 的最小尺寸是
+## `update_minimum_size()` 推到帧末才算的（它自己也是 `call_deferred`，先注册先跑）⇒ 当场读
+## `get_combined_minimum_size()` 拿到的是**上一条文案**的高度，横幅刚出现 / 刚变长的那一帧会把
+## 气泡压在它身上。延后一拍读到的才是当帧算好的值。
+## 没有畸变时 `h` 回到 42 ⇒ 横幅容器 8..50、气泡 52（与 2026-10-11 起的落位一字不差）。
+##
+## ⚠ **形参故意不写类型**（`g` 而不是 `g: Node`）：这一拍是**延迟**跑的，那时这一局可能已经
+## 结束、`game` 节点被 `queue_free` 掉了 —— 类型化形参会在**进函数之前**先做一次转换检查，
+## 对已释放的对象直接抛 `Cannot convert argument 1 from Object to Object`（`settings_test` 实测
+## 刷了一屏这个错）。不写类型 ⇒ 进来第一句用 `is_instance_valid` 自己判，安静收场。
+static func fit_ab_banner(g) -> void:
+	if not is_instance_valid(g):
+		return
+	if g.ab_wrap == null or g.log_toast == null:
+		return
+	var h := 42.0
+	if g.ab_label != null and is_instance_valid(g.ab_label) and g.ab_label.visible:
+		h = maxf(42.0, g.ab_label.get_combined_minimum_size().y)
+	g.ab_wrap.offset_bottom = g.ab_wrap.offset_top + h
+	g.log_toast.offset_top = g.ab_wrap.offset_bottom + 2.0
+
 ## 造一条战报弹出条（屏幕上方居中）。淡入淡出与回收由 game.gd:_push_log_toast 负责。
 ## 行文本已是 BBCode 安全串（game.gd:_log 把 `[` 转义成 `［`），可直接外包一层 [center]。
 static func make_log_toast(line: String) -> Control:
@@ -113,6 +186,8 @@ static func build_play_ui(g: Node) -> void:
 	# **2026-10-11 起顶边从 128 收回 52**：原先 8..76 是仪表盘横条、不能再压上去；横条搬走后
 	# 顶部只剩左右两角的按钮，气泡回到屏幕最上方（52 = 角按钮那一条 8..46 的下沿）。
 	# 落位史：52（无横条时代）→ 128（2026-10-09 横条上顶）→ **52（2026-10-11 横条搬到桌垫）**。
+	# **2026-10-12 起 52 是"没有畸变时"的值**：畸变横幅带正文后会变高，`game._fit_ab_banner`
+	# 把本容器的 `offset_top` 推到横幅下面（横幅 8..50 ⇒ 这里 52，与旧值一字不差）。
 	g.log_toast = VBoxContainer.new()
 	g.log_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	g.log_toast.offset_left = -390.0
@@ -131,6 +206,11 @@ static func build_play_ui(g: Node) -> void:
 	# 走 `CenterContainer` 才能"贴内容宽度 + 居中"：`PanelContainer` 自己按锚点铺满，
 	# 直接给 `CENTER_TOP` 会得到一条固定宽度的长条（文案短时两侧一大片空、还压住更多屏幕）。
 	# 显隐仍由 `game._refresh_ab_ui` 只管 `ab_label.visible`（外层容器留着不吃鼠标、不画东西）。
+	#
+	# **2026-10-12：横幅开始带畸变正文，高度不再固定**（用户：「畸变显示加上畸变的内容」）：
+	# 一条畸变一行（名称 + 全文 + 剩几回合），容器高度由 `game._fit_ab_banner` 按实测内容写回，
+	# 并把下面的**战报气泡**顺位推下去（气泡的 `offset_top` 也由它写）。`offset_bottom` 这里给的
+	# 50 = **没有畸变时的原值**（`offset_top + 42`），有畸变时那两处会改它。
 	g.ab_wrap = CenterContainer.new()
 	g.ab_wrap.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	g.ab_wrap.offset_top = 8.0
@@ -144,6 +224,10 @@ static func build_play_ui(g: Node) -> void:
 	ab_lm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.ab_label.add_child(ab_lm)
 	g.ab_label_l = UIKit.label("", 14, Color("#f0c064"))
+	# **换行开着、但宽度由 `game._refresh_ab_ui` 逐次写死**（量了再钳到 `AB_BANNER_MAX_W`）：
+	# 自动换行的 Label 在宽度未知时算出的最小高度是**爆炸**的（info_body 那段踩过同一个坑），
+	# 所以宽度永远不许留 0。
+	g.ab_label_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ab_lm.add_child(g.ab_label_l)
 	g.ab_wrap.add_child(g.ab_label)
 
@@ -434,6 +518,9 @@ static func build_play_ui(g: Node) -> void:
 	g.add_child(g.opt_btn)
 
 	# 暂停按钮旁：网络质量指示（**仅非房主**；fix/0.14.1）。数值/信号由 game._refresh_net_indicator 逐帧填。
+	# **落位**：2026-10-12 起从 100..268 右移到 **204..372** —— 「📖 图鉴」按钮搬到了左上角
+	# 「暂停」右边（`codex_panel.PAUSE_RIGHT + BTN_GAP .. + BTN_W` = 100..196），这一枚是**下一格**。
+	# 图鉴按钮的 x 因此不随"房主 / 客户端"漂移，只有本指示要不要显示不同。
 	g.net_ind = null
 	g.net_ind_pips = []
 	g.net_ind_text = null
@@ -441,9 +528,9 @@ static func build_play_ui(g: Node) -> void:
 		g.net_ind = UIKit.panel_container(UIKit.PANEL_GLASS, 8,
 			Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.7), 1, 0)
 		g.net_ind.set_anchors_preset(Control.PRESET_TOP_LEFT)
-		g.net_ind.offset_left = 100
+		g.net_ind.offset_left = NET_IND_LEFT
 		g.net_ind.offset_top = 10
-		g.net_ind.offset_right = 268
+		g.net_ind.offset_right = NET_IND_RIGHT
 		g.net_ind.offset_bottom = 38
 		g.net_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		g.net_ind.tooltip_text = "到房主的往返延迟与信号质量"

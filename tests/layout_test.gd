@@ -1866,8 +1866,12 @@ func _run() -> void:
 			for i in 7:
 				many4.append({"id": "共享单车", "cd": 0})
 			tp4.set_hand(many4)
-			_check(tp4.hand_count() == 5 and vis4.call(hr) == 5,
-				"7 件道具 → 最多摆 5 张（实得 %d 张）" % tp4.hand_count())
+			# **2026-10-12 改**：封顶从 5 提到 **7**（= `game._bag_cap` 的上限，带「置物架」的档）。
+			# 原先那条钉的是"最多摆 5 张" —— 那正是用户报的「桌面上无法显示超过 5 张牌」，
+			# 而且不只是看不见：`hand_hit` 只遍历 `_hand_n` ⇒ 第 6、7 件**点不到**（用不了也丢不掉）。
+			# 判据从"封顶"翻成"**七件都摆出来**"（摆不下 / 又封回去，这条先红）。
+			_check(tp4.hand_count() == 7 and vis4.call(hr) == 7,
+				"7 件道具 → 七张都摆出来（实得 %d 张）" % tp4.hand_count())
 			tp4.set_hand([])
 			_check(tp4.hand_count() == 0 and vis4.call(hr) == 0, "清空 → 一张都不露")
 			# **整排手牌必须完整在屏内**（批次 12 A2b 补）。此前这条只在 `_apply_camera` 那段

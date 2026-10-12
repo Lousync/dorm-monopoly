@@ -45,12 +45,16 @@ const SCREEN_MARGIN := 40.0
 ## 的角标（2026-10-12 用户实拍：左角标切一半、「一次性」只看得见下半截）—— 见 `_fill` 里
 ## 建 `BagPad` 那段。**别再手抄一份**：手牌那次就是漏算「一次性」胶囊才切掉右半截。
 var _pad := ItemCard.badge_overhang(ITEM_CARD_SIZE)
-## 每件道具那一块在卡**之外**还要占的高度：名字一行 + 标签一行 + 两条分隔（`_item_row` 的 VBox）。
-## **算高度时必须加上它**：只按卡高算的话 `ScrollContainer` 会矮一截，名字 / 标签那一行被裁掉
-##（出图逮到：弹窗里只看得见卡、卡下面那行名字没了）。批次 13 ⑤ 随字号一起从 44 提到 48。
-const ITEM_BLOCK_EXTRA := 48.0
+## 每件道具那一块在卡**之外**还要占的高度：名字一行 + 一条分隔（`_item_row` 的 VBox）。
+## **算高度时必须加上它**：只按卡高算的话 `ScrollContainer` 会矮一截，卡下面那行名字被裁掉
+##（出图逮到：弹窗里只看得见卡、名字没了）。
+## **2026-10-12 从 48 收到 24** —— 用户把「卡名下的效果文本」整行去掉了（`_item_row`）：
+## 15 号字的一行 ≈ 21px + VBox 的 2px 分隔 = 23，取 24 留 1px。**改字号 / 加回一行都要重取**，
+## `hud_test` 那条「内容高 ≤ 容器高」的断言会在裁掉名字时先红。
+const ITEM_BLOCK_EXTRA := 24.0
 ## 背包区最大高度：超过就滚动（`ScrollContainer`），免得大背包把面板顶出屏幕。
-## 大档卡一行（300+48+6 = 354）放得下；两行（710）就超了、开始滚 —— 带「置物架」的 7 格是这一档。
+## 大档卡一行（300 + `ITEM_BLOCK_EXTRA` + 6 ≈ 330）放得下；两行（≈ 670）就超了、开始滚
+## —— 带「置物架」的 7 格正是这一档（**它要靠滚轮**，见 `BagScroll` 那段）。
 const BAG_MAX_H := 430.0
 
 var _dim: ColorRect
@@ -232,7 +236,12 @@ func _fill(data: Dictionary) -> void:
 	sc.name = "BagScroll"
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED   # 关横向 ⇒ 子节点按容器宽度换行
 	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	sc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# **必须是 STOP（默认值）**：滚轮是 `ScrollContainer` 自己在 `_gui_input` 里滚的
+	# —— `MOUSE_FILTER_IGNORE` 的控件**根本不参与拾取**，滚轮会穿过去落到面板（STOP）上被吃掉。
+	# 2026-10-12 用户实拍：带「置物架」的 7 格要滚一屏，滚轮却毫无反应（原先这里就是 IGNORE，
+	# 大概是照着"模态里别抢点击"的习惯写的）。改 STOP 不影响"点空白处不关面板"：面板自己也
+	# 是 STOP，点击本来就不会传到压暗底上。
+	sc.mouse_filter = Control.MOUSE_FILTER_STOP
 	# 高度取"装得下的自然高度"与上限的较小者（`_bag_needed_h`）—— 行数少时不留一大片空白，
 	# 行数多时封顶、由 `ScrollContainer` 接管。
 	sc.custom_minimum_size = Vector2(panel_w - PANEL_PAD * 2.0, _bag_needed_h(slots, per_row))
@@ -289,12 +298,20 @@ func _slots_per_row(slots: int) -> int:
 	var n: int = int((avail + SLOT_SEP) / (ITEM_CARD_SIZE.x + SLOT_SEP))
 	return clampi(n, 1, maxi(1, mini(slots, MAX_SLOT_COLS)))
 
-## 空槽：与整张卡同尺寸的占位框。Compatibility 下没有虚线画笔，用**细边框 + 极低对比底**
+## 空槽：与整张卡**逐像素同尺寸**的占位框。Compatibility 下没有虚线画笔，用**细边框 + 极低对比底**
 ## 代替 —— 与"有卡"一眼分得开即可（用户 ⑤ 要的是"看得出最多只能同时拥有 5 张"）。
+##
+## ⚠ **`SIZE_SHRINK_BEGIN` 是承重的**（2026-10-12 用户：「空槽的尺寸要与卡牌的尺寸一致」）：
+## `FlowContainer` 用 `fit_child_in_rect` 摆每个孩子、**只要该轴带 `SIZE_FILL` 就把它拉到整行高**
+##（`Container.fit_child_in_rect` 里那句 `if (!(p_child->get_v_size_flags().has_flag(SIZE_FILL)))`）。
+## 空槽是 `Panel` 自己撑出来的可见盒子，被拉高就**真的画得比卡更高**（实测 ~323 > 卡的 300，
+## "空槽"两字还垂直居中落到卡面之下）；有卡那一格是 `VBoxContainer`（内容 `300 + 名字`），
+## 被拉高看不出来。带上 `SHRINK_BEGIN` = 不吃 FILL ⇒ 盒子保持卡高、与卡顶对齐。
 func _empty_slot() -> Control:
 	var box := Panel.new()
 	box.custom_minimum_size = ITEM_CARD_SIZE
 	box.size = ITEM_CARD_SIZE
+	box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_theme_stylebox_override("panel", UIKit.stylebox(
 		Color(1, 1, 1, 0.03), 12,
@@ -315,11 +332,15 @@ func _bag_needed_h(slots: int, per_row: int) -> float:
 	return minf(float(rows) * (ITEM_CARD_SIZE.y + ITEM_BLOCK_EXTRA) + float(rows - 1) * SLOT_SEP
 		+ 6.0 + _pad.y + _pad.w, BAG_MAX_H)
 
-## 一件道具一整块：**一张 `ItemCard`**（与商店货架同一画法）+ 名字 + 状态标签（被动 / 冷却 N / 未实装）。
-## 名字与标签挂在卡**下面**（卡面自带名称条，但近处再写一行大字更好认；标签卡面上没有）。
+## 一件道具一整块：**一张 `ItemCard`**（与商店货架同一画法）+ 名字。
+##
+## **2026-10-12：卡名下面那行状态文本去掉了**（用户：「卡牌名称下的效果文本（如"被动"）去掉」）。
+## 去掉不丢信息 —— 它写的三样卡面角标上都印着：**被动** = 左上那枚圆标（`ItemCard.make` 按
+## `type == "passive"` 印「被动」）、**冷却 N** = 右上那枚 ⏳N、**剩余次数** = 右上那枚数字。
+## 唯一少掉的是「未实装」，而那类件**进不了任何获取池**（货架 / 发现 / 礼物 / 黑市都按
+## `implemented` 过滤），背包里根本不会出现 ⇒ 那行是防御性文案，留着只是重复。
 func _item_row(it: Dictionary) -> Control:
 	var iid := String(it.get("id", ""))
-	var d := ItemData.def(iid)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -329,18 +350,4 @@ func _item_row(it: Dictionary) -> Control:
 	name_l.custom_minimum_size = Vector2(ITEM_CARD_SIZE.x, 0)
 	name_l.clip_text = true
 	box.add_child(name_l)
-	var tags: Array = []
-	if String(d.get("type", "")) == "passive":
-		tags.append("被动")
-	var cd := int(it.get("cd", 0))
-	if cd > 0:
-		tags.append("冷却 %d" % cd)
-	if not bool(d.get("implemented", false)):
-		tags.append("未实装")
-	if not tags.is_empty():
-		var t := UIKit.label("（%s）" % " · ".join(tags), 12, UIKit.TEXT_DIM)
-		t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		t.custom_minimum_size = Vector2(ITEM_CARD_SIZE.x, 0)
-		t.clip_text = true
-		box.add_child(t)
 	return box

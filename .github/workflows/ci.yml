@@ -40,17 +40,15 @@ jobs:
             echo "::endgroup::"
           done
 
-      # 图鉴页（doc/game-design/图鉴.html）是**生成产物**：提交进 git，但由
-      # scripts/*_data.gd 与 doc/game-design/道具图鉴.md 生成。
-      # 改了数据却忘了重跑生成器 ⇒ 这一闸当场逮住；生成器是确定性的（无时间戳、无随机序），
-      # 所以正常情况不会误报。重跑：godot --headless --path . --script tools/gen_gallery.gd
-      # 行尾：生成器写 LF（Godot 默认），仓库存的也是 LF；本机 core.autocrlf 不影响
-      # `git diff` 的比较（两侧都会先归一化成 LF），已实测。
-      - name: 图鉴页不过期
+      # 「道具图鉴.md ↔ item_data.gd」对账（原「图鉴页不过期」那一步的续命版）。
+      # 原先是"重跑生成器 ⇒ git diff 必须为空"：产物是一张网页 `doc/game-design/图鉴.html`，
+      # **2026-10-12 已删除**（图鉴改成对局里那一个，见 scripts/codex_panel.gd）。
+      # 网页没了，但"逐件道具 prose 与代码会不会漂开"这件事仍然只有这里在查 ⇒ 闸门留着、
+      # 改成直接跑对账器（不带产物、不一致就非零退出）。
+      - name: 道具图鉴.md 与代码一致
         run: |
           set -euo pipefail
-          godot --headless --path . --script tools/gen_gallery.gd
-          git diff --exit-code -- doc/game-design/图鉴.html
+          godot --headless --path . --script tools/check_item_docs.gd
 
       # game.gd 的导航索引同样是**生成产物**：由 tools/gen_game_index.gd 从 game.gd
       # 自身的区块横幅生成、写回文件头的标记块之间（手写的索引必然烂——参见

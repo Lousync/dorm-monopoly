@@ -60,12 +60,58 @@ func _item_cards(g, ic_script: GDScript) -> Array:
 						out.append(n)
 	return out
 
-## 文字页（科技 / 畸变）的条目数：清单下每个 `VBoxContainer` 就是一条。
+## 一格里的**卡名 Label**（卡是那一格的第一个孩子，名字包在一圈 margin 里、是第二个的孩子）。
+func _caption_of(card: Control) -> Label:
+	var cell := card.get_parent()
+	if cell == null or cell.get_child_count() < 2:
+		return null
+	for n in (cell as Node).get_child(1).find_children("*", "Label", true, false):
+		return n as Label
+	return null
+
+## 一张卡**看得见的**包围盒：卡身 ∪ 所有子控件的矩形（角标是半出卡外画的，
+## 只量卡身会漏掉它们 —— 而"两张卡有没有互相压"看的正是那些探出来的部分）。
+func _visual_rect(c: Control) -> Rect2:
+	var r := c.get_global_rect()
+	for n in c.get_children():
+		var ch := n as Control
+		if ch == null or ch.size.x <= 0.0 or ch.size.y <= 0.0:
+			continue
+		r = r.merge(ch.get_global_rect())
+	return r
+
+## 文字页（机会卡 / 科技 / 畸变）的条目数：清单下每个 `VBoxContainer` 就是一条。
 ## （"没有匹配的条目"那句是 `Label`，两样都不算 ⇒ 无结果时两边都数出 0。）
 func _count_rows(g) -> int:
 	var n := 0
 	for c in g.codex_list.get_children():
 		if c is VBoxContainer:
+			n += 1
+	return n
+
+## 当前页所有 `Label` 的文本（供"某一行在不在 / 出现几次"这类断言用）。
+func _label_texts(g) -> Array:
+	var out: Array = []
+	_collect_labels(g.codex_list, out)
+	return out
+
+func _collect_labels(n: Node, out: Array) -> void:
+	for c in n.get_children():
+		if c is Label:
+			out.append(String((c as Label).text))
+		_collect_labels(c, out)
+
+func _count_in(lines: Array, needle: String) -> int:
+	var n := 0
+	for t in lines:
+		if String(t).contains(needle):
+			n += 1
+	return n
+
+func _count_exact(lines: Array, s: String) -> int:
+	var n := 0
+	for t in lines:
+		if String(t).strip_edges() == s:
 			n += 1
 	return n
 
@@ -110,23 +156,41 @@ func _run() -> void:
 		"分页标签数与族数一致（实得 %d）" % g.codex_tabs.size())
 	_check(g.codex_btn.visible and not g.codex_modal.visible,
 		"默认收起：**只有按钮可见**（模态包装整个藏着）")
-	# 按钮本身仍是右上角那一簇里的一员（2026-10-12 只改了**弹窗**的落点，按钮没动）
-	_check(is_equal_approx(g.codex_btn.offset_top, g.rules_btn.offset_top)
-			and is_equal_approx(g.codex_btn.offset_top, g.log_toggle.offset_top),
-		"三枚按钮同一条 y（图鉴 %s / 规则 %s / 战报 %s）"
-			% [str(g.codex_btn.offset_top), str(g.rules_btn.offset_top), str(g.log_toggle.offset_top)])
-	var codex_r: float = (g.codex_btn as Control).get_global_rect().end.x
-	var rules_l: float = (g.rules_btn as Control).get_global_rect().position.x
-	_check(codex_r <= rules_l + 0.5,
-		"图鉴按钮排在「规则说明」左边、不重叠（图鉴右沿 %.1f ≤ 规则左沿 %.1f）" % [codex_r, rules_l])
+	# 按钮在**左上角**、紧跟在「暂停」右边、与它同一条 y（2026-10-12 从右上角搬来）
+	_check(is_equal_approx(g.codex_btn.offset_top, g.opt_btn.offset_top)
+			and is_equal_approx(g.codex_btn.offset_bottom, g.opt_btn.offset_bottom),
+		"图鉴按钮与「暂停」同一条 y（图鉴 %s..%s / 暂停 %s..%s）"
+			% [str(g.codex_btn.offset_top), str(g.codex_btn.offset_bottom),
+				str(g.opt_btn.offset_top), str(g.opt_btn.offset_bottom)])
+	var pause_r: float = (g.opt_btn as Control).get_global_rect().end.x
+	var codex_l: float = (g.codex_btn as Control).get_global_rect().position.x
+	_check(codex_l >= pause_r - 0.5, "图鉴按钮排在「暂停」右边、不压它（图鉴左沿 %.1f ≥ 暂停右沿 %.1f）"
+		% [codex_l, pause_r])
+	# 客户端那枚网络指示是**下一格**：按钮的 x 不随身份漂移（房主没有它，也没有空隙问题）
+	if g.net_ind != null:
+		var net_l: float = (g.net_ind as Control).get_global_rect().position.x
+		_check((g.codex_btn as Control).get_global_rect().end.x <= net_l + 0.5,
+			"网络指示让在图鉴按钮右边、不重叠（图鉴右沿 %.1f ≤ 指示左沿 %.1f）"
+				% [(g.codex_btn as Control).get_global_rect().end.x, net_l])
+	else:
+		# **本机是房主**（无头脚手架的 multiplayer 是默认接口 ⇒ `is_server()` 恒真）⇒ 那个控件
+		# 压根没建出来。落位改由**常量契约**钉住：指示的左沿必须在图鉴按钮右沿之外。
+		# `table_hud` 同样**运行时 load**（它引用了 autoload `Net`，静态写类名会整链编译失败，
+		# 见本文件里 `CodexPanel` 那段说明）。
+		var TH = load("res://scripts/table_hud.gd")
+		var btn_r: float = CodexP.PAUSE_RIGHT + CodexP.BTN_GAP + CodexP.BTN_W
+		_check(float(TH.NET_IND_LEFT) >= btn_r,
+			"（房主侧，看常量）网络指示不压图鉴按钮（指示左沿 %.0f ≥ 按钮右沿 %.0f）"
+				% [float(TH.NET_IND_LEFT), btn_r])
 
-	print("== 三族都在，且与 CardDB 对得上 ==")
+	print("== 四族都在，且与 CardDB 对得上 ==")
 	var missing: Array = []
 	for fam in CodexP.TABS:
 		if not g.codex_tabs.has(fam):
 			missing.append(fam)
-	_check(missing.is_empty(), "道具 / 科技 / 畸变三枚标签齐全（缺 %s）" % str(missing))
-	_check(g.codex_tab == "item", "默认停在道具页（实得 %s）" % g.codex_tab)
+	_check(missing.is_empty(), "机会卡 / 道具 / 科技 / 畸变四枚标签齐全（缺 %s）" % str(missing))
+	_check(CodexP.TABS == CardDB.families(), "分页序 = CardDB.FAMILIES（单一来源，别另抄一份）")
+	_check(g.codex_tab == "event", "默认停在机会卡页（= 第一页，实得 %s）" % g.codex_tab)
 
 	print("== 点按钮展开：屏幕中央的大尺寸模态 ==")
 	_click(g.codex_btn)
@@ -156,14 +220,100 @@ func _run() -> void:
 		"z 带在小卖部(%d) / 暂停(%d) **之下**（不会盖住那两个模态）"
 			% [g.shop_layer.z_index, g.menu_layer.z_index])
 
+	print("== 机会卡页（2026-10-12 接入；默认页）==")
+	# 每张卡**逐字段摊开**（金额 / 夺取 / 抉择 / … + 香皂），不是一行摘要 —— 那套口径原先住
+	# `tools/gen_gallery.gd`，随 `图鉴.html` 一起删掉后搬进 `CardDB.event_rows`，这里是它的展示端。
+	var want_ev: int = CardDB.ids(CardDB.FAMILY_EVENT).size()
+	_check(_count_rows(g) == want_ev and want_ev > 0,
+		"机会卡页摆了 %d 条（CardDB 里 %d 张）" % [_count_rows(g), want_ev])
+	var ev_lines := _label_texts(g)
+	_check(_count_in(ev_lines, "金额：") > 0 and _count_in(ev_lines, "夺取：") > 0,
+		"效果行按「键：值」摊开（金额 / 夺取…）")
+	_check(_count_in(ev_lines, "香皂：") == want_ev,
+		"每条都带一行「香皂」（免疫口径，%d 条实得 %d）" % [want_ev, _count_in(ev_lines, "香皂：")])
+	# 卡型小片：机会卡的分级名取自 `GameData.CARD_KINDS`（演出大字卡读同一张表）
+	var kind_label := String(GameData.CARD_KINDS["jail"].label)
+	var jail_n := 0
+	for eid in CardDB.ids(CardDB.FAMILY_EVENT):
+		if String(CardDB.def(CardDB.FAMILY_EVENT, String(eid)).category) == "jail":
+			jail_n += 1
+	_check(jail_n > 0 and _count_exact(ev_lines, kind_label) == jail_n,
+		"卡型小片用的是 CARD_KINDS 的名字（「%s」应有 %d 张，实得 %d）"
+			% [kind_label, jail_n, _count_exact(ev_lines, kind_label)])
+	# **画出来的那一端也要同源**：小片的「文字 + 字色」必须与 `CARD_KINDS` 里的成对，
+	# 且五对齐全 —— 手抄一份 hex 到图鉴这边就会在这里露馅（演出与图鉴分叉过的那次病根）。
+	var chip_pairs := {}
+	for row_v in g.codex_list.get_children():
+		if not (row_v is VBoxContainer):
+			continue
+		var head := (row_v as Node).get_child(0)
+		if head == null or head.get_child_count() == 0:
+			continue
+		var chip := head.get_child(0)
+		if chip == null:
+			continue
+		for leaf in chip.get_children():
+			if leaf is Label:
+				chip_pairs["%s|%s" % [String((leaf as Label).text),
+					(leaf as Label).get_theme_color("font_color").to_html(false)]] = true
+	var want_pairs := {}
+	for k in GameData.CARD_KINDS:
+		var kd: Dictionary = GameData.CARD_KINDS[k]
+		want_pairs["%s|%s" % [String(kd["label"]), (kd["color"] as Color).to_html(false)]] = true
+	var unknown: Array = []
+	for pr in chip_pairs:
+		if not want_pairs.has(pr):
+			unknown.append(pr)
+	_check(unknown.is_empty() and chip_pairs.size() == want_pairs.size(),
+		"卡型小片的「文字|字色」全来自 CARD_KINDS（实得 %d 对、应有 %d，多出 %s）"
+			% [chip_pairs.size(), want_pairs.size(), str(unknown)])
+
+	_click(g.codex_tabs.get("item"))
+	await create_timer(0.2).timeout
 	print("== 道具页：条目数 == CardDB ==")
 	var n_item := _count_cards(g)
 	var want_item: int = CardDB.ids(CardDB.FAMILY_ITEM).size()
 	_check(n_item == want_item and want_item > 0,
 		"道具页摆了 %d 张卡（CardDB 里 %d 件）" % [n_item, want_item])
 	# 道具页摆的必须是**真卡**（`item_card.gd`），不是另画一行文字 —— 图鉴的一半就是"长什么样"
-	_check(_item_cards(g, ICARD).size() == want_item,
-		"每一件都是 `ItemCard` 真卡（实得 %d）" % _item_cards(g, ICARD).size())
+	var icards := _item_cards(g, ICARD)
+	_check(icards.size() == want_item, "每一件都是 `ItemCard` 真卡（实得 %d）" % icards.size())
+	# **卡面必须够大**（用户：「卡牌尺寸大一点，保证能看清」）：小档 96×132 的卡面正文只有 7px
+	#（字号 = `size.y × 0.042`，7 是下限），大档 300 ⇒ 12px。判据量真卡的 `size`，不读常量。
+	var small_n := 0
+	var big_n := 0
+	for cd in icards:
+		if (cd as Control).size.is_equal_approx(ICARD.SIZE_LARGE):
+			big_n += 1
+		elif (cd as Control).size.is_equal_approx(ICARD.SIZE_SMALL):
+			small_n += 1
+	_check(big_n == icards.size() and small_n == 0,
+		"每张卡都是**大档**（SIZE_LARGE %s，实得大 %d / 小 %d）"
+			% [str(ICARD.SIZE_LARGE), big_n, small_n])
+	# 一行摆几张：每格占 **285**（卡 220 + 角标探出的那圈 65，见 `_item_cell`），
+	# 内容区约 1019 ⇒ **3 张**。这条钉"没塌成一行 1~2 张"（留白算错 / 面板变窄都会先在这里露出来）。
+	var row_tops := {}
+	for cd in icards:
+		var ty := int(roundf((cd as Control).get_global_rect().position.y))
+		row_tops[ty] = int(row_tops.get(ty, 0)) + 1
+	var per_row := 0
+	for ty in row_tops:
+		per_row = maxi(per_row, int(row_tops[ty]))
+	_check(per_row >= 3, "道具页一行至少 3 张（实得 %d；塌成一列说明留白 / 宽度算错了）" % per_row)
+	# 卡下面的名字对**卡**居中（那一格左右角标留白不等：左 21 / 右 40）——
+	# 铺满整格会让名字整体偏右约 10px（`_item_cell` 里用一圈 margin 把范围收成卡宽）。
+	var cap_bad: Array = []
+	for cd in icards:
+		var card_rect: Rect2 = (cd as Control).get_global_rect()
+		var cap := _caption_of(cd as Control)
+		if cap == null:
+			continue
+		var cap_rect: Rect2 = (cap as Control).get_global_rect()
+		if absf(cap_rect.get_center().x - card_rect.get_center().x) > 1.0:
+			cap_bad.append("%s 偏 %.1fpx" % [String((cd as Control).id),
+				cap_rect.get_center().x - card_rect.get_center().x])
+	_check(cap_bad.is_empty(), "卡名对卡居中（异常：%s）"
+		% str(cap_bad.slice(0, mini(cap_bad.size(), 4))))
 
 	print("== 道具页的角标不许被 `ScrollContainer` 裁掉（2026-10-12：与背包弹窗同一个坑） ==")
 	# 真卡角标是**半出卡外**画的，而清单装在 `ScrollContainer` 里（裁子节点）⇒ 网格贴边就切角标。
@@ -196,7 +346,7 @@ func _run() -> void:
 		_check(over_bad.is_empty(),
 			"角标都在可视区内（最坏一枚越界 %.1fpx；%s）" % [worst, str(over_show)])
 		# 最宽的那枚是「一次性」胶囊 —— 留白必须盖得住**最宽**的那种（只算圆角标是手牌那次的翻车原因）
-		var probe_card: Control = ICARD.make("蛋蛋节", ICARD.SIZE_SMALL, {})
+		var probe_card: Control = ICARD.make("蛋蛋节", ICARD.SIZE_LARGE, {})
 		var probe_over := Vector4(0, 0, 0, 0)
 		for leaf_v2 in probe_card.get_children():
 			var leaf2 := leaf_v2 as Control
@@ -218,6 +368,30 @@ func _run() -> void:
 				"留白盖得住最宽那枚角标（需 左%.1f 上%.1f 右%.1f 下%.1f，实得 左%.0f 上%.0f 右%.0f 下%.0f）"
 					% [probe_over.x, probe_over.y, probe_over.z, probe_over.w,
 						got.x, got.y, got.z, got.w])
+		# **格子之间**也要留够：右边那张的「一次性」胶囊会探进左边那格的领地里
+		#（2026-10-12 每格自己按 `badge_overhang` 留了偏置，这条就是它的判据）。
+		# 逐行按 x 排序，比"左边那张的可见右沿"与"右边那张的可见左沿"。
+		var rows := {}
+		for cd in cards:
+			var vr := _visual_rect(cd as Control)
+			var key := int(roundf(vr.position.y / 10.0))
+			if not rows.has(key):
+				rows[key] = []
+			(rows[key] as Array).append({"r": vr, "id": String((cd as Control).id)})
+		var clash: Array = []
+		for key in rows:
+			var arr: Array = rows[key]
+			arr.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return (a.r as Rect2).position.x < (b.r as Rect2).position.x)
+			for i in range(1, arr.size()):
+				var prev: Rect2 = arr[i - 1].r
+				var cur: Rect2 = arr[i].r
+				if prev.end.x > cur.position.x + 0.5:
+					clash.append("%s↔%s 压 %.1fpx" % [arr[i - 1].id, arr[i].id,
+						prev.end.x - cur.position.x])
+		_check(clash.is_empty(), "同一行相邻两格的角标不互相压（%s）"
+			% str(clash.slice(0, mini(clash.size(), 4))))
+
 
 	print("== 搜索过滤 ==")
 	g.codex_search.text = "黑卡"
