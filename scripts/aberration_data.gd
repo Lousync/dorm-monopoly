@@ -50,7 +50,7 @@ const ABERRATIONS := {
 	"斗地主": {"type": "非持续", "trigger": "随机", "tag": "中性", "dur": 0, "min_round": 30,
 		"desc": "房产最多的「地主」把自己一块投入最少的地皮无偿过户给末位（保留等级）。", "implemented": true},
 	"改革开放": {"type": "非持续", "trigger": "随机", "tag": "buff", "dur": 0, "min_round": 30,
-		"desc": "让后富的玩家先富：身家末位随机获得一件紫色道具。", "implemented": true},
+		"desc": "让后富的玩家先富：总资产末位随机获得一件紫色道具。", "implemented": true},
 }
 
 static func def(id: String) -> Dictionary:

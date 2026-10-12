@@ -2,8 +2,8 @@ class_name PlayerPopup
 extends Control
 ## 某个玩家的**道具弹窗**（批次 9，见 doc/game-design/设计决策留痕.md §九）。
 ##
-## 为什么有它：桌上的 3D 立牌（名字/身家/公开背包/倒计时）于批次 9 整体退场 —— 其中
-## **公开背包**这一样没有别的落点（四角条只有名字/身家/现金/倒计时）⇒ 收在这里。
+## 为什么有它：桌上的 3D 立牌（名字/总资产/公开背包/倒计时）于批次 9 整体退场 —— 其中
+## **公开背包**这一样没有别的落点（四角条只有名字/总资产/现金/倒计时）⇒ 收在这里。
 ## 顺带把"能量（体力）"也收进来（原来在桌上的体力件，批次 7 已删，此后一直只有四角条没有的读数）。
 ##
 ## **数据全取已同步的 `st`**（由 game 组装成 `data` 传进来）⇒ 客户端也准；本组件不碰 `hp`。
@@ -22,12 +22,10 @@ extends Control
 ## 若询问被压暗底盖住且点不到，那条链就断了 ⇒ 静默超时放弃。弹问（60）是**运行时懒建**的
 ## （`_show_prompt` 里才 append 到 `game`）⇒ 树序天然更晚、被优先拾取，模态仍成立。
 
-## 屏幕上弹窗面板的最大宽度（屏幕像素）。**批次 13 ⑤ 放大**：卡面换成大档
-##（`ItemCard.SIZE_LARGE` 220×300）之后，一行摆满 5 个槽位 = 5×220 + 4×8 = 1132，
-## 加两侧内边距 = **1168**（1280 宽的窗口两侧各余 56）。
+## 面板宽度**不写死**：由 `_panel_w(列数)` 现算（**批次 13 辛 ⑤ 放大**之后一份宽度要算三样：
+## 卡宽 × 列数 + 列间距 + **网格留白** + 两侧内边距）。开面板前 `_build` 先按满列估一个。
 ## 窗口更窄时 `_fill` 会按可用宽度**收窄**（槽位自动换行，见 `_slots_per_row`）——
 ## 所以这不是"写死就不管窗口"的那种宽度。
-const PANEL_W := 1168.0
 ## 面板内边距（`_build` 的 `UIKit.margins` 是 18/18/16/16）—— 这里取水平那对，
 ## 用来把"面板内可用宽度"从面板宽里减出来。
 const PANEL_PAD := 18.0
@@ -37,6 +35,16 @@ const PANEL_PAD := 18.0
 const ITEM_CARD_SIZE := ItemCard.SIZE_LARGE
 ## 背包槽位一行最多几个（规则上限 5 格正好一行放满；带「置物架」7 格时换第二行）。
 const MAX_SLOT_COLS := 5
+## 网格里横向 / 纵向的间距（`FlowContainer` 的两条 separation）—— 留白与面板宽按同一个数算。
+const SLOT_SEP := 8.0
+## 面板两侧到画布边的**余量**（`_slots_per_row` 拿它推列数）。**别往上调**：1280 画布下
+## 一行 5 张（220 宽）+ 两处网格留白 + 面板内边距 = 1229，余量给到 51 就掉成 4 列（见 `_slots_per_row`）。
+const SCREEN_MARGIN := 40.0
+## 网格四周的留白（**左 / 上 / 右 / 下**）—— **量出来的**，不是拍的：`ItemCard.badge_overhang`
+## 就是"角标最多探出卡面多少"（含投影）。不留白会被 `ScrollContainer` 裁掉第一行 / 第一列
+## 的角标（2026-10-12 用户实拍：左角标切一半、「一次性」只看得见下半截）—— 见 `_fill` 里
+## 建 `BagPad` 那段。**别再手抄一份**：手牌那次就是漏算「一次性」胶囊才切掉右半截。
+var _pad := ItemCard.badge_overhang(ITEM_CARD_SIZE)
 ## 每件道具那一块在卡**之外**还要占的高度：名字一行 + 标签一行 + 两条分隔（`_item_row` 的 VBox）。
 ## **算高度时必须加上它**：只按卡高算的话 `ScrollContainer` 会矮一截，名字 / 标签那一行被裁掉
 ##（出图逮到：弹窗里只看得见卡、卡下面那行名字没了）。批次 13 ⑤ 随字号一起从 44 提到 48。
@@ -109,7 +117,7 @@ func _build() -> void:
 	# 点面板的空白处**不**关闭 —— 关闭只有三条路：压暗底 / ✕ / Esc。别当成漏设去改成 IGNORE。
 	_panel = UIKit.panel_container(UIKit.PANEL_GLASS, 14,
 		Color(UIKit.BORDER.r, UIKit.BORDER.g, UIKit.BORDER.b, 0.9), 1, 10)
-	_panel.custom_minimum_size = Vector2(PANEL_W, 0)
+	_panel.custom_minimum_size = Vector2(_panel_w(MAX_SLOT_COLS), 0)
 	cc.add_child(_panel)
 	var m := UIKit.margins(18, 18, 16, 16)
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -133,7 +141,7 @@ func _fill(data: Dictionary) -> void:
 	var slots: int = maxi(int(data.get("bag_cap", 0)), maxi(items.size(), 1))
 	# 面板宽度按**槽位数与窗口宽度**收窄（窄窗口里 5 列放不下就换行），别硬撑出屏。
 	var per_row: int = _slots_per_row(slots)
-	var panel_w := float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * 8.0 + PANEL_PAD * 2.0
+	var panel_w := _panel_w(per_row)
 	_panel.custom_minimum_size = Vector2(panel_w, 0)
 	# 标题行：棋子色小片 + 名字 + 名次徽章 + 关闭
 	var head := HBoxContainer.new()
@@ -166,7 +174,7 @@ func _fill(data: Dictionary) -> void:
 	x.tooltip_text = "关闭"
 	x.pressed.connect(close)
 	head.add_child(x)
-	# 身家（大字）+ 现金（小字）
+	# 总资产（大字）+ 现金（小字）
 	_body.add_child(UIKit.label("已出局" if not alive else GameData.fmt_money(int(data.get("worth", 0))),
 		26, UIKit.ACCENT if alive else UIKit.TEXT_DIM))
 	if alive:
@@ -229,28 +237,56 @@ func _fill(data: Dictionary) -> void:
 	# 行数多时封顶、由 `ScrollContainer` 接管。
 	sc.custom_minimum_size = Vector2(panel_w - PANEL_PAD * 2.0, _bag_needed_h(slots, per_row))
 	_body.add_child(sc)
+	# **网格外面套一圈留白（`BagPad`）**：`ScrollContainer` 把子节点**裁在可视矩形内**，而
+	# `ItemCard` 的角标是**半出卡外**画的 ⇒ 网格贴着它的左上角摆，第一行 / 第一列的角标就被硬切
+	#（2026-10-12 用户实拍：左角标切一半、「一次性」胶囊只看得见下半截）。
+	# 留白量取自 `ItemCard.badge_overhang`（"角标最多探出多少"的唯一一份），别再手抄。
+	var pad := MarginContainer.new()
+	pad.name = "BagPad"
+	var pad_sides := ["left", "top", "right", "bottom"]   # 与 `badge_overhang()` 的 (左, 上, 右, 下) 同序
+	for pi in 4:
+		pad.add_theme_constant_override("margin_" + pad_sides[pi], int(ceilf(_pad[pi])))
+	# ⚠ `SIZE_EXPAND_FILL` **必须有**：`ScrollContainer` 只把带 EXPAND 的**直接子节点**拉到自己的宽度
+	#（`_reposition_children` 里那句 `if (c->get_h_size_flags().has_flag(SIZE_EXPAND))`）。
+	# 少了它，留白容器只占"网格最小宽度"⇒ 横向关掉滚动后网格被挤成**一列**、每件道具各占一行
+	#（实测：5 件时内容高 1573px、滚动条顶到天上）。
+	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sc.add_child(pad)
 	var flow := FlowContainer.new()
 	flow.name = "BagFlow"
-	flow.add_theme_constant_override("h_separation", 8)
-	flow.add_theme_constant_override("v_separation", 8)
+	flow.add_theme_constant_override("h_separation", int(SLOT_SEP))
+	flow.add_theme_constant_override("v_separation", int(SLOT_SEP))
 	flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# **把网格宽度声明出来**（= 列宽 × 列数 + 列间距）。横向滚动是关的 ⇒ 网格能用多少宽全看
+	# "滚动容器宽 − 留白"，而面板的九宫格边框 / 取整会吃掉零点几像素 —— **实测差 0.3px**，
+	# 第 5 张就被折到第二行（内容高 649、白滚一屏）。声明成最小宽度后网格宽度由**它自己**定，
+	# 面板跟着它长，不再"碰巧差一点"。
+	flow.custom_minimum_size = Vector2(
+		float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * SLOT_SEP, 0.0)
 	flow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	sc.add_child(flow)
+	pad.add_child(flow)
 	for i in slots:
 		if i < items.size():
 			flow.add_child(_item_row(items[i] as Dictionary))
 		else:
 			flow.add_child(_empty_slot())
 
+## 摆 `per_row` 列时面板需要多宽 = 网格宽 + **两处留白** + 两侧内边距。
+## `_build`（开面板前先按满列估一个）与 `_fill`（按实际列数定）**共用这一份**，别各算一遍。
+func _panel_w(per_row: int) -> float:
+	return float(per_row) * ITEM_CARD_SIZE.x + float(per_row - 1) * SLOT_SEP \
+		+ _pad.x + _pad.z + PANEL_PAD * 2.0
+
 ## 一行放得下几个槽位：按**可用宽度**推（不写死 5），窗口窄时自动换行。
-## 可用宽度 = 视口宽 − 两侧各 40 的余量 − 面板内边距。1280 宽、内边距 36 ⇒ n = 5。
+## 可用宽度 = 画布宽 − 两侧余量 − 面板内边距 − **两处网格留白**。1280 画布 ⇒ n = 5。
 func _slots_per_row(slots: int) -> int:
 	# 首帧 `size` 可能还是 0（布局未跑）⇒ 退回视口宽度，免得误判成"窄窗口"、只摆 1 列。
 	var vw: float = size.x
 	if vw <= 1.0:
 		vw = get_viewport_rect().size.x
-	var avail: float = maxf(vw, 1.0) - 80.0 - PANEL_PAD * 2.0
-	var n: int = int((avail + 8.0) / (ITEM_CARD_SIZE.x + 8.0))
+	var avail: float = maxf(vw, 1.0) - SCREEN_MARGIN - PANEL_PAD * 2.0 - _pad.x - _pad.z
+	var n: int = int((avail + SLOT_SEP) / (ITEM_CARD_SIZE.x + SLOT_SEP))
 	return clampi(n, 1, maxi(1, mini(slots, MAX_SLOT_COLS)))
 
 ## 空槽：与整张卡同尺寸的占位框。Compatibility 下没有虚线画笔，用**细边框 + 极低对比底**
@@ -273,10 +309,11 @@ func _empty_slot() -> Control:
 
 ## 背包区需要多高（= 按**槽位数**与每行格数算出的行数，封顶 `BAG_MAX_H`）。
 ## `per_row` 由 `_slots_per_row` 按可用宽度给出（窄窗口里会换行 ⇒ 行数变多）。
+## **上下留白也算进去**：只按卡高算的话 `ScrollContainer` 会矮一截、把角标切掉（同 `BagPad` 那条）。
 func _bag_needed_h(slots: int, per_row: int) -> float:
 	var rows: int = maxi(ceili(float(slots) / float(maxi(per_row, 1))), 1)
-	return minf(float(rows) * (ITEM_CARD_SIZE.y + ITEM_BLOCK_EXTRA) + float(rows - 1) * 8.0 + 6.0,
-		BAG_MAX_H)
+	return minf(float(rows) * (ITEM_CARD_SIZE.y + ITEM_BLOCK_EXTRA) + float(rows - 1) * SLOT_SEP
+		+ 6.0 + _pad.y + _pad.w, BAG_MAX_H)
 
 ## 一件道具一整块：**一张 `ItemCard`**（与商店货架同一画法）+ 名字 + 状态标签（被动 / 冷却 N / 未实装）。
 ## 名字与标签挂在卡**下面**（卡面自带名称条，但近处再写一行大字更好认；标签卡面上没有）。

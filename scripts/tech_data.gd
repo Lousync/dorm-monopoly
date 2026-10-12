@@ -143,7 +143,7 @@ const TECHS := {
 	"欧皇附体": {"tier": TIER_DIAMOND,
 		"desc": "开局随机获得一件金档道具。", "implemented": true},
 	"金字招牌": {"tier": TIER_DIAMOND,
-		"desc": "到轮按身家结算时，你名下每块地皮按 1.3 倍计入。", "implemented": true},
+		"desc": "到轮按总资产结算时，你名下每块地皮按 1.3 倍计入。", "implemented": true},
 	"大器晚成": {"tier": TIER_DIAMOND,
 		"desc": "第 15 轮起，每个自己回合开始 +¥1000。", "implemented": true},
 	"谈判专家": {"tier": TIER_DIAMOND,

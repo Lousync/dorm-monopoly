@@ -39,7 +39,7 @@ static func _prompt_rule(tier: String) -> String:
 
 ## 分页：[key, 标签, 正文]
 ## tier = 本局「操作限时」挡位（见 开局设置.md §三之一）；秒数一律从 GameSettings 取，不写死。
-## st = 本局设置对象（开局设置.md）：经济 / 胜负页随它走；缺省（= null）按常量默认（= 现状）。
+## st = 本局设置对象（开局设置.md）：经济 / 胜负页随它走；缺省（= null）按常量默认（= 各环节原值）。
 static func pages(tier := GameSettings.TIER_CURRENT, st: GameSettings = null) -> Array:
 	return [
 		{"key": "basic", "title": "基础操作", "body": _basic(st)},
@@ -55,7 +55,7 @@ static func _basic(st: GameSettings = null) -> String:
 	var round_lines := ["· 轮流行动，所有人各行动一次 = 一回合"]
 	if st == null or st.max_rounds > 0:
 		var lim := GameData.MAX_ROUNDS if st == null else st.max_rounds
-		round_lines.append("· 共 %d 回合；到轮未分胜负则按身家排名结算" % lim)
+		round_lines.append("· 共 %d 回合；到轮未分胜负则按总资产排名结算" % lim)
 	else:
 		round_lines.append("· 本局%s：只靠胜利条件（目标现金 / 最后存活）或全员破产结束" % _d("不限轮数"))
 	return "\n".join([
@@ -81,7 +81,7 @@ static func _basic(st: GameSettings = null) -> String:
 		"  非房主按只对自己生效，屏幕出现「房主已暂停」遮罩就是房主按了暂停",
 		"· 右上角「战报」可折叠；面板底部输入框聊天（回车发送）",
 		"· 桌面上每位对手一块[b]立牌[/b]（棋子色 + 名次 + 昵称），点一块看 TA 的道具与能量；",
-		"· 左下角是你自己的身家条（身家 / 现金 / 能量）",
+		"· 左下角是你自己的总资产条（总资产 / 现金 / 能量）",
 		"· 右上角「规则说明」就是本面板（与「战报」互斥：开一个自动收另一个），点「收起」回到按钮态",
 		"",
 		_h("一局的基本盘"),
@@ -186,25 +186,25 @@ static func _money(st: GameSettings = null) -> String:
 		"· %s 租金、购买、赌注、道具消耗是中性，香皂挡不住" % _d("注意："),
 		"",
 		_h("胜负"),
-		"· 胜利条件房主开局可设：到轮身家结算（默认）/ 目标现金 / 最后存活",
+		"· 胜利条件房主开局可设：到轮总资产结算（默认）/ 目标现金 / 最后存活",
 	] + _win_lines(st))
 
-## 胜负页的收尾三行：按本局胜利条件展开（st 缺省 = 默认「到轮身家结算」）
+## 胜负页的收尾三行：按本局胜利条件展开（st 缺省 = 默认「到轮总资产结算」）
 static func _win_lines(st: GameSettings = null) -> Array:
 	var mode := "rounds" if st == null else st.win_mode
 	var lim := GameData.MAX_ROUNDS if st == null else st.max_rounds
-	var out := ["· 身家 = 现金 + Σ(地价 + 等级 × 升级费用)"]
+	var out := ["· 总资产 = 现金 + Σ(地价 + 等级 × 升级费用)"]
 	match mode:
 		"cash":
-			out.append("· 本局比拼%s：先到 %s 的玩家立即获胜；到轮未达标则按身家结算" % [
+			out.append("· 本局比拼%s：先到 %s 的玩家立即获胜；到轮未达标则按总资产结算" % [
 				_d("目标现金"), GameData.fmt_money(50000 if st == null else st.win_cash)])
 		"last":
 			out.append("· 本局比拼%s：只剩一人时立即获胜%s" % [_d("最后存活"),
-				"" if lim <= 0 else "；到第 %d 轮仍未分出则按身家结算" % lim])
+				"" if lim <= 0 else "；到第 %d 轮仍未分出则按总资产结算" % lim])
 		_:
-			out.append("· 第 %d 回合结束按身家排名，最富有者胜（全员破产则学校胜）" % lim
+			out.append("· 第 %d 回合结束按总资产排名，最富有者胜（全员破产则学校胜）" % lim
 				if lim > 0 else
-				"· 本局不限轮数：按身家结算只在全员破产时被跳过——胜负由最后存活者定")
+				"· 本局不限轮数：按总资产结算只在全员破产时被跳过——胜负由最后存活者定")
 	return out
 
 static func _item() -> String:

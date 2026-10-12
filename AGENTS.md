@@ -30,7 +30,7 @@
 | `回合与行动.md` | 回合顺序、两阶段、转轮规则、休眠 vs 跳过、决策托管 |
 | `棋盘与地产.md` | 棋盘几何、格型、30 块独立地产、租金/装修/焦土 |
 | `机会卡.md` | 机会卡池（50 张）、三类卡的抽卡概率、卡字段、免疫点 |
-| `经济与胜负.md` | 资金、罚款/奖励、破产、反省、30 轮身家结算 |
+| `经济与胜负.md` | 资金、罚款/奖励、破产、反省、30 轮总资产结算 |
 | `小卖部.md` | 6 家独立货架、全池等概率铺货、刷新曲线、点击购买 |
 | `黑市.md` | 机会卡进入、地皮计价、挨打小黑屋（休眠） |
 | `赌场.md` | 全屏演出场景、抽游戏、投骰子、同步 |
@@ -109,8 +109,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 & $G --headless --path . --script tests/tech_test.gd    # 科技单测（定档抽卡 + 逐条效果）
 & $G --headless --path . --script tests/pause_menu_test.gd # 暂停菜单回归（真实 GUI 输入链路）
 & $G --headless --path . --script tests/rules_panel_test.gd # 规则说明面板回归
-& $G --headless --path . --script tests/codex_panel_test.gd # 图鉴面板回归（三族 / 搜索 / 互斥 / 落点）
-& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（身家条/底栏/客户端视角）
+& $G --headless --path . --script tests/codex_panel_test.gd # 图鉴弹窗回归（三族 / 搜索 / 互斥 / 居中模态 / 角标）
+& $G --headless --path . --script tests/hud_test.gd      # HUD 回归（总资产条/底栏/客户端视角）
 & $G --headless --path . --script tests/placard_test.gd  # 桌面立牌回归（落点/朝向/命中/烘图）
 & $G --headless --path . --script tests/layout_test.gd  # 3D 房间+桌面布局与取景（格宽/房间带/光照契约/家具/吊灯）
 & $G --headless --path . --script tests/chars_test.gd   # 3D 人物（坐姿/静止/事件反应/不穿模/不投影）
@@ -136,7 +136,8 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
   `table` 时会调 `focus_grid(27, 2.0)` 想拉近到 27 号格、并弹格详情卡 —— **但 `cam_locked`
   默认锁着，`focus_grid` 直接 no-op**（摆拍默认锁镜头那条的副作用，见下 `freecam`）⇒ 不带
   `table` 的图**实际也是全景**，只是多一张格详情卡；真要看近景**必须配 `freecam`**；
-  `rules` → 展开规则说明；`pause` → 打开暂停菜单（文件名再带 `setpanel` ⇒ 顺手切到「设置」那一片，
+  `rules` → 展开规则说明；`codex` → **打开图鉴**（2026-10-12 起是屏幕中央的大尺寸模态；
+  文件名再带 `codextech` / `codexaber` 可切到科技 / 畸变页，如 `xx_codex_table_plain.png`）；`pause` → 打开暂停菜单（文件名再带 `setpanel` ⇒ 顺手切到「设置」那一片，
   用来核对**对局内设置面板**的分节边框盒 / 开关组件 / 与大厅弹窗的一致性，如
   `xx_pause_setpanel_table_plain.png`）；`card` → 跳过赌局；
   `deckout` → **抽卡「抽出」瞬间**：在 **0.06s / 0.16s 各补一张**（常规三帧的第一帧落在翻面之后，
@@ -227,6 +228,11 @@ $G = "D:\Godot\Godot_v4.6.2-stable_win64_console.exe"
 > 另注：**`--rounds=N` 的单人 host 跑不满 N 轮不是 bug** —— 房主是"真人"，它每一轮的决定都要
 > 等满 25 s 询问超时（`Engine.time_scale` 3 倍速下 ≈8.3 s），`--rounds=30` 得跑好几分钟；
 > 想快速自检就配一个 client 一起跑，或把 `--rounds` 调小。
+> **第四条（2026-10-12）：`--autotest` 下「操作限时」的 `不限时` 会被钳回 `系统默认`。**
+> 操作限时的默认值自本日起是「不限时」，而自动回归里的房主是**真人** —— "到点由系统托管"是它
+> 往前推的**唯一动力**。所以不钳的话 `--rounds=N`（含 CI 的联机回归）与**所有** `--shot=` 摆拍
+> 都会永远打不完。钳制在 `game._autotest_clamp_tier`（`at_mode != ""` 时生效，并打印一行说明），
+> `settings_test` 钉了两个方向；要测 `不限时` 这一档请直接写 `_settings.timeout_tier`。
 > 排查这类"卡住"时，**在 `_process` 里打一行心跳**（`paused` / `Engine.time_scale` / `running` /
 > 各 `_awaiting_*`）比猜快得多 —— 2026-10-05 就是靠它一次定位到"树没暂停、时间倍率正常、
 > 只是房主在等自己的决定超时"。

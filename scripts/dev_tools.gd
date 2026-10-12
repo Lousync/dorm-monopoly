@@ -535,6 +535,16 @@ func take_shot(path: String) -> void:
 		_on_tile_clicked(27)  # 顺便展示格子详情卡
 	if path.contains("rules"):
 		g._set_rules_open(true)  # 摆拍：展开右上角「规则说明」（批次 13 ① 起面板从左下角搬来）
+	if path.contains("codex"):
+		# 摆拍（2026-10-12）：打开**图鉴**（改成屏幕中央的大尺寸模态之后要出图核对落点 / 尺寸 /
+		# 压暗底 / 道具页的角标）。走**真入口** `_set_codex_open`（与点那枚「📖 图鉴」同一条路）。
+		# 用法：`--shot-game=1 --shot=shots/xx_codex_table_plain.png`（文件名别带 `tilt` / `view2d`）。
+		# 想看图鉴的**某一页**：文件名再带 `codextech` / `codexaber`（默认停在道具页）。
+		g._set_codex_open(true)
+		if path.contains("codextech"):
+			CodexPanel.select_tab(g, "tech")
+		elif path.contains("codexaber"):
+			CodexPanel.select_tab(g, "aberration")
 	if path.contains("logopen"):
 		# 摆拍（批次 12 D）：展开右上角**战报栏**，用来核对"展开的战报栏不压名册条"。
 		# **批次 13 ② 起名册条搬到了左上角 ⇒ 两者已天然分居左右、不会打架**；这条图仍照拍
@@ -688,9 +698,9 @@ func take_shot(path: String) -> void:
 			await get_tree().create_timer(0.4).timeout
 	if path.contains("popup") and g.multiplayer.is_server():
 		# 摆拍（终审 fix wave）：开一个**对手**的道具弹窗，核对"卡牌图标 / 名称 / 能量小格 /
-		# 身家现金都读得出、面板居中"。与 hand / level / target 同类 —— 只在对局里注入**局面状态**，
+		# 总资产现金都读得出、面板居中"。与 hand / level / target 同类 —— 只在对局里注入**局面状态**，
 		# 玩法代码一行不改。手上有道具的家才有东西看：没有就先给 TA 发几件，再广播。
-		# **走真入口** `_on_corner_bar_clicked`（与玩家点身家条 / 名册行走同一条路），不直调 `_open_player_popup`。
+		# **走真入口** `_on_corner_bar_clicked`（与玩家点总资产条 / 名册行走同一条路），不直调 `_open_player_popup`。
 		# 用法：`--autotest=host --rounds=6 --shot=shots/b9_popup_table_plain.png`
 		#   `table` → 停在围桌全景（不拉近、不弹格详情卡）；`plain` → 跳过抽卡与赌局浮层
 		#   （那两样会抢镜；**别**再带上 `card`）。
@@ -701,9 +711,17 @@ func take_shot(path: String) -> void:
 				break
 		if pick != GameData.NO_PEER:
 			var opp: Dictionary = g._player_by_peer(pick)
-			if not opp.is_empty() and (opp.get("items", []) as Array).is_empty():
-				for hid_v in ["招财猫", "交换生", "作弊器", "黑卡"]:
-					g._grant_item(opp, String(hid_v))
+			if not opp.is_empty():
+				# **补齐**（2026-10-12 改）：老写法只在"对手空包"时才发，而对手往往开局就有牌 ⇒
+				# 常常拍不到最宽的那枚「一次性」胶囊（`蛋蛋节` 右上的那枚），而"角标探出卡外多少 /
+				# 有没有被裁"看的正是它。改成"缺哪件补哪件"（受背包上限约束）。
+				var held_opp: Array = []
+				for it in (opp.get("items", []) as Array):
+					held_opp.append(String((it as Dictionary).get("id", "")))
+				for hid_v in ["招财猫", "蛋蛋节", "黑卡"]:
+					if String(hid_v) != "" and not held_opp.has(String(hid_v)) \
+							and (opp.get("items", []) as Array).size() < g._bag_cap(opp):
+						g._grant_item(opp, String(hid_v))
 			g._broadcast_state()
 			await get_tree().create_timer(0.35).timeout
 			g._on_corner_bar_clicked(pick)

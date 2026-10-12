@@ -80,7 +80,7 @@ func _fresh_tiles() -> Array:
 	return out
 
 ## 一份 4 人状态（与 `hud_test._state` 同形）：甲（名下有"一号楼"）/ 乙（**我**）/ 丙 / 丁（已出局）。
-## 身家 = 现金 + 地产 ⇒ 乙 20000 > 甲 12000+一号楼 > 丙 8000 > 丁 100。
+## 总资产 = 现金 + 地产 ⇒ 乙 20000 > 甲 12000+一号楼 > 丙 8000 > 丁 100。
 ## **色号 = peer − 1**，而座位序（`_seat_peers()`，自己打头）= [2,3,4,1] ⇒ 三家分到的座号是
 ## 丙 1（右）/ 丁 2（对面）/ 甲 3（左）⇒ **色号与座位号处处不等**（② 靠这一条才有杀伤力）。
 func _state(turn_peer: int) -> Dictionary:
@@ -256,7 +256,7 @@ func _run() -> void:
 	shown.sort()
 	_check(shown == [1, 3, 4], "三块立牌 = 其余三人（实得 %s）" % str(shown))
 	_check(not tp._placards.has(2),
-		"**没有「我」那块** —— 自己的信息在左下角那条身家条上（`slot 0` = 近侧，相机就在那儿）")
+		"**没有「我」那块** —— 自己的信息在左下角那条总资产条上（`slot 0` = 近侧，相机就在那儿）")
 	_check(tp._placards_root != null and tp._placards_root.get_child_count() == 3,
 		"`Placards` 父节点下就是这三块（实得 %d）"
 			% (0 if tp._placards_root == null else tp._placards_root.get_child_count()))
@@ -342,7 +342,7 @@ func _run() -> void:
 		"**内框静息是中性的、不带任何玩家色**（三通道极差 ≤ 0.06；不符的 %s）" % str(frame_bad))
 
 	print("== ③ 昵称文本 == name（出局的带「（破产）」）/ 名次 == rank ==")
-	# 期望名次在测试里**自己算一遍**（身家 = 现金 + 名下地皮地价，与 `game._state_worth` 同一公式），
+	# 期望名次在测试里**自己算一遍**（总资产 = 现金 + 名下地皮地价，与 `game._state_worth` 同一公式），
 	# 不写死数字（地价表一调就假红）。
 	var worth := {}
 	for p in [1, 2, 3, 4]:
@@ -373,10 +373,10 @@ func _run() -> void:
 			name_bad.append(int(p))
 		if got_rank != want_rank:
 			rank_bad.append(int(p))
-		print("  [实测] peer%d 昵称「%s」(期望「%s」) / 名次「%s」(期望 #%d，身家 %d)"
+		print("  [实测] peer%d 昵称「%s」(期望「%s」) / 名次「%s」(期望 #%d，总资产 %d)"
 			% [int(p), got_name, want_name, got_rank_s, want_rank, int(worth[int(p)])])
 	_check(name_bad.is_empty(), "昵称文本 == 喂进去的 name（不符的 %s）" % str(name_bad))
-	_check(rank_bad.is_empty(), "名次写「#N」且 N == 喂进去的 rank（身家倒序；不符的 %s）" % str(rank_bad))
+	_check(rank_bad.is_empty(), "名次写「#N」且 N == 喂进去的 rank（总资产倒序；不符的 %s）" % str(rank_bad))
 	# 文字**加粗**：`Label3D` 自己没有字重，靠换上粗体 `SystemFont`（与屏幕层同一支）。
 	# 判据取"是 `SystemFont` 且字重 ≥ 700"，而不是"和 `UIKit.font_bold()` 是同一个对象"——
 	# 后者会把实现写死（哪天换成别的粗体源就不该红）。
@@ -675,9 +675,9 @@ func _run() -> void:
 		if (oc["track"] as MeshInstance3D).visible or (oc["bar"] as MeshInstance3D).visible:
 			others_on += 1
 	_check(others_on == 0, "其余两块**不显示倒计时**（只出现在行动者那一块上；越界 %d 块）" % others_on)
-	# 我那条身家条（屏幕层）此刻不该显示 —— 倒计时只落在一处
+	# 我那条总资产条（屏幕层）此刻不该显示 —— 倒计时只落在一处
 	_check(not (g.corner_bars[0].timer_kind as Label).visible,
-		"窗口归属不是我 ⇒ 屏幕层那条身家条的倒计时内容收起（同一条判据、两处载体）")
+		"窗口归属不是我 ⇒ 屏幕层那条总资产条的倒计时内容收起（同一条判据、两处载体）")
 	# 直接量 `set_placard_timer` 本身：`frac` 是唯一输入，条长应当严格跟着它走。
 	tp.set_placard_timer(3, 0.5, true)
 	_check(absf((pl3t["bar"] as MeshInstance3D).scale.x - 0.5) < 0.001,

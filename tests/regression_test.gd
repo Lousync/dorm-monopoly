@@ -360,7 +360,7 @@ func _test_ui_widgets_applied(g) -> void:
 		"info_body", "info_sb", "chat_edit",
 		"opt_btn", "black_btns", "black_hint",
 		"menu_dim", "menu_wraps", "rules_btn", "rules_panel", "rules_body", "rules_tabs",
-		# 批次 5 Task 3：身家条取代了右侧名册栏（roster_box / roster_rows 已从 game 上删净）。
+		# 批次 5 Task 3：总资产条取代了右侧名册栏（roster_box / roster_rows 已从 game 上删净）。
 		# 批次 12 D ~ 13 辛：他人信息与"选目标落点"在**屏幕上的名册条**里。
 		# **v0.8.0 第三次改版：名册条整体删除**，那两样搬到**桌面立牌**（3D，不是 `game` 上的控件
 		# ⇒ 这里不再列它；立牌的存在性由 `hud_test` / `layout_test` 从 `table_props` 那边钉）。
@@ -375,7 +375,7 @@ func _test_ui_widgets_applied(g) -> void:
 	# 等于坞又长出来了，这条会先红。
 	var removed := ["mat_bar", "action_bar", "dock_plate", "roll_btn", "use_phase_btn", "item_btn_box",
 		"status_label", "ph1_lab", "ph2_lab", "ph1_pill", "ph2_pill", "ph_arrow_l",
-		# 批次 5 Task 3：右侧名册栏被四角身家条取代 —— 这两个名字必须**从 game 上删净**，
+		# 批次 5 Task 3：右侧名册栏被四角总资产条取代 —— 这两个名字必须**从 game 上删净**，
 		# 谁把它们加回来就等于名册栏又长出来了（四角条与它挂的是同一份东西，重复）。
 		"roster_box", "roster_rows"]
 	var back: Array = []

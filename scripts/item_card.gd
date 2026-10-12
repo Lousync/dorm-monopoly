@@ -9,8 +9,44 @@ const SIZE_SMALL := Vector2(96, 132)    # 道具栏
 const SIZE_MEDIUM := Vector2(150, 210)  # 货架 / 黑市
 const SIZE_LARGE := Vector2(220, 300)   # 发现三选一 / 使用飞出
 
+# ---- 角标几何：**唯一一份数字**（2026-10-12 抽出来）----
+#
+# 角徽章是**半出卡外**画的（设计如此，见 `doc/game-design/道具系统.md` §九）：左上那枚 ⚡ / 被动
+# 探出左、上各一截，右上那枚（计数 / 冷却预览 / **「一次性」胶囊**）探出右边一截。凡是**会裁边**
+# 的容器（手牌正面的 `SubViewport`、背包与图鉴的 `ScrollContainer`）都得按"最多探出多少"留白。
+#
+# 为什么抽成常量：这两个数**必须同源**。2026-10-11 手牌那次翻车就是留白只算到圆角标、
+# 漏了更宽的「一次性」胶囊（右半截被硬切）；2026-10-12 背包那次是压根没留白。谁再手算一份，
+# 下次改尺寸时就会再漂开一次 —— 要留白请调 `badge_overhang()`。
+const BADGE_SIDE_R := 0.15      # 圆角标边长 = size.y × 本比例（下限 BADGE_SIDE_MIN）
+const BADGE_SIDE_MIN := 20.0
+const BADGE_SHADOW := 2.0       # 角标投影半径（`UIKit.stylebox` 的 shadow，偏移 (0, 2)）
+const BADGE_LEFT_OFF := 0.42    # 左上徽章：position = (−bs × 本值, −bs × 本值)
+const BADGE_RIGHT_X := 0.58     # 右上徽章：position.x = size.x − bs × 本值
+const BADGE_TOP_OFF := 0.42     # 右上徽章：position.y = −bs × 本值
+const PILL_W_R := 2.1           # 「一次性」胶囊：宽 = bs × 本值
+const PILL_H_R := 0.9           # 高 = bs × 本值
+const PILL_X := 0.6             # 胶囊 position.x = size.x − pw × 本值（右端因此探出 pw × 0.4）
+const PILL_Y := 0.42            # 胶囊 position.y = −ph × 本值
+
 var id := ""
 var state := {}
+
+## 圆角标的边长（`make()` 的落点与 `badge_overhang()` 共用，别各算一份）。
+static func badge_side(size: Vector2) -> float:
+	return maxf(size.y * BADGE_SIDE_R, BADGE_SIDE_MIN)
+
+## 「半出卡外」的角标最多探出卡面多少：**(左, 上, 右, 下)**，已含投影。
+## 会裁边的容器照它留白（手牌 `HAND_FACE_PAD` / 背包 `PlayerPopup` 的网格留白 / 图鉴道具页）。
+## 下沿恒为 0：两枚角标都挂在卡面上沿之外，除了圆角标下半截在卡内、没有任何东西探出下沿。
+static func badge_overhang(size: Vector2) -> Vector4:
+	var bs := badge_side(size)
+	var pw := bs * PILL_W_R
+	# 右：圆角标右端 = bs × (1 − BADGE_RIGHT_X)，胶囊右端 = pw × (1 − PILL_X) —— 取大的那个
+	#（大档下胶囊更宽，正是 2026-10-11 漏掉的那一枚）
+	var right := maxf(bs * (1.0 - BADGE_RIGHT_X), pw * (1.0 - PILL_X))
+	return Vector4(bs * BADGE_LEFT_OFF + BADGE_SHADOW, bs * BADGE_TOP_OFF + BADGE_SHADOW,
+		right + BADGE_SHADOW, 0.0)
 
 static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	var card := ItemCard.new()
@@ -121,7 +157,7 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 	qbar.add_child(ql)
 
 	# 左上徽章：⚡消耗（§十六：显示**生效值**，> 基础红、< 基础绿）/ 被动标
-	var bs := maxf(size.y * 0.15, 20.0)
+	var bs := badge_side(size)
 	var cost_eff := int(state.get("cost_eff", cost))
 	var cost_dir := 0
 	if cost_eff > cost:
@@ -130,7 +166,7 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 		cost_dir = -1
 	var lc := _delta_color(cost_dir, Color(1.0, 0.85, 0.3))
 	var lb := _badge(bs, Color(0.15, 0.17, 0.26), lc)
-	lb.position = Vector2(-bs * 0.42, -bs * 0.42)
+	lb.position = Vector2(-bs * BADGE_LEFT_OFF, -bs * BADGE_LEFT_OFF)
 	card.add_child(lb)
 	var lb_text := "被动"
 	if not passive:
@@ -157,10 +193,10 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 			cd_dir = -1
 	var is_once: bool = String(d.get("type", "")) == "consumable"
 	if is_once:
-		var pw := bs * 2.1
-		var ph := bs * 0.9
+		var pw := bs * PILL_W_R
+		var ph := bs * PILL_H_R
 		var ob := _pill(Vector2(pw, ph), Color(0.34, 0.19, 0.48), Color(0.72, 0.55, 1.0))
-		ob.position = Vector2(size.x - pw * 0.6, -ph * 0.42)
+		ob.position = Vector2(size.x - pw * PILL_X, -ph * PILL_Y)
 		card.add_child(ob)
 		var ol := UIKit.label("一次性", int(ph * 0.5), Color(0.92, 0.84, 1.0))
 		ol.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -170,7 +206,7 @@ static func make(id: String, size: Vector2, state: Dictionary = {}) -> ItemCard:
 		ob.add_child(ol)
 	elif count >= 0:
 		var rb := _badge(bs, Color(0.15, 0.17, 0.26), Color(0.7, 0.9, 1.0))
-		rb.position = Vector2(size.x - bs * 0.58, -bs * 0.42)
+		rb.position = Vector2(size.x - bs * BADGE_RIGHT_X, -bs * BADGE_TOP_OFF)
 		card.add_child(rb)
 		var txt := ("⏳%d" % count) if cooling else str(count)
 		var rb_l := UIKit.label(txt, int(bs * 0.42), Color(0.7, 0.9, 1.0))
